@@ -1,0 +1,2 @@
+# git apply needs the patch byte-for-byte; keep autocrlf from converting it
+*.patch -text
