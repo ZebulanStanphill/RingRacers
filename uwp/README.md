@@ -23,6 +23,10 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 
 This clones Ring Racers v2.4 into `RingRacers/`, applies the patch, builds it, then generates and builds the launcher solution at `build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
 
+### GitHub Actions
+
+Every push builds the app on a Windows runner and uploads a `ringracers-uwp` artifact containing a sideloadable `.msix` and its `.cer`. The certificate is generated fresh for each run, so uninstall the previous build before installing one from a different run. In Xbox Device Portal, install the `.cer` along with the package.
+
 ## Installing
 
 1. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) to `E:\ringracers` so that `E:\ringracers\bios.pk3` and `E:\ringracers\data\` exist. The game verifies these files, so assets from other versions won't load. Config, saves, and add-ons go in `E:\ringracers\ringracers\`.
