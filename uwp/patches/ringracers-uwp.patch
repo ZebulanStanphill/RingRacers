@@ -1,4 +1,4 @@
-From 90c551abd8a1a4a81f1b65f37698c6ac4c08c3e7 Mon Sep 17 00:00:00 2001
+From 04d7edcd3286a8e21cba30e2fe04533b853c9d36 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -23,8 +23,14 @@ RingRacers-dev, rebased onto v2.4.
   when it changes
 - Spend less time on work the game doesn't need, which costs a lot on
   the Xbox's CPU: clear only the columns of a new visplane that can be on
-  screen, inline FixedMul, and don't sleep after a frame skipped to catch
-  up on game logic as if it had been drawn
+  screen, inline FixedMul, don't sleep after a frame skipped to catch up
+  on game logic as if it had been drawn, remember which subsector recent
+  points are in, skip sprite sorting nodes that share no column with the
+  sprite without reading what they point to, keep a set of the pointers
+  that have Lua userdata so freeing a block doesn't ask Lua, store
+  single-channel textures as GL_RED (EXT_texture_rg), which ANGLE doesn't
+  convert to RGBA on every upload the way it does GL_LUMINANCE, and size
+  the thread pool by the processors Xbox lets the game use
 - Fix P_SetMobjState and P_SetPlayerMobjState returning early without
   counting their call as finished when a state removes its mobj, after
   which every state change cleared a table of every state (about 40 KB).
@@ -50,13 +56,17 @@ RingRacers-dev, rebased onto v2.4.
   seconds a summary of the perfstats frame and tic timings, the parts of
   I_FinishUpdate, and counts of draws, texture uploads, and resources
   created
-- Sample the main thread about 250 times a second while a level is
+- Sample the main thread about 50 times a second while a level is
   played, and write how many samples landed at each address and with each
   call stack (found from each module's unwind data), by what the game was
   doing, to E:\ringracers\uwp-profile.txt. The perf summary also logs how
   long the samples paused the main thread, which processors it ran on, the
-  level's mobjs, and P_CheckPosition calls and Lua mobj hooks per tic, and
-  startup logs the CPU sets Windows lists for the game
+  level's mobjs, P_CheckPosition calls and Lua mobj hooks per tic, and how
+  often R_PointInSubsector's cache answered, and startup logs the CPU sets
+  Windows lists for the game
+- Log crashes and their call stacks from a vectored exception handler,
+  since the app runtime, not the C runtime, starts the main thread, so the
+  signal handler never sees an access violation there
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
@@ -65,37 +75,43 @@ RingRacers-dev, rebased onto v2.4.
 ---
  CMakeLists.txt                   |  19 +-
  CMakePresets.json                |  17 +
- src/CMakeLists.txt               |  44 ++-
+ src/CMakeLists.txt               |  44 +-
  src/console.c                    |  18 +
- src/core/thread_pool.cpp         |   9 +
+ src/core/thread_pool.cpp         |  19 +
  src/d_clisrv.c                   |  19 +
- src/d_main.cpp                   |  84 +++-
+ src/d_main.cpp                   |  84 ++-
  src/http-mserv.c                 |   2 +
  src/hwr2/patch_atlas.cpp         |   8 +
- src/hwr2/resource_management.cpp | 105 +++--
+ src/hwr2/resource_management.cpp | 105 ++--
  src/hwr2/resource_management.hpp |  31 +-
- src/i_system.h                   |  54 +++
- src/i_video_common.cpp           |  48 ++-
+ src/i_system.h                   |  61 +++
+ src/i_video_common.cpp           |  48 +-
+ src/lua_script.c                 | 127 +++++
  src/m_fixed.h                    |  11 +
- src/m_perfstats.c                | 182 +++++++++
+ src/m_perfstats.c                | 193 +++++++
  src/m_perfstats.h                |  11 +
- src/p_mobj.c                     |  96 +++--
+ src/p_mobj.c                     |  96 +++-
+ src/p_setup.cpp                  |   7 +
+ src/r_main.cpp                   |  40 ++
+ src/r_main.h                     |   8 +
  src/r_plane.cpp                  |  17 +-
- src/rhi/gl2/gl2_rhi.cpp          | 578 +++++++++++++++++++--------
- src/rhi/gl2/gl2_rhi.hpp          |  33 ++
+ src/r_things.cpp                 |  63 +++
+ src/r_things.h                   |   5 +
+ src/rhi/gl2/gl2_rhi.cpp          | 618 ++++++++++++++++------
+ src/rhi/gl2/gl2_rhi.hpp          |  36 ++
  src/screen.c                     |   2 +-
  src/sdl/CMakeLists.txt           |   5 +
  src/sdl/i_main.cpp               |  11 +-
- src/sdl/i_system.cpp             | 119 +++++-
- src/sdl/i_uwpprofile.cpp         | 650 +++++++++++++++++++++++++++++++
- src/sdl/i_video.cpp              |  74 ++++
+ src/sdl/i_system.cpp             | 119 ++++-
+ src/sdl/i_uwpprofile.cpp         | 861 +++++++++++++++++++++++++++++++
+ src/sdl/i_video.cpp              |  74 +++
  src/sdl/mixer_sound.c            |   4 +-
  src/sdl/ogl_sdl.c                |   8 +
  src/sdl/rhi_gl2_platform.cpp     |   9 +
- src/w_wad.cpp                    | 117 ++++++
+ src/w_wad.cpp                    | 117 +++++
  src/w_wad.h                      |  10 +
- src/z_zone.cpp                   |   4 +
- 32 files changed, 2158 insertions(+), 241 deletions(-)
+ src/z_zone.cpp                   |   5 +
+ 38 files changed, 2690 insertions(+), 242 deletions(-)
  create mode 100644 src/sdl/i_uwpprofile.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -313,28 +329,45 @@ index 1e7585fbc..fc9c5fb3c 100644
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
-index 8a434ba63..d28196d30 100644
+index 8a434ba63..8e737e9d3 100644
 --- a/src/core/thread_pool.cpp
 +++ b/src/core/thread_pool.cpp
-@@ -24,6 +24,10 @@
+@@ -24,6 +24,11 @@
  #include "../cxxutil.hpp"
  #include "../m_argv.h"
  
 +#ifdef _UWP
 +extern "C" void I_OutputMsg(const char *error, ...);
++extern "C" unsigned int I_UWPUsableProcessors(void);
 +#endif
 +
  using namespace srb2;
  
  static void do_work(ThreadPool::Task& work)
-@@ -316,6 +320,11 @@ void I_ThreadPoolInit(void)
+@@ -301,6 +306,15 @@ void I_ThreadPoolInit(void)
+ {
+ 	SRB2_ASSERT(g_main_threadpool == nullptr);
+ 	size_t thread_count = std::min(static_cast<unsigned int>(9), std::thread::hardware_concurrency());
++#ifdef _UWP
++	// [UWP]: Xbox keeps some processors for the system, which hardware_concurrency counts. Running more threads than
++	// the game has processors makes some planes finish late while the main thread waits for them.
++	const unsigned int usable = I_UWPUsableProcessors();
++	if (usable)
++	{
++		thread_count = std::min(static_cast<unsigned int>(9), usable);
++	}
++#endif
+ 	if (thread_count > 1)
+ 	{
+ 		// The main thread will act as a worker when waiting for pool idle
+@@ -316,6 +330,11 @@ void I_ThreadPoolInit(void)
  	{
  		g_main_threadpool = std::make_unique<ThreadPool>(thread_count);
  	}
 +
 +#ifdef _UWP
-+	I_OutputMsg("UWP: %u hardware threads, %zu thread pool workers\n", std::thread::hardware_concurrency(),
-+		M_CheckParm("-singlethreaded") ? (size_t)0 : thread_count);
++	I_OutputMsg("UWP: %u hardware threads, %u usable by the game, %zu thread pool workers\n",
++		std::thread::hardware_concurrency(), usable, M_CheckParm("-singlethreaded") ? (size_t)0 : thread_count);
 +#endif
  }
  
@@ -852,10 +885,10 @@ index 3fd6666cf..3cfcb18f1 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..f9b38c203 100644
+index 56d507e90..1cdaf83a4 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,8 +313,62 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,69 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
@@ -880,6 +913,13 @@ index 56d507e90..f9b38c203 100644
 +// [UWP]: Logs the CPU sets Windows lists for the game, which should show which cores are the game's own when Xbox
 +// runs it as a game. Call from the main thread.
 +void I_UWPLogCpuSets(void);
++
++// [UWP]: How many processors the game may run on, leaving out those Xbox keeps for the system, or 0 if unknown
++unsigned int I_UWPUsableProcessors(void);
++
++// [UWP]: Logs crashes, with their call stacks, to the log, which the game's signal handler misses on Xbox.
++// Call from the main thread.
++void I_UWPInstallCrashHandler(void);
 +
 +// [UWP]: Counts which processor the main thread is running on, and writes which ones it was on since the last
 +// call and how often, like "2 (60%), 3 (40%)"
@@ -1049,6 +1089,165 @@ index f52f9298e..8bff55204 100644
  	I_StartDisplayUpdate();
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
+diff --git a/src/lua_script.c b/src/lua_script.c
+index 51cef5129..8581c102e 100644
+--- a/src/lua_script.c
++++ b/src/lua_script.c
+@@ -42,6 +42,126 @@
+ 
+ lua_State *gL = NULL;
+ 
++// [UWP]: The pointers that have userdata in LREG_VALID, kept beside it so LUA_InvalidateUserdata can skip asking Lua
++// about the many pointers that never had any, like each block freed from the level pools whenever a mobj moves.
++// Asking was about 4% of game logic on Xbox. A hash set with open addressing; if it ever can't grow, it's abandoned,
++// and every pointer is asked about again.
++#define VALIDUSERDATA_REMOVED ((void *)1)
++
++static void **validuserdata;
++static size_t validuserdata_capacity; // a power of 2, or 0 before the first pointer
++static size_t validuserdata_used; // slots that aren't empty, including removed pointers
++static boolean validuserdata_abandoned;
++
++static size_t ValidUserdata_Slot(void *data)
++{
++	UINT64 hash = (UINT64)(uintptr_t)data;
++
++	hash ^= hash >> 33;
++	hash *= 0xff51afd7ed558ccdULL;
++	hash ^= hash >> 33;
++	return (size_t)hash & (validuserdata_capacity - 1);
++}
++
++static void ValidUserdata_Clear(void)
++{
++	free(validuserdata);
++	validuserdata = NULL;
++	validuserdata_capacity = validuserdata_used = 0;
++	validuserdata_abandoned = false;
++}
++
++// Whether data may have userdata, which is always the case once abandoned
++static boolean ValidUserdata_Has(void *data)
++{
++	size_t i;
++
++	if (validuserdata_abandoned)
++		return true;
++
++	if (!validuserdata_capacity)
++		return false;
++
++	for (i = ValidUserdata_Slot(data); validuserdata[i]; i = (i + 1) & (validuserdata_capacity - 1))
++	{
++		if (validuserdata[i] == data)
++			return true;
++	}
++
++	return false;
++}
++
++static void ValidUserdata_Insert(void *data)
++{
++	size_t i = ValidUserdata_Slot(data);
++
++	while (validuserdata[i])
++		i = (i + 1) & (validuserdata_capacity - 1);
++
++	validuserdata[i] = data;
++	validuserdata_used++;
++}
++
++static void ValidUserdata_Add(void *data)
++{
++	if (validuserdata_abandoned)
++		return;
++
++	// Keep at most 3/4 of the slots in use, or Has() slows down, rebuilding without removed pointers when full
++	if ((validuserdata_used + 1) * 4 > validuserdata_capacity * 3)
++	{
++		void **old = validuserdata;
++		const size_t oldcapacity = validuserdata_capacity;
++		size_t live = 0, i;
++
++		for (i = 0; i < oldcapacity; i++)
++		{
++			if (old[i] && old[i] != VALIDUSERDATA_REMOVED)
++				live++;
++		}
++
++		validuserdata_capacity = oldcapacity ? oldcapacity : 1024;
++		while ((live + 1) * 2 > validuserdata_capacity)
++			validuserdata_capacity *= 2;
++
++		validuserdata = calloc(validuserdata_capacity, sizeof *validuserdata);
++		if (!validuserdata)
++		{
++			free(old);
++			validuserdata_capacity = validuserdata_used = 0;
++			validuserdata_abandoned = true;
++			return;
++		}
++
++		validuserdata_used = 0;
++		for (i = 0; i < oldcapacity; i++)
++		{
++			if (old[i] && old[i] != VALIDUSERDATA_REMOVED)
++				ValidUserdata_Insert(old[i]);
++		}
++		free(old);
++	}
++
++	ValidUserdata_Insert(data);
++}
++
++static void ValidUserdata_Remove(void *data)
++{
++	size_t i;
++
++	if (validuserdata_abandoned || !validuserdata_capacity)
++		return;
++
++	for (i = ValidUserdata_Slot(data); validuserdata[i]; i = (i + 1) & (validuserdata_capacity - 1))
++	{
++		if (validuserdata[i] == data)
++		{
++			validuserdata[i] = VALIDUSERDATA_REMOVED;
++			return;
++		}
++	}
++}
++
+ // List of internal libraries to load from SRB2
+ static lua_CFunction liblist[] = {
+ 	LUA_EnumLib, // global metatable for enums
+@@ -475,6 +595,7 @@ void LUA_ClearState(void)
+ 	if (gL)
+ 		lua_close(gL);
+ 	gL = NULL;
++	ValidUserdata_Clear();
+ 
+ 	CONS_Printf(M_GetText("Pardon me while I initialize the Lua scripting interface...\n"));
+ 
+@@ -757,6 +878,7 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
+ 		lua_pushlightuserdata(L, data); // k (store the userdata via the data's pointer)
+ 		lua_pushvalue(L, -2); // v (copy of the userdata)
+ 		lua_rawset(L, -4);
++		ValidUserdata_Add(data);
+ 
+ 		// stack is left with the userdata on top, as if getting it had originally succeeded.
+ 
+@@ -785,6 +907,11 @@ void LUA_InvalidateUserdata(void *data)
+ 	if (!gL)
+ 		return;
+ 
++	// [UWP]: Most pointers never had userdata (see validuserdata)
++	if (!ValidUserdata_Has(data))
++		return;
++	ValidUserdata_Remove(data);
++
+ 	// fetch the userdata
+ 	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
+ 	I_Assert(lua_istable(gL, -1));
 diff --git a/src/m_fixed.h b/src/m_fixed.h
 index de4b0f252..420d0290d 100644
 --- a/src/m_fixed.h
@@ -1072,7 +1271,7 @@ index de4b0f252..420d0290d 100644
  	#define __USE_C_FIXEDMUL__
  	#define __USE_C_FIXEDDIV__
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eab..9efec4ee5 100644
+index 705b60eab..54d7a28c8 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
 @@ -25,6 +25,11 @@
@@ -1087,7 +1286,7 @@ index 705b60eab..9efec4ee5 100644
  struct perfstatcol;
  struct perfstatrow;
  
-@@ -707,3 +712,180 @@ void M_DrawPerfStats(void)
+@@ -707,3 +712,191 @@ void M_DrawPerfStats(void)
  		}
  	}
  }
@@ -1248,10 +1447,21 @@ index 705b60eab..9efec4ee5 100644
 +			n / seconds, uwp_perf.tic * ms / n, uwp_perf.playerthink * ms / n, uwp_perf.thinkers * ms / n,
 +			uwp_perf.lua * ms / n, uwp_perf.acs * ms / n, uwp_perf.bots * ms / n);
 +
-+		PS_UWPCountMobjs(&regular, &scenery, &nothink);
-+		I_OutputMsg("UWP perf:   mobjs now: %d thinking, %d scenery, %d not thinking; per tic: %.0f P_CheckPosition calls, %.0f Lua mobj hooks\n",
-+			regular, scenery, nothink, (double)uwp_perf.checkpositions / n, (double)uwp_perf.luamobjhooks / n);
++		// Only in a level: leaving one through D_ClearState frees its mobjs without resetting the thinker lists
++		if (gamestate == GS_LEVEL)
++		{
++			PS_UWPCountMobjs(&regular, &scenery, &nothink);
++			I_OutputMsg("UWP perf:   mobjs now: %d thinking, %d scenery, %d not thinking; per tic: %.0f P_CheckPosition calls, %.0f Lua mobj hooks\n",
++				regular, scenery, nothink, (double)uwp_perf.checkpositions / n, (double)uwp_perf.luamobjhooks / n);
++		}
 +	}
++
++	if (r_uwppointlookups)
++	{
++		I_OutputMsg("UWP perf:   %.0f R_PointInSubsector calls per second, %.0f%% answered from its cache\n",
++			r_uwppointlookups / seconds, 100.0 * r_uwppointhits / r_uwppointlookups);
++	}
++	r_uwppointlookups = r_uwppointhits = 0;
 +
 +	{
 +		INT32 samples;
@@ -1487,6 +1697,112 @@ index 305a75e0e..ea050a086 100644
  }
  
  //----------------------------------------------------------------------------
+diff --git a/src/p_setup.cpp b/src/p_setup.cpp
+index e5208ce77..9ca086d67 100644
+--- a/src/p_setup.cpp
++++ b/src/p_setup.cpp
+@@ -7567,6 +7567,9 @@ static boolean P_LoadMapFromFile(void)
+ 	}
+ 
+ 	P_LoadMapBSP(curmapvirt);
++#ifdef _UWP
++	R_ClearPointInSubsectorCache();
++#endif
+ 	P_LoadMapLUT(curmapvirt);
+ 
+ 	P_LinkMapData();
+@@ -8447,6 +8450,10 @@ void P_LoadLevelMusic(void)
+ 
+ void P_FreeLevelState(void)
+ {
++#ifdef _UWP
++	R_ClearPointInSubsectorCache();
++#endif
++
+ 	if (numsectors)
+ 	{
+ 		F_EndTextPrompt(false, true);
+diff --git a/src/r_main.cpp b/src/r_main.cpp
+index 639f74437..aa63767e1 100644
+--- a/src/r_main.cpp
++++ b/src/r_main.cpp
+@@ -1148,17 +1148,57 @@ void R_Init(void)
+ 	framecount = 0;
+ }
+ 
++#ifdef _UWP
++// [UWP]: The subsectors of points looked up recently. Which subsector a point is in depends only on the point and the
++// level's BSP, and moving one mobj looks up the same few points several times (P_CheckPosition, P_SetThingPosition,
++// P_GetThingStepUp, P_MobjFloorZ), while walking the BSP from its root every time was 10% of game logic on Xbox.
++// Cleared whenever a level's BSP is loaded or freed. Only the main thread looks up points.
++struct PointInSubsectorCacheEntry
++{
++	fixed_t x, y;
++	subsector_t *subsector; // null if unused
++};
++
++static PointInSubsectorCacheEntry g_pointinsubsector_cache[512];
++
++UINT32 r_uwppointlookups, r_uwppointhits;
++
++void R_ClearPointInSubsectorCache(void)
++{
++	memset(g_pointinsubsector_cache, 0, sizeof g_pointinsubsector_cache);
++}
++#endif
++
+ //
+ // R_PointInSubsector
+ //
+ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
+ {
++#ifdef _UWP
++	PointInSubsectorCacheEntry& entry =
++		g_pointinsubsector_cache[(((UINT32)x * 0x9E3779B1u) ^ ((UINT32)y * 0x85EBCA77u)) >> 23];
++
++	r_uwppointlookups++;
++	if (entry.subsector && entry.x == x && entry.y == y)
++	{
++		r_uwppointhits++;
++		return entry.subsector;
++	}
++#endif
++
+ 	size_t nodenum = numnodes-1;
+ 
+ 	while (!(nodenum & NF_SUBSECTOR))
+ 		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)];
+ 
++#ifdef _UWP
++	entry.x = x;
++	entry.y = y;
++	entry.subsector = &subsectors[nodenum & ~NF_SUBSECTOR];
++	return entry.subsector;
++#else
+ 	return &subsectors[nodenum & ~NF_SUBSECTOR];
++#endif
+ }
+ 
+ //
+diff --git a/src/r_main.h b/src/r_main.h
+index f17ef9551..42643d3d3 100644
+--- a/src/r_main.h
++++ b/src/r_main.h
+@@ -89,6 +89,14 @@ fixed_t R_ScaleFromGlobalAngle(angle_t visangle);
+ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y);
+ subsector_t *R_PointInSubsectorOrNull(fixed_t x, fixed_t y);
+ 
++#ifdef _UWP
++// [UWP]: Forgets the subsectors R_PointInSubsector remembers, for when the level's BSP is loaded or freed
++void R_ClearPointInSubsectorCache(void);
++
++// [UWP]: Calls to R_PointInSubsector, and how many it answered from what it remembered, for the perf log
++extern UINT32 r_uwppointlookups, r_uwppointhits;
++#endif
++
+ boolean R_DoCulling(line_t *cullheight, line_t *viewcullheight, fixed_t vz, fixed_t bottomh, fixed_t toph);
+ 
+ void R_GetRenderBlockMapDimensions(fixed_t drawdist, INT32 *xl, INT32 *xh, INT32 *yl, INT32 *yh);
 diff --git a/src/r_plane.cpp b/src/r_plane.cpp
 index 36f9b6b03..e4ee8870b 100644
 --- a/src/r_plane.cpp
@@ -1529,8 +1845,182 @@ index 36f9b6b03..e4ee8870b 100644
  	}
  	return pl;
  }
+diff --git a/src/r_things.cpp b/src/r_things.cpp
+index 7e608da9c..b2ad9fcac 100644
+--- a/src/r_things.cpp
++++ b/src/r_things.cpp
+@@ -3080,6 +3080,49 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link);
+ 
+ static drawnode_t nodebankhead;
+ 
++// [UWP]: When R_CreateDrawNodes may skip a node that doesn't share a column with the sprite it's sorting, without
++// reading what the node points to. Walking every node and reading that was most of R_DrawMasked's own time on Xbox.
++enum
++{
++	DRAWNODE_ALWAYSCHECK, // a node whose columns aren't known, or a splat sprite, which is sorted by its distance alone
++	DRAWNODE_SKIPOUTSIDE, // a plane, 3D floor side, or masked seg
++	DRAWNODE_SKIPOUTSIDEUNLESSSPLAT, // a sprite that isn't a splat, which is compared with splat sprites anyway
++};
++
++// Records the columns a node covers. Follows the order in which R_CreateDrawNodes checks what a node points to,
++// since a plane node can also have a seg. Each of those checks skips the node when it shares no column with the
++// sprite being sorted, except when comparing two sprites where either is a splat.
++static void R_SetDrawNodeColumns(drawnode_t *node)
++{
++	node->columncheck = DRAWNODE_SKIPOUTSIDE;
++
++	if (node->plane)
++	{
++		node->x1 = node->plane->minx;
++		node->x2 = node->plane->maxx;
++	}
++	else if (node->thickseg)
++	{
++		node->x1 = node->thickseg->x1;
++		node->x2 = node->thickseg->x2;
++	}
++	else if (node->seg)
++	{
++		node->x1 = node->seg->x1;
++		node->x2 = node->seg->x2;
++	}
++	else if (node->sprite)
++	{
++		node->x1 = node->sprite->x1;
++		node->x2 = node->sprite->x2;
++		node->columncheck = (node->sprite->cut & SC_SPLAT) ? DRAWNODE_ALWAYSCHECK : DRAWNODE_SKIPOUTSIDEUNLESSSPLAT;
++	}
++	else
++	{
++		node->columncheck = DRAWNODE_ALWAYSCHECK;
++	}
++}
++
+ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean tempskip)
+ {
+ 	drawnode_t *entry;
+@@ -3103,6 +3146,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 				entry = R_CreateDrawNode(head);
+ 				entry->thickseg = ds;
+ 				entry->ffloor = ds->thicksides[i];
++				R_SetDrawNodeColumns(entry);
+ 			}
+ 		}
+ 		// Check for a polyobject plane, but only if this is a front line
+@@ -3117,6 +3161,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 				entry = R_CreateDrawNode(head);
+ 				entry->plane = plane;
+ 				entry->seg = ds;
++				R_SetDrawNodeColumns(entry);
+ 			}
+ 			ds->curline->polyseg->visplane = NULL;
+ 		}
+@@ -3124,6 +3169,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 		{
+ 			entry = R_CreateDrawNode(head);
+ 			entry->seg = ds;
++			R_SetDrawNodeColumns(entry);
+ 		}
+ 		if (ds->numffloorplanes)
+ 		{
+@@ -3156,6 +3202,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 					entry = R_CreateDrawNode(head);
+ 					entry->plane = ds->ffloorplanes[best];
+ 					entry->seg = ds;
++					R_SetDrawNodeColumns(entry);
+ 					ds->ffloorplanes[best] = NULL;
+ 				}
+ 				else
+@@ -3185,6 +3232,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 		entry = R_CreateDrawNode(head);
+ 		entry->plane = plane;
+ 		// note: no seg is set, for what should be obvious reasons
++		R_SetDrawNodeColumns(entry);
+ 		PolyObjects[i].visplane = NULL;
+ 	}
+ 
+@@ -3206,6 +3254,15 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 
+ 		for (r2 = head->next; r2 != head; r2 = r2->next)
+ 		{
++			// [UWP]: Skip a node that shares no column with this sprite without reading what it points to, as
++			// the checks below would after reading it (see R_SetDrawNodeColumns)
++			if ((r2->x1 > rover->x2 || r2->x2 < rover->x1)
++				&& (r2->columncheck == DRAWNODE_SKIPOUTSIDE
++					|| (r2->columncheck == DRAWNODE_SKIPOUTSIDEUNLESSSPLAT && !(rover->cut & SC_SPLAT))))
++			{
++				continue;
++			}
++
+ 			if (alwaysontop)
+ 			{
+ 				// Only sort behind other sprites; sorts in
+@@ -3274,6 +3331,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 				(entry->prev = r2->prev)->next = entry;
+ 				(entry->next = r2)->prev = entry;
+ 				entry->sprite = rover;
++				R_SetDrawNodeColumns(entry);
+ 				break;
+ 			}
+ 			else if (r2->thickseg)
+@@ -3308,6 +3366,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 					(entry->prev = r2->prev)->next = entry;
+ 					(entry->next = r2)->prev = entry;
+ 					entry->sprite = rover;
++					R_SetDrawNodeColumns(entry);
+ 					break;
+ 				}
+ 			}
+@@ -3327,6 +3386,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 					(entry->prev = r2->prev)->next = entry;
+ 					(entry->next = r2)->prev = entry;
+ 					entry->sprite = rover;
++					R_SetDrawNodeColumns(entry);
+ 					break;
+ 				}
+ 			}
+@@ -3376,6 +3436,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 					(entry->prev = r2->prev)->next = entry;
+ 					(entry->next = r2)->prev = entry;
+ 					entry->sprite = rover;
++					R_SetDrawNodeColumns(entry);
+ 					break;
+ 				}
+ 			}
+@@ -3384,6 +3445,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
+ 		{
+ 			entry = R_CreateDrawNode(head);
+ 			entry->sprite = rover;
++			R_SetDrawNodeColumns(entry);
+ 		}
+ 	}
+ }
+@@ -3414,6 +3476,7 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link)
+ 	node->thickseg = NULL;
+ 	node->ffloor = NULL;
+ 	node->sprite = NULL;
++	node->columncheck = DRAWNODE_ALWAYSCHECK;
+ 
+ 	ps_numdrawnodes++;
+ 	return node;
+diff --git a/src/r_things.h b/src/r_things.h
+index bf1e28b09..41754ced9 100644
+--- a/src/r_things.h
++++ b/src/r_things.h
+@@ -266,6 +266,11 @@ struct drawnode_t
+ 
+ 	drawnode_t *next;
+ 	drawnode_t *prev;
++
++	// [UWP]: The columns this node covers, for R_CreateDrawNodes to skip nodes that don't share a column with the
++	// sprite it's sorting without reading what they point to, and when it may (see R_SetDrawNodeColumns)
++	INT32 x1, x2;
++	UINT8 columncheck;
+ };
+ 
+ void R_InitDrawNodes(void);
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
-index cf35eebb5..05d63bade 100644
+index cf35eebb5..6b9f25841 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
 +++ b/src/rhi/gl2/gl2_rhi.cpp
 @@ -10,6 +10,7 @@
@@ -1566,7 +2056,7 @@ index cf35eebb5..05d63bade 100644
  } // namespace
  
  Gl2Platform::~Gl2Platform() = default;
-@@ -606,6 +618,92 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) :
+@@ -606,6 +618,109 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) :
  {
  	gl_ = std::make_unique<GladGLContext>();
  	gladLoadGLContext(gl_.get(), load_func);
@@ -1588,6 +2078,23 @@ index cf35eebb5..05d63bade 100644
 +		gl_->GenRenderbuffers = reinterpret_cast<PFNGLGENRENDERBUFFERSPROC>(load_func("glGenRenderbuffers"));
 +		gl_->RenderbufferStorage = reinterpret_cast<PFNGLRENDERBUFFERSTORAGEPROC>(load_func("glRenderbufferStorage"));
 +		clear_depthf_ = load_func("glClearDepthf");
++
++#ifdef _UWP
++		// [UWP]: The shaders only read the red channel of single-channel textures (the software-rendered screen,
++		// colormaps, lighttables), so GL_RED looks the same as GL_LUMINANCE, without ANGLE converting every upload
++		const char* extensions = reinterpret_cast<const char*>(gl_->GetString(GL_EXTENSIONS));
++		const char* name = "GL_EXT_texture_rg";
++		const size_t length = std::strlen(name);
++		for (const char* p = extensions; p && (p = std::strstr(p, name)) != nullptr; p += length)
++		{
++			if ((p == extensions || p[-1] == ' ') && (p[length] == ' ' || p[length] == '\0'))
++			{
++				red_textures_ = true;
++				break;
++			}
++		}
++		I_OutputMsg("UWP: single-channel textures are %s\n", red_textures_ ? "GL_RED (EXT_texture_rg)" : "GL_LUMINANCE");
++#endif
 +	}
 +}
 +
@@ -1659,7 +2166,7 @@ index cf35eebb5..05d63bade 100644
  }
  
  Gl2Rhi::~Gl2Rhi() = default;
-@@ -615,11 +713,20 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
+@@ -615,11 +730,26 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
  	GLenum internal_format = map_internal_texture_format(desc.format);
  	SRB2_ASSERT(internal_format != GL_ZERO);
  	GLenum format = GL_RGBA;
@@ -1667,6 +2174,12 @@ index cf35eebb5..05d63bade 100644
 +	{
 +		// OpenGL ES 2 requires an unsized internal format matching the data format
 +		internal_format = map_texture_format(desc.format);
++#ifdef _UWP
++		if (red_textures_ && internal_format == GL_LUMINANCE)
++		{
++			internal_format = GL_RED;
++		}
++#endif
 +		format = internal_format;
 +	}
  
@@ -1681,7 +2194,7 @@ index cf35eebb5..05d63bade 100644
  
  	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, map_texture_filter(desc.min));
  	GL_ASSERT;
-@@ -641,10 +748,36 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
+@@ -641,10 +771,36 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
  void Gl2Rhi::destroy_texture(rhi::Handle<rhi::Texture> handle)
  {
  	SRB2_ASSERT(texture_slab_.is_valid(handle) == true);
@@ -1718,7 +2231,30 @@ index cf35eebb5..05d63bade 100644
  }
  
  void Gl2Rhi::update_texture(
-@@ -677,10 +810,10 @@ void Gl2Rhi::update_texture(
+@@ -670,17 +826,32 @@ void Gl2Rhi::update_texture(
+ 	GLenum type = GL_UNSIGNED_BYTE;
+ 	GLuint size = 0;
+ 	std::tie(format, type, size) = map_pixel_data_format(data_format);
++	GLenum texture_format = map_texture_format(t.desc.format);
++#ifdef _UWP
++	if (gles_ && red_textures_)
++	{
++		// Created as GL_RED instead (see create_texture)
++		if (format == GL_LUMINANCE)
++		{
++			format = GL_RED;
++		}
++		if (texture_format == GL_LUMINANCE)
++		{
++			texture_format = GL_RED;
++		}
++	}
++#endif
+ 	SRB2_ASSERT(format != GL_ZERO && type != GL_ZERO);
+-	SRB2_ASSERT(map_texture_format(t.desc.format) == format);
++	SRB2_ASSERT(texture_format == format);
+ 
+ 	int32_t expected_row_span = (((size * region.w) + kUnpackAlignment - 1) / kUnpackAlignment) * kUnpackAlignment;
  	SRB2_ASSERT(expected_row_span * region.h == data.size_bytes());
  	SRB2_ASSERT(region.x + region.w <= t.desc.width && region.y + region.h <= t.desc.height);
  
@@ -1733,7 +2269,7 @@ index cf35eebb5..05d63bade 100644
  	gl_->TexSubImage2D(
  		GL_TEXTURE_2D,
  		0,
-@@ -706,10 +839,7 @@ void Gl2Rhi::update_texture_settings(
+@@ -706,10 +877,7 @@ void Gl2Rhi::update_texture_settings(
  	SRB2_ASSERT(texture_slab_.is_valid(texture) == true);
  	auto& t = texture_slab_[texture];
  
@@ -1745,7 +2281,7 @@ index cf35eebb5..05d63bade 100644
  	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, map_texture_wrap(u_wrap));
  	GL_ASSERT;
  	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, map_texture_wrap(v_wrap));
-@@ -732,8 +862,7 @@ rhi::Handle<rhi::Buffer> Gl2Rhi::create_buffer(const rhi::BufferDesc& desc)
+@@ -732,8 +900,7 @@ rhi::Handle<rhi::Buffer> Gl2Rhi::create_buffer(const rhi::BufferDesc& desc)
  	gl_->GenBuffers(1, &name);
  	GL_ASSERT;
  
@@ -1755,7 +2291,7 @@ index cf35eebb5..05d63bade 100644
  
  	gl_->BufferData(target, desc.size, nullptr, usage);
  	GL_ASSERT;
-@@ -752,6 +881,16 @@ void Gl2Rhi::destroy_buffer(rhi::Handle<rhi::Buffer> handle)
+@@ -752,6 +919,16 @@ void Gl2Rhi::destroy_buffer(rhi::Handle<rhi::Buffer> handle)
  
  	gl_->DeleteBuffers(1, &name);
  	GL_ASSERT;
@@ -1772,7 +2308,7 @@ index cf35eebb5..05d63bade 100644
  }
  
  void Gl2Rhi::update_buffer(
-@@ -781,8 +920,7 @@ void Gl2Rhi::update_buffer(
+@@ -781,8 +958,7 @@ void Gl2Rhi::update_buffer(
  		break;
  	}
  
@@ -1782,7 +2318,7 @@ index cf35eebb5..05d63bade 100644
  	gl_->BufferSubData(target, offset, data.size(), data.data());
  	GL_ASSERT;
  }
-@@ -822,6 +960,23 @@ rhi::Handle<rhi::Renderbuffer> Gl2Rhi::create_renderbuffer(const rhi::Renderbuff
+@@ -822,6 +998,23 @@ rhi::Handle<rhi::Renderbuffer> Gl2Rhi::create_renderbuffer(const rhi::Renderbuff
  void Gl2Rhi::destroy_renderbuffer(rhi::Handle<rhi::Renderbuffer> handle)
  {
  	SRB2_ASSERT(renderbuffer_slab_.is_valid(handle) == true);
@@ -1806,7 +2342,7 @@ index cf35eebb5..05d63bade 100644
  	Gl2Renderbuffer casted = renderbuffer_slab_.remove(handle);
  	GLuint name = casted.renderbuffer;
  	gl_->DeleteRenderbuffers(1, &name);
-@@ -833,6 +988,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -833,6 +1026,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  	SRB2_ASSERT(platform_ != nullptr);
  	Gl2Program program;
  
@@ -1816,7 +2352,7 @@ index cf35eebb5..05d63bade 100644
  	auto [vert_srcs, frag_srcs] = platform_->find_shader_sources(desc.name);
  
  	// GL 2 note:
-@@ -844,8 +1002,8 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -844,8 +1040,8 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  	srb2::Vector<const char*> frag_sources;
  	ShaderLoadContext vert_ctx;
  	ShaderLoadContext frag_ctx;
@@ -1827,7 +2363,7 @@ index cf35eebb5..05d63bade 100644
  	for (auto def : desc.defines)
  	{
  		vert_ctx.define(def);
-@@ -915,6 +1073,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -915,6 +1111,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  		gl_->DeleteShader(program.vertex_shader);
  		throw std::runtime_error(fmt::format("Pipeline program link failed: {}", String(link_error.data())));
  	}
@@ -1837,7 +2373,7 @@ index cf35eebb5..05d63bade 100644
  
  	// get attribute information
  	GLint active_attribute_total = -1;
-@@ -993,13 +1154,18 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
+@@ -993,13 +1192,18 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
  	GL_ASSERT;
  	gl_->Disable(GL_SCISSOR_TEST);
  	GL_ASSERT;
@@ -1857,7 +2393,7 @@ index cf35eebb5..05d63bade 100644
  		gl_->ClearStencil(0);
  		gl_->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
  		GL_ASSERT;
-@@ -1015,6 +1181,9 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
+@@ -1015,6 +1219,9 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
  		GLuint fb_name;
  		gl_->GenFramebuffers(1, &fb_name);
  		GL_ASSERT;
@@ -1867,7 +2403,7 @@ index cf35eebb5..05d63bade 100644
  		gl_->BindFramebuffer(GL_FRAMEBUFFER, fb_name);
  		GL_ASSERT;
  		fb_itr = framebuffers_.insert({
-@@ -1054,7 +1223,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
+@@ -1054,7 +1261,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
  
  	if (info.depth_load_op == rhi::AttachmentLoadOp::kClear)
  	{
@@ -1876,7 +2412,7 @@ index cf35eebb5..05d63bade 100644
  		clear_bits |= GL_DEPTH_BUFFER_BIT;
  	}
  	if (info.stencil_load_op == rhi::AttachmentLoadOp::kClear)
-@@ -1116,13 +1285,15 @@ void Gl2Rhi::bind_program(Handle<Program> program)
+@@ -1116,13 +1323,15 @@ void Gl2Rhi::bind_program(Handle<Program> program)
  
  	gl_->UseProgram(prog.program);
  	current_program_ = program;
@@ -1898,7 +2434,7 @@ index cf35eebb5..05d63bade 100644
  	}
  }
  
-@@ -1143,11 +1314,14 @@ void Gl2Rhi::bind_vertex_attrib(const char* name, Handle<Buffer> buffer, VertexA
+@@ -1143,11 +1352,14 @@ void Gl2Rhi::bind_vertex_attrib(const char* name, Handle<Buffer> buffer, VertexA
  
  	GLint location = gl_->GetAttribLocation(prog.program, name);
  	GL_ASSERT;
@@ -1916,7 +2452,7 @@ index cf35eebb5..05d63bade 100644
  	gl_->VertexAttribPointer(
  		location,
  		vertex_attr_size,
-@@ -1170,15 +1344,14 @@ void Gl2Rhi::bind_index_buffer(Handle<Buffer> buffer)
+@@ -1170,15 +1382,14 @@ void Gl2Rhi::bind_index_buffer(Handle<Buffer> buffer)
  
  	current_index_buffer_ = buffer;
  
@@ -1934,7 +2470,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform1f(location, value);
-@@ -1189,18 +1362,18 @@ void Gl2Rhi::set_uniform(const char* name, int value)
+@@ -1189,18 +1400,18 @@ void Gl2Rhi::set_uniform(const char* name, int value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -1958,7 +2494,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform2f(location, value.x, value.y);
-@@ -1211,7 +1384,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec3 value)
+@@ -1211,7 +1422,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec3 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -1967,7 +2503,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform3f(location, value.x, value.y, value.z);
-@@ -1222,7 +1395,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec4 value)
+@@ -1222,7 +1433,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec4 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -1976,7 +2512,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform4f(location, value.x, value.y, value.z, value.w);
-@@ -1233,7 +1406,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec2 value)
+@@ -1233,7 +1444,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec2 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -1985,7 +2521,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform2i(location, value.x, value.y);
-@@ -1244,7 +1417,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec3 value)
+@@ -1244,7 +1455,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec3 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -1994,7 +2530,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform3i(location, value.x, value.y, value.z);
-@@ -1255,7 +1428,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec4 value)
+@@ -1255,7 +1466,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec4 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -2003,7 +2539,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->Uniform4i(location, value.x, value.y, value.z, value.w);
-@@ -1266,7 +1439,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat2 value)
+@@ -1266,7 +1477,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat2 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -2012,7 +2548,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->UniformMatrix2fv(location, 1, false, glm::value_ptr(value));
-@@ -1277,7 +1450,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat3 value)
+@@ -1277,7 +1488,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat3 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -2021,7 +2557,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->UniformMatrix3fv(location, 1, false, glm::value_ptr(value));
-@@ -1288,7 +1461,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat4 value)
+@@ -1288,7 +1499,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat4 value)
  {
  	SRB2_ASSERT(current_program_.has_value());
  	Gl2Program& cast = program_slab_[*current_program_];
@@ -2030,7 +2566,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  	SRB2_ASSERT(location >= 0);
  	gl_->UniformMatrix4fv(location, 1, false, glm::value_ptr(value));
-@@ -1303,83 +1476,123 @@ void Gl2Rhi::set_sampler(const char* name, uint32_t slot, Handle<Texture> textur
+@@ -1303,83 +1514,123 @@ void Gl2Rhi::set_sampler(const char* name, uint32_t slot, Handle<Texture> textur
  	Gl2Program& prog = program_slab_[*current_program_];
  	SRB2_ASSERT(texture_slab_.is_valid(texture));
  	Gl2Texture& tex = texture_slab_[texture];
@@ -2210,7 +2746,7 @@ index cf35eebb5..05d63bade 100644
  	stencil_front_reference_ = 0;
  	stencil_back_reference_ = 0;
  	stencil_front_compare_mask_ = 0xFF;
-@@ -1388,58 +1601,88 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
+@@ -1388,58 +1639,88 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
  	stencil_back_write_mask_ = 0xFF;
  	stencil_front_func_ = desc.front_stencil_compare;
  	stencil_back_func_ = desc.back_stencil_compare;
@@ -2249,27 +2785,27 @@ index cf35eebb5..05d63bade 100644
 -	GL_ASSERT;
 -	if (desc.scissor_test)
 +	if (!last || last->front_stencil_compare != desc.front_stencil_compare)
- 	{
--		gl_->Enable(GL_SCISSOR_TEST);
++	{
 +		gl_->StencilFuncSeparate(
 +			GL_FRONT,
 +			map_compare_func(stencil_front_func_),
 +			stencil_front_reference_,
 +			stencil_front_compare_mask_
 +		);
- 		GL_ASSERT;
- 	}
--	else
++		GL_ASSERT;
++	}
 +	if (!last || last->back_stencil_compare != desc.back_stencil_compare)
-+	{
+ 	{
+-		gl_->Enable(GL_SCISSOR_TEST);
 +		gl_->StencilFuncSeparate(
 +			GL_BACK,
 +			map_compare_func(stencil_back_func_),
 +			stencil_back_reference_,
 +			stencil_back_compare_mask_
 +		);
-+		GL_ASSERT;
-+	}
+ 		GL_ASSERT;
+ 	}
+-	else
 +	if (!last)
  	{
 -		gl_->Disable(GL_SCISSOR_TEST);
@@ -2338,7 +2874,7 @@ index cf35eebb5..05d63bade 100644
  }
  
  void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
-@@ -1448,6 +1691,9 @@ void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
+@@ -1448,6 +1729,9 @@ void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
  
  	gl_->DrawArrays(map_primitive_mode(current_primitive_type_), first_vertex, vertex_count);
  	GL_ASSERT;
@@ -2348,7 +2884,7 @@ index cf35eebb5..05d63bade 100644
  }
  
  void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
-@@ -1467,6 +1713,9 @@ void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
+@@ -1467,6 +1751,9 @@ void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
  		(const void*)((size_t)first_index * 2 + index_buffer_offset_)
  	);
  	GL_ASSERT;
@@ -2358,7 +2894,7 @@ index cf35eebb5..05d63bade 100644
  }
  
  void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::byte> out)
-@@ -1504,9 +1753,28 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
+@@ -1504,9 +1791,28 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
  	SRB2_ASSERT(rect.x + rect.w <= src_dim.w);
  	SRB2_ASSERT(rect.y + rect.h <= src_dim.h);
  
@@ -2390,7 +2926,7 @@ index cf35eebb5..05d63bade 100644
  
  	gl_->ReadPixels(rect.x, rect.y, rect.w, rect.h, layout, type, out.data());
  	GL_ASSERT;
-@@ -1517,6 +1785,9 @@ void Gl2Rhi::set_stencil_reference(CullMode face, uint8_t reference)
+@@ -1517,6 +1823,9 @@ void Gl2Rhi::set_stencil_reference(CullMode face, uint8_t reference)
  	SRB2_ASSERT(face != CullMode::kNone);
  	SRB2_ASSERT(render_pass_stack_.empty() == false);
  
@@ -2400,7 +2936,7 @@ index cf35eebb5..05d63bade 100644
  	if (face == CullMode::kFront)
  	{
  		stencil_front_reference_ = reference;
-@@ -1544,6 +1815,9 @@ void Gl2Rhi::set_stencil_compare_mask(CullMode face, uint8_t compare_mask)
+@@ -1544,6 +1853,9 @@ void Gl2Rhi::set_stencil_compare_mask(CullMode face, uint8_t compare_mask)
  	SRB2_ASSERT(face != CullMode::kNone);
  	SRB2_ASSERT(render_pass_stack_.empty() == false);
  
@@ -2410,7 +2946,7 @@ index cf35eebb5..05d63bade 100644
  	if (face == CullMode::kFront)
  	{
  		stencil_front_compare_mask_ = compare_mask;
-@@ -1571,6 +1845,9 @@ void Gl2Rhi::set_stencil_write_mask(CullMode face, uint8_t write_mask)
+@@ -1571,6 +1883,9 @@ void Gl2Rhi::set_stencil_write_mask(CullMode face, uint8_t write_mask)
  	SRB2_ASSERT(face != CullMode::kNone);
  	SRB2_ASSERT(render_pass_stack_.empty() == false);
  
@@ -2420,7 +2956,7 @@ index cf35eebb5..05d63bade 100644
  	if (face == CullMode::kFront)
  	{
  		stencil_front_write_mask_ = write_mask;
-@@ -1620,13 +1897,8 @@ uint32_t Gl2Rhi::get_buffer_size(Handle<Buffer> buffer)
+@@ -1620,13 +1935,8 @@ uint32_t Gl2Rhi::get_buffer_size(Handle<Buffer> buffer)
  
  void Gl2Rhi::finish()
  {
@@ -2436,7 +2972,7 @@ index cf35eebb5..05d63bade 100644
  }
  
  void Gl2Rhi::copy_framebuffer_to_texture(
-@@ -1667,12 +1939,14 @@ void Gl2Rhi::copy_framebuffer_to_texture(
+@@ -1667,12 +1977,14 @@ void Gl2Rhi::copy_framebuffer_to_texture(
  	SRB2_ASSERT(src_region.x + src_region.w <= src_dim.w);
  	SRB2_ASSERT(src_region.y + src_region.h <= src_dim.h);
  
@@ -2457,7 +2993,7 @@ index cf35eebb5..05d63bade 100644
  	GL_ASSERT;
  }
 diff --git a/src/rhi/gl2/gl2_rhi.hpp b/src/rhi/gl2/gl2_rhi.hpp
-index f8b62987b..61da770e0 100644
+index f8b62987b..fbc382258 100644
 --- a/src/rhi/gl2/gl2_rhi.hpp
 +++ b/src/rhi/gl2/gl2_rhi.hpp
 @@ -11,6 +11,7 @@
@@ -2492,12 +3028,15 @@ index f8b62987b..61da770e0 100644
  };
  
  struct Gl2ActiveUniform
-@@ -114,6 +125,12 @@ class Gl2Rhi final : public Rhi
+@@ -114,6 +125,15 @@ class Gl2Rhi final : public Rhi
  
  	std::unique_ptr<GladGLContext> gl_;
  
 +	// OpenGL ES 2 context (e.g. ANGLE), which needs unsized texture formats and has no glClearDepth or glReadBuffer
 +	bool gles_ = false;
++	// [UWP]: Single-channel textures are GL_RED (EXT_texture_rg) instead of GL_LUMINANCE, which ANGLE's Direct3D 11
++	// backend stores as RGBA, converting each upload on the CPU
++	bool red_textures_ = false;
 +	GlProc clear_depthf_ = nullptr;
 +
 +	void clear_depth(float depth);
@@ -2505,7 +3044,7 @@ index f8b62987b..61da770e0 100644
  	Slab<Gl2Texture> texture_slab_;
  	Slab<Gl2Buffer> buffer_slab_;
  	Slab<Gl2Renderbuffer> renderbuffer_slab_;
-@@ -142,9 +159,25 @@ class Gl2Rhi final : public Rhi
+@@ -142,9 +162,25 @@ class Gl2Rhi final : public Rhi
  	CompareFunc stencil_front_func_;
  	CompareFunc stencil_back_func_;
  
@@ -2795,10 +3334,10 @@ index 827f493b1..d3b30c4a3 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 000000000..8d4e62e2c
+index 000000000..0b4f2fafd
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
-@@ -0,0 +1,650 @@
+@@ -0,0 +1,861 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -2806,13 +3345,15 @@ index 000000000..8d4e62e2c
 +// See the 'LICENSE' file for more details.
 +//-----------------------------------------------------------------------------
 +/// \file  i_uwpprofile.cpp
-+/// \brief [UWP]: Sampling profiler for the main thread, and what CPUs it runs on, to find what's slow on Xbox
++/// \brief [UWP]: Sampling profiler for the main thread, what CPUs it runs on, and a log of crashes, to find what's
++///        slow or broken on Xbox
 +///
-+/// A thread pauses the main thread about 250 times a second and records the address it was running, the calls
++/// A thread pauses the main thread about 50 times a second and records the address it was running, the calls
 +/// that led there (found with the unwind data of each module), and what it was doing (uwpprofphase_t). Every 20
 +/// seconds, it writes how many samples it took at each address and with each call stack while a level was being
 +/// played to E:\ringracers\uwp-profile.txt. Addresses are written as offsets into their module, which for the game
-+/// itself (ringracers-uwp.exe) ringracers-uwp.map from the same build maps to functions.
++/// itself (ringracers-uwp.exe) ringracers-uwp.map from the same build maps to functions. Each sample pauses the main
++/// thread for about 0.25 ms on Xbox, so sampling more often slows the game noticeably.
 +
 +#include <algorithm>
 +#include <array>
@@ -2844,7 +3385,7 @@ index 000000000..8d4e62e2c
 +
 +constexpr const char* kProfilePath = "E:\\ringracers\\uwp-profile.txt";
 +constexpr auto kWriteInterval = std::chrono::seconds(20);
-+constexpr LONGLONG kSampleInterval = -40000; // 4 ms, in 100 ns units (negative for relative to now)
++constexpr LONGLONG kSampleInterval = -200000; // 20 ms, in 100 ns units (negative for relative to now)
 +constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display"};
 +constexpr int kMaxFrames = 12; // of each call stack, innermost first
 +constexpr size_t kMaxModules = 64; // to unwind through
@@ -3003,14 +3544,18 @@ index 000000000..8d4e62e2c
 +std::atomic<uint32_t> g_pausesamples{0};
 +std::atomic<uint64_t> g_pausenanoseconds{0};
 +
++// The profiler's thread, which catches its own faults reading the main thread's stack
++std::atomic<DWORD> g_samplerthreadid{0};
++
 +GetProcessorNumberFn g_getprocessornumber;
 +uint32_t g_processorcounts[kMaxProcessors]; // only touched by the main thread
 +
-+// Walks the paused main thread's stack from context, filling frames with the address it's running and then return
-+// addresses, innermost first. Takes no locks and allocates nothing, since the main thread could be holding them.
-+// Stops at a module it doesn't know yet, which it sets unknown to, so it can be added once the thread is resumed.
-+int UnwindStack(const Sampler& sampler, const UnwindModules& modules, CONTEXT* context, uintptr_t* frames,
-+	uintptr_t* unknown)
++// Walks a stack from context, filling frames with the address being run and then return addresses, innermost first,
++// for up to maxframes. Takes no locks and allocates nothing, since the main thread could be paused holding them.
++// Stops at a module it doesn't know, which it sets unknown to, so it can be added once the thread is resumed, unless
++// discover is set, which adds the module right away (for walking the current thread's stack).
++int UnwindStack(VirtualUnwindFn unwind, UnwindModules& modules, bool discover, uintptr_t stacklow, uintptr_t stackhigh,
++	CONTEXT* context, uintptr_t* frames, int maxframes, uintptr_t* unknown)
 +{
 +	int count = 0;
 +
@@ -3018,11 +3563,21 @@ index 000000000..8d4e62e2c
 +	{
 +		frames[count++] = context->Rip;
 +
-+		while (count < kMaxFrames)
++		while (count < maxframes)
 +		{
 +			const uintptr_t pc = context->Rip;
 +			const DWORD64 sp = context->Rsp;
 +			const UnwindModule* module = modules.find(pc);
++
++			if (!module && discover)
++			{
++				MEMORY_BASIC_INFORMATION info = {};
++				if (VirtualQuery(reinterpret_cast<LPCVOID>(pc), &info, sizeof info) && info.Type == MEM_IMAGE)
++				{
++					modules.add(reinterpret_cast<uintptr_t>(info.AllocationBase));
++					module = modules.find(pc);
++				}
++			}
 +
 +			if (!module)
 +			{
@@ -3034,12 +3589,12 @@ index 000000000..8d4e62e2c
 +			{
 +				void* handlerdata;
 +				DWORD64 establisher;
-+				sampler.unwind(0, module->base, pc, function, context, &handlerdata, &establisher, nullptr);
++				unwind(0, module->base, pc, function, context, &handlerdata, &establisher, nullptr);
 +			}
 +			else
 +			{
 +				// Functions that don't touch the stack have no unwind data; the return address is on top
-+				if (sp < sampler.stacklow || sp + sizeof (DWORD64) > sampler.stackhigh)
++				if (sp < stacklow || sp + sizeof (DWORD64) > stackhigh)
 +				{
 +					break;
 +				}
@@ -3047,7 +3602,7 @@ index 000000000..8d4e62e2c
 +				context->Rsp = sp + sizeof (DWORD64);
 +			}
 +
-+			if (!context->Rip || context->Rsp <= sp || context->Rsp < sampler.stacklow || context->Rsp >= sampler.stackhigh)
++			if (!context->Rip || context->Rsp <= sp || context->Rsp < stacklow || context->Rsp >= stackhigh)
 +			{
 +				break;
 +			}
@@ -3203,6 +3758,7 @@ index 000000000..8d4e62e2c
 +	uint64_t written = 0;
 +
 +	modules.add(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
++	g_samplerthreadid = GetCurrentThreadId();
 +
 +	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 +
@@ -3220,7 +3776,7 @@ index 000000000..8d4e62e2c
 +		}
 +		else
 +		{
-+			Sleep(4);
++			Sleep(20);
 +		}
 +
 +		CONTEXT context = {};
@@ -3241,7 +3797,8 @@ index 000000000..8d4e62e2c
 +			inlevel = i_uwpprofinlevel;
 +			if (gotcontext && inlevel && sampler.unwind)
 +			{
-+				frames = UnwindStack(sampler, modules, &context, stack.data(), &unknown);
++				frames = UnwindStack(sampler.unwind, modules, false, sampler.stacklow, sampler.stackhigh, &context,
++					stack.data(), kMaxFrames, &unknown);
 +			}
 +			sampler.resume(sampler.thread);
 +		}
@@ -3345,34 +3902,48 @@ index 000000000..8d4e62e2c
 +	*pausedms = g_pausenanoseconds.exchange(0) / 1e6;
 +}
 +
-+void I_UWPLogCpuSets(void)
++namespace
++{
++
++struct CpuSet
++{
++	DWORD id;
++	uint8_t processor, core, cache, efficiency, flags, scheduling;
++};
++
++constexpr uint8_t kCpuSetParked = 1;
++constexpr uint8_t kCpuSetAllocated = 2; // for some processes only
++constexpr uint8_t kCpuSetAllocatedToUs = 4;
++constexpr uint8_t kCpuSetRealTime = 8;
++
++// The CPU sets Windows lists for the game, or none if it can't. Logs why it can't if log is set.
++std::vector<CpuSet> ReadCpuSets(bool log)
 +{
 +	auto getinfo = reinterpret_cast<GetSystemCpuSetInformationFn>(FindKernelFunction("GetSystemCpuSetInformation"));
-+	auto getprocesssets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetProcessDefaultCpuSets"));
-+	auto getthreadsets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetThreadSelectedCpuSets"));
++	std::vector<CpuSet> sets;
 +	ULONG size = 0;
-+
-+	g_getprocessornumber = reinterpret_cast<GetProcessorNumberFn>(FindKernelFunction("GetCurrentProcessorNumber"));
 +
 +	if (!getinfo)
 +	{
-+		I_OutputMsg("UWP: can't list CPU sets: GetSystemCpuSetInformation is missing\n");
-+		return;
++		if (log)
++			I_OutputMsg("UWP: can't list CPU sets: GetSystemCpuSetInformation is missing\n");
++		return sets;
 +	}
 +
 +	getinfo(nullptr, 0, &size, GetCurrentProcess(), 0);
 +	std::vector<uint8_t> buffer(size);
 +	if (!size || !getinfo(buffer.data(), size, &size, GetCurrentProcess(), 0))
 +	{
-+		I_OutputMsg("UWP: can't list CPU sets: error %lu\n", GetLastError());
-+		return;
++		if (log)
++			I_OutputMsg("UWP: can't list CPU sets: error %lu\n", GetLastError());
++		return sets;
 +	}
 +
 +	// SYSTEM_CPU_SET_INFORMATION, read by offset, since UWP apps may not get its definition
 +	for (size_t offset = 0; offset + 8 <= size;)
 +	{
 +		const uint8_t* entry = buffer.data() + offset;
-+		DWORD entrysize, type, id;
++		DWORD entrysize, type;
 +
 +		memcpy(&entrysize, entry, sizeof entrysize);
 +		memcpy(&type, entry + 4, sizeof type);
@@ -3383,15 +3954,52 @@ index 000000000..8d4e62e2c
 +
 +		if (type == 0 && entrysize >= 32) // CpuSetInformation
 +		{
-+			const uint8_t flags = entry[19];
-+
-+			memcpy(&id, entry + 8, sizeof id);
-+			I_OutputMsg("UWP: CPU set %lu: processor %u, core %u, cache %u, efficiency class %u, scheduling class %u%s%s%s%s\n",
-+				id, entry[14], entry[15], entry[16], entry[18], entry[20],
-+				(flags & 1) ? ", parked" : "", (flags & 2) ? ", allocated" : "",
-+				(flags & 4) ? ", allocated to this process" : "", (flags & 8) ? ", real time" : "");
++			CpuSet set;
++			memcpy(&set.id, entry + 8, sizeof set.id);
++			set.processor = entry[14];
++			set.core = entry[15];
++			set.cache = entry[16];
++			set.efficiency = entry[18];
++			set.flags = entry[19];
++			set.scheduling = entry[20];
++			sets.push_back(set);
 +		}
 +		offset += entrysize;
++	}
++
++	return sets;
++}
++
++} // namespace
++
++unsigned int I_UWPUsableProcessors(void)
++{
++	unsigned int usable = 0;
++
++	for (const CpuSet& set : ReadCpuSets(false))
++	{
++		if (!(set.flags & kCpuSetAllocated) || (set.flags & kCpuSetAllocatedToUs))
++		{
++			usable++;
++		}
++	}
++	return usable;
++}
++
++void I_UWPLogCpuSets(void)
++{
++	auto getprocesssets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetProcessDefaultCpuSets"));
++	auto getthreadsets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetThreadSelectedCpuSets"));
++
++	g_getprocessornumber = reinterpret_cast<GetProcessorNumberFn>(FindKernelFunction("GetCurrentProcessorNumber"));
++
++	for (const CpuSet& set : ReadCpuSets(true))
++	{
++		I_OutputMsg("UWP: CPU set %lu: processor %u, core %u, cache %u, efficiency class %u, scheduling class %u%s%s%s%s\n",
++			set.id, set.processor, set.core, set.cache, set.efficiency, set.scheduling,
++			(set.flags & kCpuSetParked) ? ", parked" : "", (set.flags & kCpuSetAllocated) ? ", allocated" : "",
++			(set.flags & kCpuSetAllocatedToUs) ? ", allocated to this process" : "",
++			(set.flags & kCpuSetRealTime) ? ", real time" : "");
 +	}
 +
 +	auto log_sets = [](const char* what, GetCpuSetsFn get, HANDLE handle)
@@ -3448,6 +4056,148 @@ index 000000000..8d4e62e2c
 +	}
 +
 +	memset(g_processorcounts, 0, sizeof g_processorcounts);
++}
++
++// [UWP]: Logs crashes that the game's own handler never sees. The app runtime starts the main thread, not the C
++// runtime, so the signal handler isn't called for an access violation there, and Windows closes the game without
++// a word. A vectored exception handler sees every exception first, so it logs this one and its call stack to
++// latest-log.txt and leaves the rest as before. If something catches the exception, the game carries on, so a logged
++// "crash" that the game survived wasn't one.
++extern "C" FILE *logstream;
++
++namespace
++{
++
++// long, not LONG, which m_swap.h defines as a macro
++using VectoredHandlerFn = long (CALLBACK *)(EXCEPTION_POINTERS*);
++using AddVectoredExceptionHandlerFn = void* (WINAPI *)(ULONG, VectoredHandlerFn);
++
++DWORD g_mainthreadid;
++VirtualUnwindFn g_crashunwind;
++GetStackLimitsFn g_crashstacklimits;
++UnwindModules g_crashmodules;
++std::atomic<int> g_crashlogs{0};
++
++bool IsCrash(DWORD code)
++{
++	switch (code)
++	{
++	case EXCEPTION_ACCESS_VIOLATION:
++	case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
++	case EXCEPTION_DATATYPE_MISALIGNMENT:
++	case EXCEPTION_FLT_DIVIDE_BY_ZERO:
++	case EXCEPTION_ILLEGAL_INSTRUCTION:
++	case EXCEPTION_IN_PAGE_ERROR:
++	case EXCEPTION_INT_DIVIDE_BY_ZERO:
++	case EXCEPTION_PRIV_INSTRUCTION:
++	case EXCEPTION_STACK_OVERFLOW:
++	case 0xC0000374: // STATUS_HEAP_CORRUPTION
++	case 0xC0000409: // STATUS_STACK_BUFFER_OVERRUN
++		return true;
++	default:
++		return false;
++	}
++}
++
++// Writes where an address is as module+offset, which for the game itself ringracers-uwp.map maps to a function
++void DescribeAddress(uintptr_t address, char* buffer, size_t size)
++{
++	MEMORY_BASIC_INFORMATION info = {};
++	char path[MAX_PATH] = "?";
++
++	if (!VirtualQuery(reinterpret_cast<LPCVOID>(address), &info, sizeof info) || info.Type != MEM_IMAGE)
++	{
++		snprintf(buffer, size, "%llx", static_cast<unsigned long long>(address));
++		return;
++	}
++
++	const uintptr_t base = reinterpret_cast<uintptr_t>(info.AllocationBase);
++	if (!GetModuleFileNameA(reinterpret_cast<HMODULE>(base), path, sizeof path))
++	{
++		snprintf(path, sizeof path, "?");
++	}
++	const char* name = strrchr(path, '\\');
++	snprintf(buffer, size, "%s+%llx", name ? name + 1 : path, static_cast<unsigned long long>(address - base));
++}
++
++long CALLBACK LogCrash(EXCEPTION_POINTERS* info)
++{
++	const DWORD code = info->ExceptionRecord->ExceptionCode;
++	const DWORD thread = GetCurrentThreadId();
++	const char* threadname = thread == g_mainthreadid ? "the main thread" : "another thread";
++	char where[MAX_PATH + 32];
++
++	// The profiler catches its own faults reading the main thread's stack
++	if (!IsCrash(code) || thread == g_samplerthreadid)
++	{
++		return EXCEPTION_CONTINUE_SEARCH;
++	}
++
++	// Each one, in case something catches them, but not endlessly
++	if (g_crashlogs++ >= 5)
++	{
++		return EXCEPTION_CONTINUE_SEARCH;
++	}
++
++	if (code == EXCEPTION_STACK_OVERFLOW)
++	{
++		// Too little stack is left to format anything
++		if (logstream)
++		{
++			fputs("UWP: crash: stack overflow\n", logstream);
++			fflush(logstream);
++		}
++		return EXCEPTION_CONTINUE_SEARCH;
++	}
++
++	DescribeAddress(reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress), where, sizeof where);
++	if (code == EXCEPTION_ACCESS_VIOLATION && info->ExceptionRecord->NumberParameters >= 2)
++	{
++		const ULONG_PTR kind = info->ExceptionRecord->ExceptionInformation[0];
++		I_OutputMsg("UWP: crash: access violation %s %llx at %s on %s\n",
++			kind == 1 ? "writing" : kind == 8 ? "executing" : "reading",
++			static_cast<unsigned long long>(info->ExceptionRecord->ExceptionInformation[1]), where, threadname);
++	}
++	else
++	{
++		I_OutputMsg("UWP: crash: exception %08lx at %s on %s\n", code, where, threadname);
++	}
++
++	if (g_crashunwind && g_crashstacklimits)
++	{
++		ULONG_PTR low = 0, high = 0;
++		CONTEXT context = *info->ContextRecord;
++		uintptr_t frames[32];
++		uintptr_t unknown = 0;
++
++		g_crashstacklimits(&low, &high);
++		const int count = UnwindStack(g_crashunwind, g_crashmodules, true, low, high, &context, frames, 32, &unknown);
++
++		// Return addresses point after their call, so describe the byte before, which is in the caller
++		for (int i = 1; i < count; i++)
++		{
++			DescribeAddress(frames[i] - 1, where, sizeof where);
++			I_OutputMsg("UWP:   called from %s\n", where);
++		}
++	}
++
++	return EXCEPTION_CONTINUE_SEARCH;
++}
++
++} // namespace
++
++void I_UWPInstallCrashHandler(void)
++{
++	auto add = reinterpret_cast<AddVectoredExceptionHandlerFn>(FindKernelFunction("AddVectoredExceptionHandler"));
++
++	g_mainthreadid = GetCurrentThreadId();
++	g_crashunwind = reinterpret_cast<VirtualUnwindFn>(FindKernelFunction("RtlVirtualUnwind"));
++	g_crashstacklimits = reinterpret_cast<GetStackLimitsFn>(FindKernelFunction("GetCurrentThreadStackLimits"));
++
++	if (!add || !add(1, LogCrash))
++	{
++		I_OutputMsg("UWP: can't log crashes: AddVectoredExceptionHandler is missing or failed\n");
++	}
 +}
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
 index 7fa8e0c3f..d0c0afb5d 100644
@@ -3905,14 +4655,15 @@ index 7024826dc..4c6f71772 100644
  
  void W_Shutdown(void);
 diff --git a/src/z_zone.cpp b/src/z_zone.cpp
-index b5f73450b..2cddce8c3 100644
+index b5f73450b..521623929 100644
 --- a/src/z_zone.cpp
 +++ b/src/z_zone.cpp
-@@ -111,6 +111,10 @@ void Z_Init(void)
+@@ -111,6 +111,11 @@ void Z_Init(void)
  
  	memfree = I_GetFreeMem(&total)>>20;
  	CONS_Printf("System memory: %uMB - Free: %uMB\n", total>>20, memfree);
 +#ifdef _UWP
++	I_UWPInstallCrashHandler();
 +	I_UWPLogMemoryLimit();
 +	I_UWPLogCpuSets();
 +#endif

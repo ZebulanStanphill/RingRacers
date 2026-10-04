@@ -18,6 +18,7 @@ PATTERNS = [
     (r'UWP perf:\s+mobjs now: (\d+) thinking, (\d+) scenery, (\d+) not thinking; per tic: ([\d.]+) P_CheckPosition calls, ([\d.]+) Lua mobj hooks',
      ['mobjs', 'scenery', 'nothink', 'checkpos', 'luahooks']),
     (r'UWP perf:\s+main thread on processors (.*); profiler paused it ([\d.]+) ms per second', ['cpus', 'paused']),
+    (r'UWP perf:\s+([\d.]+) R_PointInSubsector calls per second, ([\d.]+)% answered from its cache', ['pointlookups', 'pointcached']),
 ]
 
 def parse(path):
@@ -76,6 +77,8 @@ def summarize(group):
             f"UI {avg('ui'):.1f}, sw {avg('sw'):.1f}, finish {avg('fin'):.1f}; logic {avg('logic'):.1f} ms/tic (players {avg('players'):.1f}, thinkers {avg('thinkers'):.1f}, bots {avg('bots'):.1f})")
     if any('mobjs' in r for r in group):
         text += f"; {avg('mobjs'):.0f} thinking mobjs, {avg('checkpos'):.0f} P_CheckPosition/tic, profiler pauses {avg('paused'):.1f} ms/s"
+    if any('pointcached' in r for r in group):
+        text += f"; R_PointInSubsector {avg('pointlookups'):.0f}/s, {avg('pointcached'):.0f}% cached"
     return text
 
 if __name__ == '__main__':
