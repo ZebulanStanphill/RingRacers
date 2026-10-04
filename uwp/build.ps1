@@ -32,6 +32,8 @@ $AngleSha256 = "566F78D4FAB2086E694DC8F1EDCDB498EE549DADE8A198CA95246CFDD0632E98
 $Deps = Join-Path $Root "deps"
 $SdlSource = Join-Path $Deps "SDL"
 $SdlBuild = Join-Path $Deps "SDL-build"
+# msbuild puts UWP project output in a subfolder named after the project
+$SdlOut = Join-Path $SdlBuild "SDL2-UWP"
 $Angle = Join-Path $Deps "ANGLE"
 
 function Exec([scriptblock]$Command) {
@@ -99,7 +101,7 @@ if (-not (Test-Path (Join-Path $Angle "bin/UAP/x64/libGLESv2.dll"))) {
 	Expand-Archive -Force $AnglePackage $Angle
 }
 
-Exec { cmake -S (Join-Path $Root "uwp") -B $UwpBuild -G "Visual Studio 17 2022" -A x64 "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlBuild.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
+Exec { cmake -S (Join-Path $Root "uwp") -B $UwpBuild -G "Visual Studio 17 2022" -A x64 "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
 Exec { cmake --build $UwpBuild --config Release }
 
 Write-Host ""

@@ -1,4 +1,4 @@
-From 93d743dd0c5f7ebec46730e99323269a784b7338 Mon Sep 17 00:00:00 2001
+From 74ace7ffab6e3c89fc6d4c6a2f66415bb0d00d2f Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:21:17 -0500
 Subject: [PATCH] UWP: Use OpenGL ES through ANGLE instead of desktop OpenGL
@@ -7,15 +7,20 @@ Subject: [PATCH] UWP: Use OpenGL ES through ANGLE instead of desktop OpenGL
 Mesa's Direct3D 12 driver needs shader model 6, which Xbox One consoles
 don't offer to UWP games. ANGLE translates OpenGL ES to Direct3D 11,
 which works on every Xbox.
+
+The Direct3D 11 renderer stays off: it needs the XAML swap chain panel,
+which this fork doesn't build. Without it, the WinRT video driver needs
+its own copy of D3D11_DXGIFormatToSDLPixelFormat.
 ---
- include/SDL_config_winrt.h | 12 ++++--------
- 1 file changed, 4 insertions(+), 8 deletions(-)
+ include/SDL_config_winrt.h         | 8 ++------
+ src/video/winrt/SDL_winrtvideo.cpp | 2 +-
+ 2 files changed, 3 insertions(+), 7 deletions(-)
 
 diff --git a/include/SDL_config_winrt.h b/include/SDL_config_winrt.h
-index 2d38d37a..9037f649 100644
+index 2d38d37a..e2017e78 100644
 --- a/include/SDL_config_winrt.h
 +++ b/include/SDL_config_winrt.h
-@@ -201,18 +201,14 @@
+@@ -201,8 +201,8 @@
  //#define SDL_VIDEO_DRIVER_DUMMY  1
  
  /* Enable OpenGL ES 2.0 (via a modified ANGLE library) */
@@ -25,16 +30,31 @@ index 2d38d37a..9037f649 100644
 +#define SDL_VIDEO_OPENGL_EGL 1
  
  /* Enable appropriate renderer(s) */
--//#define SDL_VIDEO_RENDER_D3D11 0
-+#define SDL_VIDEO_RENDER_D3D11 1
- 
+ //#define SDL_VIDEO_RENDER_D3D11 0
+@@ -210,10 +210,6 @@
  /* Disable D3D12 as it's not implemented for WinRT */
--//#define SDL_VIDEO_RENDER_D3D12  0
--
+ //#define SDL_VIDEO_RENDER_D3D12  0
+ 
 -#define SDL_VIDEO_OPENGL 1
 -#define SDL_VIDEO_RENDER_OGL 1
 -#define SDL_VIDEO_OPENGL_WGL 1
-+#define SDL_VIDEO_RENDER_D3D12  0
- 
+-
  #define __XBOXSERIES__ 1
  #define SDL_VIDEO_DRIVER_KEYBOARD_WINRT 1
+ #define SDL_VIDEO_DRIVER_POINTER_WINRT 1
+diff --git a/src/video/winrt/SDL_winrtvideo.cpp b/src/video/winrt/SDL_winrtvideo.cpp
+index 6cb9d65d..c96156ed 100644
+--- a/src/video/winrt/SDL_winrtvideo.cpp
++++ b/src/video/winrt/SDL_winrtvideo.cpp
+@@ -277,7 +277,7 @@ int WINRT_VideoInit(_THIS)
+     return 0;
+ }
+ 
+-#ifdef SDL_VIDEO_OPENGL_WGL
++#if !SDL_VIDEO_RENDER_D3D11
+ Uint32 D3D11_DXGIFormatToSDLPixelFormat(DXGI_FORMAT dxgiFormat)
+ {
+     switch (dxgiFormat) {
+-- 
+2.50.1 (Apple Git-155)
+
