@@ -1,4 +1,4 @@
-From 137058938f88c584e09a74e80065a909e9f3b745 Mon Sep 17 00:00:00 2001
+From 0f9a9ccf6c18825ba08169ad9c92a247ff95e91a Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -15,6 +15,12 @@ RingRacers-dev, rebased onto v2.4.
 - Render through OpenGL ES 2 (ANGLE on Direct3D 11): support OpenGL ES 2
   contexts in the GL2 RHI backend, request one, render at the size of
   ANGLE's surface, and hide Legacy GL, which needs desktop OpenGL
+- Make fewer GL calls, which are expensive through ANGLE on the Xbox's
+  CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
+  change anything, cache uniform locations, keep framebuffers between
+  frames, keep colormap and lighttable textures between frames
+  (reuploading them only when they change), and only upload the palette
+  when it changes
 - Read game data and save files from E:\ringracers
 - Ask at launch whether to check the main asset files' MD5s, since that
   reads all of them from the USB drive; skipping uses the expected MD5s
@@ -25,39 +31,45 @@ RingRacers-dev, rebased onto v2.4.
 - Create the save folder before checking that the config is writable
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
-- Log how long each loading step takes, the thread pool size, and every
-  5 seconds a summary of the perfstats frame and tic timings
+- Log how long each loading step and asset file takes and how much of
+  that was spent logging, the thread pool size, and every 5 seconds a
+  summary of the perfstats frame and tic timings, the parts of
+  I_FinishUpdate, and counts of draws, texture uploads, and resources
+  created
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
 ---
- CMakeLists.txt               |  19 ++++++-
- CMakePresets.json            |  17 ++++++
- src/CMakeLists.txt           |  44 +++++++++++----
- src/console.c                |  13 +++++
- src/core/thread_pool.cpp     |   9 +++
- src/d_clisrv.c               |   3 +
- src/d_main.cpp               |  36 ++++++++++++
- src/http-mserv.c             |   2 +
- src/i_system.h               |   5 ++
- src/i_video_common.cpp       |  21 +++++++
- src/m_perfstats.c            | 104 +++++++++++++++++++++++++++++++++++
- src/m_perfstats.h            |   6 ++
- src/rhi/gl2/gl2_rhi.cpp      |  90 ++++++++++++++++++++++++++----
- src/rhi/gl2/gl2_rhi.hpp      |   6 ++
- src/screen.c                 |   2 +-
- src/sdl/CMakeLists.txt       |   4 ++
- src/sdl/i_main.cpp           |  11 +++-
- src/sdl/i_system.cpp         |  99 ++++++++++++++++++++++++++++++++-
- src/sdl/i_video.cpp          |  74 +++++++++++++++++++++++++
- src/sdl/mixer_sound.c        |   4 +-
- src/sdl/ogl_sdl.c            |   8 +++
- src/sdl/rhi_gl2_platform.cpp |   9 +++
- src/w_wad.cpp                |  12 ++++
- src/w_wad.h                  |   6 ++
- 24 files changed, 575 insertions(+), 29 deletions(-)
+ CMakeLists.txt                   |  19 +-
+ CMakePresets.json                |  17 +
+ src/CMakeLists.txt               |  44 ++-
+ src/console.c                    |  18 +
+ src/core/thread_pool.cpp         |   9 +
+ src/d_clisrv.c                   |   3 +
+ src/d_main.cpp                   |  54 +++
+ src/http-mserv.c                 |   2 +
+ src/hwr2/patch_atlas.cpp         |   8 +
+ src/hwr2/resource_management.cpp | 105 ++++--
+ src/hwr2/resource_management.hpp |  31 +-
+ src/i_system.h                   |   8 +
+ src/i_video_common.cpp           |  44 ++-
+ src/m_perfstats.c                | 136 ++++++++
+ src/m_perfstats.h                |  11 +
+ src/rhi/gl2/gl2_rhi.cpp          | 578 +++++++++++++++++++++++--------
+ src/rhi/gl2/gl2_rhi.hpp          |  33 ++
+ src/screen.c                     |   2 +-
+ src/sdl/CMakeLists.txt           |   4 +
+ src/sdl/i_main.cpp               |  11 +-
+ src/sdl/i_system.cpp             | 109 +++++-
+ src/sdl/i_video.cpp              |  74 ++++
+ src/sdl/mixer_sound.c            |   4 +-
+ src/sdl/ogl_sdl.c                |   8 +
+ src/sdl/rhi_gl2_platform.cpp     |   9 +
+ src/w_wad.cpp                    |  23 ++
+ src/w_wad.h                      |   6 +
+ 27 files changed, 1161 insertions(+), 209 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -244,23 +256,28 @@ index 9eb0bcbf1..46543dc45 100644
  
  # Setup clang-tidy
 diff --git a/src/console.c b/src/console.c
-index 1e7585fbc..1712e8da4 100644
+index 1e7585fbc..fc9c5fb3c 100644
 --- a/src/console.c
 +++ b/src/console.c
-@@ -1948,7 +1948,20 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+@@ -1948,7 +1948,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
  	con_startup_loadprogress = newStep;
  
  	if (con_startup_loadprogress <= LOADED_ALLDONE)
 +	{
 +#ifdef _UWP
-+		// [UWP]: Time each step, to see what makes startup slow on Xbox
++		// [UWP]: Time each step, and the time spent logging, to see what makes startup slow on Xbox
 +		static precise_t loadstart = 0;
++		static precise_t logstart = 0;
 +
 +		if (!loadstart)
++		{
 +			loadstart = I_GetPreciseTime();
++			logstart = i_uwplogtime;
++		}
 +
-+		CONS_Printf("LOADING UPDATE - %s (%.1f s)\n", CON_LoadingStrings[con_startup_loadprogress],
-+			(double)(I_GetPreciseTime() - loadstart) / I_GetPrecisePrecision());
++		CONS_Printf("LOADING UPDATE - %s (%.1f s, %.1f s of it logging)\n", CON_LoadingStrings[con_startup_loadprogress],
++			(double)(I_GetPreciseTime() - loadstart) / I_GetPrecisePrecision(),
++			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
 +#else
  		CONS_Printf("LOADING UPDATE - %s\n", CON_LoadingStrings[con_startup_loadprogress]);
 +#endif
@@ -310,10 +327,24 @@ index 1166b3c99..11c98f69b 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..c5c218efb 100644
+index 19fcfe0a7..ee82f93c4 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
-@@ -922,6 +922,9 @@ void D_SRB2Loop(void)
+@@ -685,7 +685,13 @@ static bool D_Display(bool world)
+ 
+ 			if (rendermode == render_soft)
+ 			{
++#ifdef _UWP
++				const precise_t screenstart = I_GetPreciseTime();
++#endif
+ 				VID_DisplaySoftwareScreen();
++#ifdef _UWP
++				ps_uwp_screentime += I_GetPreciseTime() - screenstart;
++#endif
+ 			}
+ 
+ 			if (lastdraw)
+@@ -922,6 +928,9 @@ void D_SRB2Loop(void)
  
  		bool ranwipe = false;
  		bool world = false;
@@ -323,7 +354,7 @@ index 19fcfe0a7..c5c218efb 100644
  
  		I_UpdateTime();
  
-@@ -1067,6 +1070,9 @@ void D_SRB2Loop(void)
+@@ -1067,6 +1076,9 @@ void D_SRB2Loop(void)
  			}
  
  			ranwipe = D_Display(world);
@@ -333,7 +364,7 @@ index 19fcfe0a7..c5c218efb 100644
  		}
  
  #ifdef HWRENDER
-@@ -1183,12 +1189,21 @@ void D_SRB2Loop(void)
+@@ -1183,12 +1195,21 @@ void D_SRB2Loop(void)
  			skiplaggyworld = false;
  		}
  
@@ -355,7 +386,7 @@ index 19fcfe0a7..c5c218efb 100644
  
  			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
  			{
-@@ -1199,6 +1214,10 @@ void D_SRB2Loop(void)
+@@ -1199,6 +1220,10 @@ void D_SRB2Loop(void)
  		finishprecise = I_GetPreciseTime();
  		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
  		deltatics = deltasecs * NEWTICRATE;
@@ -366,7 +397,7 @@ index 19fcfe0a7..c5c218efb 100644
  	}
  }
  
-@@ -1661,6 +1680,11 @@ void D_SRB2Main(void)
+@@ -1661,6 +1686,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -378,7 +409,7 @@ index 19fcfe0a7..c5c218efb 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1757,6 +1781,16 @@ void D_SRB2Main(void)
+@@ -1757,6 +1787,16 @@ void D_SRB2Main(void)
  	// Make backups of some SOCcable tables.
  	P_BackupTables();
  
@@ -395,7 +426,27 @@ index 19fcfe0a7..c5c218efb 100644
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
-@@ -2323,6 +2357,8 @@ const char *D_Home(void)
+@@ -1774,7 +1814,19 @@ void D_SRB2Main(void)
+ 	//
+ 	// search for mainwad maps
+ 	//
++#ifdef _UWP
++	{
++		const precise_t mapdatastart = I_GetPreciseTime();
++		const precise_t logstart = i_uwplogtime;
++
++		P_InitMapData();
++		I_OutputMsg("UWP: P_InitMapData took %.1f s (%.1f s of it logging)\n",
++			(double)(I_GetPreciseTime() - mapdatastart) / I_GetPrecisePrecision(),
++			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
++	}
++#else
+ 	P_InitMapData();
++#endif
+ 	basenummapheaders = nummapheaders;
+ 	basenumkartcupheaders = numkartcupheaders;
+ 
+@@ -2323,6 +2375,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -422,27 +473,308 @@ index 4f9f9cb39..6854fc5e7 100644
  
  	if (M_CheckParm("-bindaddr") && M_IsNextParm())
  	{
+diff --git a/src/hwr2/patch_atlas.cpp b/src/hwr2/patch_atlas.cpp
+index 395b28601..76227a569 100644
+--- a/src/hwr2/patch_atlas.cpp
++++ b/src/hwr2/patch_atlas.cpp
+@@ -14,6 +14,11 @@
+ 
+ #include "../r_patch.h"
+ 
++#ifdef _UWP
++// [UWP]: Counted for the performance summary in the log (m_perfstats.c)
++extern "C" int ps_uwp_atlasresets;
++#endif
++
+ using namespace srb2;
+ using namespace srb2::hwr2;
+ using namespace srb2::rhi;
+@@ -180,6 +185,9 @@ bool PatchAtlasCache::need_to_reset() const
+ 
+ void PatchAtlasCache::reset(Rhi& rhi)
+ {
++#ifdef _UWP
++	ps_uwp_atlasresets++;
++#endif
+ 	for (auto& atlas : atlases_)
+ 	{
+ 		rhi.destroy_texture(atlas.texture());
+diff --git a/src/hwr2/resource_management.cpp b/src/hwr2/resource_management.cpp
+index 0ac7d7358..d3b9b920c 100644
+--- a/src/hwr2/resource_management.cpp
++++ b/src/hwr2/resource_management.cpp
+@@ -10,6 +10,8 @@
+ 
+ #include "resource_management.hpp"
+ 
++#include <cstring>
++
+ #include "../r_state.h"
+ #include "../v_video.h"
+ #include "../z_zone.h"
+@@ -25,6 +27,8 @@ PaletteManager& PaletteManager::operator=(PaletteManager&&) = default;
+ 
+ constexpr std::size_t kPaletteSize = 256;
+ constexpr std::size_t kLighttableRows = LIGHTLEVELS;
++// Frames a colormap or lighttable texture is kept after it was last drawn
++constexpr uint32_t kTableLifetime = 300;
+ 
+ void PaletteManager::update(Rhi& rhi)
+ {
+@@ -50,14 +54,20 @@ void PaletteManager::update(Rhi& rhi)
+ 		default_colormap_ = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, 1, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
+ 	}
+ 
+-	// Palette
++	// Palette, uploaded only when it changes
+ 	{
+ 		std::array<byteColor_t, kPaletteSize> palette_32;
+ 		for (std::size_t i = 0; i < kPaletteSize; i++)
+ 		{
+ 			palette_32[i] = V_GetColor(i).s;
+ 		}
+-		rhi.update_texture(palette_, {0, 0, kPaletteSize, 1}, PixelFormat::kRGBA8, tcb::as_bytes(tcb::span(palette_32)));
++		static_assert(sizeof(palette_32) == sizeof(palette_data_));
++		if (!palette_uploaded_ || std::memcmp(palette_data_.data(), palette_32.data(), sizeof(palette_32)) != 0)
++		{
++			std::memcpy(palette_data_.data(), palette_32.data(), sizeof(palette_32));
++			palette_uploaded_ = true;
++			rhi.update_texture(palette_, {0, 0, kPaletteSize, 1}, PixelFormat::kRGBA8, tcb::as_bytes(tcb::span(palette_32)));
++		}
+ 	}
+ 
+ #if 0
+@@ -79,7 +89,8 @@ void PaletteManager::update(Rhi& rhi)
+ 	}
+ #endif
+ 
+-	// Default colormap
++	// Default colormap, which never changes
++	if (!default_colormap_uploaded_)
+ 	{
+ 		std::array<uint8_t, kPaletteSize> data;
+ 		for (std::size_t i = 0; i < kPaletteSize; i++)
+@@ -87,56 +98,82 @@ void PaletteManager::update(Rhi& rhi)
+ 			data[i] = i;
+ 		}
+ 		rhi.update_texture(default_colormap_, {0, 0, kPaletteSize, 1}, PixelFormat::kR8, tcb::as_bytes(tcb::span(data)));
++		default_colormap_uploaded_ = true;
+ 	}
+ }
+ 
+-void PaletteManager::destroy_per_frame_resources(Rhi& rhi)
++static void destroy_unused_tables(Rhi& rhi, srb2::HashMap<const uint8_t*, PaletteTable>& tables, uint32_t frame)
+ {
+-	for (auto colormap_tex : colormaps_)
+-	{
+-		rhi.destroy_texture(colormap_tex.second);
+-	}
+-
+-	colormaps_.clear();
+-
+-	for (auto lighttable_tex : lighttables_)
++	for (auto itr = tables.begin(); itr != tables.end();)
+ 	{
+-		rhi.destroy_texture(lighttable_tex.second);
++		if (frame - itr->second.last_used_frame > kTableLifetime)
++		{
++			rhi.destroy_texture(itr->second.texture);
++			itr = tables.erase(itr);
++		}
++		else
++		{
++			++itr;
++		}
+ 	}
++}
+ 
+-	lighttables_.clear();
++void PaletteManager::end_frame(Rhi& rhi)
++{
++	destroy_unused_tables(rhi, colormaps_, frame_);
++	destroy_unused_tables(rhi, lighttables_, frame_);
++	frame_++;
+ }
+ 
+-Handle<Texture> PaletteManager::find_or_create_colormap(Rhi& rhi, srb2::NotNull<const uint8_t*> colormap)
++Handle<Texture> PaletteManager::find_or_create_table(
++	Rhi& rhi,
++	srb2::HashMap<const uint8_t*, PaletteTable>& tables,
++	const uint8_t* table,
++	uint32_t rows
++)
+ {
+-	if (colormaps_.find(colormap) != colormaps_.end())
++	const std::size_t size = kPaletteSize * rows;
++	tcb::span<const std::byte> table_bytes = tcb::as_bytes(tcb::span(table, size));
++
++	auto itr = tables.find(table);
++	if (itr == tables.end())
+ 	{
+-		return colormaps_[colormap];
++		PaletteTable new_table;
++		new_table.texture = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, rows, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
++		new_table.data.resize(size);
++		std::memcpy(new_table.data.data(), table, size);
++		new_table.last_used_frame = frame_;
++		rhi.update_texture(new_table.texture, {0, 0, kPaletteSize, rows}, PixelFormat::kR8, table_bytes);
++
++		Handle<Texture> texture = new_table.texture;
++		tables.insert_or_assign(table, std::move(new_table));
++		return texture;
+ 	}
+ 
+-	Handle<Texture> texture = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, 1, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
++	// The first time a table is drawn in a frame, check that it hasn't changed (or been freed and its memory reused)
++	// since it was uploaded
++	PaletteTable& cached = itr->second;
++	if (cached.last_used_frame != frame_)
++	{
++		cached.last_used_frame = frame_;
++		if (std::memcmp(cached.data.data(), table, size) != 0)
++		{
++			std::memcpy(cached.data.data(), table, size);
++			rhi.update_texture(cached.texture, {0, 0, kPaletteSize, rows}, PixelFormat::kR8, table_bytes);
++		}
++	}
+ 
+-	tcb::span<const std::byte> map_bytes = tcb::as_bytes(tcb::span(colormap.get(), kPaletteSize));
+-	rhi.update_texture(texture, {0, 0, kPaletteSize, 1}, PixelFormat::kR8, map_bytes);
++	return cached.texture;
++}
+ 
+-	colormaps_.insert_or_assign(colormap, texture);
+-	return texture;
++Handle<Texture> PaletteManager::find_or_create_colormap(Rhi& rhi, srb2::NotNull<const uint8_t*> colormap)
++{
++	return find_or_create_table(rhi, colormaps_, colormap.get(), 1);
+ }
+ 
+ Handle<Texture> PaletteManager::find_or_create_extra_lighttable(Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable)
+ {
+-	if (lighttables_.find(lighttable) != lighttables_.end())
+-	{
+-		return lighttables_[lighttable];
+-	}
+-
+-	Handle<Texture> texture = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, kLighttableRows, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
+-
+-	tcb::span<const std::byte> lighttable_bytes = tcb::as_bytes(tcb::span(lighttable.get(), kPaletteSize * kLighttableRows));
+-	rhi.update_texture(texture, {0, 0, kPaletteSize, kLighttableRows}, PixelFormat::kR8, lighttable_bytes);
+-	lighttables_.insert_or_assign(lighttable, texture);
+-
+-	return texture;
++	return find_or_create_table(rhi, lighttables_, lighttable.get(), kLighttableRows);
+ }
+ 
+ FlatTextureManager::FlatTextureManager() = default;
+diff --git a/src/hwr2/resource_management.hpp b/src/hwr2/resource_management.hpp
+index 3fd6666cf..3cfcb18f1 100644
+--- a/src/hwr2/resource_management.hpp
++++ b/src/hwr2/resource_management.hpp
+@@ -11,6 +11,8 @@
+ #ifndef __SRB2_HWR2_RESOURCE_MANAGEMENT_HPP__
+ #define __SRB2_HWR2_RESOURCE_MANAGEMENT_HPP__
+ 
++#include <array>
++
+ #include "../core/hash_map.hpp"
+ #include "../core/vector.hpp"
+ #include "../rhi/rhi.hpp"
+@@ -18,6 +20,15 @@
+ namespace srb2::hwr2
+ {
+ 
++/// @brief A colormap or lighttable uploaded as a texture. These are kept between frames and reuploaded only when
++/// their contents change, since creating textures every frame is costly through ANGLE.
++struct PaletteTable
++{
++	rhi::Handle<rhi::Texture> texture;
++	srb2::Vector<uint8_t> data;
++	uint32_t last_used_frame;
++};
++
+ class PaletteManager
+ {
+ 	rhi::Handle<rhi::Texture> palette_;
+@@ -27,8 +38,21 @@ class PaletteManager
+ #endif
+ 	rhi::Handle<rhi::Texture> default_colormap_;
+ 
+-	srb2::HashMap<const uint8_t*, rhi::Handle<rhi::Texture>> colormaps_;
+-	srb2::HashMap<const uint8_t*, rhi::Handle<rhi::Texture>> lighttables_;
++	srb2::HashMap<const uint8_t*, PaletteTable> colormaps_;
++	srb2::HashMap<const uint8_t*, PaletteTable> lighttables_;
++	uint32_t frame_ = 0;
++
++	// The last palette and whether the default colormap were uploaded, so they're only uploaded when needed
++	std::array<uint8_t, 256 * 4> palette_data_ {};
++	bool palette_uploaded_ = false;
++	bool default_colormap_uploaded_ = false;
++
++	rhi::Handle<rhi::Texture> find_or_create_table(
++		rhi::Rhi& rhi,
++		srb2::HashMap<const uint8_t*, PaletteTable>& tables,
++		const uint8_t* table,
++		uint32_t rows
++	);
+ 
+ public:
+ 	PaletteManager();
+@@ -46,7 +70,8 @@ public:
+ 	rhi::Handle<rhi::Texture> default_colormap() const noexcept { return default_colormap_; }
+ 
+ 	void update(rhi::Rhi& rhi);
+-	void destroy_per_frame_resources(rhi::Rhi& rhi);
++	/// @brief Destroys the colormap and lighttable textures that haven't been drawn in a while.
++	void end_frame(rhi::Rhi& rhi);
+ 
+ 	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
+ 	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..de58e86fd 100644
+index 56d507e90..d8a08ae51 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,6 +313,11 @@ boolean I_HasOpenURL(void);
+@@ -313,6 +313,14 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
 +#ifdef _UWP
 +// [UWP]: Asks at launch whether to skip checking the main asset files' MD5s. Returns true to skip.
 +boolean I_UWPAskSkipAssetCheck(void);
++
++// [UWP]: Time I_OutputMsg has spent writing messages to the log file and debugger, to see how much logging slows startup
++extern precise_t i_uwplogtime;
 +#endif
 +
  #ifdef __cplusplus
  } // extern "C"
  #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
-index f52f9298e..173a15c64 100644
+index f52f9298e..6c8bb8914 100644
 --- a/src/i_video_common.cpp
 +++ b/src/i_video_common.cpp
-@@ -208,6 +208,15 @@ void I_CaptureVideoFrame()
+@@ -48,6 +48,10 @@
+ #include "st_stuff.h"
+ #include "v_video.h"
+ 
++#ifdef _UWP
++#include "i_system.h"
++#endif
++
+ extern "C" consvar_t cv_scr_scale, cv_scr_x, cv_scr_y;
+ 
+ using namespace srb2;
+@@ -105,7 +109,7 @@ static void preframe_update(Rhi& rhi)
+ 
+ static void postframe_update(Rhi& rhi)
+ {
+-	g_hw_state.palette_manager->destroy_per_frame_resources(rhi);
++	g_hw_state.palette_manager->end_frame(rhi);
+ }
+ 
+ static void temp_legacy_finishupdate_draws()
+@@ -208,6 +212,22 @@ void I_CaptureVideoFrame()
  	hw_state->screen_capture->capture(*rhi);
  }
  
@@ -451,14 +783,21 @@ index f52f9298e..173a15c64 100644
 +extern "C" void I_OutputMsg(const char *fmt, ...);
 +static int uwp_traceframe = 0;
 +#define UWP_TRACE(step) do { if (uwp_traceframe < 3) I_OutputMsg("UWP: frame %d: %s\n", uwp_traceframe, step); } while (0)
++
++// [UWP]: Time the parts of I_FinishUpdate for the performance summary in the log (m_perfstats.c)
++extern "C" precise_t ps_uwp_twodeetime, ps_uwp_upscaletime, ps_uwp_imguitime, ps_uwp_cleanuptime, ps_uwp_presenttime,
++	ps_uwp_finishtime, ps_uwp_nextframetime;
++static precise_t uwp_stagestart;
++#define UWP_STAGE(total) do { const precise_t now = I_GetPreciseTime(); total += now - uwp_stagestart; uwp_stagestart = now; } while (0)
 +#else
 +#define UWP_TRACE(step) do {} while (0)
++#define UWP_STAGE(total) do {} while (0)
 +#endif
 +
  void I_StartDisplayUpdate(void)
  {
  	if (rendermode == render_none)
-@@ -230,6 +239,7 @@ void I_StartDisplayUpdate(void)
+@@ -230,6 +250,7 @@ void I_StartDisplayUpdate(void)
  		return;
  	}
  
@@ -466,7 +805,17 @@ index f52f9298e..173a15c64 100644
  	if (rhi_changed(rhi))
  	{
  		// Reset all hardware 2 state
-@@ -272,10 +282,12 @@ void I_FinishUpdate(void)
+@@ -261,6 +282,9 @@ void I_FinishUpdate(void)
+ 	}
+ #endif
+ 
++#ifdef _UWP
++	uwp_stagestart = I_GetPreciseTime();
++#endif
+ 	temp_legacy_finishupdate_draws();
+ 
+ 	rhi::Rhi* rhi = sys::get_rhi(sys::g_current_rhi);
+@@ -272,10 +296,13 @@ void I_FinishUpdate(void)
  		return;
  	}
  
@@ -474,12 +823,13 @@ index f52f9298e..173a15c64 100644
  	// better hope the drawing code left the context in a render pass, I guess
  	g_hw_state.twodee_renderer->flush(*rhi, g_2d);
  	rhi->pop_render_pass();
++	UWP_STAGE(ps_uwp_twodeetime);
  
 +	UWP_TRACE("push default render pass");
  	rhi->push_default_render_pass(true);
  
  	// Upscale draw the backbuffer (with postprocessing maybe?)
-@@ -304,6 +316,7 @@ void I_FinishUpdate(void)
+@@ -304,6 +331,7 @@ void I_FinishUpdate(void)
  	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  
@@ -487,22 +837,28 @@ index f52f9298e..173a15c64 100644
  	switch (cv_scr_effect.value)
  	{
  	case 1:
-@@ -324,14 +337,22 @@ void I_FinishUpdate(void)
+@@ -323,18 +351,32 @@ void I_FinishUpdate(void)
+ 		g_hw_state.blit_rect->draw(*rhi);
  		break;
  	}
++	UWP_STAGE(ps_uwp_upscaletime);
  
 +	UWP_TRACE("render imgui");
  	g_hw_state.imgui_renderer->render(*rhi);
  
  	rhi->pop_render_pass();
++	UWP_STAGE(ps_uwp_imguitime);
  
 +	UWP_TRACE("postframe update");
  	postframe_update(*rhi);
++	UWP_STAGE(ps_uwp_cleanuptime);
  
 +	UWP_TRACE("present");
  	rhi->present();
++	UWP_STAGE(ps_uwp_presenttime);
 +	UWP_TRACE("finish");
  	rhi->finish();
++	UWP_STAGE(ps_uwp_finishtime);
 +	UWP_TRACE("done");
 +#ifdef _UWP
 +	uwp_traceframe++;
@@ -510,8 +866,12 @@ index f52f9298e..173a15c64 100644
  
  	FrameMark;
  
+ 	// Immediately prepare to begin drawing the next frame
+ 	I_StartDisplayUpdate();
++	UWP_STAGE(ps_uwp_nextframetime);
+ }
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eab..dc517cc0c 100644
+index 705b60eab..4c78c7d8c 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
 @@ -25,6 +25,11 @@
@@ -526,7 +886,7 @@ index 705b60eab..dc517cc0c 100644
  struct perfstatcol;
  struct perfstatrow;
  
-@@ -707,3 +712,102 @@ void M_DrawPerfStats(void)
+@@ -707,3 +712,134 @@ void M_DrawPerfStats(void)
  		}
  	}
  }
@@ -534,12 +894,18 @@ index 705b60eab..dc517cc0c 100644
 +#ifdef _UWP
 +#define UWP_PERF_INTERVAL 5 // seconds between summaries
 +
++precise_t ps_uwp_screentime, ps_uwp_twodeetime, ps_uwp_upscaletime, ps_uwp_imguitime, ps_uwp_cleanuptime,
++	ps_uwp_presenttime, ps_uwp_finishtime, ps_uwp_nextframetime;
++int ps_uwp_draws, ps_uwp_texturescreated, ps_uwp_textureuploads, ps_uwp_framebufferscreated, ps_uwp_atlasresets;
++
 +static struct
 +{
 +	precise_t start;
 +	int loops, frames, worldframes, tics;
 +	precise_t work, worstwork;
 +	precise_t render, bsp, spriteclip, portals, planes, masked, ui, swap;
++	precise_t screen, twodee, upscale, imgui, cleanup, present, finish, nextframe;
++	int draws, texturescreated, textureuploads, framebufferscreated, atlasresets;
 +	precise_t tic, playerthink, thinkers, lua, acs, bots;
 +} uwp_perf;
 +
@@ -568,6 +934,24 @@ index 705b60eab..dc517cc0c 100644
 +	uwp_perf.work += worktime;
 +	if (worktime > uwp_perf.worstwork)
 +		uwp_perf.worstwork = worktime;
++
++	// Includes the updates of loading screens and wipes, which happen outside of D_Display
++	uwp_perf.screen += ps_uwp_screentime;
++	uwp_perf.twodee += ps_uwp_twodeetime;
++	uwp_perf.upscale += ps_uwp_upscaletime;
++	uwp_perf.imgui += ps_uwp_imguitime;
++	uwp_perf.cleanup += ps_uwp_cleanuptime;
++	uwp_perf.present += ps_uwp_presenttime;
++	uwp_perf.finish += ps_uwp_finishtime;
++	uwp_perf.nextframe += ps_uwp_nextframetime;
++	uwp_perf.draws += ps_uwp_draws;
++	uwp_perf.texturescreated += ps_uwp_texturescreated;
++	uwp_perf.textureuploads += ps_uwp_textureuploads;
++	uwp_perf.framebufferscreated += ps_uwp_framebufferscreated;
++	uwp_perf.atlasresets += ps_uwp_atlasresets;
++	ps_uwp_screentime = ps_uwp_twodeetime = ps_uwp_upscaletime = ps_uwp_imguitime = ps_uwp_cleanuptime = 0;
++	ps_uwp_presenttime = ps_uwp_finishtime = ps_uwp_nextframetime = 0;
++	ps_uwp_draws = ps_uwp_texturescreated = ps_uwp_textureuploads = ps_uwp_framebufferscreated = ps_uwp_atlasresets = 0;
 +
 +	if (displayed)
 +	{
@@ -612,8 +996,16 @@ index 705b60eab..dc517cc0c 100644
 +
 +	if (uwp_perf.frames)
 +	{
-+		I_OutputMsg("UWP perf:   UI %.1f ms, finish update %.1f ms per frame\n",
-+			uwp_perf.ui * ms / uwp_perf.frames, uwp_perf.swap * ms / uwp_perf.frames);
++		const int n = uwp_perf.frames;
++
++		I_OutputMsg("UWP perf:   UI %.1f ms, software screen %.1f ms, finish update %.1f ms per frame\n",
++			uwp_perf.ui * ms / n, uwp_perf.screen * ms / n, uwp_perf.swap * ms / n);
++		I_OutputMsg("UWP perf:   finish update: 2D %.1f, upscale %.1f, ImGui %.1f, cleanup %.1f, present %.1f, finish %.1f, next frame %.1f ms\n",
++			uwp_perf.twodee * ms / n, uwp_perf.upscale * ms / n, uwp_perf.imgui * ms / n, uwp_perf.cleanup * ms / n,
++			uwp_perf.present * ms / n, uwp_perf.finish * ms / n, uwp_perf.nextframe * ms / n);
++		I_OutputMsg("UWP perf:   %.1f draws, %.1f textures created, %.1f texture uploads, %.1f framebuffers created per frame; %d patch atlas resets\n",
++			(double)uwp_perf.draws / n, (double)uwp_perf.texturescreated / n, (double)uwp_perf.textureuploads / n,
++			(double)uwp_perf.framebufferscreated / n, uwp_perf.atlasresets);
 +	}
 +
 +	if (uwp_perf.tics)
@@ -630,10 +1022,10 @@ index 705b60eab..dc517cc0c 100644
 +}
 +#endif
 diff --git a/src/m_perfstats.h b/src/m_perfstats.h
-index f92b1d8e0..6046ab84e 100644
+index f92b1d8e0..4e4f82a8f 100644
 --- a/src/m_perfstats.h
 +++ b/src/m_perfstats.h
-@@ -70,6 +70,12 @@ void PS_ResetBotInfo(void);
+@@ -70,6 +70,17 @@ void PS_ResetBotInfo(void);
  
  void M_DrawPerfStats(void);
  
@@ -641,13 +1033,18 @@ index f92b1d8e0..6046ab84e 100644
 +// [UWP]: The perfstats overlay is hard to read on Xbox, so these summarize the same timings in the log every few seconds
 +void PS_UWPAddTic(void); // after each game tic
 +void PS_UWPAddLoop(precise_t worktime, boolean displayed); // after each main loop iteration, with its time before sleeping
++
++// Timed by D_Display and I_FinishUpdate, and counted by the hardware renderer, for the summaries
++extern precise_t ps_uwp_screentime, ps_uwp_twodeetime, ps_uwp_upscaletime, ps_uwp_imguitime, ps_uwp_cleanuptime,
++	ps_uwp_presenttime, ps_uwp_finishtime, ps_uwp_nextframetime;
++extern int ps_uwp_draws, ps_uwp_texturescreated, ps_uwp_textureuploads, ps_uwp_framebufferscreated, ps_uwp_atlasresets;
 +#endif
 +
  #ifdef __cplusplus
  } // extern "C"
  #endif
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
-index cf35eebb5..b6de6e4c5 100644
+index cf35eebb5..05d63bade 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
 +++ b/src/rhi/gl2/gl2_rhi.cpp
 @@ -10,6 +10,7 @@
@@ -658,18 +1055,32 @@ index cf35eebb5..b6de6e4c5 100644
  #include <memory>
  #include <string>
  #include <string_view>
-@@ -23,6 +24,10 @@
+@@ -23,6 +24,12 @@
  #include "../../core/vector.hpp"
  #include "../shader_load_context.hpp"
  
 +#ifdef _UWP
 +extern "C" void I_OutputMsg(const char *fmt, ...);
++// [UWP]: Counted for the performance summary in the log (m_perfstats.c)
++extern "C" int ps_uwp_draws, ps_uwp_texturescreated, ps_uwp_textureuploads, ps_uwp_framebufferscreated;
 +#endif
 +
  using namespace srb2;
  using namespace rhi;
  
-@@ -606,6 +611,37 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) :
+@@ -598,6 +605,11 @@ constexpr GLenum map_stencil_op(rhi::StencilOp op)
+ 	}
+ }
+ 
++bool same_rect(const rhi::Rect& a, const rhi::Rect& b)
++{
++	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
++}
++
+ } // namespace
+ 
+ Gl2Platform::~Gl2Platform() = default;
+@@ -606,6 +618,92 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) :
  {
  	gl_ = std::make_unique<GladGLContext>();
  	gladLoadGLContext(gl_.get(), load_func);
@@ -704,10 +1115,65 @@ index cf35eebb5..b6de6e4c5 100644
 +	{
 +		gl_->ClearDepth(depth);
 +	}
++}
++
++Gl2UniformLocation& Gl2Rhi::find_uniform(Gl2Program& program, const char* name)
++{
++	for (auto& uniform : program.uniform_cache)
++	{
++		if (std::strcmp(uniform.name.c_str(), name) == 0)
++		{
++			return uniform;
++		}
++	}
++
++	GLint location = gl_->GetUniformLocation(program.program, name);
++	GL_ASSERT;
++	program.uniform_cache.push_back({srb2::String(name), location, std::nullopt});
++	return program.uniform_cache.back();
++}
++
++void Gl2Rhi::bind_texture(uint32_t slot, uint32_t texture)
++{
++	const bool tracked = slot < bound_textures_.size();
++	if (tracked && bound_textures_[slot] == texture)
++	{
++		return;
++	}
++
++	if (slot != 0)
++	{
++		gl_->ActiveTexture(GL_TEXTURE0 + slot);
++		GL_ASSERT;
++	}
++	gl_->BindTexture(GL_TEXTURE_2D, texture);
++	GL_ASSERT;
++	if (slot != 0)
++	{
++		gl_->ActiveTexture(GL_TEXTURE0);
++		GL_ASSERT;
++	}
++	if (tracked)
++	{
++		bound_textures_[slot] = texture;
++	}
++}
++
++void Gl2Rhi::bind_buffer(uint32_t target, uint32_t buffer)
++{
++	uint32_t& bound = target == GL_ELEMENT_ARRAY_BUFFER ? bound_index_buffer_ : bound_array_buffer_;
++	if (bound == buffer)
++	{
++		return;
++	}
++
++	gl_->BindBuffer(target, buffer);
++	GL_ASSERT;
++	bound = buffer;
  }
  
  Gl2Rhi::~Gl2Rhi() = default;
-@@ -615,6 +651,12 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
+@@ -615,11 +713,20 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
  	GLenum internal_format = map_internal_texture_format(desc.format);
  	SRB2_ASSERT(internal_format != GL_ZERO);
  	GLenum format = GL_RGBA;
@@ -720,7 +1186,141 @@ index cf35eebb5..b6de6e4c5 100644
  
  	GLuint name = 0;
  	gl_->GenTextures(1, &name);
-@@ -833,6 +875,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
++#ifdef _UWP
++	ps_uwp_texturescreated++;
++#endif
+ 
+-	gl_->BindTexture(GL_TEXTURE_2D, name);
++	bind_texture(0, name);
+ 
+ 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, map_texture_filter(desc.min));
+ 	GL_ASSERT;
+@@ -641,10 +748,36 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
+ void Gl2Rhi::destroy_texture(rhi::Handle<rhi::Texture> handle)
+ {
+ 	SRB2_ASSERT(texture_slab_.is_valid(handle) == true);
++
++	// Framebuffers are kept between frames, so delete the ones drawing to this texture
++	for (auto itr = framebuffers_.begin(); itr != framebuffers_.end();)
++	{
++		if (itr->first.color == handle)
++		{
++			GLuint fb_name = itr->second;
++			gl_->DeleteFramebuffers(1, &fb_name);
++			GL_ASSERT;
++			itr = framebuffers_.erase(itr);
++		}
++		else
++		{
++			++itr;
++		}
++	}
++
+ 	Gl2Texture casted = texture_slab_.remove(handle);
+ 	GLuint name = casted.texture;
+ 	gl_->DeleteTextures(1, &name);
+ 	GL_ASSERT;
++
++	// Deleting a texture unbinds it
++	for (auto& bound : bound_textures_)
++	{
++		if (bound == name)
++		{
++			bound = 0;
++		}
++	}
+ }
+ 
+ void Gl2Rhi::update_texture(
+@@ -677,10 +810,10 @@ void Gl2Rhi::update_texture(
+ 	SRB2_ASSERT(expected_row_span * region.h == data.size_bytes());
+ 	SRB2_ASSERT(region.x + region.w <= t.desc.width && region.y + region.h <= t.desc.height);
+ 
+-	gl_->ActiveTexture(GL_TEXTURE0);
+-	GL_ASSERT;
+-	gl_->BindTexture(GL_TEXTURE_2D, t.texture);
+-	GL_ASSERT;
++#ifdef _UWP
++	ps_uwp_textureuploads++;
++#endif
++	bind_texture(0, t.texture);
+ 	gl_->TexSubImage2D(
+ 		GL_TEXTURE_2D,
+ 		0,
+@@ -706,10 +839,7 @@ void Gl2Rhi::update_texture_settings(
+ 	SRB2_ASSERT(texture_slab_.is_valid(texture) == true);
+ 	auto& t = texture_slab_[texture];
+ 
+-	gl_->ActiveTexture(GL_TEXTURE0);
+-	GL_ASSERT;
+-	gl_->BindTexture(GL_TEXTURE_2D, t.texture);
+-	GL_ASSERT;
++	bind_texture(0, t.texture);
+ 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, map_texture_wrap(u_wrap));
+ 	GL_ASSERT;
+ 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, map_texture_wrap(v_wrap));
+@@ -732,8 +862,7 @@ rhi::Handle<rhi::Buffer> Gl2Rhi::create_buffer(const rhi::BufferDesc& desc)
+ 	gl_->GenBuffers(1, &name);
+ 	GL_ASSERT;
+ 
+-	gl_->BindBuffer(target, name);
+-	GL_ASSERT;
++	bind_buffer(target, name);
+ 
+ 	gl_->BufferData(target, desc.size, nullptr, usage);
+ 	GL_ASSERT;
+@@ -752,6 +881,16 @@ void Gl2Rhi::destroy_buffer(rhi::Handle<rhi::Buffer> handle)
+ 
+ 	gl_->DeleteBuffers(1, &name);
+ 	GL_ASSERT;
++
++	// Deleting a buffer unbinds it
++	if (bound_array_buffer_ == name)
++	{
++		bound_array_buffer_ = 0;
++	}
++	if (bound_index_buffer_ == name)
++	{
++		bound_index_buffer_ = 0;
++	}
+ }
+ 
+ void Gl2Rhi::update_buffer(
+@@ -781,8 +920,7 @@ void Gl2Rhi::update_buffer(
+ 		break;
+ 	}
+ 
+-	gl_->BindBuffer(target, b.buffer);
+-	GL_ASSERT;
++	bind_buffer(target, b.buffer);
+ 	gl_->BufferSubData(target, offset, data.size(), data.data());
+ 	GL_ASSERT;
+ }
+@@ -822,6 +960,23 @@ rhi::Handle<rhi::Renderbuffer> Gl2Rhi::create_renderbuffer(const rhi::Renderbuff
+ void Gl2Rhi::destroy_renderbuffer(rhi::Handle<rhi::Renderbuffer> handle)
+ {
+ 	SRB2_ASSERT(renderbuffer_slab_.is_valid(handle) == true);
++
++	// Framebuffers are kept between frames, so delete the ones using this depth-stencil buffer
++	for (auto itr = framebuffers_.begin(); itr != framebuffers_.end();)
++	{
++		if (itr->first.depth_stencil == handle)
++		{
++			GLuint fb_name = itr->second;
++			gl_->DeleteFramebuffers(1, &fb_name);
++			GL_ASSERT;
++			itr = framebuffers_.erase(itr);
++		}
++		else
++		{
++			++itr;
++		}
++	}
++
+ 	Gl2Renderbuffer casted = renderbuffer_slab_.remove(handle);
+ 	GLuint name = casted.renderbuffer;
+ 	gl_->DeleteRenderbuffers(1, &name);
+@@ -833,6 +988,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  	SRB2_ASSERT(platform_ != nullptr);
  	Gl2Program program;
  
@@ -730,7 +1330,7 @@ index cf35eebb5..b6de6e4c5 100644
  	auto [vert_srcs, frag_srcs] = platform_->find_shader_sources(desc.name);
  
  	// GL 2 note:
-@@ -844,8 +889,8 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -844,8 +1002,8 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  	srb2::Vector<const char*> frag_sources;
  	ShaderLoadContext vert_ctx;
  	ShaderLoadContext frag_ctx;
@@ -741,7 +1341,7 @@ index cf35eebb5..b6de6e4c5 100644
  	for (auto def : desc.defines)
  	{
  		vert_ctx.define(def);
-@@ -915,6 +960,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -915,6 +1073,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  		gl_->DeleteShader(program.vertex_shader);
  		throw std::runtime_error(fmt::format("Pipeline program link failed: {}", String(link_error.data())));
  	}
@@ -751,7 +1351,18 @@ index cf35eebb5..b6de6e4c5 100644
  
  	// get attribute information
  	GLint active_attribute_total = -1;
-@@ -999,7 +1047,7 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
+@@ -993,13 +1154,18 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
+ 	GL_ASSERT;
+ 	gl_->Disable(GL_SCISSOR_TEST);
+ 	GL_ASSERT;
++	if (rasterizer_state_)
++	{
++		rasterizer_state_->scissor_test = false;
++	}
+ 	gl_->Viewport(0, 0, fb_rect.w, fb_rect.h);
+ 	GL_ASSERT;
++	viewport_ = Rect {0, 0, fb_rect.w, fb_rect.h};
+ 
  	if (clear)
  	{
  		gl_->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -760,7 +1371,17 @@ index cf35eebb5..b6de6e4c5 100644
  		gl_->ClearStencil(0);
  		gl_->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
  		GL_ASSERT;
-@@ -1054,7 +1102,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
+@@ -1015,6 +1181,9 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
+ 		GLuint fb_name;
+ 		gl_->GenFramebuffers(1, &fb_name);
+ 		GL_ASSERT;
++#ifdef _UWP
++		ps_uwp_framebufferscreated++;
++#endif
+ 		gl_->BindFramebuffer(GL_FRAMEBUFFER, fb_name);
+ 		GL_ASSERT;
+ 		fb_itr = framebuffers_.insert({
+@@ -1054,7 +1223,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
  
  	if (info.depth_load_op == rhi::AttachmentLoadOp::kClear)
  	{
@@ -769,7 +1390,489 @@ index cf35eebb5..b6de6e4c5 100644
  		clear_bits |= GL_DEPTH_BUFFER_BIT;
  	}
  	if (info.stencil_load_op == rhi::AttachmentLoadOp::kClear)
-@@ -1504,9 +1552,28 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
+@@ -1116,13 +1285,15 @@ void Gl2Rhi::bind_program(Handle<Program> program)
+ 
+ 	gl_->UseProgram(prog.program);
+ 	current_program_ = program;
+-	GLint max_attribs;
+-	gl_->GetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_attribs);
+-	GL_ASSERT;
+-	for (GLint i = 0; i < max_attribs; i++)
++	// Only bind_vertex_attrib enables attribute arrays
++	for (GLuint i = 0; enabled_attribs_ != 0; i++)
+ 	{
+-		gl_->DisableVertexAttribArray(i);
+-		GL_ASSERT;
++		if (enabled_attribs_ & (1u << i))
++		{
++			gl_->DisableVertexAttribArray(i);
++			GL_ASSERT;
++			enabled_attribs_ &= ~(1u << i);
++		}
+ 	}
+ }
+ 
+@@ -1143,11 +1314,14 @@ void Gl2Rhi::bind_vertex_attrib(const char* name, Handle<Buffer> buffer, VertexA
+ 
+ 	GLint location = gl_->GetAttribLocation(prog.program, name);
+ 	GL_ASSERT;
+-	SRB2_ASSERT(location >= 0);
+-	gl_->BindBuffer(GL_ARRAY_BUFFER, cast_buffer.buffer);
+-	GL_ASSERT;
++	SRB2_ASSERT(location >= 0 && location < 32);
++	bind_buffer(GL_ARRAY_BUFFER, cast_buffer.buffer);
+ 	gl_->EnableVertexAttribArray(location);
+ 	GL_ASSERT;
++	if (location >= 0 && location < 32)
++	{
++		enabled_attribs_ |= 1u << location;
++	}
+ 	gl_->VertexAttribPointer(
+ 		location,
+ 		vertex_attr_size,
+@@ -1170,15 +1344,14 @@ void Gl2Rhi::bind_index_buffer(Handle<Buffer> buffer)
+ 
+ 	current_index_buffer_ = buffer;
+ 
+-	gl_->BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib.buffer);
+-	GL_ASSERT;
++	bind_buffer(GL_ELEMENT_ARRAY_BUFFER, ib.buffer);
+ }
+ 
+ void Gl2Rhi::set_uniform(const char* name, float value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform1f(location, value);
+@@ -1189,18 +1362,18 @@ void Gl2Rhi::set_uniform(const char* name, int value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
+-	GL_ASSERT;
+-	SRB2_ASSERT(location >= 0);
+-	gl_->Uniform1i(location, value);
++	Gl2UniformLocation& uniform = find_uniform(cast, name);
++	SRB2_ASSERT(uniform.location >= 0);
++	gl_->Uniform1i(uniform.location, value);
+ 	GL_ASSERT;
++	uniform.int_value = value;
+ }
+ 
+ void Gl2Rhi::set_uniform(const char* name, glm::vec2 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform2f(location, value.x, value.y);
+@@ -1211,7 +1384,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec3 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform3f(location, value.x, value.y, value.z);
+@@ -1222,7 +1395,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec4 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform4f(location, value.x, value.y, value.z, value.w);
+@@ -1233,7 +1406,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec2 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform2i(location, value.x, value.y);
+@@ -1244,7 +1417,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec3 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform3i(location, value.x, value.y, value.z);
+@@ -1255,7 +1428,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec4 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->Uniform4i(location, value.x, value.y, value.z, value.w);
+@@ -1266,7 +1439,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat2 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->UniformMatrix2fv(location, 1, false, glm::value_ptr(value));
+@@ -1277,7 +1450,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat3 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->UniformMatrix3fv(location, 1, false, glm::value_ptr(value));
+@@ -1288,7 +1461,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat4 value)
+ {
+ 	SRB2_ASSERT(current_program_.has_value());
+ 	Gl2Program& cast = program_slab_[*current_program_];
+-	GLint location = gl_->GetUniformLocation(cast.program, name);
++	GLint location = find_uniform(cast, name).location;
+ 	GL_ASSERT;
+ 	SRB2_ASSERT(location >= 0);
+ 	gl_->UniformMatrix4fv(location, 1, false, glm::value_ptr(value));
+@@ -1303,83 +1476,123 @@ void Gl2Rhi::set_sampler(const char* name, uint32_t slot, Handle<Texture> textur
+ 	Gl2Program& prog = program_slab_[*current_program_];
+ 	SRB2_ASSERT(texture_slab_.is_valid(texture));
+ 	Gl2Texture& tex = texture_slab_[texture];
+-	GLint location = gl_->GetUniformLocation(prog.program, name);
+-	GL_ASSERT;
+-	SRB2_ASSERT(location >= 0);
+-	GLenum active_texture = GL_TEXTURE0 + slot;
+-	GLuint uniform_value = slot;
+-	gl_->ActiveTexture(active_texture);
+-	GL_ASSERT;
+-	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
+-	GL_ASSERT;
+-	gl_->Uniform1i(location, uniform_value);
+-	GL_ASSERT;
+-	gl_->ActiveTexture(GL_TEXTURE0);
+-	GL_ASSERT;
++	Gl2UniformLocation& uniform = find_uniform(prog, name);
++	SRB2_ASSERT(uniform.location >= 0);
++	bind_texture(slot, tex.texture);
++	// Sampler uniforms keep their value in the program, and usually get the same slot every time
++	if (uniform.int_value != static_cast<int32_t>(slot))
++	{
++		gl_->Uniform1i(uniform.location, slot);
++		GL_ASSERT;
++		uniform.int_value = slot;
++	}
+ }
+ 
+ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
+ {
+ 	current_primitive_type_ = desc.primitive;
+-	if (desc.cull == CullMode::kNone)
++
++	// Only change the GL state that differs from the last rasterizer state, unless something else changed it since
++	const std::optional<RasterizerStateDesc>& last = rasterizer_state_;
++
++	if (!last || last->cull != desc.cull)
+ 	{
+-		gl_->Disable(GL_CULL_FACE);
++		if (desc.cull == CullMode::kNone)
++		{
++			gl_->Disable(GL_CULL_FACE);
++		}
++		else
++		{
++			gl_->Enable(GL_CULL_FACE);
++			gl_->CullFace(map_cull_mode(desc.cull));
++		}
+ 	}
+-	else
++	if (!last || last->color_mask.r != desc.color_mask.r || last->color_mask.g != desc.color_mask.g
++		|| last->color_mask.b != desc.color_mask.b || last->color_mask.a != desc.color_mask.a)
+ 	{
+-		gl_->Enable(GL_CULL_FACE);
+-		gl_->CullFace(map_cull_mode(desc.cull));
++		gl_->ColorMask(desc.color_mask.r, desc.color_mask.g, desc.color_mask.b, desc.color_mask.a);
++		GL_ASSERT;
+ 	}
+-	gl_->ColorMask(desc.color_mask.r, desc.color_mask.g, desc.color_mask.b, desc.color_mask.a);
+-
+-	GL_ASSERT;
+-	gl_->FrontFace(map_winding(desc.winding));
+-	GL_ASSERT;
+-	if (desc.blend_enabled)
++	if (!last || last->winding != desc.winding)
+ 	{
+-		gl_->Enable(GL_BLEND);
++		gl_->FrontFace(map_winding(desc.winding));
++		GL_ASSERT;
+ 	}
+-	else
++	if (!last || last->blend_enabled != desc.blend_enabled)
+ 	{
+-		gl_->Disable(GL_BLEND);
++		if (desc.blend_enabled)
++		{
++			gl_->Enable(GL_BLEND);
++		}
++		else
++		{
++			gl_->Disable(GL_BLEND);
++		}
++		GL_ASSERT;
+ 	}
+-	GL_ASSERT;
+-	gl_->BlendFuncSeparate(
+-		map_blend_factor(desc.blend_source_factor_color),
+-		map_blend_factor(desc.blend_dest_factor_color),
+-		map_blend_factor(desc.blend_source_factor_alpha),
+-		map_blend_factor(desc.blend_dest_factor_alpha)
+-	);
+-	GL_ASSERT;
+-	gl_->BlendEquationSeparate(
+-		map_blend_function(desc.blend_color_function),
+-		map_blend_function(desc.blend_alpha_function)
+-	);
+-	GL_ASSERT;
+-	gl_->BlendColor(desc.blend_color.r, desc.blend_color.g, desc.blend_color.b, desc.blend_color.a);
+-	GL_ASSERT;
+-	if (desc.depth_test)
++	if (!last || last->blend_source_factor_color != desc.blend_source_factor_color
++		|| last->blend_dest_factor_color != desc.blend_dest_factor_color
++		|| last->blend_source_factor_alpha != desc.blend_source_factor_alpha
++		|| last->blend_dest_factor_alpha != desc.blend_dest_factor_alpha)
+ 	{
+-		gl_->Enable(GL_DEPTH_TEST);
++		gl_->BlendFuncSeparate(
++			map_blend_factor(desc.blend_source_factor_color),
++			map_blend_factor(desc.blend_dest_factor_color),
++			map_blend_factor(desc.blend_source_factor_alpha),
++			map_blend_factor(desc.blend_dest_factor_alpha)
++		);
++		GL_ASSERT;
+ 	}
+-	else
++	if (!last || last->blend_color_function != desc.blend_color_function
++		|| last->blend_alpha_function != desc.blend_alpha_function)
+ 	{
+-		gl_->Disable(GL_DEPTH_TEST);
++		gl_->BlendEquationSeparate(
++			map_blend_function(desc.blend_color_function),
++			map_blend_function(desc.blend_alpha_function)
++		);
++		GL_ASSERT;
+ 	}
+-	GL_ASSERT;
+-	gl_->DepthMask(desc.depth_write);
+-	GL_ASSERT;
+-	gl_->DepthFunc(map_compare_func(desc.depth_func));
+-	GL_ASSERT;
+-	if (desc.stencil_test)
++	if (!last || last->blend_color != desc.blend_color)
+ 	{
+-		gl_->Enable(GL_STENCIL_TEST);
++		gl_->BlendColor(desc.blend_color.r, desc.blend_color.g, desc.blend_color.b, desc.blend_color.a);
++		GL_ASSERT;
+ 	}
+-	else
++	if (!last || last->depth_test != desc.depth_test)
+ 	{
+-		gl_->Disable(GL_STENCIL_TEST);
++		if (desc.depth_test)
++		{
++			gl_->Enable(GL_DEPTH_TEST);
++		}
++		else
++		{
++			gl_->Disable(GL_DEPTH_TEST);
++		}
++		GL_ASSERT;
+ 	}
+-	GL_ASSERT;
++	if (!last || last->depth_write != desc.depth_write)
++	{
++		gl_->DepthMask(desc.depth_write);
++		GL_ASSERT;
++	}
++	if (!last || last->depth_func != desc.depth_func)
++	{
++		gl_->DepthFunc(map_compare_func(desc.depth_func));
++		GL_ASSERT;
++	}
++	if (!last || last->stencil_test != desc.stencil_test)
++	{
++		if (desc.stencil_test)
++		{
++			gl_->Enable(GL_STENCIL_TEST);
++		}
++		else
++		{
++			gl_->Disable(GL_STENCIL_TEST);
++		}
++		GL_ASSERT;
++	}
++	// Each rasterizer state resets the stencil reference and masks. The set_stencil functions clear
++	// rasterizer_state_, so if it's set, GL already has these values.
+ 	stencil_front_reference_ = 0;
+ 	stencil_back_reference_ = 0;
+ 	stencil_front_compare_mask_ = 0xFF;
+@@ -1388,58 +1601,88 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
+ 	stencil_back_write_mask_ = 0xFF;
+ 	stencil_front_func_ = desc.front_stencil_compare;
+ 	stencil_back_func_ = desc.back_stencil_compare;
+-	gl_->StencilFuncSeparate(
+-		GL_FRONT,
+-		map_compare_func(stencil_front_func_),
+-		stencil_front_reference_,
+-		stencil_front_compare_mask_
+-	);
+-	GL_ASSERT;
+-	gl_->StencilFuncSeparate(
+-		GL_BACK,
+-		map_compare_func(stencil_back_func_),
+-		stencil_back_reference_,
+-		stencil_back_compare_mask_
+-	);
+-	GL_ASSERT;
+-	gl_->StencilMaskSeparate(GL_FRONT, stencil_front_write_mask_);
+-	GL_ASSERT;
+-	gl_->StencilMaskSeparate(GL_BACK, stencil_back_write_mask_);
+-	GL_ASSERT;
+-
+-	gl_->StencilOpSeparate(
+-		GL_FRONT,
+-		map_stencil_op(desc.front_fail),
+-		map_stencil_op(desc.front_depth_fail),
+-		map_stencil_op(desc.front_pass)
+-	);
+-	GL_ASSERT;
+-	gl_->StencilOpSeparate(
+-		GL_BACK,
+-		map_stencil_op(desc.back_fail),
+-		map_stencil_op(desc.back_depth_fail),
+-		map_stencil_op(desc.back_pass)
+-	);
+-	GL_ASSERT;
+-	if (desc.scissor_test)
++	if (!last || last->front_stencil_compare != desc.front_stencil_compare)
+ 	{
+-		gl_->Enable(GL_SCISSOR_TEST);
++		gl_->StencilFuncSeparate(
++			GL_FRONT,
++			map_compare_func(stencil_front_func_),
++			stencil_front_reference_,
++			stencil_front_compare_mask_
++		);
+ 		GL_ASSERT;
+ 	}
+-	else
++	if (!last || last->back_stencil_compare != desc.back_stencil_compare)
++	{
++		gl_->StencilFuncSeparate(
++			GL_BACK,
++			map_compare_func(stencil_back_func_),
++			stencil_back_reference_,
++			stencil_back_compare_mask_
++		);
++		GL_ASSERT;
++	}
++	if (!last)
+ 	{
+-		gl_->Disable(GL_SCISSOR_TEST);
++		gl_->StencilMaskSeparate(GL_FRONT, stencil_front_write_mask_);
++		GL_ASSERT;
++		gl_->StencilMaskSeparate(GL_BACK, stencil_back_write_mask_);
++		GL_ASSERT;
+ 	}
+-	gl_->Scissor(desc.scissor.x, desc.scissor.y, desc.scissor.w, desc.scissor.h);
+-	GL_ASSERT;
++	if (!last || last->front_fail != desc.front_fail || last->front_depth_fail != desc.front_depth_fail
++		|| last->front_pass != desc.front_pass)
++	{
++		gl_->StencilOpSeparate(
++			GL_FRONT,
++			map_stencil_op(desc.front_fail),
++			map_stencil_op(desc.front_depth_fail),
++			map_stencil_op(desc.front_pass)
++		);
++		GL_ASSERT;
++	}
++	if (!last || last->back_fail != desc.back_fail || last->back_depth_fail != desc.back_depth_fail
++		|| last->back_pass != desc.back_pass)
++	{
++		gl_->StencilOpSeparate(
++			GL_BACK,
++			map_stencil_op(desc.back_fail),
++			map_stencil_op(desc.back_depth_fail),
++			map_stencil_op(desc.back_pass)
++		);
++		GL_ASSERT;
++	}
++	if (!last || last->scissor_test != desc.scissor_test)
++	{
++		if (desc.scissor_test)
++		{
++			gl_->Enable(GL_SCISSOR_TEST);
++			GL_ASSERT;
++		}
++		else
++		{
++			gl_->Disable(GL_SCISSOR_TEST);
++		}
++	}
++	if (!last || !same_rect(last->scissor, desc.scissor))
++	{
++		gl_->Scissor(desc.scissor.x, desc.scissor.y, desc.scissor.w, desc.scissor.h);
++		GL_ASSERT;
++	}
++
++	rasterizer_state_ = desc;
+ }
+ 
+ void Gl2Rhi::set_viewport(const Rect& rect)
+ {
+ 	SRB2_ASSERT(render_pass_stack_.empty() == false);
+ 
++	if (viewport_ && same_rect(*viewport_, rect))
++	{
++		return;
++	}
++
+ 	gl_->Viewport(rect.x, rect.y, rect.w, rect.h);
+ 	GL_ASSERT;
++	viewport_ = rect;
+ }
+ 
+ void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
+@@ -1448,6 +1691,9 @@ void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
+ 
+ 	gl_->DrawArrays(map_primitive_mode(current_primitive_type_), first_vertex, vertex_count);
+ 	GL_ASSERT;
++#ifdef _UWP
++	ps_uwp_draws++;
++#endif
+ }
+ 
+ void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
+@@ -1467,6 +1713,9 @@ void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
+ 		(const void*)((size_t)first_index * 2 + index_buffer_offset_)
+ 	);
+ 	GL_ASSERT;
++#ifdef _UWP
++	ps_uwp_draws++;
++#endif
+ }
+ 
+ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::byte> out)
+@@ -1504,9 +1753,28 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
  	SRB2_ASSERT(rect.x + rect.w <= src_dim.w);
  	SRB2_ASSERT(rect.y + rect.h <= src_dim.h);
  
@@ -801,7 +1904,53 @@ index cf35eebb5..b6de6e4c5 100644
  
  	gl_->ReadPixels(rect.x, rect.y, rect.w, rect.h, layout, type, out.data());
  	GL_ASSERT;
-@@ -1667,9 +1734,12 @@ void Gl2Rhi::copy_framebuffer_to_texture(
+@@ -1517,6 +1785,9 @@ void Gl2Rhi::set_stencil_reference(CullMode face, uint8_t reference)
+ 	SRB2_ASSERT(face != CullMode::kNone);
+ 	SRB2_ASSERT(render_pass_stack_.empty() == false);
+ 
++	// The next rasterizer state has to reset the stencil state
++	rasterizer_state_.reset();
++
+ 	if (face == CullMode::kFront)
+ 	{
+ 		stencil_front_reference_ = reference;
+@@ -1544,6 +1815,9 @@ void Gl2Rhi::set_stencil_compare_mask(CullMode face, uint8_t compare_mask)
+ 	SRB2_ASSERT(face != CullMode::kNone);
+ 	SRB2_ASSERT(render_pass_stack_.empty() == false);
+ 
++	// The next rasterizer state has to reset the stencil state
++	rasterizer_state_.reset();
++
+ 	if (face == CullMode::kFront)
+ 	{
+ 		stencil_front_compare_mask_ = compare_mask;
+@@ -1571,6 +1845,9 @@ void Gl2Rhi::set_stencil_write_mask(CullMode face, uint8_t write_mask)
+ 	SRB2_ASSERT(face != CullMode::kNone);
+ 	SRB2_ASSERT(render_pass_stack_.empty() == false);
+ 
++	// The next rasterizer state has to reset the stencil state
++	rasterizer_state_.reset();
++
+ 	if (face == CullMode::kFront)
+ 	{
+ 		stencil_front_write_mask_ = write_mask;
+@@ -1620,13 +1897,8 @@ uint32_t Gl2Rhi::get_buffer_size(Handle<Buffer> buffer)
+ 
+ void Gl2Rhi::finish()
+ {
+-	// I sure hope creating FBOs isn't costly on the driver!
+-	for (auto& fbset : framebuffers_)
+-	{
+-		gl_->DeleteFramebuffers(1, (GLuint*)&fbset.second);
+-		GL_ASSERT;
+-	}
+-	framebuffers_.clear();
++	// Framebuffers are kept between frames, since recreating them every frame is costly through ANGLE.
++	// destroy_texture and destroy_renderbuffer delete the ones using them.
+ }
+ 
+ void Gl2Rhi::copy_framebuffer_to_texture(
+@@ -1667,12 +1939,14 @@ void Gl2Rhi::copy_framebuffer_to_texture(
  	SRB2_ASSERT(src_region.x + src_region.w <= src_dim.w);
  	SRB2_ASSERT(src_region.y + src_region.h <= src_dim.h);
  
@@ -815,13 +1964,49 @@ index cf35eebb5..b6de6e4c5 100644
 +		GL_ASSERT;
 +	}
  
- 	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
+-	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
+-	GL_ASSERT;
++	bind_texture(0, tex.texture);
+ 	gl_->CopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_region.x, dst_region.y, src_region.x, src_region.y, dst_region.w, dst_region.h);
  	GL_ASSERT;
+ }
 diff --git a/src/rhi/gl2/gl2_rhi.hpp b/src/rhi/gl2/gl2_rhi.hpp
-index f8b62987b..0debae785 100644
+index f8b62987b..61da770e0 100644
 --- a/src/rhi/gl2/gl2_rhi.hpp
 +++ b/src/rhi/gl2/gl2_rhi.hpp
-@@ -114,6 +114,12 @@ class Gl2Rhi final : public Rhi
+@@ -11,6 +11,7 @@
+ #ifndef __SRB2_RHI_GL2_RHI_HPP__
+ #define __SRB2_RHI_GL2_RHI_HPP__
+ 
++#include <array>
+ #include <functional>
+ #include <memory>
+ #include <optional>
+@@ -93,6 +94,14 @@ struct Gl2Renderbuffer : public rhi::Renderbuffer
+ 	rhi::RenderbufferDesc desc;
+ };
+ 
++struct Gl2UniformLocation
++{
++	srb2::String name;
++	int32_t location;
++	// The last value given to the uniform with set_uniform(int) or set_sampler
++	std::optional<int32_t> int_value;
++};
++
+ struct Gl2Program : public rhi::Program
+ {
+ 	uint32_t vertex_shader = 0;
+@@ -100,6 +109,8 @@ struct Gl2Program : public rhi::Program
+ 	uint32_t program = 0;
+ 	srb2::HashMap<srb2::String, uint32_t> attrib_locations;
+ 	srb2::HashMap<srb2::String, uint32_t> uniform_locations;
++	// Uniform locations by name, searched without allocating
++	srb2::Vector<Gl2UniformLocation> uniform_cache;
+ };
+ 
+ struct Gl2ActiveUniform
+@@ -114,6 +125,12 @@ class Gl2Rhi final : public Rhi
  
  	std::unique_ptr<GladGLContext> gl_;
  
@@ -834,6 +2019,32 @@ index f8b62987b..0debae785 100644
  	Slab<Gl2Texture> texture_slab_;
  	Slab<Gl2Buffer> buffer_slab_;
  	Slab<Gl2Renderbuffer> renderbuffer_slab_;
+@@ -142,9 +159,25 @@ class Gl2Rhi final : public Rhi
+ 	CompareFunc stencil_front_func_;
+ 	CompareFunc stencil_back_func_;
+ 
++	// GL state set by this backend, so calls that wouldn't change it can be skipped. Each GL call is expensive
++	// through ANGLE, and the 2D renderer sets its whole state for every batch.
++	// The last rasterizer state set; empty when something else has changed that GL state
++	std::optional<RasterizerStateDesc> rasterizer_state_;
++	std::optional<Rect> viewport_;
++	// Textures bound to each texture unit. GL_TEXTURE0 is the active unit outside of set_sampler.
++	std::array<uint32_t, kMaxSamplers> bound_textures_ {};
++	uint32_t bound_array_buffer_ = 0;
++	uint32_t bound_index_buffer_ = 0;
++	// Vertex attribute arrays enabled since the last bind_program
++	uint32_t enabled_attribs_ = 0;
++
+ 	void apply_default_framebuffer(bool clear);
+ 	void apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear);
+ 
++	Gl2UniformLocation& find_uniform(Gl2Program& program, const char* name);
++	void bind_texture(uint32_t slot, uint32_t texture);
++	void bind_buffer(uint32_t target, uint32_t buffer);
++
+ public:
+ 	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);
+ 	virtual ~Gl2Rhi();
 diff --git a/src/screen.c b/src/screen.c
 index 67b8f13fb..8e22df0f2 100644
 --- a/src/screen.c
@@ -917,7 +2128,7 @@ index f2fa2fce9..73f659db8 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..329c12c17 100644
+index 827f493b1..d19185c89 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -930,7 +2141,7 @@ index 827f493b1..329c12c17 100644
  #define USE_DBGHELP
  #include <DbgHelp.h>
  #endif
-@@ -287,6 +288,73 @@ static void write_backtrace(INT32 signal)
+@@ -287,6 +288,75 @@ static void write_backtrace(INT32 signal)
  #undef CRASHLOG_STDERR_WRITE
  #endif // UNIXBACKTRACE
  
@@ -976,6 +2187,8 @@ index 827f493b1..329c12c17 100644
 +	}
 +}
 +
++precise_t i_uwplogtime = 0;
++
 +boolean I_UWPAskSkipAssetCheck(void)
 +{
 +	const SDL_MessageBoxButtonData buttons[] = {
@@ -1004,7 +2217,7 @@ index 827f493b1..329c12c17 100644
  static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
  {
  	static char finalmessage[2048];
-@@ -295,6 +363,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
+@@ -295,6 +365,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
  	if (M_CheckParm("-dedicated"))
  		return;
  
@@ -1034,7 +2247,29 @@ index 827f493b1..329c12c17 100644
  	snprintf(
  		finalmessage,
  		sizeof(finalmessage),
-@@ -2083,6 +2174,7 @@ static void Shittycopyerror(const char *name)
+@@ -1071,6 +1164,10 @@ void I_OutputMsg(const char *fmt, ...)
+ 	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
+ #endif
+ 
++#ifdef _UWP
++	const precise_t logstart = I_GetPreciseTime();
++#endif
++
+ #if defined (_WIN32) && defined (_MSC_VER)
+ 	OutputDebugStringA(txt);
+ #endif
+@@ -1086,6 +1183,10 @@ void I_OutputMsg(const char *fmt, ...)
+ 	}
+ #endif
+ 
++#ifdef _UWP
++	i_uwplogtime += I_GetPreciseTime() - logstart;
++#endif
++
+ #if defined (_WIN32)
+ #ifdef DEBUGFILE
+ 	if (debugfile != stderr)
+@@ -2083,6 +2184,7 @@ static void Shittycopyerror(const char *name)
  
  static void Shittylogcopy(void)
  {
@@ -1042,7 +2277,7 @@ index 827f493b1..329c12c17 100644
  	char buf[8192];
  	FILE *fp;
  	size_t r;
-@@ -2110,6 +2202,7 @@ static void Shittylogcopy(void)
+@@ -2110,6 +2212,7 @@ static void Shittylogcopy(void)
  	{
  		Shittycopyerror(logfilename);
  	}
@@ -1050,7 +2285,7 @@ index 827f493b1..329c12c17 100644
  }
  #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
  
-@@ -2374,6 +2467,10 @@ static const char *locateWad(void)
+@@ -2374,6 +2477,10 @@ static const char *locateWad(void)
  	const char *envstr;
  	const char *WadPath;
  
@@ -1268,7 +2503,7 @@ index f3f10fe90..c85cbe0b4 100644
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
-index 3c68b1378..de09c513d 100644
+index 3c68b1378..27efad60c 100644
 --- a/src/w_wad.cpp
 +++ b/src/w_wad.cpp
 @@ -114,6 +114,10 @@ static UINT16 lumpnumcacheindex = 0;
@@ -1282,7 +2517,18 @@ index 3c68b1378..de09c513d 100644
  static FILE *g_shaderspk3file;
  static UINT16 g_shaderspk3numlumps;
  static lumpinfo_t *g_shaderspk3lumps;
-@@ -864,6 +868,9 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -819,6 +823,10 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+ #endif
+ 	UINT8 md5sum[16];
+ 	int important;
++#ifdef _UWP
++	const precise_t uwploadstart = I_GetPreciseTime();
++	const precise_t uwplogstart = i_uwplogtime;
++#endif
+ 
+ 	if (!(refreshdirmenu & REFRESHDIR_ADDFILE))
+ 		refreshdirmenu = REFRESHDIR_NORMAL|REFRESHDIR_ADDFILE; // clean out cons_alerts that happened earlier
+@@ -864,6 +872,9 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	// Let's not add a wad file if the MD5 matches
  	// an MD5 of an already added WAD file!
  	//
@@ -1292,7 +2538,7 @@ index 3c68b1378..de09c513d 100644
  	W_MakeFileMD5(filename, md5sum);
  
  	if (md5expected)
-@@ -891,6 +898,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -891,6 +902,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  			else realmd5[ix>>1] = (UINT8)(n<<4);
  		}
  
@@ -1304,6 +2550,20 @@ index 3c68b1378..de09c513d 100644
  		if (memcmp(realmd5, md5sum, 16) != 0)
  		{
  			char actualmd5text[2*MD5_LEN+1];
+@@ -1050,6 +1066,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+ 	DEH_UpdateMaxFreeslots();
+ 
+ 	W_InvalidateLumpnumCache();
++
++#ifdef _UWP
++	// [UWP]: Time each file, to see what makes startup slow on Xbox
++	I_OutputMsg("UWP: loading %s took %.1f s (%.1f s of it logging)\n", filename,
++		(double)(I_GetPreciseTime() - uwploadstart) / I_GetPrecisePrecision(),
++		(double)(i_uwplogtime - uwplogstart) / I_GetPrecisePrecision());
++#endif
+ 	return wadfile->numlumps;
+ }
+ 
 diff --git a/src/w_wad.h b/src/w_wad.h
 index 7024826dc..02fad1620 100644
 --- a/src/w_wad.h
