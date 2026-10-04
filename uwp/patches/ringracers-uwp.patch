@@ -1,4 +1,4 @@
-From 027854a878957c56041bf45fbfa5ce7a4a6fff4b Mon Sep 17 00:00:00 2001
+From 76535c88f10ca13707a95138aee64693cab21b07 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -9,35 +9,41 @@ which builds the game as a static library to be linked into the UWP
 launcher from ringracers-uwp. Based on worleydl's uwp-compat branch of
 RingRacers-dev, rebased onto v2.4.
 
-- Pull SDL2 (UWP), Mesa, and libuwp from worleydl/uwp-dep instead of vcpkg
+- Pull the SDL2 headers and libuwp from worleydl/uwp-dep instead of vcpkg
+- Render through OpenGL ES 2 (ANGLE on Direct3D 11): support OpenGL ES 2
+  contexts in the GL2 RHI backend, request one, render at the size of
+  ANGLE's surface, and hide Legacy GL, which needs desktop OpenGL
 - Read game data and save files from E:\ringracers
 - Use the libuwp display size and refresh rate instead of SDL's
 - Force WASAPI audio
 - Write the log to E:\ringracers\latest-log.txt, since the working
   directory is the read-only package folder
 - Create the save folder before checking that the config is writable
-- Log Direct3D 12 capabilities, OpenGL strings, shader compiles, and
-  each step of the first frames, to diagnose the Xbox One X startup hang
+- Log the OpenGL strings, surface size, shader compiles, and each step
+  of the first frames, to diagnose startup on Xbox
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
 ---
- CMakeLists.txt          |  19 +++++--
- CMakePresets.json       |  17 +++++++
- src/CMakeLists.txt      |  38 +++++++++-----
- src/d_main.cpp          |  12 +++++
- src/http-mserv.c        |   2 +
- src/i_video_common.cpp  |  21 ++++++++
- src/rhi/gl2/gl2_rhi.cpp |  10 ++++
- src/sdl/CMakeLists.txt  |   4 ++
- src/sdl/i_main.cpp      |  11 +++-
- src/sdl/i_system.cpp    |  75 ++++++++++++++++++++++++++-
- src/sdl/i_video.cpp     | 110 ++++++++++++++++++++++++++++++++++++++++
- src/sdl/mixer_sound.c   |   4 +-
- src/sdl/ogl_sdl.c       |   8 +++
- 13 files changed, 313 insertions(+), 18 deletions(-)
+ CMakeLists.txt               | 19 ++++++--
+ CMakePresets.json            | 17 +++++++
+ src/CMakeLists.txt           | 38 ++++++++++-----
+ src/d_main.cpp               | 12 +++++
+ src/http-mserv.c             |  2 +
+ src/i_video_common.cpp       | 21 +++++++++
+ src/rhi/gl2/gl2_rhi.cpp      | 90 ++++++++++++++++++++++++++++++++----
+ src/rhi/gl2/gl2_rhi.hpp      |  6 +++
+ src/screen.c                 |  2 +-
+ src/sdl/CMakeLists.txt       |  4 ++
+ src/sdl/i_main.cpp           | 11 ++++-
+ src/sdl/i_system.cpp         | 75 +++++++++++++++++++++++++++++-
+ src/sdl/i_video.cpp          | 74 +++++++++++++++++++++++++++++
+ src/sdl/mixer_sound.c        |  4 +-
+ src/sdl/ogl_sdl.c            |  8 ++++
+ src/sdl/rhi_gl2_platform.cpp |  9 ++++
+ 16 files changed, 363 insertions(+), 29 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -347,10 +353,18 @@ index f52f9298e..173a15c64 100644
  	FrameMark;
  
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
-index cf35eebb5..c4fa19999 100644
+index cf35eebb5..b6de6e4c5 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
 +++ b/src/rhi/gl2/gl2_rhi.cpp
-@@ -23,6 +23,10 @@
+@@ -10,6 +10,7 @@
+ 
+ #include "gl2_rhi.hpp"
+ 
++#include <cstring>
+ #include <memory>
+ #include <string>
+ #include <string_view>
+@@ -23,6 +24,10 @@
  #include "../../core/vector.hpp"
  #include "../shader_load_context.hpp"
  
@@ -361,7 +375,58 @@ index cf35eebb5..c4fa19999 100644
  using namespace srb2;
  using namespace rhi;
  
-@@ -833,6 +837,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -606,6 +611,37 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) :
+ {
+ 	gl_ = std::make_unique<GladGLContext>();
+ 	gladLoadGLContext(gl_.get(), load_func);
++
++	const char* version = reinterpret_cast<const char*>(gl_->GetString(GL_VERSION));
++	gles_ = version != nullptr && std::strncmp(version, "OpenGL ES", 9) == 0;
++	if (gles_)
++	{
++		// Framebuffer objects are core in OpenGL ES 2, but glad only loads them for desktop GL 3.0 or
++		// ARB_framebuffer_object
++		gl_->BindFramebuffer = reinterpret_cast<PFNGLBINDFRAMEBUFFERPROC>(load_func("glBindFramebuffer"));
++		gl_->BindRenderbuffer = reinterpret_cast<PFNGLBINDRENDERBUFFERPROC>(load_func("glBindRenderbuffer"));
++		gl_->CheckFramebufferStatus = reinterpret_cast<PFNGLCHECKFRAMEBUFFERSTATUSPROC>(load_func("glCheckFramebufferStatus"));
++		gl_->DeleteFramebuffers = reinterpret_cast<PFNGLDELETEFRAMEBUFFERSPROC>(load_func("glDeleteFramebuffers"));
++		gl_->DeleteRenderbuffers = reinterpret_cast<PFNGLDELETERENDERBUFFERSPROC>(load_func("glDeleteRenderbuffers"));
++		gl_->FramebufferRenderbuffer = reinterpret_cast<PFNGLFRAMEBUFFERRENDERBUFFERPROC>(load_func("glFramebufferRenderbuffer"));
++		gl_->FramebufferTexture2D = reinterpret_cast<PFNGLFRAMEBUFFERTEXTURE2DPROC>(load_func("glFramebufferTexture2D"));
++		gl_->GenFramebuffers = reinterpret_cast<PFNGLGENFRAMEBUFFERSPROC>(load_func("glGenFramebuffers"));
++		gl_->GenRenderbuffers = reinterpret_cast<PFNGLGENRENDERBUFFERSPROC>(load_func("glGenRenderbuffers"));
++		gl_->RenderbufferStorage = reinterpret_cast<PFNGLRENDERBUFFERSTORAGEPROC>(load_func("glRenderbufferStorage"));
++		clear_depthf_ = load_func("glClearDepthf");
++	}
++}
++
++void Gl2Rhi::clear_depth(float depth)
++{
++	if (gles_)
++	{
++		reinterpret_cast<void (GLAD_API_PTR*)(GLfloat)>(clear_depthf_)(depth);
++	}
++	else
++	{
++		gl_->ClearDepth(depth);
++	}
+ }
+ 
+ Gl2Rhi::~Gl2Rhi() = default;
+@@ -615,6 +651,12 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
+ 	GLenum internal_format = map_internal_texture_format(desc.format);
+ 	SRB2_ASSERT(internal_format != GL_ZERO);
+ 	GLenum format = GL_RGBA;
++	if (gles_)
++	{
++		// OpenGL ES 2 requires an unsized internal format matching the data format
++		internal_format = map_texture_format(desc.format);
++		format = internal_format;
++	}
+ 
+ 	GLuint name = 0;
+ 	gl_->GenTextures(1, &name);
+@@ -833,6 +875,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  	SRB2_ASSERT(platform_ != nullptr);
  	Gl2Program program;
  
@@ -371,7 +436,18 @@ index cf35eebb5..c4fa19999 100644
  	auto [vert_srcs, frag_srcs] = platform_->find_shader_sources(desc.name);
  
  	// GL 2 note:
-@@ -915,6 +922,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+@@ -844,8 +889,8 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+ 	srb2::Vector<const char*> frag_sources;
+ 	ShaderLoadContext vert_ctx;
+ 	ShaderLoadContext frag_ctx;
+-	vert_ctx.set_version("120");
+-	frag_ctx.set_version("120");
++	vert_ctx.set_version(gles_ ? "100" : "120");
++	frag_ctx.set_version(gles_ ? "100" : "120");
+ 	for (auto def : desc.defines)
+ 	{
+ 		vert_ctx.define(def);
+@@ -915,6 +960,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
  		gl_->DeleteShader(program.vertex_shader);
  		throw std::runtime_error(fmt::format("Pipeline program link failed: {}", String(link_error.data())));
  	}
@@ -381,6 +457,102 @@ index cf35eebb5..c4fa19999 100644
  
  	// get attribute information
  	GLint active_attribute_total = -1;
+@@ -999,7 +1047,7 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
+ 	if (clear)
+ 	{
+ 		gl_->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+-		gl_->ClearDepth(1.0f);
++		clear_depth(1.0f);
+ 		gl_->ClearStencil(0);
+ 		gl_->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+ 		GL_ASSERT;
+@@ -1054,7 +1102,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
+ 
+ 	if (info.depth_load_op == rhi::AttachmentLoadOp::kClear)
+ 	{
+-		gl_->ClearDepth(1.f);
++		clear_depth(1.f);
+ 		clear_bits |= GL_DEPTH_BUFFER_BIT;
+ 	}
+ 	if (info.stencil_load_op == rhi::AttachmentLoadOp::kClear)
+@@ -1504,9 +1552,28 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
+ 	SRB2_ASSERT(rect.x + rect.w <= src_dim.w);
+ 	SRB2_ASSERT(rect.y + rect.h <= src_dim.h);
+ 
+-	GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
+-	gl_->ReadBuffer(read_buffer);
+-	GL_ASSERT;
++	if (!gles_)
++	{
++		GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
++		gl_->ReadBuffer(read_buffer);
++		GL_ASSERT;
++	}
++
++	if (gles_ && format == PixelFormat::kRGB8)
++	{
++		// OpenGL ES 2 only guarantees RGBA readback, so read that and drop alpha
++		srb2::Vector<std::byte> rgba(static_cast<size_t>(rect.w) * rect.h * 4);
++		gl_->ReadPixels(rect.x, rect.y, rect.w, rect.h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
++		GL_ASSERT;
++		for (uint32_t y = 0; y < rect.h; y++)
++		{
++			for (uint32_t x = 0; x < rect.w; x++)
++			{
++				std::memcpy(&out[y * pack_stride + x * 3], &rgba[(static_cast<size_t>(y) * rect.w + x) * 4], 3);
++			}
++		}
++		return;
++	}
+ 
+ 	gl_->ReadPixels(rect.x, rect.y, rect.w, rect.h, layout, type, out.data());
+ 	GL_ASSERT;
+@@ -1667,9 +1734,12 @@ void Gl2Rhi::copy_framebuffer_to_texture(
+ 	SRB2_ASSERT(src_region.x + src_region.w <= src_dim.w);
+ 	SRB2_ASSERT(src_region.y + src_region.h <= src_dim.h);
+ 
+-	GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
+-	gl_->ReadBuffer(read_buffer);
+-	GL_ASSERT;
++	if (!gles_)
++	{
++		GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
++		gl_->ReadBuffer(read_buffer);
++		GL_ASSERT;
++	}
+ 
+ 	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
+ 	GL_ASSERT;
+diff --git a/src/rhi/gl2/gl2_rhi.hpp b/src/rhi/gl2/gl2_rhi.hpp
+index f8b62987b..0debae785 100644
+--- a/src/rhi/gl2/gl2_rhi.hpp
++++ b/src/rhi/gl2/gl2_rhi.hpp
+@@ -114,6 +114,12 @@ class Gl2Rhi final : public Rhi
+ 
+ 	std::unique_ptr<GladGLContext> gl_;
+ 
++	// OpenGL ES 2 context (e.g. ANGLE), which needs unsized texture formats and has no glClearDepth or glReadBuffer
++	bool gles_ = false;
++	GlProc clear_depthf_ = nullptr;
++
++	void clear_depth(float depth);
++
+ 	Slab<Gl2Texture> texture_slab_;
+ 	Slab<Gl2Buffer> buffer_slab_;
+ 	Slab<Gl2Renderbuffer> renderbuffer_slab_;
+diff --git a/src/screen.c b/src/screen.c
+index 67b8f13fb..8e22df0f2 100644
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -58,7 +58,7 @@ UINT8 setrenderneeded = 0;
+ 
+ CV_PossibleValue_t cv_renderer_t[] = {
+ 	{1, "Software"},
+-#ifdef HWRENDER
++#if defined(HWRENDER) && !defined(_UWP) // [UWP]: Legacy GL needs desktop OpenGL, which ANGLE doesn't provide
+ 	{2, "Legacy GL"},
+ #endif
+ 	{0, NULL}
 diff --git a/src/sdl/CMakeLists.txt b/src/sdl/CMakeLists.txt
 index d6f32a67c..da4266132 100644
 --- a/src/sdl/CMakeLists.txt
@@ -572,22 +744,23 @@ index 827f493b1..8f31d47aa 100644
  	// does RINGRACERSWADDIR exist?
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c3f..3169c887d 100644
+index 7fa8e0c3f..d0c0afb5d 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
-@@ -29,6 +29,11 @@
+@@ -29,6 +29,12 @@
  #pragma warning(disable : 4214 4244)
  #endif
  
 +#ifdef _UWP
 +extern "C" __declspec(dllimport) float uwp_GetRefreshRate();
 +extern "C" __declspec(dllimport) void  uwp_GetScreenSize(int*, int*);
++extern "C" __declspec(dllimport) void  uwp_SetScreenSize(int, int);
 +#endif
 +
  #ifdef HAVE_SDL
  #define _MATH_DEFINES_DEFINED
  #include "SDL.h"
-@@ -198,6 +203,10 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
+@@ -198,6 +204,10 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
  	realwidth = vid.width;
  	realheight = vid.height;
  
@@ -598,7 +771,7 @@ index 7fa8e0c3f..3169c887d 100644
  	if (window)
  	{
  		if (fullscreen)
-@@ -251,7 +260,13 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
+@@ -251,7 +261,13 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
  		SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
  	}
  
@@ -612,69 +785,11 @@ index 7fa8e0c3f..3169c887d 100644
  	vid.realwidth = static_cast<uint32_t>(width);
  	vid.realheight = static_cast<uint32_t>(height);
  
-@@ -1319,8 +1334,93 @@ static void init_imgui()
+@@ -1319,6 +1335,48 @@ static void init_imgui()
  	ImGui::StyleColorsDark();
  }
  
 +#ifdef _UWP
-+// d3d12.h pulls in rpcndr.h, whose "boolean" typedef clashes with doomtype.h's boolean macro
-+#pragma push_macro("boolean")
-+#undef boolean
-+#include <d3d12.h>
-+#pragma pop_macro("boolean")
-+
-+// [UWP]: Report what Direct3D 12 (which Mesa's OpenGL driver runs on) offers on this console
-+static void UWPLogD3D12(void)
-+{
-+	static boolean logged = false;
-+	ID3D12Device *device = nullptr;
-+	HRESULT hr;
-+
-+	if (logged)
-+		return;
-+	logged = true;
-+
-+	hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
-+	if (FAILED(hr))
-+	{
-+		I_OutputMsg("UWP: D3D12CreateDevice failed (0x%08lx)\n", (unsigned long)hr);
-+		return;
-+	}
-+
-+	{
-+		static const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_12_1};
-+		D3D12_FEATURE_DATA_FEATURE_LEVELS featurelevels = {};
-+		featurelevels.NumFeatureLevels = sizeof levels / sizeof *levels;
-+		featurelevels.pFeatureLevelsRequested = levels;
-+		hr = device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &featurelevels, sizeof featurelevels);
-+		if (SUCCEEDED(hr))
-+			I_OutputMsg("UWP: D3D12 max feature level 0x%x\n", (unsigned)featurelevels.MaxSupportedFeatureLevel);
-+		else
-+			I_OutputMsg("UWP: D3D12 feature level check failed (0x%08lx)\n", (unsigned long)hr);
-+	}
-+
-+	{
-+		// Newer shader models are rejected by runtimes that don't know them, so try from newest to oldest
-+		static const D3D_SHADER_MODEL models[] = {D3D_SHADER_MODEL_6_5, D3D_SHADER_MODEL_6_4, D3D_SHADER_MODEL_6_3, D3D_SHADER_MODEL_6_2, D3D_SHADER_MODEL_6_1, D3D_SHADER_MODEL_6_0, D3D_SHADER_MODEL_5_1};
-+		size_t i;
-+
-+		for (i = 0; i < sizeof models / sizeof *models; i++)
-+		{
-+			D3D12_FEATURE_DATA_SHADER_MODEL shadermodel = {models[i]};
-+			hr = device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shadermodel, sizeof shadermodel);
-+			if (SUCCEEDED(hr))
-+			{
-+				I_OutputMsg("UWP: D3D12 highest shader model 0x%x\n", (unsigned)shadermodel.HighestShaderModel);
-+				break;
-+			}
-+		}
-+		if (i == sizeof models / sizeof *models)
-+			I_OutputMsg("UWP: D3D12 shader model check failed (0x%08lx)\n", (unsigned long)hr);
-+	}
-+
-+	device->Release();
-+}
-+
 +static void UWPLogGLStrings(void)
 +{
 +	using GetStringFn = const unsigned char *(WINAPI *)(unsigned int);
@@ -695,38 +810,59 @@ index 7fa8e0c3f..3169c887d 100644
 +		I_OutputMsg("UWP: %s: %s\n", string.label, value ? reinterpret_cast<const char *>(value) : "(null)");
 +	}
 +}
++
++// [UWP]: Render at the size of ANGLE's window surface, which can be smaller than the HDMI display mode
++static void UWPUseSurfaceSize(void)
++{
++	using GetIntegervFn = void (WINAPI *)(unsigned int, int *);
++	GetIntegervFn getintegerv = reinterpret_cast<GetIntegervFn>(SDL_GL_GetProcAddress("glGetIntegerv"));
++	static boolean done = false;
++	int viewport[4] = {0, 0, 0, 0};
++
++	if (done || getintegerv == nullptr)
++		return;
++	done = true;
++
++	// A context's initial viewport is the size of the surface it was first made current with
++	getintegerv(0x0BA2 /* GL_VIEWPORT */, viewport);
++	I_OutputMsg("UWP: surface size %dx%d\n", viewport[2], viewport[3]);
++	if (viewport[2] > 0 && viewport[3] > 0)
++		uwp_SetScreenSize(viewport[2], viewport[3]);
++}
 +#endif
 +
  static SDL_bool Impl_CreateContext(void)
  {
-+#ifdef _UWP
-+	UWPLogD3D12();
-+#endif
-+
  #ifdef HWRENDER
- 	if (rendermode == render_opengl)
+@@ -1345,8 +1403,16 @@ static SDL_bool Impl_CreateContext(void)
+ 	if (!sdlglcontext)
  	{
-@@ -1347,6 +1447,9 @@ static SDL_bool Impl_CreateContext(void)
  		SDL_GL_ResetAttributes();
++#ifdef _UWP
++		// [UWP]: OpenGL ES 2 through ANGLE (Direct3D 11), since Xbox One consoles can't run Mesa's D3D12 driver
++		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
++		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
++		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
++		I_OutputMsg("UWP: creating RHI GL context\n");
++#else
  		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
  		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-+#ifdef _UWP
-+		I_OutputMsg("UWP: creating RHI GL context\n");
 +#endif
  		sdlglcontext = SDL_GL_CreateContext(window);
  	}
  	if (sdlglcontext == NULL)
-@@ -1356,6 +1459,9 @@ static SDL_bool Impl_CreateContext(void)
+@@ -1356,6 +1422,10 @@ static SDL_bool Impl_CreateContext(void)
  	}
  	init_imgui();
  	SDL_GL_MakeCurrent(window, sdlglcontext);
 +#ifdef _UWP
 +	UWPLogGLStrings();
++	UWPUseSurfaceSize();
 +#endif
  
  	if (!g_rhi)
  	{
-@@ -1426,6 +1532,7 @@ boolean VID_CheckRenderer(void)
+@@ -1426,6 +1496,7 @@ boolean VID_CheckRenderer(void)
  static UINT32 refresh_rate;
  static UINT32 VID_GetRefreshRate(void)
  {
@@ -734,7 +870,7 @@ index 7fa8e0c3f..3169c887d 100644
  	int index = SDL_GetWindowDisplayIndex(window);
  	SDL_DisplayMode m;
  
-@@ -1442,6 +1549,9 @@ static UINT32 VID_GetRefreshRate(void)
+@@ -1442,6 +1513,9 @@ static UINT32 VID_GetRefreshRate(void)
  	}
  
  	return m.refresh_rate;
@@ -786,3 +922,30 @@ index 17eb1b8b3..113476a1b 100644
  
  	HWR_MakeScreenFinalTexture();
  	HWR_DrawScreenFinalTexture(sdlw, sdlh);
+diff --git a/src/sdl/rhi_gl2_platform.cpp b/src/sdl/rhi_gl2_platform.cpp
+index f3f10fe90..c85cbe0b4 100644
+--- a/src/sdl/rhi_gl2_platform.cpp
++++ b/src/sdl/rhi_gl2_platform.cpp
+@@ -23,6 +23,10 @@
+ #include "../w_wad.h"
+ #include "../z_zone.h"
+ 
++#ifdef _UWP
++extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
++#endif
++
+ using namespace srb2;
+ using namespace srb2::rhi;
+ 
+@@ -118,6 +122,11 @@ rhi::Rect SdlGl2Platform::get_default_framebuffer_dimensions()
+ 	SRB2_ASSERT(window != nullptr);
+ 	int w;
+ 	int h;
++#ifdef _UWP
++	// [UWP]: Match vid.realwidth and vid.realheight, which come from libuwp
++	uwp_GetScreenSize(&w, &h);
++#else
+ 	SDL_GL_GetDrawableSize(window, &w, &h);
++#endif
+ 	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
+ }

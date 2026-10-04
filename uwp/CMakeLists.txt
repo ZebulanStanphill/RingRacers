@@ -24,19 +24,27 @@ endif()
 
 set(UWP_DEPS "${RR_DIR}/_deps/uwplibs-src/x64")
 
+# SDL2 for UWP built with OpenGL ES through ANGLE, and the ANGLE.WindowsStore package (both from build.ps1)
+set(SDL_DIR "" CACHE PATH "SDL2 UWP build output directory (SDL2.dll and SDL2.lib)")
+set(ANGLE_DIR "" CACHE PATH "Extracted ANGLE.WindowsStore package")
+if(NOT EXISTS "${SDL_DIR}/SDL2.lib")
+	message(FATAL_ERROR "SDL_DIR must point to the SDL2 UWP build output; build.ps1 builds it")
+endif()
+if(NOT EXISTS "${ANGLE_DIR}/bin/UAP/x64/libGLESv2.dll")
+	message(FATAL_ERROR "ANGLE_DIR must point to the extracted ANGLE.WindowsStore package; build.ps1 downloads it")
+endif()
+
 add_executable(${PROJECT_NAME} WIN32
 	main.cpp
 	Package.appxmanifest
 )
 
-# SDL2 (UWP), Mesa, and libuwp from worleydl/uwp-dep, fetched by the Ring Racers build
+# libuwp from worleydl/uwp-dep (fetched by the Ring Racers build), SDL2, and ANGLE
 set(BinDeps
-	${UWP_DEPS}/bin/dxil.dll
-	${UWP_DEPS}/bin/libgallium_wgl.dll
 	${UWP_DEPS}/bin/libuwp.dll
-	${UWP_DEPS}/bin/opengl32.dll
-	${UWP_DEPS}/bin/SDL2.dll
-	${UWP_DEPS}/bin/z-1.dll
+	${SDL_DIR}/SDL2.dll
+	${ANGLE_DIR}/bin/UAP/x64/libEGL.dll
+	${ANGLE_DIR}/bin/UAP/x64/libGLESv2.dll
 )
 source_group("BinDeps" FILES ${BinDeps})
 set_source_files_properties(${BinDeps} PROPERTIES
@@ -98,10 +106,9 @@ set(BinLibs
 
 	# UWP specific stuff
 	${UWP_DEPS}/lib/libuwp.lib
-	${UWP_DEPS}/lib/SDL2.lib
+	${SDL_DIR}/SDL2.lib
 
 	# Sys libs
-	d3d12.lib
 	WS2_32.lib
 	OneCore.lib
 	WindowsApp.lib

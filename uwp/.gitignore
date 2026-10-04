@@ -397,6 +397,7 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 
-# Ring Racers checkout and build output from build.ps1
+# Ring Racers checkout, SDL and ANGLE, and build output from build.ps1
 /RingRacers/
+/deps/
 /build/

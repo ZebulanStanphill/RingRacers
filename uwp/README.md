@@ -3,7 +3,7 @@
 Unofficial UWP port of [Dr. Robotnik's Ring Racers](https://github.com/KartKrewDev/RingRacers) **v2.4** for Xbox Dev Mode. Based on [worleydl's port](https://github.com/worleydl/ringracers-uwp); this is not an official Kart Krew project, so don't report bugs with it to them.
 
 - `patches/ringracers-uwp.patch` builds Ring Racers v2.4 as a static library for UWP (see the patch header for what it changes).
-- `uwp/` is the launcher app that links it, along with SDL2, Mesa, and libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep).
+- `uwp/` is the launcher app that links it, along with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) built for OpenGL ES by `patches/sdl-angle.patch`, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore), which runs OpenGL ES on Direct3D 11. Unlike Mesa's Direct3D 12 driver, this doesn't need shader model 6, which Xbox One consoles don't offer to UWP games.
 
 ## Building
 
@@ -21,7 +21,7 @@ From an **x64 Native Tools Command Prompt for VS 2022**:
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-This clones Ring Racers v2.4 into `RingRacers/`, applies the patch, builds it, then generates and builds the launcher solution at `build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
+This clones Ring Racers v2.4 into `RingRacers/`, applies the patch, and builds it; builds SDL2 and downloads ANGLE into `deps/`; then generates and builds the launcher solution at `build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
 
 ### GitHub Actions
 
@@ -34,10 +34,5 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 ## Notes
 
-From the 2.3 port; these may differ with 2.4 and the newer Mesa build:
-
-- Vsync is forced on by the OpenGL driver; leave the in-game vsync off.
-- Performance varies by track; 1280x800 with Legacy GL is a good starting point. 3D models hurt framerate.
-- Use the software renderer for online play; Legacy GL is unstable on this platform.
-
-The app requests microphone access for 2.4's voice chat. If access is denied, the game logs a warning and voice input stays off.
+- Only the software renderer is available. Legacy GL needs desktop OpenGL, which ANGLE doesn't provide.
+- The app requests microphone access for 2.4's voice chat. If access is denied, the game logs a warning and voice input stays off.
