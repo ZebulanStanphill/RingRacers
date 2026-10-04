@@ -6,8 +6,9 @@ Builds Ring Racers for UWP (Xbox Dev Mode).
 Clones Ring Racers at the pinned release, applies patches/ringracers-uwp.patch,
 builds it as a static library with the ninja-x64_windows_uwp_vcpkg-release
 preset, builds SDL2 for UWP with OpenGL ES through ANGLE
-(patches/sdl-angle.patch), downloads ANGLE, then generates and builds the UWP
-launcher solution in build/.
+(patches/sdl-angle.patch) and a fix for controllers showing up twice
+(patches/sdl-controller-duplicates.patch), downloads ANGLE, then generates and
+builds the UWP launcher solution in build/.
 
 Run from an x64 Visual Studio 2022 developer shell with VCPKG_ROOT set.
 #>
@@ -24,8 +25,10 @@ $Preset = "ninja-x64_windows_uwp_vcpkg-release"
 $LibBuild = Join-Path $Source "build/$Preset"
 $UwpBuild = Join-Path $Root "build"
 
-# worleydl's SDL2 for UWP, switched from Mesa to ANGLE by patches/sdl-angle.patch
+# worleydl's SDL2 for UWP, and our patches to it: switching it from Mesa to ANGLE, and keeping controllers from
+# showing up twice
 $SdlCommit = "c5f2ce7c4f792d4e42c81551fcb385dae96d98ce"
+$SdlPatches = "sdl-angle.patch", "sdl-controller-duplicates.patch"
 $AngleVersion = "2.1.14"
 $AngleSha256 = "566F78D4FAB2086E694DC8F1EDCDB498EE549DADE8A198CA95246CFDD0632E98"
 
@@ -86,7 +89,9 @@ if (-not (Test-Path $SdlSource)) {
 	Exec { git -C $SdlSource config core.eol lf }
 	Exec { git -C $SdlSource fetch -q --depth 1 https://github.com/worleydl/SDL-uwp-gl.git $SdlCommit }
 	Exec { git -C $SdlSource checkout -q FETCH_HEAD }
-	Exec { git -C $SdlSource apply (Join-Path $Root "patches/sdl-angle.patch") }
+	foreach ($SdlPatch in $SdlPatches) {
+		Exec { git -C $SdlSource apply (Join-Path $Root "patches/$SdlPatch") }
+	}
 }
 # Forward slashes so a trailing separator doesn't escape the closing quote when the path has spaces
 Exec { msbuild (Join-Path $SdlSource "VisualC-WinRT/SDL-UWP.vcxproj") -m -nologo -p:Configuration=Release -p:Platform=x64 "-p:OutDir=$($SdlBuild.Replace('\', '/'))/" }

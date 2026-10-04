@@ -3,7 +3,7 @@
 Unofficial UWP port of [Dr. Robotnik's Ring Racers](https://github.com/KartKrewDev/RingRacers) **v2.4** for Xbox Dev Mode. Based on [worleydl's port](https://github.com/worleydl/ringracers-uwp); this is not an official Kart Krew project, so don't report bugs with it to them.
 
 - `patches/ringracers-uwp.patch` builds Ring Racers v2.4 as a static library for UWP (see the patch header for what it changes).
-- `uwp/` is the launcher app that links it, along with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) built for OpenGL ES by `patches/sdl-angle.patch`, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore), which runs OpenGL ES on Direct3D 11. Unlike Mesa's Direct3D 12 driver, this doesn't need shader model 6, which Xbox One consoles don't offer to UWP games.
+- `uwp/` is the launcher app that links it, along with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) built for OpenGL ES by `patches/sdl-angle.patch` (`patches/sdl-controller-duplicates.patch` also keeps it from seeing each controller twice), and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore), which runs OpenGL ES on Direct3D 11. Unlike Mesa's Direct3D 12 driver, this doesn't need shader model 6, which Xbox One consoles don't offer to UWP games.
 
 ## Building
 
@@ -31,7 +31,8 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 1. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) to `E:\ringracers` so that `E:\ringracers\bios.pk3` and `E:\ringracers\data\` exist. The game verifies these files, so assets from other versions won't load. Config and saves go in `E:\ringracers\ringracers\`, the log is written to `E:\ringracers\latest-log.txt`, and if the game crashes, the error is saved to `E:\ringracers\error.txt`.
 2. Install the app on your Xbox. The first load takes a while.
-3. At launch, the game asks whether to check its files. Checking reads all of them in full, which is slow from a USB drive, so once the files have passed a check, you can skip it on later launches.
+3. In Dev Home, set the app type to Game: under Games and Apps, highlight Ring Racers, press the View button, choose View details, and change App type to Game. As an app, it shares 2 to 4 CPU cores with the system and gets 1 GB of memory and part of the GPU; as a game, it gets 4 dedicated CPU cores plus 2 shared, 5 GB of memory, and the whole GPU. Reinstalling may reset this.
+4. At launch, the game asks whether to check its files. Checking reads all of them in full, which is slow from a USB drive, so once the files have passed a check, you can skip it on later launches.
 
 ## Notes
 
