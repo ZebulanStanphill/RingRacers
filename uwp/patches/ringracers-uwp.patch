@@ -1,6 +1,6 @@
-From aff8b2df258ed7efa538bb8674b68e4cba33f6ed Mon Sep 17 00:00:00 2001
+From b3b8e17acc432c050ddb3ea5f05385113cb76982 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
-Date: Sat, 3 Oct 2026 15:22:23 -0500
+Date: Sat, 3 Oct 2026 21:14:13 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
  launcher
 
@@ -15,20 +15,23 @@ RingRacers-dev, rebased onto v2.4.
 - Force WASAPI audio and disable log files
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
+- Show only the error in the crash dialog, which the Xbox cuts off,
+  followed by which drives the app can see and whether each has a
+  ringracers folder, and save it to E:\ringracers\error.txt
 ---
- CMakeLists.txt         | 19 ++++++++++++++++---
- CMakePresets.json      | 17 +++++++++++++++++
- src/CMakeLists.txt     | 38 ++++++++++++++++++++++++++------------
- src/d_main.cpp         |  7 +++++++
+ CMakeLists.txt         | 19 +++++++++--
+ CMakePresets.json      | 17 ++++++++++
+ src/CMakeLists.txt     | 38 ++++++++++++++-------
+ src/d_main.cpp         |  7 ++++
  src/doomdef.h          |  2 ++
  src/http-mserv.c       |  2 ++
- src/sdl/CMakeLists.txt |  4 ++++
- src/sdl/i_main.cpp     |  8 +++++++-
- src/sdl/i_system.cpp   |  9 ++++++++-
- src/sdl/i_video.cpp    | 19 +++++++++++++++++++
- src/sdl/mixer_sound.c  |  4 +++-
- src/sdl/ogl_sdl.c      |  8 ++++++++
- 12 files changed, 119 insertions(+), 18 deletions(-)
+ src/sdl/CMakeLists.txt |  4 +++
+ src/sdl/i_main.cpp     |  8 ++++-
+ src/sdl/i_system.cpp   | 75 +++++++++++++++++++++++++++++++++++++++++-
+ src/sdl/i_video.cpp    | 19 +++++++++++
+ src/sdl/mixer_sound.c  |  4 ++-
+ src/sdl/ogl_sdl.c      |  8 +++++
+ 12 files changed, 185 insertions(+), 18 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -329,7 +332,7 @@ index f2fa2fce9..e2e618644 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..3275efc91 100644
+index 827f493b1..8f31d47aa 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -342,7 +345,87 @@ index 827f493b1..3275efc91 100644
  #define USE_DBGHELP
  #include <DbgHelp.h>
  #endif
-@@ -2083,6 +2084,7 @@ static void Shittycopyerror(const char *name)
+@@ -287,6 +288,49 @@ static void write_backtrace(INT32 signal)
+ #undef CRASHLOG_STDERR_WRITE
+ #endif // UNIXBACKTRACE
+ 
++#ifdef _UWP
++// Describes which drives the app can see and where ringracers folders are, for the crash dialog
++static void UWPDescribeDrives(char *out, size_t outsize)
++{
++	size_t len = 0;
++	DWORD attributes;
++	char letter;
++
++	attributes = GetFileAttributesA("E:\\ringracers\\bios.pk3");
++	if (attributes == INVALID_FILE_ATTRIBUTES)
++		len += snprintf(out + len, outsize - len, "E:\\ringracers\\bios.pk3: error %lu\n", GetLastError());
++	else
++		len += snprintf(out + len, outsize - len, "E:\\ringracers\\bios.pk3: found\n");
++
++	for (letter = 'A'; letter <= 'Z' && len < outsize; letter++)
++	{
++		char path[16];
++		DWORD error;
++
++		snprintf(path, sizeof path, "%c:\\", letter);
++		attributes = GetFileAttributesA(path);
++		error = GetLastError();
++
++		// No drive with this letter
++		if (attributes == INVALID_FILE_ATTRIBUTES && (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND || error == ERROR_INVALID_DRIVE))
++			continue;
++
++		if (attributes == INVALID_FILE_ATTRIBUTES)
++		{
++			len += snprintf(out + len, outsize - len, "%c: error %lu\n", letter, error);
++			continue;
++		}
++
++		snprintf(path, sizeof path, "%c:\\ringracers", letter);
++		attributes = GetFileAttributesA(path);
++		if (attributes == INVALID_FILE_ATTRIBUTES)
++			len += snprintf(out + len, outsize - len, "%c: ok, ringracers error %lu\n", letter, GetLastError());
++		else
++			len += snprintf(out + len, outsize - len, "%c: ok, ringracers found\n", letter);
++	}
++}
++#endif
++
+ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
+ {
+ 	static char finalmessage[2048];
+@@ -295,6 +339,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
+ 	if (M_CheckParm("-dedicated"))
+ 		return;
+ 
++#ifdef _UWP
++	// [UWP]: The Xbox message dialog cuts off long text, so show only the error and save it next to the game data
++	{
++		char drives[1024];
++		FILE *errorfile;
++
++		UWPDescribeDrives(drives, sizeof drives);
++		snprintf(finalmessage, sizeof finalmessage, "%s\n\n%s", messagefordevelopers, drives);
++
++		errorfile = fopen("E:\\ringracers\\error.txt", "w");
++		if (errorfile)
++		{
++			fprintf(errorfile, "%s", finalmessage);
++			fclose(errorfile);
++		}
++
++		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
++			"Dr. Robotnik's Ring Racers " VERSIONSTRING " Error",
++			finalmessage, NULL);
++		return;
++	}
++#endif
++
+ 	snprintf(
+ 		finalmessage,
+ 		sizeof(finalmessage),
+@@ -2083,6 +2150,7 @@ static void Shittycopyerror(const char *name)
  
  static void Shittylogcopy(void)
  {
@@ -350,7 +433,7 @@ index 827f493b1..3275efc91 100644
  	char buf[8192];
  	FILE *fp;
  	size_t r;
-@@ -2110,6 +2112,7 @@ static void Shittylogcopy(void)
+@@ -2110,6 +2178,7 @@ static void Shittylogcopy(void)
  	{
  		Shittycopyerror(logfilename);
  	}
@@ -358,7 +441,7 @@ index 827f493b1..3275efc91 100644
  }
  #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
  
-@@ -2374,6 +2377,10 @@ static const char *locateWad(void)
+@@ -2374,6 +2443,10 @@ static const char *locateWad(void)
  	const char *envstr;
  	const char *WadPath;
  

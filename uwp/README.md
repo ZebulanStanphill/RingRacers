@@ -29,7 +29,7 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 ## Installing
 
-1. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) to `E:\ringracers` so that `E:\ringracers\bios.pk3` and `E:\ringracers\data\` exist. The game verifies these files, so assets from other versions won't load. Config, saves, and add-ons go in `E:\ringracers\ringracers\`.
+1. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) to `E:\ringracers` so that `E:\ringracers\bios.pk3` and `E:\ringracers\data\` exist. The game verifies these files, so assets from other versions won't load. Config and saves go in `E:\ringracers\ringracers\`, and if the game crashes, the error is saved to `E:\ringracers\error.txt`.
 2. Install the app on your Xbox. The first load takes a while.
 
 ## Notes
