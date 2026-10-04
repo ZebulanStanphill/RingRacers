@@ -101,6 +101,7 @@ set(BinLibs
 	${UWP_DEPS}/lib/SDL2.lib
 
 	# Sys libs
+	d3d12.lib
 	WS2_32.lib
 	OneCore.lib
 	WindowsApp.lib

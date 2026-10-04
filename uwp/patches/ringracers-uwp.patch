@@ -1,4 +1,4 @@
-From 8ec1585d5d4413ae6a487ad590d20b9c4fd557a7 Mon Sep 17 00:00:00 2001
+From 027854a878957c56041bf45fbfa5ce7a4a6fff4b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -16,24 +16,28 @@ RingRacers-dev, rebased onto v2.4.
 - Write the log to E:\ringracers\latest-log.txt, since the working
   directory is the read-only package folder
 - Create the save folder before checking that the config is writable
+- Log Direct3D 12 capabilities, OpenGL strings, shader compiles, and
+  each step of the first frames, to diagnose the Xbox One X startup hang
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
 ---
- CMakeLists.txt         | 19 +++++++++--
- CMakePresets.json      | 17 ++++++++++
- src/CMakeLists.txt     | 38 ++++++++++++++-------
- src/d_main.cpp         | 12 +++++++
- src/http-mserv.c       |  2 ++
- src/sdl/CMakeLists.txt |  4 +++
- src/sdl/i_main.cpp     | 11 ++++++-
- src/sdl/i_system.cpp   | 75 +++++++++++++++++++++++++++++++++++++++++-
- src/sdl/i_video.cpp    | 19 +++++++++++
- src/sdl/mixer_sound.c  |  4 ++-
- src/sdl/ogl_sdl.c      |  8 +++++
- 11 files changed, 191 insertions(+), 18 deletions(-)
+ CMakeLists.txt          |  19 +++++--
+ CMakePresets.json       |  17 +++++++
+ src/CMakeLists.txt      |  38 +++++++++-----
+ src/d_main.cpp          |  12 +++++
+ src/http-mserv.c        |   2 +
+ src/i_video_common.cpp  |  21 ++++++++
+ src/rhi/gl2/gl2_rhi.cpp |  10 ++++
+ src/sdl/CMakeLists.txt  |   4 ++
+ src/sdl/i_main.cpp      |  11 +++-
+ src/sdl/i_system.cpp    |  75 ++++++++++++++++++++++++++-
+ src/sdl/i_video.cpp     | 110 ++++++++++++++++++++++++++++++++++++++++
+ src/sdl/mixer_sound.c   |   4 +-
+ src/sdl/ogl_sdl.c       |   8 +++
+ 13 files changed, 313 insertions(+), 18 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -270,6 +274,113 @@ index 4f9f9cb39..6854fc5e7 100644
  
  	if (M_CheckParm("-bindaddr") && M_IsNextParm())
  	{
+diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
+index f52f9298e..173a15c64 100644
+--- a/src/i_video_common.cpp
++++ b/src/i_video_common.cpp
+@@ -208,6 +208,15 @@ void I_CaptureVideoFrame()
+ 	hw_state->screen_capture->capture(*rhi);
+ }
+ 
++#ifdef _UWP
++// [UWP]: Log each step of the first few frames, to find where the Xbox One X hangs
++extern "C" void I_OutputMsg(const char *fmt, ...);
++static int uwp_traceframe = 0;
++#define UWP_TRACE(step) do { if (uwp_traceframe < 3) I_OutputMsg("UWP: frame %d: %s\n", uwp_traceframe, step); } while (0)
++#else
++#define UWP_TRACE(step) do {} while (0)
++#endif
++
+ void I_StartDisplayUpdate(void)
+ {
+ 	if (rendermode == render_none)
+@@ -230,6 +239,7 @@ void I_StartDisplayUpdate(void)
+ 		return;
+ 	}
+ 
++	UWP_TRACE("start display update");
+ 	if (rhi_changed(rhi))
+ 	{
+ 		// Reset all hardware 2 state
+@@ -272,10 +282,12 @@ void I_FinishUpdate(void)
+ 		return;
+ 	}
+ 
++	UWP_TRACE("flush 2D");
+ 	// better hope the drawing code left the context in a render pass, I guess
+ 	g_hw_state.twodee_renderer->flush(*rhi, g_2d);
+ 	rhi->pop_render_pass();
+ 
++	UWP_TRACE("push default render pass");
+ 	rhi->push_default_render_pass(true);
+ 
+ 	// Upscale draw the backbuffer (with postprocessing maybe?)
+@@ -304,6 +316,7 @@ void I_FinishUpdate(void)
+ 	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
+ 	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
+ 
++	UWP_TRACE("blit backbuffer");
+ 	switch (cv_scr_effect.value)
+ 	{
+ 	case 1:
+@@ -324,14 +337,22 @@ void I_FinishUpdate(void)
+ 		break;
+ 	}
+ 
++	UWP_TRACE("render imgui");
+ 	g_hw_state.imgui_renderer->render(*rhi);
+ 
+ 	rhi->pop_render_pass();
+ 
++	UWP_TRACE("postframe update");
+ 	postframe_update(*rhi);
+ 
++	UWP_TRACE("present");
+ 	rhi->present();
++	UWP_TRACE("finish");
+ 	rhi->finish();
++	UWP_TRACE("done");
++#ifdef _UWP
++	uwp_traceframe++;
++#endif
+ 
+ 	FrameMark;
+ 
+diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
+index cf35eebb5..c4fa19999 100644
+--- a/src/rhi/gl2/gl2_rhi.cpp
++++ b/src/rhi/gl2/gl2_rhi.cpp
+@@ -23,6 +23,10 @@
+ #include "../../core/vector.hpp"
+ #include "../shader_load_context.hpp"
+ 
++#ifdef _UWP
++extern "C" void I_OutputMsg(const char *fmt, ...);
++#endif
++
+ using namespace srb2;
+ using namespace rhi;
+ 
+@@ -833,6 +837,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+ 	SRB2_ASSERT(platform_ != nullptr);
+ 	Gl2Program program;
+ 
++#ifdef _UWP
++	I_OutputMsg("UWP: compiling program %s\n", desc.name);
++#endif
+ 	auto [vert_srcs, frag_srcs] = platform_->find_shader_sources(desc.name);
+ 
+ 	// GL 2 note:
+@@ -915,6 +922,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
+ 		gl_->DeleteShader(program.vertex_shader);
+ 		throw std::runtime_error(fmt::format("Pipeline program link failed: {}", String(link_error.data())));
+ 	}
++#ifdef _UWP
++	I_OutputMsg("UWP: linked program %s\n", desc.name);
++#endif
+ 
+ 	// get attribute information
+ 	GLint active_attribute_total = -1;
 diff --git a/src/sdl/CMakeLists.txt b/src/sdl/CMakeLists.txt
 index d6f32a67c..da4266132 100644
 --- a/src/sdl/CMakeLists.txt
@@ -461,7 +572,7 @@ index 827f493b1..8f31d47aa 100644
  	// does RINGRACERSWADDIR exist?
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c3f..11a35385d 100644
+index 7fa8e0c3f..3169c887d 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
 @@ -29,6 +29,11 @@
@@ -501,7 +612,121 @@ index 7fa8e0c3f..11a35385d 100644
  	vid.realwidth = static_cast<uint32_t>(width);
  	vid.realheight = static_cast<uint32_t>(height);
  
-@@ -1426,6 +1441,7 @@ boolean VID_CheckRenderer(void)
+@@ -1319,8 +1334,93 @@ static void init_imgui()
+ 	ImGui::StyleColorsDark();
+ }
+ 
++#ifdef _UWP
++// d3d12.h pulls in rpcndr.h, whose "boolean" typedef clashes with doomtype.h's boolean macro
++#pragma push_macro("boolean")
++#undef boolean
++#include <d3d12.h>
++#pragma pop_macro("boolean")
++
++// [UWP]: Report what Direct3D 12 (which Mesa's OpenGL driver runs on) offers on this console
++static void UWPLogD3D12(void)
++{
++	static boolean logged = false;
++	ID3D12Device *device = nullptr;
++	HRESULT hr;
++
++	if (logged)
++		return;
++	logged = true;
++
++	hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
++	if (FAILED(hr))
++	{
++		I_OutputMsg("UWP: D3D12CreateDevice failed (0x%08lx)\n", (unsigned long)hr);
++		return;
++	}
++
++	{
++		static const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_12_1};
++		D3D12_FEATURE_DATA_FEATURE_LEVELS featurelevels = {};
++		featurelevels.NumFeatureLevels = sizeof levels / sizeof *levels;
++		featurelevels.pFeatureLevelsRequested = levels;
++		hr = device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &featurelevels, sizeof featurelevels);
++		if (SUCCEEDED(hr))
++			I_OutputMsg("UWP: D3D12 max feature level 0x%x\n", (unsigned)featurelevels.MaxSupportedFeatureLevel);
++		else
++			I_OutputMsg("UWP: D3D12 feature level check failed (0x%08lx)\n", (unsigned long)hr);
++	}
++
++	{
++		// Newer shader models are rejected by runtimes that don't know them, so try from newest to oldest
++		static const D3D_SHADER_MODEL models[] = {D3D_SHADER_MODEL_6_5, D3D_SHADER_MODEL_6_4, D3D_SHADER_MODEL_6_3, D3D_SHADER_MODEL_6_2, D3D_SHADER_MODEL_6_1, D3D_SHADER_MODEL_6_0, D3D_SHADER_MODEL_5_1};
++		size_t i;
++
++		for (i = 0; i < sizeof models / sizeof *models; i++)
++		{
++			D3D12_FEATURE_DATA_SHADER_MODEL shadermodel = {models[i]};
++			hr = device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &shadermodel, sizeof shadermodel);
++			if (SUCCEEDED(hr))
++			{
++				I_OutputMsg("UWP: D3D12 highest shader model 0x%x\n", (unsigned)shadermodel.HighestShaderModel);
++				break;
++			}
++		}
++		if (i == sizeof models / sizeof *models)
++			I_OutputMsg("UWP: D3D12 shader model check failed (0x%08lx)\n", (unsigned long)hr);
++	}
++
++	device->Release();
++}
++
++static void UWPLogGLStrings(void)
++{
++	using GetStringFn = const unsigned char *(WINAPI *)(unsigned int);
++	GetStringFn getstring = reinterpret_cast<GetStringFn>(SDL_GL_GetProcAddress("glGetString"));
++	static const struct { unsigned int name; const char *label; } strings[] = {
++		{0x1F00, "GL_VENDOR"}, {0x1F01, "GL_RENDERER"}, {0x1F02, "GL_VERSION"}, {0x8B8C, "GL_SHADING_LANGUAGE_VERSION"},
++	};
++
++	if (getstring == nullptr)
++	{
++		I_OutputMsg("UWP: glGetString not found\n");
++		return;
++	}
++
++	for (const auto& string : strings)
++	{
++		const unsigned char *value = getstring(string.name);
++		I_OutputMsg("UWP: %s: %s\n", string.label, value ? reinterpret_cast<const char *>(value) : "(null)");
++	}
++}
++#endif
++
+ static SDL_bool Impl_CreateContext(void)
+ {
++#ifdef _UWP
++	UWPLogD3D12();
++#endif
++
+ #ifdef HWRENDER
+ 	if (rendermode == render_opengl)
+ 	{
+@@ -1347,6 +1447,9 @@ static SDL_bool Impl_CreateContext(void)
+ 		SDL_GL_ResetAttributes();
+ 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+ 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
++#ifdef _UWP
++		I_OutputMsg("UWP: creating RHI GL context\n");
++#endif
+ 		sdlglcontext = SDL_GL_CreateContext(window);
+ 	}
+ 	if (sdlglcontext == NULL)
+@@ -1356,6 +1459,9 @@ static SDL_bool Impl_CreateContext(void)
+ 	}
+ 	init_imgui();
+ 	SDL_GL_MakeCurrent(window, sdlglcontext);
++#ifdef _UWP
++	UWPLogGLStrings();
++#endif
+ 
+ 	if (!g_rhi)
+ 	{
+@@ -1426,6 +1532,7 @@ boolean VID_CheckRenderer(void)
  static UINT32 refresh_rate;
  static UINT32 VID_GetRefreshRate(void)
  {
@@ -509,7 +734,7 @@ index 7fa8e0c3f..11a35385d 100644
  	int index = SDL_GetWindowDisplayIndex(window);
  	SDL_DisplayMode m;
  
-@@ -1442,6 +1458,9 @@ static UINT32 VID_GetRefreshRate(void)
+@@ -1442,6 +1549,9 @@ static UINT32 VID_GetRefreshRate(void)
  	}
  
  	return m.refresh_rate;
