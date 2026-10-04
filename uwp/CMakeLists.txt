@@ -116,3 +116,7 @@ set(BinLibs
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${BinLibs})
 set_target_properties(${PROJECT_NAME} PROPERTIES VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION 10.0.19041.0)
+
+# Write ringracers-uwp.map next to the exe, which maps the addresses in the profile the game writes while playing
+# (E:\ringracers\uwp-profile.txt) to functions
+target_link_options(${PROJECT_NAME} PRIVATE /MAP)

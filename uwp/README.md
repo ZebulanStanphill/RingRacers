@@ -37,4 +37,5 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 - Only the software renderer is available. Legacy GL needs desktop OpenGL, which ANGLE doesn't provide.
 - `latest-log.txt` records how long each loading step and asset file took and, every 5 seconds, the frame rate and where frame and game logic time went (the same timings as the `perfstats` overlay, plus a breakdown of drawing the HUD and presenting each frame).
+- `uwp-profile.txt` records what code the game's main thread was running, sampled about 1000 times a second while a level is being played. The `ringracers-uwp-symbols` artifact from the same build maps it to functions.
 - The app requests microphone access for 2.4's voice chat. If access is denied, the game logs a warning and voice input stays off.

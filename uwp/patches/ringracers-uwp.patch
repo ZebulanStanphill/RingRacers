@@ -1,4 +1,4 @@
-From 0f9a9ccf6c18825ba08169ad9c92a247ff95e91a Mon Sep 17 00:00:00 2001
+From a38603b975e856756c6056f67e31b6f24bb280ec Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -22,8 +22,12 @@ RingRacers-dev, rebased onto v2.4.
   (reuploading them only when they change), and only upload the palette
   when it changes
 - Read game data and save files from E:\ringracers
-- Ask at launch whether to check the main asset files' MD5s, since that
-  reads all of them from the USB drive; skipping uses the expected MD5s
+- Ask at launch whether to check the main asset files, since that reads
+  all of them from the USB drive. Skipping uses the expected MD5s instead
+  of hashing the files, hashes only the names of the music and sound
+  files (which have no expected MD5), and doesn't read every zip entry's
+  local header to check the layout and find where its data starts; that's
+  found the first time the entry is read instead
 - Use the libuwp display size and refresh rate instead of SDL's
 - Force WASAPI audio
 - Write the log to E:\ringracers\latest-log.txt, since the working
@@ -32,10 +36,14 @@ RingRacers-dev, rebased onto v2.4.
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
 - Log how long each loading step and asset file takes and how much of
-  that was spent logging, the thread pool size, and every 5 seconds a
-  summary of the perfstats frame and tic timings, the parts of
+  that was spent logging, the thread pool size, the memory limit (which
+  tells whether Xbox runs the game as an app or a game), and every 5
+  seconds a summary of the perfstats frame and tic timings, the parts of
   I_FinishUpdate, and counts of draws, texture uploads, and resources
   created
+- Sample the main thread about 1000 times a second while a level is
+  played, and write how many samples landed at each address, by what the
+  game was doing, to E:\ringracers\uwp-profile.txt
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
@@ -47,29 +55,32 @@ RingRacers-dev, rebased onto v2.4.
  src/CMakeLists.txt               |  44 ++-
  src/console.c                    |  18 +
  src/core/thread_pool.cpp         |   9 +
- src/d_clisrv.c                   |   3 +
- src/d_main.cpp                   |  54 +++
+ src/d_clisrv.c                   |  19 +
+ src/d_main.cpp                   |  68 ++++
  src/http-mserv.c                 |   2 +
  src/hwr2/patch_atlas.cpp         |   8 +
  src/hwr2/resource_management.cpp | 105 ++++--
  src/hwr2/resource_management.hpp |  31 +-
- src/i_system.h                   |   8 +
- src/i_video_common.cpp           |  44 ++-
+ src/i_system.h                   |  42 +++
+ src/i_video_common.cpp           |  48 ++-
  src/m_perfstats.c                | 136 ++++++++
  src/m_perfstats.h                |  11 +
  src/rhi/gl2/gl2_rhi.cpp          | 578 +++++++++++++++++++++++--------
  src/rhi/gl2/gl2_rhi.hpp          |  33 ++
  src/screen.c                     |   2 +-
- src/sdl/CMakeLists.txt           |   4 +
+ src/sdl/CMakeLists.txt           |   5 +
  src/sdl/i_main.cpp               |  11 +-
- src/sdl/i_system.cpp             | 109 +++++-
+ src/sdl/i_system.cpp             | 119 ++++++-
+ src/sdl/i_uwpprofile.cpp         | 267 ++++++++++++++
  src/sdl/i_video.cpp              |  74 ++++
  src/sdl/mixer_sound.c            |   4 +-
  src/sdl/ogl_sdl.c                |   8 +
  src/sdl/rhi_gl2_platform.cpp     |   9 +
- src/w_wad.cpp                    |  23 ++
- src/w_wad.h                      |   6 +
- 27 files changed, 1161 insertions(+), 209 deletions(-)
+ src/w_wad.cpp                    | 117 +++++++
+ src/w_wad.h                      |  10 +
+ src/z_zone.cpp                   |   3 +
+ 29 files changed, 1608 insertions(+), 209 deletions(-)
+ create mode 100644 src/sdl/i_uwpprofile.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -313,10 +324,43 @@ index 8a434ba63..d28196d30 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/d_clisrv.c b/src/d_clisrv.c
-index 1166b3c99..11c98f69b 100644
+index 1166b3c99..3cc0c59a9 100644
 --- a/src/d_clisrv.c
 +++ b/src/d_clisrv.c
-@@ -6971,6 +6971,9 @@ boolean TryRunTics(tic_t realtics)
+@@ -6789,8 +6789,16 @@ static void SV_Maketic(void)
+ 		if (K_PlayerUsesBotMovement(&players[i]))
+ 		{
+ 			const precise_t t = I_GetPreciseTime();
++#ifdef _UWP
++			const INT32 uwpprofphase = i_uwpprofphase;
++
++			i_uwpprofphase = UWPPROF_LOGIC;
++#endif
+ 
+ 			K_BuildBotTiccmd(&players[i], &netcmds[maketic%BACKUPTICS][i]);
++#ifdef _UWP
++			i_uwpprofphase = uwpprofphase;
++#endif
+ 
+ 			ps_bots[i].isBot = true;
+ 			ps_bots[i].total = I_GetPreciseTime() - t;
+@@ -6954,7 +6962,15 @@ boolean TryRunTics(tic_t realtics)
+ 					tickInterp = false; // do not update again in sped-up tics
+ 				}
+ 
++#ifdef _UWP
++				const INT32 uwpprofphase = i_uwpprofphase;
++
++				i_uwpprofphase = UWPPROF_LOGIC;
++#endif
+ 				G_Ticker(run);
++#ifdef _UWP
++				i_uwpprofphase = uwpprofphase;
++#endif
+ 			}
+ 
+ 			if (Playing() && netgame && (gametic % TICRATE == 0))
+@@ -6971,6 +6987,9 @@ boolean TryRunTics(tic_t realtics)
  			consistancy[gametic % BACKUPTICS] = Consistancy();
  
  			ps_tictime = I_GetPreciseTime() - ps_tictime;
@@ -327,10 +371,31 @@ index 1166b3c99..11c98f69b 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..ee82f93c4 100644
+index 19fcfe0a7..2ee2f1da5 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
-@@ -685,7 +685,13 @@ static bool D_Display(bool world)
+@@ -369,6 +369,10 @@ static bool D_Display(bool world)
+ 
+ 	ZoneScoped;
+ 
++#ifdef _UWP
++	UWPProfPhase uwpprofphase(UWPPROF_2D);
++#endif
++
+ 	if (g_takemapthumbnail != TMT_NO)
+ 	{
+ 		forcerefresh = true;
+@@ -554,6 +558,9 @@ static bool D_Display(bool world)
+ 				objectsdrawn = 0;
+ 
+ 				ps_rendercalltime = I_GetPreciseTime();
++#ifdef _UWP
++				UWPProfPhase uwpprofphase3d(UWPPROF_3D);
++#endif
+ 
+ 				if (rendermode == render_soft)
+ 				{
+@@ -685,7 +692,13 @@ static bool D_Display(bool world)
  
  			if (rendermode == render_soft)
  			{
@@ -344,7 +409,18 @@ index 19fcfe0a7..ee82f93c4 100644
  			}
  
  			if (lastdraw)
-@@ -922,6 +928,9 @@ void D_SRB2Loop(void)
+@@ -903,6 +916,10 @@ void D_SRB2Loop(void)
+ 	S_SetMusicVolume();
+ 	S_SetSfxVolume();
+ 
++#ifdef _UWP
++	I_UWPStartProfiler();
++#endif
++
+ 	for (;;)
+ 	{
+ 		// capbudget is the minimum precise_t duration of a single loop iteration
+@@ -922,6 +939,9 @@ void D_SRB2Loop(void)
  
  		bool ranwipe = false;
  		bool world = false;
@@ -354,7 +430,17 @@ index 19fcfe0a7..ee82f93c4 100644
  
  		I_UpdateTime();
  
-@@ -1067,6 +1076,9 @@ void D_SRB2Loop(void)
+@@ -954,6 +974,9 @@ void D_SRB2Loop(void)
+ 		renderisnewtic = (realtics > 0 || singletics);
+ 
+ 		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
++#ifdef _UWP
++		i_uwpprofinlevel = gamestate == GS_LEVEL && timeisprogressing;
++#endif
+ 
+ 		if (renderisnewtic)
+ 		{
+@@ -1067,6 +1090,9 @@ void D_SRB2Loop(void)
  			}
  
  			ranwipe = D_Display(world);
@@ -364,7 +450,7 @@ index 19fcfe0a7..ee82f93c4 100644
  		}
  
  #ifdef HWRENDER
-@@ -1183,12 +1195,21 @@ void D_SRB2Loop(void)
+@@ -1183,12 +1209,21 @@ void D_SRB2Loop(void)
  			skiplaggyworld = false;
  		}
  
@@ -386,7 +472,7 @@ index 19fcfe0a7..ee82f93c4 100644
  
  			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
  			{
-@@ -1199,6 +1220,10 @@ void D_SRB2Loop(void)
+@@ -1199,6 +1234,10 @@ void D_SRB2Loop(void)
  		finishprecise = I_GetPreciseTime();
  		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
  		deltatics = deltasecs * NEWTICRATE;
@@ -397,7 +483,7 @@ index 19fcfe0a7..ee82f93c4 100644
  	}
  }
  
-@@ -1661,6 +1686,11 @@ void D_SRB2Main(void)
+@@ -1661,6 +1700,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -409,7 +495,7 @@ index 19fcfe0a7..ee82f93c4 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1757,6 +1787,16 @@ void D_SRB2Main(void)
+@@ -1757,6 +1801,16 @@ void D_SRB2Main(void)
  	// Make backups of some SOCcable tables.
  	P_BackupTables();
  
@@ -417,8 +503,8 @@ index 19fcfe0a7..ee82f93c4 100644
 +	{
 +		const precise_t promptstart = I_GetPreciseTime();
 +
-+		w_skipexpectedmd5 = I_UWPAskSkipAssetCheck();
-+		I_OutputMsg("UWP: %s the asset check (prompt took %.1f s)\n", w_skipexpectedmd5 ? "skipping" : "running",
++		w_skipassetcheck = I_UWPAskSkipAssetCheck();
++		I_OutputMsg("UWP: %s the asset check (prompt took %.1f s)\n", w_skipassetcheck ? "skipping" : "running",
 +			(double)(I_GetPreciseTime() - promptstart) / I_GetPrecisePrecision());
 +	}
 +#endif
@@ -426,7 +512,7 @@ index 19fcfe0a7..ee82f93c4 100644
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
-@@ -1774,7 +1814,19 @@ void D_SRB2Main(void)
+@@ -1774,7 +1828,19 @@ void D_SRB2Main(void)
  	//
  	// search for mainwad maps
  	//
@@ -446,7 +532,7 @@ index 19fcfe0a7..ee82f93c4 100644
  	basenummapheaders = nummapheaders;
  	basenumkartcupheaders = numkartcupheaders;
  
-@@ -2323,6 +2375,8 @@ const char *D_Home(void)
+@@ -2323,6 +2389,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -732,26 +818,62 @@ index 3fd6666cf..3cfcb18f1 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..d8a08ae51 100644
+index 56d507e90..6b7953a3c 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,6 +313,14 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,50 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
 +#ifdef _UWP
-+// [UWP]: Asks at launch whether to skip checking the main asset files' MD5s. Returns true to skip.
++// [UWP]: Asks at launch whether to skip checking the main asset files (see w_skipassetcheck). Returns true to skip.
 +boolean I_UWPAskSkipAssetCheck(void);
 +
 +// [UWP]: Time I_OutputMsg has spent writing messages to the log file and debugger, to see how much logging slows startup
 +extern precise_t i_uwplogtime;
++
++// [UWP]: Logs the memory limit in full, which tells whether Xbox runs the game as an app (1 GB) or a game (5 GB).
++// "System memory" at startup cuts it to 32 bits, which makes the two look the same.
++void I_UWPLogMemoryLimit(void);
++
++// [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
++// Call from the main thread.
++void I_UWPStartProfiler(void);
++
++// [UWP]: What the main thread is doing, for the profiler
++typedef enum
++{
++	UWPPROF_OTHER,
++	UWPPROF_LOGIC, // game tics, and building bots' ticcmds
++	UWPPROF_3D, // rendering the 3D view
++	UWPPROF_2D, // the rest of D_Display: the HUD, menus, wipes, and passing the software screen to the GPU
++	UWPPROF_DISPLAY, // I_FinishUpdate: drawing the 2D layer, scaling it to the screen, and presenting
++	NUMUWPPROFPHASES
++} uwpprofphase_t;
++extern volatile INT32 i_uwpprofphase;
++
++// [UWP]: Whether a level is being played (not paused), for the profiler, which only counts samples taken then
++extern volatile INT32 i_uwpprofinlevel;
 +#endif
 +
  #ifdef __cplusplus
  } // extern "C"
  #endif
+ 
++#if defined(_UWP) && defined(__cplusplus)
++// [UWP]: Sets what the main thread is doing, for the profiler, until the end of the scope
++struct UWPProfPhase
++{
++	INT32 previous;
++
++	explicit UWPProfPhase(INT32 phase) : previous(i_uwpprofphase) { i_uwpprofphase = phase; }
++	~UWPProfPhase() { i_uwpprofphase = previous; }
++};
++#endif
++
+ #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
-index f52f9298e..6c8bb8914 100644
+index f52f9298e..8bff55204 100644
 --- a/src/i_video_common.cpp
 +++ b/src/i_video_common.cpp
 @@ -48,6 +48,10 @@
@@ -805,7 +927,18 @@ index f52f9298e..6c8bb8914 100644
  	if (rhi_changed(rhi))
  	{
  		// Reset all hardware 2 state
-@@ -261,6 +282,9 @@ void I_FinishUpdate(void)
+@@ -245,6 +266,10 @@ void I_StartDisplayUpdate(void)
+ 
+ void I_FinishUpdate(void)
+ {
++#ifdef _UWP
++	UWPProfPhase uwpprofphase(UWPPROF_DISPLAY);
++#endif
++
+ 	ZoneScoped;
+ 	if (rendermode == render_none)
+ 	{
+@@ -261,6 +286,9 @@ void I_FinishUpdate(void)
  	}
  #endif
  
@@ -815,7 +948,7 @@ index f52f9298e..6c8bb8914 100644
  	temp_legacy_finishupdate_draws();
  
  	rhi::Rhi* rhi = sys::get_rhi(sys::g_current_rhi);
-@@ -272,10 +296,13 @@ void I_FinishUpdate(void)
+@@ -272,10 +300,13 @@ void I_FinishUpdate(void)
  		return;
  	}
  
@@ -829,7 +962,7 @@ index f52f9298e..6c8bb8914 100644
  	rhi->push_default_render_pass(true);
  
  	// Upscale draw the backbuffer (with postprocessing maybe?)
-@@ -304,6 +331,7 @@ void I_FinishUpdate(void)
+@@ -304,6 +335,7 @@ void I_FinishUpdate(void)
  	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  
@@ -837,7 +970,7 @@ index f52f9298e..6c8bb8914 100644
  	switch (cv_scr_effect.value)
  	{
  	case 1:
-@@ -323,18 +351,32 @@ void I_FinishUpdate(void)
+@@ -323,18 +355,32 @@ void I_FinishUpdate(void)
  		g_hw_state.blit_rect->draw(*rhi);
  		break;
  	}
@@ -2059,10 +2192,10 @@ index 67b8f13fb..8e22df0f2 100644
  #endif
  	{0, NULL}
 diff --git a/src/sdl/CMakeLists.txt b/src/sdl/CMakeLists.txt
-index d6f32a67c..da4266132 100644
+index d6f32a67c..537495d51 100644
 --- a/src/sdl/CMakeLists.txt
 +++ b/src/sdl/CMakeLists.txt
-@@ -58,10 +58,14 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
+@@ -58,10 +58,15 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
  	)
  endif()
  
@@ -2073,6 +2206,7 @@ index d6f32a67c..da4266132 100644
  )
 +else()
 +	target_link_libraries(SRB2SDL2 PRIVATE SDL2) # TODO: I should cleanup uwp-dep namespaces
++	target_sources(SRB2SDL2 PRIVATE i_uwpprofile.cpp)
 +endif()
  
  if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)
@@ -2128,7 +2262,7 @@ index f2fa2fce9..73f659db8 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..d19185c89 100644
+index 827f493b1..d3b30c4a3 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -2141,7 +2275,7 @@ index 827f493b1..d19185c89 100644
  #define USE_DBGHELP
  #include <DbgHelp.h>
  #endif
-@@ -287,6 +288,75 @@ static void write_backtrace(INT32 signal)
+@@ -287,6 +288,85 @@ static void write_backtrace(INT32 signal)
  #undef CRASHLOG_STDERR_WRITE
  #endif // UNIXBACKTRACE
  
@@ -2212,12 +2346,22 @@ index 827f493b1..d19185c89 100644
 +
 +	return button == 1;
 +}
++
++void I_UWPLogMemoryLimit(void)
++{
++	MEMORYSTATUSEX status;
++
++	status.dwLength = sizeof status;
++	if (GlobalMemoryStatusEx(&status))
++		I_OutputMsg("UWP: memory limit %llu MB, %llu MB free (Xbox gives apps 1 GB and games 5 GB)\n",
++			status.ullTotalPhys >> 20, status.ullAvailPhys >> 20);
++}
 +#endif
 +
  static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
  {
  	static char finalmessage[2048];
-@@ -295,6 +365,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
+@@ -295,6 +375,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
  	if (M_CheckParm("-dedicated"))
  		return;
  
@@ -2247,7 +2391,7 @@ index 827f493b1..d19185c89 100644
  	snprintf(
  		finalmessage,
  		sizeof(finalmessage),
-@@ -1071,6 +1164,10 @@ void I_OutputMsg(const char *fmt, ...)
+@@ -1071,6 +1174,10 @@ void I_OutputMsg(const char *fmt, ...)
  	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
  #endif
  
@@ -2258,7 +2402,7 @@ index 827f493b1..d19185c89 100644
  #if defined (_WIN32) && defined (_MSC_VER)
  	OutputDebugStringA(txt);
  #endif
-@@ -1086,6 +1183,10 @@ void I_OutputMsg(const char *fmt, ...)
+@@ -1086,6 +1193,10 @@ void I_OutputMsg(const char *fmt, ...)
  	}
  #endif
  
@@ -2269,7 +2413,7 @@ index 827f493b1..d19185c89 100644
  #if defined (_WIN32)
  #ifdef DEBUGFILE
  	if (debugfile != stderr)
-@@ -2083,6 +2184,7 @@ static void Shittycopyerror(const char *name)
+@@ -2083,6 +2194,7 @@ static void Shittycopyerror(const char *name)
  
  static void Shittylogcopy(void)
  {
@@ -2277,7 +2421,7 @@ index 827f493b1..d19185c89 100644
  	char buf[8192];
  	FILE *fp;
  	size_t r;
-@@ -2110,6 +2212,7 @@ static void Shittylogcopy(void)
+@@ -2110,6 +2222,7 @@ static void Shittylogcopy(void)
  	{
  		Shittycopyerror(logfilename);
  	}
@@ -2285,7 +2429,7 @@ index 827f493b1..d19185c89 100644
  }
  #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
  
-@@ -2374,6 +2477,10 @@ static const char *locateWad(void)
+@@ -2374,6 +2487,10 @@ static const char *locateWad(void)
  	const char *envstr;
  	const char *WadPath;
  
@@ -2296,6 +2440,279 @@ index 827f493b1..d19185c89 100644
  	I_OutputMsg("RINGRACERSWADDIR");
  	// does RINGRACERSWADDIR exist?
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
+diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
+new file mode 100644
+index 000000000..6dfb11784
+--- /dev/null
++++ b/src/sdl/i_uwpprofile.cpp
+@@ -0,0 +1,267 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  i_uwpprofile.cpp
++/// \brief [UWP]: Sampling profiler for the main thread, to find what's slow on Xbox
++///
++/// A thread pauses the main thread about 1000 times a second and records the
++/// address it was running and what it was doing (uwpprofphase_t). Every 20
++/// seconds, it writes how many samples it took at each address while a level
++/// was being played to E:\ringracers\uwp-profile.txt. Addresses are written as
++/// offsets into their module, which for the game itself (ringracers-uwp.exe)
++/// ringracers-uwp.map from the same build maps to functions.
++
++#include <algorithm>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <system_error>
++#include <thread>
++#include <unordered_map>
++#include <vector>
++
++#define NOMINMAX
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++
++#include "../i_system.h"
++
++#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
++#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
++#endif
++
++volatile INT32 i_uwpprofphase = UWPPROF_OTHER;
++volatile INT32 i_uwpprofinlevel = false;
++
++namespace
++{
++
++constexpr const char* kProfilePath = "E:\\ringracers\\uwp-profile.txt";
++constexpr auto kWriteInterval = std::chrono::seconds(20);
++constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display"};
++
++// Looked up at runtime, so a missing function stops the profiler instead of the game
++using SuspendResumeThreadFn = DWORD (WINAPI *)(HANDLE);
++using GetThreadContextFn = BOOL (WINAPI *)(HANDLE, LPCONTEXT);
++
++struct Sampler
++{
++	HANDLE thread;
++	SuspendResumeThreadFn suspend;
++	SuspendResumeThreadFn resume;
++	GetThreadContextFn getcontext;
++};
++
++struct Profile
++{
++	std::unordered_map<uintptr_t, uint32_t> counts[NUMUWPPROFPHASES]; // samples in levels by address
++	uint64_t levelsamples = 0;
++	uint64_t othersamples = 0;
++	uint64_t failedsamples = 0;
++};
++
++void WriteProfile(const Profile& profile, double seconds)
++{
++	struct Entry
++	{
++		size_t module;
++		uintptr_t offset;
++		uint32_t count;
++	};
++
++	FILE* file = fopen(kProfilePath, "w");
++
++	if (!file)
++	{
++		return;
++	}
++
++	// The module each address is in, from its 64 KB region, since modules are mapped at multiples of 64 KB
++	std::vector<uintptr_t> modules;
++	std::unordered_map<uintptr_t, size_t> regionmodules;
++	auto find_module = [&](uintptr_t address) -> size_t
++	{
++		auto it = regionmodules.find(address >> 16);
++		if (it != regionmodules.end())
++		{
++			return it->second;
++		}
++
++		MEMORY_BASIC_INFORMATION info = {};
++		uintptr_t base = 0;
++		if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &info, sizeof info))
++		{
++			base = reinterpret_cast<uintptr_t>(info.AllocationBase);
++		}
++
++		size_t index = std::find(modules.begin(), modules.end(), base) - modules.begin();
++		if (index == modules.size())
++		{
++			modules.push_back(base);
++		}
++		regionmodules[address >> 16] = index;
++		return index;
++	};
++
++	std::vector<Entry> entries[NUMUWPPROFPHASES];
++	for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
++	{
++		for (const auto& [address, count] : profile.counts[phase])
++		{
++			const size_t module = find_module(address);
++			entries[phase].push_back({module, address - modules[module], count});
++		}
++		std::sort(entries[phase].begin(), entries[phase].end(), [](const Entry& a, const Entry& b) { return a.count > b.count; });
++	}
++
++	fprintf(file, "Ring Racers UWP profile: %llu samples while playing levels and %llu at other times over %.0f s (%.0f per second), %llu failed\n",
++		static_cast<unsigned long long>(profile.levelsamples), static_cast<unsigned long long>(profile.othersamples), seconds,
++		(profile.levelsamples + profile.othersamples) / seconds, static_cast<unsigned long long>(profile.failedsamples));
++	fprintf(file, "Lines after each phase: module, offset into it (hex), samples\n");
++
++	for (size_t i = 0; i < modules.size(); i++)
++	{
++		char path[MAX_PATH] = "?";
++		if (modules[i] && !GetModuleFileNameA(reinterpret_cast<HMODULE>(modules[i]), path, sizeof path))
++		{
++			snprintf(path, sizeof path, "?");
++		}
++		fprintf(file, "module %zu: %s\n", i, path);
++	}
++
++	for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
++	{
++		uint64_t samples = 0;
++		for (const Entry& entry : entries[phase])
++		{
++			samples += entry.count;
++		}
++
++		fprintf(file, "phase %s: %llu samples\n", kPhaseNames[phase], static_cast<unsigned long long>(samples));
++		for (const Entry& entry : entries[phase])
++		{
++			fprintf(file, "%zu %llx %u\n", entry.module, static_cast<unsigned long long>(entry.offset), entry.count);
++		}
++	}
++
++	fclose(file);
++}
++
++void SampleMainThread(Sampler sampler)
++{
++	using Clock = std::chrono::steady_clock;
++
++	Profile profile;
++	const Clock::time_point start = Clock::now();
++	Clock::time_point lastwrite = start;
++	uint64_t written = 0;
++
++	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
++
++	// Sleep(1) can take as long as the system timer's period, which is often 15 ms
++	HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
++
++	for (;;)
++	{
++		LARGE_INTEGER due;
++		due.QuadPart = -10000; // 1 ms from now, in 100 ns units
++
++		if (timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
++		{
++			WaitForSingleObject(timer, INFINITE);
++		}
++		else
++		{
++			Sleep(1);
++		}
++
++		CONTEXT context = {};
++		context.ContextFlags = CONTEXT_CONTROL;
++
++		// Nothing that could wait on the main thread (like allocating) may happen until it's resumed
++		BOOL gotcontext = FALSE;
++		INT32 phase = UWPPROF_OTHER;
++		INT32 inlevel = false;
++		if (sampler.suspend(sampler.thread) != static_cast<DWORD>(-1))
++		{
++			gotcontext = sampler.getcontext(sampler.thread, &context);
++			phase = i_uwpprofphase;
++			inlevel = i_uwpprofinlevel;
++			sampler.resume(sampler.thread);
++		}
++
++		if (!gotcontext)
++		{
++			profile.failedsamples++;
++		}
++		else if (inlevel && phase >= 0 && phase < NUMUWPPROFPHASES)
++		{
++			profile.counts[phase][context.Rip]++;
++			profile.levelsamples++;
++		}
++		else
++		{
++			profile.othersamples++;
++		}
++
++		// Written when there are new samples from levels, or failures, so those show up too
++		const Clock::time_point now = Clock::now();
++		if (now - lastwrite >= kWriteInterval && profile.levelsamples + profile.failedsamples > written)
++		{
++			WriteProfile(profile, std::chrono::duration<double>(now - start).count());
++			written = profile.levelsamples + profile.failedsamples;
++			lastwrite = now;
++		}
++	}
++}
++
++} // namespace
++
++void I_UWPStartProfiler(void)
++{
++	HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
++	HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
++	auto find = [&](const char* name) -> void*
++	{
++		FARPROC proc = kernelbase ? GetProcAddress(kernelbase, name) : nullptr;
++		if (!proc && kernel32)
++		{
++			proc = GetProcAddress(kernel32, name);
++		}
++		return reinterpret_cast<void*>(proc);
++	};
++	Sampler sampler = {};
++
++	sampler.suspend = reinterpret_cast<SuspendResumeThreadFn>(find("SuspendThread"));
++	sampler.resume = reinterpret_cast<SuspendResumeThreadFn>(find("ResumeThread"));
++	sampler.getcontext = reinterpret_cast<GetThreadContextFn>(find("GetThreadContext"));
++	if (!sampler.suspend || !sampler.resume || !sampler.getcontext)
++	{
++		I_OutputMsg("UWP: can't profile: SuspendThread, ResumeThread, or GetThreadContext is missing\n");
++		return;
++	}
++
++	// GetCurrentThread() only means the main thread when called from it
++	if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &sampler.thread, 0, FALSE, DUPLICATE_SAME_ACCESS))
++	{
++		I_OutputMsg("UWP: can't profile: error %lu getting the main thread\n", GetLastError());
++		return;
++	}
++
++	try
++	{
++		std::thread(SampleMainThread, sampler).detach();
++	}
++	catch (const std::system_error& error)
++	{
++		I_OutputMsg("UWP: can't profile: %s\n", error.what());
++		CloseHandle(sampler.thread);
++		return;
++	}
++
++	I_OutputMsg("UWP: profiling the main thread while playing levels, written to %s every %lld s\n", kProfilePath,
++		static_cast<long long>(kWriteInterval.count()));
++}
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
 index 7fa8e0c3f..d0c0afb5d 100644
 --- a/src/sdl/i_video.cpp
@@ -2503,21 +2920,60 @@ index f3f10fe90..c85cbe0b4 100644
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
-index 3c68b1378..27efad60c 100644
+index 3c68b1378..2444f431c 100644
 --- a/src/w_wad.cpp
 +++ b/src/w_wad.cpp
-@@ -114,6 +114,10 @@ static UINT16 lumpnumcacheindex = 0;
+@@ -114,6 +114,14 @@ static UINT16 lumpnumcacheindex = 0;
  UINT16 numwadfiles = 0; // number of active wadfiles
  wadfile_t *wadfiles[MAX_WADFILES]; // 0 to numwadfiles-1 are valid
  
 +#ifdef _UWP
-+boolean w_skipexpectedmd5 = false;
++boolean w_skipassetcheck = false;
++
++// [UWP]: Set while W_InitFile checks and reads the directory of a main file with the asset check skipped, so that
++// W_VerifyPK3 and ResGetLumpsZip don't read every zip entry's local header, which reads most of the file
++static boolean w_uwptrustlayout = false;
 +#endif
 +
  static FILE *g_shaderspk3file;
  static UINT16 g_shaderspk3numlumps;
  static lumpinfo_t *g_shaderspk3lumps;
-@@ -819,6 +823,10 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -473,6 +481,9 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
+ 
+ 		memset(lump_p->name, 0x00, 9);
+ 		strncpy(lump_p->name, fileinfo->name, 8);
++#ifdef _UWP
++		lump_p->uwplocalheader = false;
++#endif
+ 
+ 		if (WADNAMECHECK(fileinfo->name))
+ 		{
+@@ -715,6 +726,9 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
+ 		lump_p->position = LONG(zentry->offset); // NOT ACCURATE YET: we still need to read the local entry to find our true position
+ 		lump_p->disksize = LONG(zentry->compsize);
+ 		lump_p->size = LONG(zentry->size);
++#ifdef _UWP
++		lump_p->uwplocalheader = w_uwptrustlayout;
++#endif
+ 
+ 		fullname = static_cast<char*>(malloc(SHORT(zentry->namelen) + 1));
+ 		strlcpy(fullname, (char*)(zentry + 1), SHORT(zentry->namelen) + 1);
+@@ -764,6 +778,14 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
+ 	}
+ 
+ 	// Adjust lump position values properly
++#ifdef _UWP
++	// [UWP]: Or leave that until each lump is first read (W_UWPSeekLumpData)
++	if (w_uwptrustlayout)
++	{
++		*nlmp = numlumps;
++		return lumpinfo;
++	}
++#endif
+ 	for (i = 0, lump_p = lumpinfo; i < numlumps; i++, lump_p++)
+ 	{
+ 		// skip and ignore comments/extra fields
+@@ -819,6 +841,10 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  #endif
  	UINT8 md5sum[16];
  	int important;
@@ -2528,29 +2984,67 @@ index 3c68b1378..27efad60c 100644
  
  	if (!(refreshdirmenu & REFRESHDIR_ADDFILE))
  		refreshdirmenu = REFRESHDIR_NORMAL|REFRESHDIR_ADDFILE; // clean out cons_alerts that happened earlier
-@@ -864,6 +872,9 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -848,7 +874,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+ 	if ((handle = W_OpenWadFile(&filename, (mainfile ? NULL : "addons"), true)) == NULL)
+ 		return W_InitFileError(filename, startup);
+ 
++#ifdef _UWP
++	const boolean uwpskipcheck = mainfile && w_skipassetcheck;
++
++	w_uwptrustlayout = uwpskipcheck;
++#endif
+ 	important = W_VerifyNMUSlumps(filename, handle, startup);
++#ifdef _UWP
++	w_uwptrustlayout = false;
++#endif
+ 
+ 	if (important == -1)
+ 	{
+@@ -864,6 +898,17 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	// Let's not add a wad file if the MD5 matches
  	// an MD5 of an already added WAD file!
  	//
 +#ifdef _UWP
-+	if (!(md5expected && w_skipexpectedmd5))
++	if (uwpskipcheck)
++	{
++		// [UWP]: Files with an expected MD5 use it below. The music and sound files have none, and theirs is only
++		// compared with other files' to tell if they're already loaded (they're never sent to netgames or recorded in
++		// replays), so hashing the file name will do.
++		if (!md5expected)
++			md5_buffer(filename, strlen(filename), md5sum);
++	}
++	else
 +#endif
  	W_MakeFileMD5(filename, md5sum);
  
  	if (md5expected)
-@@ -891,6 +902,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -891,6 +936,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  			else realmd5[ix>>1] = (UINT8)(n<<4);
  		}
  
 +#ifdef _UWP
-+		if (w_skipexpectedmd5)
++		if (uwpskipcheck)
 +			memcpy(md5sum, realmd5, MD5_LEN);
 +#endif
 +
  		if (memcmp(realmd5, md5sum, 16) != 0)
  		{
  			char actualmd5text[2*MD5_LEN+1];
-@@ -1050,6 +1066,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -942,7 +992,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+ 		lumpinfo = ResGetLumpsStandalone(handle, &numlumps, "LUA_INIT");
+ 		break;
+ 	case RET_PK3:
++#ifdef _UWP
++		w_uwptrustlayout = uwpskipcheck;
++#endif
+ 		lumpinfo = ResGetLumpsZip(handle, &numlumps);
++#ifdef _UWP
++		w_uwptrustlayout = false;
++#endif
+ 		break;
+ 	case RET_WAD:
+ 		lumpinfo = ResGetLumpsWad(handle, &numlumps, filename);
+@@ -1050,6 +1106,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	DEH_UpdateMaxFreeslots();
  
  	W_InvalidateLumpnumCache();
@@ -2564,23 +3058,130 @@ index 3c68b1378..27efad60c 100644
  	return wadfile->numlumps;
  }
  
+@@ -1799,6 +1862,44 @@ void zerr(int ret)
+ }
+ #endif
+ 
++#ifdef _UWP
++// [UWP]: Finds where a lump's data starts from its zip entry's local header, which ResGetLumpsZip doesn't read for main
++// files when the asset check is skipped, then seeks offset bytes into the data. Reading past the header instead of
++// seeking keeps the start of the data in the file's buffer, so this costs little more than reading the data.
++static void W_UWPSeekLumpData(UINT16 wad, lumpinfo_t *l, size_t offset)
++{
++	FILE *handle = wadfiles[wad]->handle;
++	zlentry_t zlentry;
++	char skipped[256];
++	size_t toskip;
++
++	if (fseek(handle, (long)l->position, SEEK_SET) != 0 || fread(&zlentry, 1, sizeof zlentry, handle) < sizeof zlentry
++		|| memcmp(zlentry.signature, "PK\x03\x04", 4) != 0)
++	{
++		I_Error("Local headers for lump %s in %s are corrupt.\nCheck the game files at launch to find damaged files.",
++			l->fullname, wadfiles[wad]->filename);
++	}
++
++	l->position += sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen);
++	l->uwplocalheader = false;
++
++	if (offset)
++	{
++		fseek(handle, (long)(l->position + offset), SEEK_SET);
++		return;
++	}
++
++	for (toskip = SHORT(zlentry.namelen) + SHORT(zlentry.xtralen); toskip > 0;)
++	{
++		const size_t n = std::min(toskip, sizeof skipped);
++
++		if (fread(skipped, 1, n, handle) < n)
++			break;
++		toskip -= n;
++	}
++}
++#endif
++
+ /** Reads bytes from the head of a lump.
+   * Note: If the lump is compressed, the whole thing has to be read anyway.
+   *
+@@ -1832,6 +1933,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
+ 	// We setup the desired file handle to read the lump data.
+ 	l = wadfiles[wad]->lumpinfo + lump;
+ 	handle = wadfiles[wad]->handle;
++#ifdef _UWP
++	if (l->uwplocalheader)
++		W_UWPSeekLumpData(wad, l, offset);
++	else
++#endif
+ 	fseek(handle, (long)(l->position + offset), SEEK_SET);
+ 
+ 	// But let's not copy it yet. We support different compression formats on lumps, so we need to take that into account.
+@@ -2427,6 +2533,12 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
+ 		data_size +=
+ 			sizeof *zentry + SHORT(zentry->namelen) + SHORT(zentry->xtralen) + SHORT(zentry->commlen);
+ 
++#ifdef _UWP
++		// [UWP]: The local headers are only needed for the size check below, which is skipped too
++		if (w_uwptrustlayout)
++			continue;
++#endif
++
+ 		if (fseek(fp, LONG(zentry->offset), SEEK_SET) != 0)
+ 			return true;
+ 
+@@ -2437,6 +2549,11 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
+ 			sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen) + LONG(zlentry.compsize);
+ 	}
+ 
++#ifdef _UWP
++	if (w_uwptrustlayout)
++		return verified;
++#endif
++
+ 	if (data_size < file_size)
+ 	{
+ 		const char * error = "ZIP file has holes (%ld extra bytes)\n";
 diff --git a/src/w_wad.h b/src/w_wad.h
-index 7024826dc..02fad1620 100644
+index 7024826dc..4c6f71772 100644
 --- a/src/w_wad.h
 +++ b/src/w_wad.h
-@@ -142,6 +142,12 @@ struct wadfile_t
+@@ -75,6 +75,9 @@ struct lumpinfo_t
+ 	char *fullname;         //                   e.g. "Folder/Subfolder/LongEntryName.extension"
+ 	size_t size;            // real (uncompressed) size
+ 	compmethod compression; // lump compression method
++#ifdef _UWP
++	boolean uwplocalheader; // [UWP]: position is still that of the zip entry's local header (see w_skipassetcheck)
++#endif
+ };
+ 
+ // =========================================================================
+@@ -142,6 +145,13 @@ struct wadfile_t
  extern UINT16 numwadfiles;
  extern wadfile_t *wadfiles[MAX_WADFILES];
  
 +#ifdef _UWP
-+// [UWP]: Use the expected MD5 of files that have one instead of hashing them, since reading all of the
-+// main assets from a USB drive is slow. Set from the prompt at launch.
-+extern boolean w_skipexpectedmd5;
++// [UWP]: Don't read all of the main asset files at startup, which is slow from a USB drive: use the expected MD5s of
++// files that have one instead of hashing them, and don't read every zip entry's local header to check the layout and
++// find where its data starts (that's found when the entry is first read instead). Set from the prompt at launch.
++extern boolean w_skipassetcheck;
 +#endif
 +
  // =========================================================================
  
  void W_Shutdown(void);
+diff --git a/src/z_zone.cpp b/src/z_zone.cpp
+index b5f73450b..55d6c7b3f 100644
+--- a/src/z_zone.cpp
++++ b/src/z_zone.cpp
+@@ -111,6 +111,9 @@ void Z_Init(void)
+ 
+ 	memfree = I_GetFreeMem(&total)>>20;
+ 	CONS_Printf("System memory: %uMB - Free: %uMB\n", total>>20, memfree);
++#ifdef _UWP
++	I_UWPLogMemoryLimit();
++#endif
+ 
+ 	// Note: This allocates memory. Watch out.
+ 	COM_AddDebugCommand("memfree", Command_Memfree_f);
 -- 
 2.50.1 (Apple Git-155)
 

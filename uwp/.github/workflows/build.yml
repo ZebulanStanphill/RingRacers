@@ -66,3 +66,16 @@ jobs:
         with:
           name: ringracers-uwp
           path: out/
+
+      # The linker map of this build, which maps the addresses in the game's profile (uwp-profile.txt) to functions
+      - name: Collect symbols
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force symbols | Out-Null
+          Get-ChildItem build -Recurse -Filter ringracers-uwp.map | Select-Object -First 1 | Copy-Item -Destination symbols
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ringracers-uwp-symbols
+          path: symbols/
+          if-no-files-found: error
