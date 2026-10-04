@@ -1,4 +1,4 @@
-From 76535c88f10ca13707a95138aee64693cab21b07 Mon Sep 17 00:00:00 2001
+From 137058938f88c584e09a74e80065a909e9f3b745 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -10,10 +10,14 @@ launcher from ringracers-uwp. Based on worleydl's uwp-compat branch of
 RingRacers-dev, rebased onto v2.4.
 
 - Pull the SDL2 headers and libuwp from worleydl/uwp-dep instead of vcpkg
+- Compile for the Xbox One's Jaguar CPU (btver2), whose instructions
+  Xbox Series X|S CPUs also support
 - Render through OpenGL ES 2 (ANGLE on Direct3D 11): support OpenGL ES 2
   contexts in the GL2 RHI backend, request one, render at the size of
   ANGLE's surface, and hide Legacy GL, which needs desktop OpenGL
 - Read game data and save files from E:\ringracers
+- Ask at launch whether to check the main asset files' MD5s, since that
+  reads all of them from the USB drive; skipping uses the expected MD5s
 - Use the libuwp display size and refresh rate instead of SDL's
 - Force WASAPI audio
 - Write the log to E:\ringracers\latest-log.txt, since the working
@@ -21,29 +25,39 @@ RingRacers-dev, rebased onto v2.4.
 - Create the save folder before checking that the config is writable
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
+- Log how long each loading step takes, the thread pool size, and every
+  5 seconds a summary of the perfstats frame and tic timings
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
 ---
- CMakeLists.txt               | 19 ++++++--
- CMakePresets.json            | 17 +++++++
- src/CMakeLists.txt           | 38 ++++++++++-----
- src/d_main.cpp               | 12 +++++
- src/http-mserv.c             |  2 +
- src/i_video_common.cpp       | 21 +++++++++
- src/rhi/gl2/gl2_rhi.cpp      | 90 ++++++++++++++++++++++++++++++++----
- src/rhi/gl2/gl2_rhi.hpp      |  6 +++
- src/screen.c                 |  2 +-
- src/sdl/CMakeLists.txt       |  4 ++
- src/sdl/i_main.cpp           | 11 ++++-
- src/sdl/i_system.cpp         | 75 +++++++++++++++++++++++++++++-
- src/sdl/i_video.cpp          | 74 +++++++++++++++++++++++++++++
- src/sdl/mixer_sound.c        |  4 +-
- src/sdl/ogl_sdl.c            |  8 ++++
- src/sdl/rhi_gl2_platform.cpp |  9 ++++
- 16 files changed, 363 insertions(+), 29 deletions(-)
+ CMakeLists.txt               |  19 ++++++-
+ CMakePresets.json            |  17 ++++++
+ src/CMakeLists.txt           |  44 +++++++++++----
+ src/console.c                |  13 +++++
+ src/core/thread_pool.cpp     |   9 +++
+ src/d_clisrv.c               |   3 +
+ src/d_main.cpp               |  36 ++++++++++++
+ src/http-mserv.c             |   2 +
+ src/i_system.h               |   5 ++
+ src/i_video_common.cpp       |  21 +++++++
+ src/m_perfstats.c            | 104 +++++++++++++++++++++++++++++++++++
+ src/m_perfstats.h            |   6 ++
+ src/rhi/gl2/gl2_rhi.cpp      |  90 ++++++++++++++++++++++++++----
+ src/rhi/gl2/gl2_rhi.hpp      |   6 ++
+ src/screen.c                 |   2 +-
+ src/sdl/CMakeLists.txt       |   4 ++
+ src/sdl/i_main.cpp           |  11 +++-
+ src/sdl/i_system.cpp         |  99 ++++++++++++++++++++++++++++++++-
+ src/sdl/i_video.cpp          |  74 +++++++++++++++++++++++++
+ src/sdl/mixer_sound.c        |   4 +-
+ src/sdl/ogl_sdl.c            |   8 +++
+ src/sdl/rhi_gl2_platform.cpp |   9 +++
+ src/w_wad.cpp                |  12 ++++
+ src/w_wad.h                  |   6 ++
+ 24 files changed, 575 insertions(+), 29 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -141,7 +155,7 @@ index a52a087bd..b96f55aa1 100644
  			"name": "ninja-x64_osx_vcpkg-debug",
  			"configurePreset": "ninja-x64_osx_vcpkg-debug"
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 9eb0bcbf1..a9e5d6d33 100644
+index 9eb0bcbf1..46543dc45 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -1,6 +1,6 @@
@@ -185,18 +199,24 @@ index 9eb0bcbf1..a9e5d6d33 100644
  	target_link_libraries(SRB2SDL2 PRIVATE cpptrace::cpptrace)
  	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_CPPTRACE)
  endif()
-@@ -394,6 +402,10 @@ if(SRB2_CONFIG_ENABLE_WEBM_MOVIES)
+@@ -394,6 +402,16 @@ if(SRB2_CONFIG_ENABLE_WEBM_MOVIES)
  	target_compile_definitions(SRB2SDL2 PRIVATE -DSRB2_CONFIG_ENABLE_WEBM_MOVIES)
  endif()
  
 +if(SRB2_CONFIG_UWP)
 +	target_link_libraries(SRB2SDL2 PRIVATE LIBUWP)
++
++	# Target the Xbox One's Jaguar CPU (btver2). Xbox Series X|S CPUs (Zen 2) support all of its instructions,
++	# and since it has no FMA, floating point math gives the same results as other x64 builds.
++	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
++		target_compile_options(SRB2SDL2 PRIVATE "/clang:-march=btver2")
++	endif()
 +endif()
 +
  target_link_libraries(SRB2SDL2 PRIVATE nlohmann_json::nlohmann_json)
  
  set(SRB2_HAVE_THREADS ON)
-@@ -933,15 +945,17 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL Windows AND NOT "${SRB2_CONFIG_INTERNAL_LIBRA
+@@ -933,15 +951,17 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL Windows AND NOT "${SRB2_CONFIG_INTERNAL_LIBRA
  
  		#message(STATUS ADDITIONAL_DLLS="${ADDITIONAL_DLLS}")
  	endif()
@@ -223,11 +243,105 @@ index 9eb0bcbf1..a9e5d6d33 100644
  endif()
  
  # Setup clang-tidy
+diff --git a/src/console.c b/src/console.c
+index 1e7585fbc..1712e8da4 100644
+--- a/src/console.c
++++ b/src/console.c
+@@ -1948,7 +1948,20 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+ 	con_startup_loadprogress = newStep;
+ 
+ 	if (con_startup_loadprogress <= LOADED_ALLDONE)
++	{
++#ifdef _UWP
++		// [UWP]: Time each step, to see what makes startup slow on Xbox
++		static precise_t loadstart = 0;
++
++		if (!loadstart)
++			loadstart = I_GetPreciseTime();
++
++		CONS_Printf("LOADING UPDATE - %s (%.1f s)\n", CON_LoadingStrings[con_startup_loadprogress],
++			(double)(I_GetPreciseTime() - loadstart) / I_GetPrecisePrecision());
++#else
+ 		CONS_Printf("LOADING UPDATE - %s\n", CON_LoadingStrings[con_startup_loadprogress]);
++#endif
++	}
+ 
+ 	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
+ 		return;
+diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
+index 8a434ba63..d28196d30 100644
+--- a/src/core/thread_pool.cpp
++++ b/src/core/thread_pool.cpp
+@@ -24,6 +24,10 @@
+ #include "../cxxutil.hpp"
+ #include "../m_argv.h"
+ 
++#ifdef _UWP
++extern "C" void I_OutputMsg(const char *error, ...);
++#endif
++
+ using namespace srb2;
+ 
+ static void do_work(ThreadPool::Task& work)
+@@ -316,6 +320,11 @@ void I_ThreadPoolInit(void)
+ 	{
+ 		g_main_threadpool = std::make_unique<ThreadPool>(thread_count);
+ 	}
++
++#ifdef _UWP
++	I_OutputMsg("UWP: %u hardware threads, %zu thread pool workers\n", std::thread::hardware_concurrency(),
++		M_CheckParm("-singlethreaded") ? (size_t)0 : thread_count);
++#endif
+ }
+ 
+ void I_ThreadPoolShutdown(void)
+diff --git a/src/d_clisrv.c b/src/d_clisrv.c
+index 1166b3c99..11c98f69b 100644
+--- a/src/d_clisrv.c
++++ b/src/d_clisrv.c
+@@ -6971,6 +6971,9 @@ boolean TryRunTics(tic_t realtics)
+ 			consistancy[gametic % BACKUPTICS] = Consistancy();
+ 
+ 			ps_tictime = I_GetPreciseTime() - ps_tictime;
++#ifdef _UWP
++			PS_UWPAddTic();
++#endif
+ 
+ 			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
+ 			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..9d4c8124c 100644
+index 19fcfe0a7..c5c218efb 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
-@@ -1187,8 +1187,13 @@ void D_SRB2Loop(void)
+@@ -922,6 +922,9 @@ void D_SRB2Loop(void)
+ 
+ 		bool ranwipe = false;
+ 		bool world = false;
++#ifdef _UWP
++		bool displayed = false;
++#endif
+ 
+ 		I_UpdateTime();
+ 
+@@ -1067,6 +1070,9 @@ void D_SRB2Loop(void)
+ 			}
+ 
+ 			ranwipe = D_Display(world);
++#ifdef _UWP
++			displayed = true;
++#endif
+ 		}
+ 
+ #ifdef HWRENDER
+@@ -1183,12 +1189,21 @@ void D_SRB2Loop(void)
+ 			skiplaggyworld = false;
+ 		}
+ 
++#ifdef _UWP
++		const precise_t worktime = finishprecise - enterprecise;
++#endif
++
+ 		if (!singletics)
  		{
  			INT64 elapsed = (INT64)(finishprecise - enterprecise);
  
@@ -241,7 +355,18 @@ index 19fcfe0a7..9d4c8124c 100644
  
  			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
  			{
-@@ -1661,6 +1666,11 @@ void D_SRB2Main(void)
+@@ -1199,6 +1214,10 @@ void D_SRB2Loop(void)
+ 		finishprecise = I_GetPreciseTime();
+ 		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
+ 		deltatics = deltasecs * NEWTICRATE;
++
++#ifdef _UWP
++		PS_UWPAddLoop(worktime, displayed);
++#endif
+ 	}
+ }
+ 
+@@ -1661,6 +1680,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -253,7 +378,24 @@ index 19fcfe0a7..9d4c8124c 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -2323,6 +2333,8 @@ const char *D_Home(void)
+@@ -1757,6 +1781,16 @@ void D_SRB2Main(void)
+ 	// Make backups of some SOCcable tables.
+ 	P_BackupTables();
+ 
++#ifdef _UWP
++	{
++		const precise_t promptstart = I_GetPreciseTime();
++
++		w_skipexpectedmd5 = I_UWPAskSkipAssetCheck();
++		I_OutputMsg("UWP: %s the asset check (prompt took %.1f s)\n", w_skipexpectedmd5 ? "skipping" : "running",
++			(double)(I_GetPreciseTime() - promptstart) / I_GetPrecisePrecision());
++	}
++#endif
++
+ 	// load wad, including the main wad file
+ 	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
+ 	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
+@@ -2323,6 +2357,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -280,6 +422,22 @@ index 4f9f9cb39..6854fc5e7 100644
  
  	if (M_CheckParm("-bindaddr") && M_IsNextParm())
  	{
+diff --git a/src/i_system.h b/src/i_system.h
+index 56d507e90..de58e86fd 100644
+--- a/src/i_system.h
++++ b/src/i_system.h
+@@ -313,6 +313,11 @@ boolean I_HasOpenURL(void);
+ 
+ void I_OpenURL(const char *data);
+ 
++#ifdef _UWP
++// [UWP]: Asks at launch whether to skip checking the main asset files' MD5s. Returns true to skip.
++boolean I_UWPAskSkipAssetCheck(void);
++#endif
++
+ #ifdef __cplusplus
+ } // extern "C"
+ #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
 index f52f9298e..173a15c64 100644
 --- a/src/i_video_common.cpp
@@ -352,6 +510,142 @@ index f52f9298e..173a15c64 100644
  
  	FrameMark;
  
+diff --git a/src/m_perfstats.c b/src/m_perfstats.c
+index 705b60eab..dc517cc0c 100644
+--- a/src/m_perfstats.c
++++ b/src/m_perfstats.c
+@@ -25,6 +25,11 @@
+ #include "hardware/hw_main.h"
+ #endif
+ 
++#ifdef _UWP
++#include "r_fps.h"
++#include "screen.h"
++#endif
++
+ struct perfstatcol;
+ struct perfstatrow;
+ 
+@@ -707,3 +712,102 @@ void M_DrawPerfStats(void)
+ 		}
+ 	}
+ }
++
++#ifdef _UWP
++#define UWP_PERF_INTERVAL 5 // seconds between summaries
++
++static struct
++{
++	precise_t start;
++	int loops, frames, worldframes, tics;
++	precise_t work, worstwork;
++	precise_t render, bsp, spriteclip, portals, planes, masked, ui, swap;
++	precise_t tic, playerthink, thinkers, lua, acs, bots;
++} uwp_perf;
++
++void PS_UWPAddTic(void)
++{
++	uwp_perf.tics++;
++	uwp_perf.tic += ps_tictime;
++	uwp_perf.playerthink += ps_playerthink_time;
++	uwp_perf.thinkers += ps_thinkertime;
++	uwp_perf.lua += ps_lua_thinkframe_time;
++	uwp_perf.acs += ps_acs_time;
++	// Bot ticcmds are built separately from the tic, once per tic
++	uwp_perf.bots += ps_botticcmd_time;
++}
++
++void PS_UWPAddLoop(precise_t worktime, boolean displayed)
++{
++	const double ms = 1000.0 / I_GetPrecisePrecision();
++	const precise_t now = I_GetPreciseTime();
++	double seconds;
++
++	if (!uwp_perf.start)
++		uwp_perf.start = now;
++
++	uwp_perf.loops++;
++	uwp_perf.work += worktime;
++	if (worktime > uwp_perf.worstwork)
++		uwp_perf.worstwork = worktime;
++
++	if (displayed)
++	{
++		uwp_perf.frames++;
++		uwp_perf.ui += ps_uitime;
++		uwp_perf.swap += ps_swaptime;
++
++		if (ps_rendercalltime)
++		{
++			uwp_perf.worldframes++;
++			uwp_perf.render += ps_rendercalltime;
++			uwp_perf.bsp += ps_bsptime;
++			uwp_perf.spriteclip += ps_sw_spritecliptime;
++			uwp_perf.portals += ps_sw_portaltime;
++			uwp_perf.planes += ps_sw_planetime;
++			uwp_perf.masked += ps_sw_maskedtime;
++		}
++	}
++
++	// Only set again by frames that render the world
++	ps_rendercalltime = 0;
++
++	seconds = (now - uwp_perf.start) * ms / 1000.0;
++	if (seconds < UWP_PERF_INTERVAL)
++		return;
++
++	I_OutputMsg("UWP perf: %.1f s at %dx%d (FPS cap %s, V-Sync %s, draw distance %s, skyboxes %s, parallel software %s)\n",
++		seconds, vid.width, vid.height,
++		cv_fpscap.string, cv_vidwait.string, cv_drawdist.string, cv_skybox.string, cv_parallelsoftware.string);
++	I_OutputMsg("UWP perf:   %.1f frames/s (%.1f with 3D) from %.1f loops/s; work %.1f ms per loop, %.1f ms at worst\n",
++		uwp_perf.frames / seconds, uwp_perf.worldframes / seconds, uwp_perf.loops / seconds,
++		uwp_perf.work * ms / uwp_perf.loops, uwp_perf.worstwork * ms);
++
++	if (uwp_perf.worldframes)
++	{
++		const int n = uwp_perf.worldframes;
++
++		I_OutputMsg("UWP perf:   3D %.1f ms per frame (BSP %.1f, sprite clip %.1f, portals and skybox %.1f, planes %.1f, masked %.1f)\n",
++			uwp_perf.render * ms / n, uwp_perf.bsp * ms / n, uwp_perf.spriteclip * ms / n,
++			uwp_perf.portals * ms / n, uwp_perf.planes * ms / n, uwp_perf.masked * ms / n);
++	}
++
++	if (uwp_perf.frames)
++	{
++		I_OutputMsg("UWP perf:   UI %.1f ms, finish update %.1f ms per frame\n",
++			uwp_perf.ui * ms / uwp_perf.frames, uwp_perf.swap * ms / uwp_perf.frames);
++	}
++
++	if (uwp_perf.tics)
++	{
++		const int n = uwp_perf.tics;
++
++		I_OutputMsg("UWP perf:   %.1f tics/s; logic %.1f ms per tic (players %.1f, thinkers %.1f, Lua %.1f, ACS %.1f), bots %.1f ms per tic\n",
++			n / seconds, uwp_perf.tic * ms / n, uwp_perf.playerthink * ms / n, uwp_perf.thinkers * ms / n,
++			uwp_perf.lua * ms / n, uwp_perf.acs * ms / n, uwp_perf.bots * ms / n);
++	}
++
++	memset(&uwp_perf, 0, sizeof uwp_perf);
++	uwp_perf.start = now;
++}
++#endif
+diff --git a/src/m_perfstats.h b/src/m_perfstats.h
+index f92b1d8e0..6046ab84e 100644
+--- a/src/m_perfstats.h
++++ b/src/m_perfstats.h
+@@ -70,6 +70,12 @@ void PS_ResetBotInfo(void);
+ 
+ void M_DrawPerfStats(void);
+ 
++#ifdef _UWP
++// [UWP]: The perfstats overlay is hard to read on Xbox, so these summarize the same timings in the log every few seconds
++void PS_UWPAddTic(void); // after each game tic
++void PS_UWPAddLoop(precise_t worktime, boolean displayed); // after each main loop iteration, with its time before sleeping
++#endif
++
+ #ifdef __cplusplus
+ } // extern "C"
+ #endif
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
 index cf35eebb5..b6de6e4c5 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
@@ -623,7 +917,7 @@ index f2fa2fce9..73f659db8 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..8f31d47aa 100644
+index 827f493b1..329c12c17 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -636,7 +930,7 @@ index 827f493b1..8f31d47aa 100644
  #define USE_DBGHELP
  #include <DbgHelp.h>
  #endif
-@@ -287,6 +288,49 @@ static void write_backtrace(INT32 signal)
+@@ -287,6 +288,73 @@ static void write_backtrace(INT32 signal)
  #undef CRASHLOG_STDERR_WRITE
  #endif // UNIXBACKTRACE
  
@@ -681,12 +975,36 @@ index 827f493b1..8f31d47aa 100644
 +			len += snprintf(out + len, outsize - len, "%c: ok, ringracers found\n", letter);
 +	}
 +}
++
++boolean I_UWPAskSkipAssetCheck(void)
++{
++	const SDL_MessageBoxButtonData buttons[] = {
++		{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Check files"},
++		{0, 1, "Skip check"},
++	};
++	SDL_MessageBoxData data = {};
++	int button = 0;
++
++	data.flags = SDL_MESSAGEBOX_INFORMATION;
++	data.title = "Dr. Robotnik's Ring Racers";
++	data.message =
++		"Check the game files in E:\\ringracers before loading?\n\n"
++		"Checking reads every file in full, which can take a while from a USB drive. "
++		"Skipping loads faster, but won't catch damaged or outdated files.";
++	data.numbuttons = (int)SDL_arraysize(buttons);
++	data.buttons = buttons;
++
++	if (SDL_ShowMessageBox(&data, &button) < 0)
++		return false;
++
++	return button == 1;
++}
 +#endif
 +
  static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
  {
  	static char finalmessage[2048];
-@@ -295,6 +339,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
+@@ -295,6 +363,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
  	if (M_CheckParm("-dedicated"))
  		return;
  
@@ -716,7 +1034,7 @@ index 827f493b1..8f31d47aa 100644
  	snprintf(
  		finalmessage,
  		sizeof(finalmessage),
-@@ -2083,6 +2150,7 @@ static void Shittycopyerror(const char *name)
+@@ -2083,6 +2174,7 @@ static void Shittycopyerror(const char *name)
  
  static void Shittylogcopy(void)
  {
@@ -724,7 +1042,7 @@ index 827f493b1..8f31d47aa 100644
  	char buf[8192];
  	FILE *fp;
  	size_t r;
-@@ -2110,6 +2178,7 @@ static void Shittylogcopy(void)
+@@ -2110,6 +2202,7 @@ static void Shittylogcopy(void)
  	{
  		Shittycopyerror(logfilename);
  	}
@@ -732,7 +1050,7 @@ index 827f493b1..8f31d47aa 100644
  }
  #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
  
-@@ -2374,6 +2443,10 @@ static const char *locateWad(void)
+@@ -2374,6 +2467,10 @@ static const char *locateWad(void)
  	const char *envstr;
  	const char *WadPath;
  
@@ -949,3 +1267,60 @@ index f3f10fe90..c85cbe0b4 100644
 +#endif
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
+diff --git a/src/w_wad.cpp b/src/w_wad.cpp
+index 3c68b1378..de09c513d 100644
+--- a/src/w_wad.cpp
++++ b/src/w_wad.cpp
+@@ -114,6 +114,10 @@ static UINT16 lumpnumcacheindex = 0;
+ UINT16 numwadfiles = 0; // number of active wadfiles
+ wadfile_t *wadfiles[MAX_WADFILES]; // 0 to numwadfiles-1 are valid
+ 
++#ifdef _UWP
++boolean w_skipexpectedmd5 = false;
++#endif
++
+ static FILE *g_shaderspk3file;
+ static UINT16 g_shaderspk3numlumps;
+ static lumpinfo_t *g_shaderspk3lumps;
+@@ -864,6 +868,9 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+ 	// Let's not add a wad file if the MD5 matches
+ 	// an MD5 of an already added WAD file!
+ 	//
++#ifdef _UWP
++	if (!(md5expected && w_skipexpectedmd5))
++#endif
+ 	W_MakeFileMD5(filename, md5sum);
+ 
+ 	if (md5expected)
+@@ -891,6 +898,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+ 			else realmd5[ix>>1] = (UINT8)(n<<4);
+ 		}
+ 
++#ifdef _UWP
++		if (w_skipexpectedmd5)
++			memcpy(md5sum, realmd5, MD5_LEN);
++#endif
++
+ 		if (memcmp(realmd5, md5sum, 16) != 0)
+ 		{
+ 			char actualmd5text[2*MD5_LEN+1];
+diff --git a/src/w_wad.h b/src/w_wad.h
+index 7024826dc..02fad1620 100644
+--- a/src/w_wad.h
++++ b/src/w_wad.h
+@@ -142,6 +142,12 @@ struct wadfile_t
+ extern UINT16 numwadfiles;
+ extern wadfile_t *wadfiles[MAX_WADFILES];
+ 
++#ifdef _UWP
++// [UWP]: Use the expected MD5 of files that have one instead of hashing them, since reading all of the
++// main assets from a USB drive is slow. Set from the prompt at launch.
++extern boolean w_skipexpectedmd5;
++#endif
++
+ // =========================================================================
+ 
+ void W_Shutdown(void);
+-- 
+2.50.1 (Apple Git-155)
+

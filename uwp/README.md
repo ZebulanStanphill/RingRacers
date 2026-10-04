@@ -31,8 +31,10 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 1. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) to `E:\ringracers` so that `E:\ringracers\bios.pk3` and `E:\ringracers\data\` exist. The game verifies these files, so assets from other versions won't load. Config and saves go in `E:\ringracers\ringracers\`, the log is written to `E:\ringracers\latest-log.txt`, and if the game crashes, the error is saved to `E:\ringracers\error.txt`.
 2. Install the app on your Xbox. The first load takes a while.
+3. At launch, the game asks whether to check its files. Checking reads all of them in full, which is slow from a USB drive, so once the files have passed a check, you can skip it on later launches.
 
 ## Notes
 
 - Only the software renderer is available. Legacy GL needs desktop OpenGL, which ANGLE doesn't provide.
+- `latest-log.txt` records how long each loading step took and, every 5 seconds, the frame rate and where frame and game logic time went (the same timings as the `perfstats` overlay).
 - The app requests microphone access for 2.4's voice chat. If access is denied, the game logs a warning and voice input stays off.
