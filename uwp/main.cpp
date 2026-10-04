@@ -1,7 +1,43 @@
 #include <Windows.h>
+#include <cstdint>
+#include <roapi.h>
+#include <windows.system.h>
+#include <wrl/client.h>
+#include <wrl/wrappers/corewrappers.h>
 #include "SDL2/SDL.h"
 
 extern "C" __declspec(dllimport) void* uwp_GetWindowReference();
+
+// Query the process budget, rather than the physical memory of Xbox's VM.
+// The engine uses this for its startup log and App-mode warning.
+extern "C" int I_UWPGetMemoryBudget(std::uint64_t* limit, std::uint64_t* usage, int* isXbox)
+{
+	*limit = *usage = 0;
+	*isXbox = 0;
+	Microsoft::WRL::Wrappers::RoInitializeWrapper initialize(RO_INIT_MULTITHREADED);
+	HRESULT result = initialize;
+	if (FAILED(result) && result != RPC_E_CHANGED_MODE)
+		return static_cast<int>(result);
+
+	*isXbox = SDL_WinRTGetDeviceFamily() == SDL_WINRT_DEVICEFAMILY_XBOX;
+	Microsoft::WRL::ComPtr<ABI::Windows::System::IMemoryManagerStatics> memory;
+	result = RoGetActivationFactory(
+		Microsoft::WRL::Wrappers::HStringReference(RuntimeClass_Windows_System_MemoryManager).Get(),
+		IID_PPV_ARGS(&memory));
+	if (FAILED(result))
+		return static_cast<int>(result);
+
+	UINT64 budget = 0, used = 0;
+	result = memory->get_AppMemoryUsageLimit(&budget);
+	if (SUCCEEDED(result))
+		result = memory->get_AppMemoryUsage(&used);
+	if (SUCCEEDED(result))
+	{
+		*limit = budget;
+		*usage = used;
+	}
+	return FAILED(result) ? static_cast<int>(result) : 0;
+}
 
 static int bootstrap(int argc, char** argv)
 {
