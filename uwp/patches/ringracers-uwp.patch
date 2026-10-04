@@ -1,4 +1,4 @@
-From a38603b975e856756c6056f67e31b6f24bb280ec Mon Sep 17 00:00:00 2001
+From 90c551abd8a1a4a81f1b65f37698c6ac4c08c3e7 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -21,6 +21,15 @@ RingRacers-dev, rebased onto v2.4.
   frames, keep colormap and lighttable textures between frames
   (reuploading them only when they change), and only upload the palette
   when it changes
+- Spend less time on work the game doesn't need, which costs a lot on
+  the Xbox's CPU: clear only the columns of a new visplane that can be on
+  screen, inline FixedMul, and don't sleep after a frame skipped to catch
+  up on game logic as if it had been drawn
+- Fix P_SetMobjState and P_SetPlayerMobjState returning early without
+  counting their call as finished when a state removes its mobj, after
+  which every state change cleared a table of every state (about 40 KB).
+  Each nested call now uses a table for its depth, and erases only the
+  states it recorded
 - Read game data and save files from E:\ringracers
 - Ask at launch whether to check the main asset files, since that reads
   all of them from the USB drive. Skipping uses the expected MD5s instead
@@ -41,9 +50,13 @@ RingRacers-dev, rebased onto v2.4.
   seconds a summary of the perfstats frame and tic timings, the parts of
   I_FinishUpdate, and counts of draws, texture uploads, and resources
   created
-- Sample the main thread about 1000 times a second while a level is
-  played, and write how many samples landed at each address, by what the
-  game was doing, to E:\ringracers\uwp-profile.txt
+- Sample the main thread about 250 times a second while a level is
+  played, and write how many samples landed at each address and with each
+  call stack (found from each module's unwind data), by what the game was
+  doing, to E:\ringracers\uwp-profile.txt. The perf summary also logs how
+  long the samples paused the main thread, which processors it ran on, the
+  level's mobjs, and P_CheckPosition calls and Lua mobj hooks per tic, and
+  startup logs the CPU sets Windows lists for the game
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
@@ -56,30 +69,33 @@ RingRacers-dev, rebased onto v2.4.
  src/console.c                    |  18 +
  src/core/thread_pool.cpp         |   9 +
  src/d_clisrv.c                   |  19 +
- src/d_main.cpp                   |  68 ++++
+ src/d_main.cpp                   |  84 +++-
  src/http-mserv.c                 |   2 +
  src/hwr2/patch_atlas.cpp         |   8 +
- src/hwr2/resource_management.cpp | 105 ++++--
+ src/hwr2/resource_management.cpp | 105 +++--
  src/hwr2/resource_management.hpp |  31 +-
- src/i_system.h                   |  42 +++
+ src/i_system.h                   |  54 +++
  src/i_video_common.cpp           |  48 ++-
- src/m_perfstats.c                | 136 ++++++++
+ src/m_fixed.h                    |  11 +
+ src/m_perfstats.c                | 182 +++++++++
  src/m_perfstats.h                |  11 +
- src/rhi/gl2/gl2_rhi.cpp          | 578 +++++++++++++++++++++++--------
+ src/p_mobj.c                     |  96 +++--
+ src/r_plane.cpp                  |  17 +-
+ src/rhi/gl2/gl2_rhi.cpp          | 578 +++++++++++++++++++--------
  src/rhi/gl2/gl2_rhi.hpp          |  33 ++
  src/screen.c                     |   2 +-
  src/sdl/CMakeLists.txt           |   5 +
  src/sdl/i_main.cpp               |  11 +-
- src/sdl/i_system.cpp             | 119 ++++++-
- src/sdl/i_uwpprofile.cpp         | 267 ++++++++++++++
+ src/sdl/i_system.cpp             | 119 +++++-
+ src/sdl/i_uwpprofile.cpp         | 650 +++++++++++++++++++++++++++++++
  src/sdl/i_video.cpp              |  74 ++++
  src/sdl/mixer_sound.c            |   4 +-
  src/sdl/ogl_sdl.c                |   8 +
  src/sdl/rhi_gl2_platform.cpp     |   9 +
- src/w_wad.cpp                    | 117 +++++++
+ src/w_wad.cpp                    | 117 ++++++
  src/w_wad.h                      |  10 +
- src/z_zone.cpp                   |   3 +
- 29 files changed, 1608 insertions(+), 209 deletions(-)
+ src/z_zone.cpp                   |   4 +
+ 32 files changed, 2158 insertions(+), 241 deletions(-)
  create mode 100644 src/sdl/i_uwpprofile.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -371,7 +387,7 @@ index 1166b3c99..3cc0c59a9 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..2ee2f1da5 100644
+index 19fcfe0a7..38e109869 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -369,6 +369,10 @@ static bool D_Display(bool world)
@@ -420,17 +436,18 @@ index 19fcfe0a7..2ee2f1da5 100644
  	for (;;)
  	{
  		// capbudget is the minimum precise_t duration of a single loop iteration
-@@ -922,6 +939,9 @@ void D_SRB2Loop(void)
+@@ -922,6 +939,10 @@ void D_SRB2Loop(void)
  
  		bool ranwipe = false;
  		bool world = false;
 +#ifdef _UWP
 +		bool displayed = false;
++		bool skippedframe = false;
 +#endif
  
  		I_UpdateTime();
  
-@@ -954,6 +974,9 @@ void D_SRB2Loop(void)
+@@ -954,6 +975,9 @@ void D_SRB2Loop(void)
  		renderisnewtic = (realtics > 0 || singletics);
  
  		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
@@ -440,17 +457,24 @@ index 19fcfe0a7..2ee2f1da5 100644
  
  		if (renderisnewtic)
  		{
-@@ -1067,6 +1090,9 @@ void D_SRB2Loop(void)
+@@ -1067,7 +1091,16 @@ void D_SRB2Loop(void)
  			}
  
  			ranwipe = D_Display(world);
 +#ifdef _UWP
 +			displayed = true;
 +#endif
++		}
++#ifdef _UWP
++		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
++		{
++			skippedframe = true;
  		}
++#endif
  
  #ifdef HWRENDER
-@@ -1183,12 +1209,21 @@ void D_SRB2Loop(void)
+ 		// Only take screenshots after drawing.
+@@ -1183,14 +1216,30 @@ void D_SRB2Loop(void)
  			skiplaggyworld = false;
  		}
  
@@ -470,9 +494,19 @@ index 19fcfe0a7..2ee2f1da5 100644
 +			const boolean vsync_with_match_refresh = false;
 +#endif
  
- 			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
+-			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
++			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh
++#ifdef _UWP
++				// [UWP]: A frame skipped to catch up on game logic gets no sleep, so the next one is drawn right away.
++				// Sleeping out the skipped frame's time left the game idle 16% of the time in Time Attack on Xbox,
++				// at 24 FPS.
++				&& !skippedframe
++#endif
++			)
  			{
-@@ -1199,6 +1234,10 @@ void D_SRB2Loop(void)
+ 				I_SleepDuration(capbudget - (finishprecise - enterprecise));
+ 			}
+@@ -1199,6 +1248,10 @@ void D_SRB2Loop(void)
  		finishprecise = I_GetPreciseTime();
  		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
  		deltatics = deltasecs * NEWTICRATE;
@@ -483,7 +517,7 @@ index 19fcfe0a7..2ee2f1da5 100644
  	}
  }
  
-@@ -1661,6 +1700,11 @@ void D_SRB2Main(void)
+@@ -1661,6 +1714,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -495,7 +529,7 @@ index 19fcfe0a7..2ee2f1da5 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1757,6 +1801,16 @@ void D_SRB2Main(void)
+@@ -1757,6 +1815,16 @@ void D_SRB2Main(void)
  	// Make backups of some SOCcable tables.
  	P_BackupTables();
  
@@ -512,7 +546,7 @@ index 19fcfe0a7..2ee2f1da5 100644
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
-@@ -1774,7 +1828,19 @@ void D_SRB2Main(void)
+@@ -1774,7 +1842,19 @@ void D_SRB2Main(void)
  	//
  	// search for mainwad maps
  	//
@@ -532,7 +566,7 @@ index 19fcfe0a7..2ee2f1da5 100644
  	basenummapheaders = nummapheaders;
  	basenumkartcupheaders = numkartcupheaders;
  
-@@ -2323,6 +2389,8 @@ const char *D_Home(void)
+@@ -2323,6 +2403,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -818,10 +852,10 @@ index 3fd6666cf..3cfcb18f1 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..6b7953a3c 100644
+index 56d507e90..f9b38c203 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,8 +313,50 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,62 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
@@ -839,6 +873,18 @@ index 56d507e90..6b7953a3c 100644
 +// [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
 +// Call from the main thread.
 +void I_UWPStartProfiler(void);
++
++// [UWP]: How many samples the profiler took, and how long they paused the main thread, since the last call
++void I_UWPTakeProfilerStats(INT32 *samples, double *pausedms);
++
++// [UWP]: Logs the CPU sets Windows lists for the game, which should show which cores are the game's own when Xbox
++// runs it as a game. Call from the main thread.
++void I_UWPLogCpuSets(void);
++
++// [UWP]: Counts which processor the main thread is running on, and writes which ones it was on since the last
++// call and how often, like "2 (60%), 3 (40%)"
++void I_UWPNoteProcessor(void);
++void I_UWPTakeProcessorStats(char *buffer, size_t size);
 +
 +// [UWP]: What the main thread is doing, for the profiler
 +typedef enum
@@ -1003,8 +1049,30 @@ index f52f9298e..8bff55204 100644
  	I_StartDisplayUpdate();
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
+diff --git a/src/m_fixed.h b/src/m_fixed.h
+index de4b0f252..420d0290d 100644
+--- a/src/m_fixed.h
++++ b/src/m_fixed.h
+@@ -171,6 +171,17 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FloatToFixed(float f)
+ 	// Microsoft Visual C++ (no asm inline)
+ 	fixed_t __cdecl FixedMul(fixed_t a, fixed_t b);
+ 	fixed_t __cdecl FixedDiv2(fixed_t a, fixed_t b);
++#elif defined (_UWP)
++	// [UWP]: The C version from m_fixed.c, inline, since calling it cost more than the multiply. It was about 3% of
++	// rendering and game logic on Xbox.
++	FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedMul(fixed_t a, fixed_t b)
++	{
++		// Need to cast to unsigned before shifting to avoid undefined behaviour
++		// for negative integers
++		return (fixed_t)(((UINT64)((INT64)a * b)) >> FRACBITS);
++	}
++
++	#define __USE_C_FIXEDDIV__
+ #else
+ 	#define __USE_C_FIXEDMUL__
+ 	#define __USE_C_FIXEDDIV__
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eab..4c78c7d8c 100644
+index 705b60eab..9efec4ee5 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
 @@ -25,6 +25,11 @@
@@ -1019,7 +1087,7 @@ index 705b60eab..4c78c7d8c 100644
  struct perfstatcol;
  struct perfstatrow;
  
-@@ -707,3 +712,134 @@ void M_DrawPerfStats(void)
+@@ -707,3 +712,180 @@ void M_DrawPerfStats(void)
  		}
  	}
  }
@@ -1040,6 +1108,7 @@ index 705b60eab..4c78c7d8c 100644
 +	precise_t screen, twodee, upscale, imgui, cleanup, present, finish, nextframe;
 +	int draws, texturescreated, textureuploads, framebufferscreated, atlasresets;
 +	precise_t tic, playerthink, thinkers, lua, acs, bots;
++	int checkpositions, luamobjhooks;
 +} uwp_perf;
 +
 +void PS_UWPAddTic(void)
@@ -1052,6 +1121,32 @@ index 705b60eab..4c78c7d8c 100644
 +	uwp_perf.acs += ps_acs_time;
 +	// Bot ticcmds are built separately from the tic, once per tic
 +	uwp_perf.bots += ps_botticcmd_time;
++	uwp_perf.checkpositions += ps_checkposition_calls;
++	uwp_perf.luamobjhooks += ps_lua_mobjhooks;
++}
++
++// Counts the level's mobjs by how much they do each tic
++static void PS_UWPCountMobjs(int *regular, int *scenery, int *nothink)
++{
++	thinker_t *thinker;
++
++	*regular = *scenery = *nothink = 0;
++
++	// Not set up until a level has been loaded
++	for (thinker = thlist[THINK_MOBJ].next; thinker && thinker != &thlist[THINK_MOBJ]; thinker = thinker->next)
++	{
++		mobj_t *mobj = (mobj_t *)thinker;
++
++		if (thinker->function.acp1 != (actionf_p1)P_MobjThinker)
++			continue;
++
++		if (mobj->flags & MF_NOTHINK)
++			(*nothink)++;
++		else if (mobj->flags & MF_SCENERY)
++			(*scenery)++;
++		else
++			(*regular)++;
++	}
 +}
 +
 +void PS_UWPAddLoop(precise_t worktime, boolean displayed)
@@ -1062,6 +1157,8 @@ index 705b60eab..4c78c7d8c 100644
 +
 +	if (!uwp_perf.start)
 +		uwp_perf.start = now;
++
++	I_UWPNoteProcessor();
 +
 +	uwp_perf.loops++;
 +	uwp_perf.work += worktime;
@@ -1145,9 +1242,26 @@ index 705b60eab..4c78c7d8c 100644
 +	{
 +		const int n = uwp_perf.tics;
 +
++		int regular, scenery, nothink;
++
 +		I_OutputMsg("UWP perf:   %.1f tics/s; logic %.1f ms per tic (players %.1f, thinkers %.1f, Lua %.1f, ACS %.1f), bots %.1f ms per tic\n",
 +			n / seconds, uwp_perf.tic * ms / n, uwp_perf.playerthink * ms / n, uwp_perf.thinkers * ms / n,
 +			uwp_perf.lua * ms / n, uwp_perf.acs * ms / n, uwp_perf.bots * ms / n);
++
++		PS_UWPCountMobjs(&regular, &scenery, &nothink);
++		I_OutputMsg("UWP perf:   mobjs now: %d thinking, %d scenery, %d not thinking; per tic: %.0f P_CheckPosition calls, %.0f Lua mobj hooks\n",
++			regular, scenery, nothink, (double)uwp_perf.checkpositions / n, (double)uwp_perf.luamobjhooks / n);
++	}
++
++	{
++		INT32 samples;
++		double pausedms;
++		char processors[256];
++
++		I_UWPTakeProfilerStats(&samples, &pausedms);
++		I_UWPTakeProcessorStats(processors, sizeof processors);
++		I_OutputMsg("UWP perf:   main thread on processors %s; profiler paused it %.1f ms per second (%d samples, %.0f us each)\n",
++			processors, pausedms / seconds, samples, samples ? pausedms * 1000.0 / samples : 0.0);
 +	}
 +
 +	memset(&uwp_perf, 0, sizeof uwp_perf);
@@ -1176,6 +1290,245 @@ index f92b1d8e0..4e4f82a8f 100644
  #ifdef __cplusplus
  } // extern "C"
  #endif
+diff --git a/src/p_mobj.c b/src/p_mobj.c
+index 305a75e0e..ea050a086 100644
+--- a/src/p_mobj.c
++++ b/src/p_mobj.c
+@@ -216,6 +216,40 @@ static void P_CyclePlayerMobjState(mobj_t *mobj)
+ 	}
+ }
+ 
++// [UWP]: P_SetMobjState and P_SetPlayerMobjState remember the states each call goes through, to detect cycles of
++// states that last no time, in a table for each depth of nested calls. Before returning, each call erases what it
++// wrote by following the chain of states it recorded, so a table never needs clearing in full.
++//
++// Upstream instead clears a whole table (about 40 KB) for each nested call, and returns without counting its call
++// as finished when a state removes its mobj. Mobjs remove themselves that way all the time, so soon every call
++// counted as nested, and every state change cleared 40 KB, about 5% of game logic on Xbox.
++#define SEENSTATEDEPTHS 4
++
++static statenum_t seenstate_tabs[SEENSTATEDEPTHS][NUMSTATES];
++static INT32 seenstate_depth; // calls in progress
++
++static statenum_t *P_StartSeenStates(INT32 depth)
++{
++	if (depth < SEENSTATEDEPTHS)
++		return seenstate_tabs[depth];
++
++	return Z_Calloc(NUMSTATES * sizeof (statenum_t), PU_STATIC, NULL);
++}
++
++static void P_EndSeenStates(statenum_t *seenstate, statenum_t i, INT32 depth)
++{
++	statenum_t state;
++
++	if (depth >= SEENSTATEDEPTHS)
++	{
++		Z_Free(seenstate);
++		return;
++	}
++
++	for (;(state = seenstate[i]) > S_NULL; i = state - 1)
++		seenstate[i] = S_NULL; // erase memory of states
++}
++
+ //
+ // P_SetPlayerMobjState
+ // Returns true if the mobj is still present.
+@@ -228,11 +262,10 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ 	player_t *player = mobj->player;
+ 
+ 	// remember states seen, to detect cycles:
+-	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
+-	statenum_t *seenstate = seenstate_tab; // pointer to table
+-	static INT32 recursion; // detects recursion
++	INT32 depth;
++	statenum_t *seenstate;
+ 	statenum_t i; // initial state
+-	statenum_t tempstate[NUMSTATES]; // for use with recursion
++	boolean ret = true;
+ 
+ #ifdef PARANOIA
+ 	if (player == NULL)
+@@ -287,8 +320,8 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ 			break;
+ 	}
+ 
+-	if (recursion++) // if recursion detected,
+-		memset(seenstate = tempstate, 0, sizeof tempstate); // clear state table
++	depth = seenstate_depth++;
++	seenstate = P_StartSeenStates(depth);
+ 
+ 	i = state;
+ 
+@@ -298,7 +331,8 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ 		{ // Bad SOC!
+ 			CONS_Alert(CONS_ERROR, "Cannot remove player mobj by setting its state to S_NULL.\n");
+ 			//P_RemoveMobj(mobj);
+-			return false;
++			ret = false;
++			goto done;
+ 		}
+ 
+ 		st = &states[state];
+@@ -347,7 +381,8 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ 					{
+ 						if (mobj->frame & FF_FRAMEMASK)
+ 							mobj->frame--;
+-						return P_SetPlayerMobjState(mobj, st->var1);
++						ret = P_SetPlayerMobjState(mobj, st->var1);
++						goto done;
+ 					}
+ 				}
+ 				else
+@@ -381,7 +416,10 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ 			// woah. a player was removed by an action.
+ 			// this sounds like a VERY BAD THING, but there's nothing we can do now...
+ 			if (P_MobjWasRemoved(mobj))
+-				return false;
++			{
++				ret = false;
++				goto done;
++			}
+ 		}
+ 
+ 		seenstate[state] = 1 + st->nextstate;
+@@ -392,11 +430,11 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ 	if (!mobj->tics)
+ 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
+ 
+-	if (!--recursion)
+-		for (;(state = seenstate[i]) > S_NULL; i = state - 1)
+-			seenstate[i] = S_NULL; // erase memory of states
++done:
++	P_EndSeenStates(seenstate, i, depth);
++	seenstate_depth--;
+ 
+-	return true;
++	return ret;
+ }
+ 
+ 
+@@ -405,26 +443,26 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
+ 	state_t *st;
+ 
+ 	// remember states seen, to detect cycles:
+-	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
+-	statenum_t *seenstate = seenstate_tab; // pointer to table
+-	static INT32 recursion; // detects recursion
++	INT32 depth;
++	statenum_t *seenstate;
+ 	statenum_t i = state; // initial state
+-	statenum_t tempstate[NUMSTATES]; // for use with recursion
++	boolean ret = true;
+ 
+ #ifdef PARANOIA
+ 	if (mobj->player != NULL)
+ 		I_Error("P_SetMobjState used for player mobj. Use P_SetPlayerMobjState instead!\n(State called: %d)", state);
+ #endif
+ 
+-	if (recursion++) // if recursion detected,
+-		memset(seenstate = tempstate, 0, sizeof tempstate); // clear state table
++	depth = seenstate_depth++;
++	seenstate = P_StartSeenStates(depth);
+ 
+ 	do
+ 	{
+ 		if (state == S_NULL)
+ 		{
+ 			P_RemoveMobj(mobj);
+-			return false;
++			ret = false;
++			goto done;
+ 		}
+ 
+ 		st = &states[state];
+@@ -473,7 +511,8 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
+ 					{
+ 						if (mobj->frame & FF_FRAMEMASK)
+ 							mobj->frame--;
+-						return P_SetMobjState(mobj, st->var1);
++						ret = P_SetMobjState(mobj, st->var1);
++						goto done;
+ 					}
+ 				}
+ 				else
+@@ -502,7 +541,10 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
+ 			astate = st;
+ 			st->action.acp1(mobj);
+ 			if (P_MobjWasRemoved(mobj))
+-				return false;
++			{
++				ret = false;
++				goto done;
++			}
+ 		}
+ 
+ 		seenstate[state] = 1 + st->nextstate;
+@@ -513,16 +555,16 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
+ 	if (!mobj->tics)
+ 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
+ 
+-	if (!--recursion)
+-		for (;(state = seenstate[i]) > S_NULL; i = state - 1)
+-			seenstate[i] = S_NULL; // erase memory of states
+-
+ 	// Shadow automatically turns white on fullbright frames.
+ 	// For now, only applies to Follower Audience.
+ 	if (mobj->type == MT_RANDOMAUDIENCE)
+ 		mobj->whiteshadow = (mobj->frame & FF_FULLBRIGHT) != 0;
+ 
+-	return true;
++done:
++	P_EndSeenStates(seenstate, i, depth);
++	seenstate_depth--;
++
++	return ret;
+ }
+ 
+ //----------------------------------------------------------------------------
+diff --git a/src/r_plane.cpp b/src/r_plane.cpp
+index 36f9b6b03..e4ee8870b 100644
+--- a/src/r_plane.cpp
++++ b/src/r_plane.cpp
+@@ -341,6 +341,17 @@ static visplane_t *new_visplane(unsigned hash)
+ 	return check;
+ }
+ 
++// [UWP]: Clears only the columns of a new visplane that can be on screen, plus the one after the last, which
++// R_DrawSinglePlane marks, instead of all MAXVIDWIDTH of them. Clearing them all was most of the 7% of 3D rendering
++// spent clearing memory at 640x400 on Xbox.
++static void R_ClearVisplaneColumns(visplane_t *pl)
++{
++	const size_t columns = std::min<size_t>(vid.width + 1, MAXVIDWIDTH);
++
++	memset(pl->top, 0xff, columns * sizeof pl->top[0]);
++	memset(pl->bottom, 0x00, columns * sizeof pl->bottom[0]);
++}
++
+ //
+ // R_FindPlane: Seek a visplane having the identical values:
+ //              Same height, same flattexture, same lightlevel.
+@@ -472,8 +483,7 @@ visplane_t *R_FindPlane(fixed_t height, INT32 picnum, INT32 lightlevel,
+ 	check->ripple = ripple;
+ 	check->damage = damage;
+ 
+-	memset(check->top, 0xff, sizeof (check->top));
+-	memset(check->bottom, 0x00, sizeof (check->bottom));
++	R_ClearVisplaneColumns(check);
+ 
+ 	return check;
+ }
+@@ -553,8 +563,7 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
+ 		pl = new_pl;
+ 		pl->minx = start;
+ 		pl->maxx = stop;
+-		memset(pl->top, 0xff, sizeof pl->top);
+-		memset(pl->bottom, 0x00, sizeof pl->bottom);
++		R_ClearVisplaneColumns(pl);
+ 	}
+ 	return pl;
+ }
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
 index cf35eebb5..05d63bade 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
@@ -2442,10 +2795,10 @@ index 827f493b1..d3b30c4a3 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 000000000..6dfb11784
+index 000000000..8d4e62e2c
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,650 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -2453,19 +2806,21 @@ index 000000000..6dfb11784
 +// See the 'LICENSE' file for more details.
 +//-----------------------------------------------------------------------------
 +/// \file  i_uwpprofile.cpp
-+/// \brief [UWP]: Sampling profiler for the main thread, to find what's slow on Xbox
++/// \brief [UWP]: Sampling profiler for the main thread, and what CPUs it runs on, to find what's slow on Xbox
 +///
-+/// A thread pauses the main thread about 1000 times a second and records the
-+/// address it was running and what it was doing (uwpprofphase_t). Every 20
-+/// seconds, it writes how many samples it took at each address while a level
-+/// was being played to E:\ringracers\uwp-profile.txt. Addresses are written as
-+/// offsets into their module, which for the game itself (ringracers-uwp.exe)
-+/// ringracers-uwp.map from the same build maps to functions.
++/// A thread pauses the main thread about 250 times a second and records the address it was running, the calls
++/// that led there (found with the unwind data of each module), and what it was doing (uwpprofphase_t). Every 20
++/// seconds, it writes how many samples it took at each address and with each call stack while a level was being
++/// played to E:\ringracers\uwp-profile.txt. Addresses are written as offsets into their module, which for the game
++/// itself (ringracers-uwp.exe) ringracers-uwp.map from the same build maps to functions.
 +
 +#include <algorithm>
++#include <array>
++#include <atomic>
 +#include <chrono>
 +#include <cstdint>
 +#include <cstdio>
++#include <cstring>
 +#include <system_error>
 +#include <thread>
 +#include <unordered_map>
@@ -2489,11 +2844,126 @@ index 000000000..6dfb11784
 +
 +constexpr const char* kProfilePath = "E:\\ringracers\\uwp-profile.txt";
 +constexpr auto kWriteInterval = std::chrono::seconds(20);
++constexpr LONGLONG kSampleInterval = -40000; // 4 ms, in 100 ns units (negative for relative to now)
 +constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display"};
++constexpr int kMaxFrames = 12; // of each call stack, innermost first
++constexpr size_t kMaxModules = 64; // to unwind through
++constexpr int kMaxProcessors = 64;
 +
-+// Looked up at runtime, so a missing function stops the profiler instead of the game
++// Looked up at runtime, so a missing function stops just the feature that needs it instead of the game
 +using SuspendResumeThreadFn = DWORD (WINAPI *)(HANDLE);
 +using GetThreadContextFn = BOOL (WINAPI *)(HANDLE, LPCONTEXT);
++// RtlVirtualUnwind, with pointers to structures whose definitions UWP apps may not get as void*
++using VirtualUnwindFn = void* (WINAPI *)(DWORD, DWORD64, DWORD64, const void*, CONTEXT*, void**, DWORD64*, void*);
++using GetStackLimitsFn = void (WINAPI *)(PULONG_PTR, PULONG_PTR);
++using GetProcessorNumberFn = DWORD (WINAPI *)(void);
++using GetSystemCpuSetInformationFn = BOOL (WINAPI *)(void*, ULONG, PULONG, HANDLE, ULONG);
++using GetCpuSetsFn = BOOL (WINAPI *)(HANDLE, PULONG, ULONG, PULONG);
++
++void* FindKernelFunction(const char* name)
++{
++	for (const wchar_t* module : {L"kernelbase.dll", L"kernel32.dll", L"ntdll.dll"})
++	{
++		if (HMODULE handle = GetModuleHandleW(module))
++		{
++			if (FARPROC proc = GetProcAddress(handle, name))
++			{
++				return reinterpret_cast<void*>(proc);
++			}
++		}
++	}
++	return nullptr;
++}
++
++// An entry of a module's exception directory (RUNTIME_FUNCTION)
++struct RuntimeFunction
++{
++	DWORD begin;
++	DWORD end;
++	DWORD unwind;
++};
++
++struct UnwindModule
++{
++	uintptr_t base;
++	uintptr_t end;
++	const RuntimeFunction* functions; // sorted by begin
++	size_t count;
++};
++
++// Fixed size, so that looking up modules while the main thread is paused never allocates
++struct UnwindModules
++{
++	UnwindModule modules[kMaxModules];
++	size_t count = 0;
++
++	const UnwindModule* find(uintptr_t address) const
++	{
++		for (size_t i = 0; i < count; i++)
++		{
++			if (address >= modules[i].base && address < modules[i].end)
++			{
++				return &modules[i];
++			}
++		}
++		return nullptr;
++	}
++
++	// Adds the module mapped at base, from its headers
++	void add(uintptr_t base)
++	{
++		if (count == kMaxModules || find(base))
++		{
++			return;
++		}
++
++		const auto image = reinterpret_cast<const uint8_t*>(base);
++		const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(image);
++		if (dos->e_magic != IMAGE_DOS_SIGNATURE)
++		{
++			return;
++		}
++		const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(image + dos->e_lfanew);
++		if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
++			nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_EXCEPTION)
++		{
++			return;
++		}
++
++		const IMAGE_DATA_DIRECTORY& exceptions = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
++		UnwindModule& module = modules[count++];
++		module.base = base;
++		module.end = base + nt->OptionalHeader.SizeOfImage;
++		module.functions = reinterpret_cast<const RuntimeFunction*>(image + exceptions.VirtualAddress);
++		module.count = exceptions.VirtualAddress ? exceptions.Size / sizeof (RuntimeFunction) : 0;
++	}
++};
++
++const RuntimeFunction* FindFunction(const UnwindModule& module, DWORD rva)
++{
++	size_t low = 0;
++	size_t high = module.count;
++
++	while (low < high)
++	{
++		const size_t mid = (low + high) / 2;
++		const RuntimeFunction& function = module.functions[mid];
++
++		if (rva < function.begin)
++		{
++			high = mid;
++		}
++		else if (rva >= function.end)
++		{
++			low = mid + 1;
++		}
++		else
++		{
++			return &function;
++		}
++	}
++	return nullptr;
++}
 +
 +struct Sampler
 +{
@@ -2501,15 +2971,95 @@ index 000000000..6dfb11784
 +	SuspendResumeThreadFn suspend;
 +	SuspendResumeThreadFn resume;
 +	GetThreadContextFn getcontext;
++	VirtualUnwindFn unwind; // null if call stacks can't be found
++	uintptr_t stacklow, stackhigh; // the main thread's stack
++};
++
++using Stack = std::array<uintptr_t, kMaxFrames>;
++
++struct StackHash
++{
++	size_t operator()(const Stack& stack) const
++	{
++		uint64_t hash = 14695981039346656037ull;
++		for (uintptr_t frame : stack)
++		{
++			hash = (hash ^ frame) * 1099511628211ull;
++		}
++		return static_cast<size_t>(hash);
++	}
 +};
 +
 +struct Profile
 +{
 +	std::unordered_map<uintptr_t, uint32_t> counts[NUMUWPPROFPHASES]; // samples in levels by address
++	std::unordered_map<Stack, uint32_t, StackHash> stacks[NUMUWPPROFPHASES]; // samples in levels by call stack
 +	uint64_t levelsamples = 0;
 +	uint64_t othersamples = 0;
 +	uint64_t failedsamples = 0;
 +};
++
++// Profiler samples and the time they paused the main thread, since the perf log last took them
++std::atomic<uint32_t> g_pausesamples{0};
++std::atomic<uint64_t> g_pausenanoseconds{0};
++
++GetProcessorNumberFn g_getprocessornumber;
++uint32_t g_processorcounts[kMaxProcessors]; // only touched by the main thread
++
++// Walks the paused main thread's stack from context, filling frames with the address it's running and then return
++// addresses, innermost first. Takes no locks and allocates nothing, since the main thread could be holding them.
++// Stops at a module it doesn't know yet, which it sets unknown to, so it can be added once the thread is resumed.
++int UnwindStack(const Sampler& sampler, const UnwindModules& modules, CONTEXT* context, uintptr_t* frames,
++	uintptr_t* unknown)
++{
++	int count = 0;
++
++	__try
++	{
++		frames[count++] = context->Rip;
++
++		while (count < kMaxFrames)
++		{
++			const uintptr_t pc = context->Rip;
++			const DWORD64 sp = context->Rsp;
++			const UnwindModule* module = modules.find(pc);
++
++			if (!module)
++			{
++				*unknown = pc;
++				break;
++			}
++
++			if (const RuntimeFunction* function = FindFunction(*module, static_cast<DWORD>(pc - module->base)))
++			{
++				void* handlerdata;
++				DWORD64 establisher;
++				sampler.unwind(0, module->base, pc, function, context, &handlerdata, &establisher, nullptr);
++			}
++			else
++			{
++				// Functions that don't touch the stack have no unwind data; the return address is on top
++				if (sp < sampler.stacklow || sp + sizeof (DWORD64) > sampler.stackhigh)
++				{
++					break;
++				}
++				context->Rip = *reinterpret_cast<const DWORD64*>(sp);
++				context->Rsp = sp + sizeof (DWORD64);
++			}
++
++			if (!context->Rip || context->Rsp <= sp || context->Rsp < sampler.stacklow || context->Rsp >= sampler.stackhigh)
++			{
++				break;
++			}
++			frames[count++] = context->Rip;
++		}
++	}
++	__except (EXCEPTION_EXECUTE_HANDLER)
++	{
++	}
++
++	return count;
++}
 +
 +void WriteProfile(const Profile& profile, double seconds)
 +{
@@ -2565,10 +3115,29 @@ index 000000000..6dfb11784
 +		std::sort(entries[phase].begin(), entries[phase].end(), [](const Entry& a, const Entry& b) { return a.count > b.count; });
 +	}
 +
++	// Each address in a call stack, numbered in the order first seen
++	std::unordered_map<uintptr_t, size_t> frameids;
++	std::vector<uintptr_t> frames;
++	for (const auto& stacks : profile.stacks)
++	{
++		for (const auto& [stack, count] : stacks)
++		{
++			for (uintptr_t frame : stack)
++			{
++				if (frame && frameids.emplace(frame, frames.size()).second)
++				{
++					frames.push_back(frame);
++					find_module(frame);
++				}
++			}
++		}
++	}
++
 +	fprintf(file, "Ring Racers UWP profile: %llu samples while playing levels and %llu at other times over %.0f s (%.0f per second), %llu failed\n",
 +		static_cast<unsigned long long>(profile.levelsamples), static_cast<unsigned long long>(profile.othersamples), seconds,
 +		(profile.levelsamples + profile.othersamples) / seconds, static_cast<unsigned long long>(profile.failedsamples));
 +	fprintf(file, "Lines after each phase: module, offset into it (hex), samples\n");
++	fprintf(file, "Lines after each phase's stacks: samples, then the frames of a call stack, innermost first; frames after the first are return addresses\n");
 +
 +	for (size_t i = 0; i < modules.size(); i++)
 +	{
@@ -2595,6 +3164,31 @@ index 000000000..6dfb11784
 +		}
 +	}
 +
++	fprintf(file, "frames: %zu\n", frames.size());
++	for (size_t i = 0; i < frames.size(); i++)
++	{
++		const size_t module = find_module(frames[i]);
++		fprintf(file, "frame %zu %zu %llx\n", i, module, static_cast<unsigned long long>(frames[i] - modules[module]));
++	}
++
++	for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
++	{
++		fprintf(file, "stacks %s: %zu\n", kPhaseNames[phase], profile.stacks[phase].size());
++		for (const auto& [stack, count] : profile.stacks[phase])
++		{
++			fprintf(file, "%u", count);
++			for (uintptr_t frame : stack)
++			{
++				if (!frame)
++				{
++					break;
++				}
++				fprintf(file, " %zu", frameids[frame]);
++			}
++			fprintf(file, "\n");
++		}
++	}
++
 +	fclose(file);
 +}
 +
@@ -2603,19 +3197,22 @@ index 000000000..6dfb11784
 +	using Clock = std::chrono::steady_clock;
 +
 +	Profile profile;
++	UnwindModules modules;
 +	const Clock::time_point start = Clock::now();
 +	Clock::time_point lastwrite = start;
 +	uint64_t written = 0;
 +
++	modules.add(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
++
 +	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 +
-+	// Sleep(1) can take as long as the system timer's period, which is often 15 ms
++	// Sleep() can take as long as the system timer's period, which is often 15 ms
 +	HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
 +
 +	for (;;)
 +	{
 +		LARGE_INTEGER due;
-+		due.QuadPart = -10000; // 1 ms from now, in 100 ns units
++		due.QuadPart = kSampleInterval;
 +
 +		if (timer && SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
 +		{
@@ -2623,23 +3220,33 @@ index 000000000..6dfb11784
 +		}
 +		else
 +		{
-+			Sleep(1);
++			Sleep(4);
 +		}
 +
 +		CONTEXT context = {};
-+		context.ContextFlags = CONTEXT_CONTROL;
++		context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
 +
 +		// Nothing that could wait on the main thread (like allocating) may happen until it's resumed
 +		BOOL gotcontext = FALSE;
 +		INT32 phase = UWPPROF_OTHER;
 +		INT32 inlevel = false;
++		Stack stack = {};
++		int frames = 0;
++		uintptr_t unknown = 0;
++		const Clock::time_point pausestart = Clock::now();
 +		if (sampler.suspend(sampler.thread) != static_cast<DWORD>(-1))
 +		{
 +			gotcontext = sampler.getcontext(sampler.thread, &context);
 +			phase = i_uwpprofphase;
 +			inlevel = i_uwpprofinlevel;
++			if (gotcontext && inlevel && sampler.unwind)
++			{
++				frames = UnwindStack(sampler, modules, &context, stack.data(), &unknown);
++			}
 +			sampler.resume(sampler.thread);
 +		}
++		g_pausenanoseconds += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - pausestart).count();
++		g_pausesamples++;
 +
 +		if (!gotcontext)
 +		{
@@ -2647,12 +3254,26 @@ index 000000000..6dfb11784
 +		}
 +		else if (inlevel && phase >= 0 && phase < NUMUWPPROFPHASES)
 +		{
-+			profile.counts[phase][context.Rip]++;
++			profile.counts[phase][frames ? stack[0] : context.Rip]++;
++			if (frames)
++			{
++				profile.stacks[phase][stack]++;
++			}
 +			profile.levelsamples++;
 +		}
 +		else
 +		{
 +			profile.othersamples++;
++		}
++
++		// A module that wasn't loaded when the last stack was unwound, to unwind through next time
++		if (unknown)
++		{
++			MEMORY_BASIC_INFORMATION info = {};
++			if (VirtualQuery(reinterpret_cast<LPCVOID>(unknown), &info, sizeof info) && info.Type == MEM_IMAGE)
++			{
++				modules.add(reinterpret_cast<uintptr_t>(info.AllocationBase));
++			}
 +		}
 +
 +		// Written when there are new samples from levels, or failures, so those show up too
@@ -2670,22 +3291,11 @@ index 000000000..6dfb11784
 +
 +void I_UWPStartProfiler(void)
 +{
-+	HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
-+	HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
-+	auto find = [&](const char* name) -> void*
-+	{
-+		FARPROC proc = kernelbase ? GetProcAddress(kernelbase, name) : nullptr;
-+		if (!proc && kernel32)
-+		{
-+			proc = GetProcAddress(kernel32, name);
-+		}
-+		return reinterpret_cast<void*>(proc);
-+	};
 +	Sampler sampler = {};
 +
-+	sampler.suspend = reinterpret_cast<SuspendResumeThreadFn>(find("SuspendThread"));
-+	sampler.resume = reinterpret_cast<SuspendResumeThreadFn>(find("ResumeThread"));
-+	sampler.getcontext = reinterpret_cast<GetThreadContextFn>(find("GetThreadContext"));
++	sampler.suspend = reinterpret_cast<SuspendResumeThreadFn>(FindKernelFunction("SuspendThread"));
++	sampler.resume = reinterpret_cast<SuspendResumeThreadFn>(FindKernelFunction("ResumeThread"));
++	sampler.getcontext = reinterpret_cast<GetThreadContextFn>(FindKernelFunction("GetThreadContext"));
 +	if (!sampler.suspend || !sampler.resume || !sampler.getcontext)
 +	{
 +		I_OutputMsg("UWP: can't profile: SuspendThread, ResumeThread, or GetThreadContext is missing\n");
@@ -2699,6 +3309,21 @@ index 000000000..6dfb11784
 +		return;
 +	}
 +
++	sampler.unwind = reinterpret_cast<VirtualUnwindFn>(FindKernelFunction("RtlVirtualUnwind"));
++	auto getstacklimits = reinterpret_cast<GetStackLimitsFn>(FindKernelFunction("GetCurrentThreadStackLimits"));
++	if (sampler.unwind && getstacklimits)
++	{
++		ULONG_PTR low = 0, high = 0;
++		getstacklimits(&low, &high);
++		sampler.stacklow = low;
++		sampler.stackhigh = high;
++	}
++	if (!sampler.stackhigh)
++	{
++		sampler.unwind = nullptr;
++		I_OutputMsg("UWP: profiling without call stacks: RtlVirtualUnwind or GetCurrentThreadStackLimits is missing\n");
++	}
++
 +	try
 +	{
 +		std::thread(SampleMainThread, sampler).detach();
@@ -2710,8 +3335,119 @@ index 000000000..6dfb11784
 +		return;
 +	}
 +
-+	I_OutputMsg("UWP: profiling the main thread while playing levels, written to %s every %lld s\n", kProfilePath,
-+		static_cast<long long>(kWriteInterval.count()));
++	I_OutputMsg("UWP: profiling the main thread while playing levels about %lld times a second, written to %s every %lld s\n",
++		-10000000LL / kSampleInterval, kProfilePath, static_cast<long long>(kWriteInterval.count()));
++}
++
++void I_UWPTakeProfilerStats(INT32 *samples, double *pausedms)
++{
++	*samples = static_cast<INT32>(g_pausesamples.exchange(0));
++	*pausedms = g_pausenanoseconds.exchange(0) / 1e6;
++}
++
++void I_UWPLogCpuSets(void)
++{
++	auto getinfo = reinterpret_cast<GetSystemCpuSetInformationFn>(FindKernelFunction("GetSystemCpuSetInformation"));
++	auto getprocesssets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetProcessDefaultCpuSets"));
++	auto getthreadsets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetThreadSelectedCpuSets"));
++	ULONG size = 0;
++
++	g_getprocessornumber = reinterpret_cast<GetProcessorNumberFn>(FindKernelFunction("GetCurrentProcessorNumber"));
++
++	if (!getinfo)
++	{
++		I_OutputMsg("UWP: can't list CPU sets: GetSystemCpuSetInformation is missing\n");
++		return;
++	}
++
++	getinfo(nullptr, 0, &size, GetCurrentProcess(), 0);
++	std::vector<uint8_t> buffer(size);
++	if (!size || !getinfo(buffer.data(), size, &size, GetCurrentProcess(), 0))
++	{
++		I_OutputMsg("UWP: can't list CPU sets: error %lu\n", GetLastError());
++		return;
++	}
++
++	// SYSTEM_CPU_SET_INFORMATION, read by offset, since UWP apps may not get its definition
++	for (size_t offset = 0; offset + 8 <= size;)
++	{
++		const uint8_t* entry = buffer.data() + offset;
++		DWORD entrysize, type, id;
++
++		memcpy(&entrysize, entry, sizeof entrysize);
++		memcpy(&type, entry + 4, sizeof type);
++		if (!entrysize || offset + entrysize > size)
++		{
++			break;
++		}
++
++		if (type == 0 && entrysize >= 32) // CpuSetInformation
++		{
++			const uint8_t flags = entry[19];
++
++			memcpy(&id, entry + 8, sizeof id);
++			I_OutputMsg("UWP: CPU set %lu: processor %u, core %u, cache %u, efficiency class %u, scheduling class %u%s%s%s%s\n",
++				id, entry[14], entry[15], entry[16], entry[18], entry[20],
++				(flags & 1) ? ", parked" : "", (flags & 2) ? ", allocated" : "",
++				(flags & 4) ? ", allocated to this process" : "", (flags & 8) ? ", real time" : "");
++		}
++		offset += entrysize;
++	}
++
++	auto log_sets = [](const char* what, GetCpuSetsFn get, HANDLE handle)
++	{
++		ULONG ids[64];
++		ULONG count = 0;
++		char list[512] = "";
++
++		if (!get || !get(handle, ids, 64, &count))
++		{
++			return;
++		}
++
++		for (ULONG i = 0; i < count && i < 64; i++)
++		{
++			const size_t used = strlen(list);
++			snprintf(list + used, sizeof list - used, "%s%lu", i ? ", " : "", ids[i]);
++		}
++		I_OutputMsg("UWP: %s CPU sets: %s\n", what, count ? list : "none (any)");
++	};
++	log_sets("the process's default", getprocesssets, GetCurrentProcess());
++	log_sets("the main thread's", getthreadsets, GetCurrentThread());
++}
++
++void I_UWPNoteProcessor(void)
++{
++	if (g_getprocessornumber)
++	{
++		g_processorcounts[g_getprocessornumber() % kMaxProcessors]++;
++	}
++}
++
++void I_UWPTakeProcessorStats(char *buffer, size_t size)
++{
++	uint32_t total = 0;
++
++	buffer[0] = '\0';
++	for (uint32_t count : g_processorcounts)
++	{
++		total += count;
++	}
++
++	for (int i = 0; i < kMaxProcessors && total; i++)
++	{
++		if (g_processorcounts[i])
++		{
++			const size_t used = strlen(buffer);
++			snprintf(buffer + used, size - used, "%s%d (%.0f%%)", used ? ", " : "", i, 100.0 * g_processorcounts[i] / total);
++		}
++	}
++	if (!total)
++	{
++		snprintf(buffer, size, "unknown");
++	}
++
++	memset(g_processorcounts, 0, sizeof g_processorcounts);
 +}
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
 index 7fa8e0c3f..d0c0afb5d 100644
@@ -3169,15 +3905,16 @@ index 7024826dc..4c6f71772 100644
  
  void W_Shutdown(void);
 diff --git a/src/z_zone.cpp b/src/z_zone.cpp
-index b5f73450b..55d6c7b3f 100644
+index b5f73450b..2cddce8c3 100644
 --- a/src/z_zone.cpp
 +++ b/src/z_zone.cpp
-@@ -111,6 +111,9 @@ void Z_Init(void)
+@@ -111,6 +111,10 @@ void Z_Init(void)
  
  	memfree = I_GetFreeMem(&total)>>20;
  	CONS_Printf("System memory: %uMB - Free: %uMB\n", total>>20, memfree);
 +#ifdef _UWP
 +	I_UWPLogMemoryLimit();
++	I_UWPLogCpuSets();
 +#endif
  
  	// Note: This allocates memory. Watch out.
