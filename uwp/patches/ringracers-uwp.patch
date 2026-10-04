@@ -1,4 +1,4 @@
-From 04d7edcd3286a8e21cba30e2fe04533b853c9d36 Mon Sep 17 00:00:00 2001
+From 04ae4115a77ba1984f5f62dd5facb003c4495c0a Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -29,8 +29,15 @@ RingRacers-dev, rebased onto v2.4.
   sprite without reading what they point to, keep a set of the pointers
   that have Lua userdata so freeing a block doesn't ask Lua, store
   single-channel textures as GL_RED (EXT_texture_rg), which ANGLE doesn't
-  convert to RGBA on every upload the way it does GL_LUMINANCE, and size
-  the thread pool by the processors Xbox lets the game use
+  convert to RGBA on every upload the way it does GL_LUMINANCE, size the
+  thread pool from processors explicitly allocated to the game (falling
+  back to the upstream hardware count when Xbox doesn't identify them),
+  and record interpolated mobjs' slots for direct removal from the list
+- Rotate tilted software views by stepping along source rows, instead
+  of rebuilding and reading a full-screen 4-byte-per-pixel map. Preserve
+  the original float stepping, clipping, zoom, and mirrored sampling;
+  share large views across the software rendering workers. Cache by
+  viewport dimensions and source pitch, and fill odd-height center rows
 - Fix P_SetMobjState and P_SetPlayerMobjState returning early without
   counting their call as finished when a state removes its mobj, after
   which every state change cleared a table of every state (about 40 KB).
@@ -84,15 +91,17 @@ RingRacers-dev, rebased onto v2.4.
  src/hwr2/patch_atlas.cpp         |   8 +
  src/hwr2/resource_management.cpp | 105 ++--
  src/hwr2/resource_management.hpp |  31 +-
- src/i_system.h                   |  61 +++
+ src/i_system.h                   |  62 +++
  src/i_video_common.cpp           |  48 +-
  src/lua_script.c                 | 127 +++++
  src/m_fixed.h                    |  11 +
  src/m_perfstats.c                | 193 +++++++
  src/m_perfstats.h                |  11 +
  src/p_mobj.c                     |  96 +++-
+ src/p_mobj.h                     |   3 +
  src/p_setup.cpp                  |   7 +
- src/r_main.cpp                   |  40 ++
+ src/r_fps.cpp                    |  25 +-
+ src/r_main.cpp                   | 174 +++++--
  src/r_main.h                     |   8 +
  src/r_plane.cpp                  |  17 +-
  src/r_things.cpp                 |  63 +++
@@ -103,7 +112,7 @@ RingRacers-dev, rebased onto v2.4.
  src/sdl/CMakeLists.txt           |   5 +
  src/sdl/i_main.cpp               |  11 +-
  src/sdl/i_system.cpp             | 119 ++++-
- src/sdl/i_uwpprofile.cpp         | 861 +++++++++++++++++++++++++++++++
+ src/sdl/i_uwpprofile.cpp         | 863 +++++++++++++++++++++++++++++++
  src/sdl/i_video.cpp              |  74 +++
  src/sdl/mixer_sound.c            |   4 +-
  src/sdl/ogl_sdl.c                |   8 +
@@ -111,7 +120,7 @@ RingRacers-dev, rebased onto v2.4.
  src/w_wad.cpp                    | 117 +++++
  src/w_wad.h                      |  10 +
  src/z_zone.cpp                   |   5 +
- 38 files changed, 2690 insertions(+), 242 deletions(-)
+ 40 files changed, 2813 insertions(+), 284 deletions(-)
  create mode 100644 src/sdl/i_uwpprofile.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -329,7 +338,7 @@ index 1e7585fbc..fc9c5fb3c 100644
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
-index 8a434ba63..8e737e9d3 100644
+index 8a434ba63..0e3c54d64 100644
 --- a/src/core/thread_pool.cpp
 +++ b/src/core/thread_pool.cpp
 @@ -24,6 +24,11 @@
@@ -349,8 +358,8 @@ index 8a434ba63..8e737e9d3 100644
  	SRB2_ASSERT(g_main_threadpool == nullptr);
  	size_t thread_count = std::min(static_cast<unsigned int>(9), std::thread::hardware_concurrency());
 +#ifdef _UWP
-+	// [UWP]: Xbox keeps some processors for the system, which hardware_concurrency counts. Running more threads than
-+	// the game has processors makes some planes finish late while the main thread waits for them.
++	// [UWP]: Limit workers when Xbox marks processors as the game's own. Some launches don't mark any, so keep the
++	// upstream hardware count then; counting only the unallocated processors picked the system's two cores.
 +	const unsigned int usable = I_UWPUsableProcessors();
 +	if (usable)
 +	{
@@ -366,7 +375,7 @@ index 8a434ba63..8e737e9d3 100644
  	}
 +
 +#ifdef _UWP
-+	I_OutputMsg("UWP: %u hardware threads, %u usable by the game, %zu thread pool workers\n",
++	I_OutputMsg("UWP: %u hardware threads, %u marked as the game's, %zu thread pool workers\n",
 +		std::thread::hardware_concurrency(), usable, M_CheckParm("-singlethreaded") ? (size_t)0 : thread_count);
 +#endif
  }
@@ -885,10 +894,10 @@ index 3fd6666cf..3cfcb18f1 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..1cdaf83a4 100644
+index 56d507e90..993cd22de 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,8 +313,69 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,70 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
@@ -914,7 +923,8 @@ index 56d507e90..1cdaf83a4 100644
 +// runs it as a game. Call from the main thread.
 +void I_UWPLogCpuSets(void);
 +
-+// [UWP]: How many processors the game may run on, leaving out those Xbox keeps for the system, or 0 if unknown
++// [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
++// doesn't mark any
 +unsigned int I_UWPUsableProcessors(void);
 +
 +// [UWP]: Logs crashes, with their call stacks, to the log, which the game's signal handler misses on Xbox.
@@ -1697,6 +1707,20 @@ index 305a75e0e..ea050a086 100644
  }
  
  //----------------------------------------------------------------------------
+diff --git a/src/p_mobj.h b/src/p_mobj.h
+index 02f46b56f..8f2a73b0a 100644
+--- a/src/p_mobj.h
++++ b/src/p_mobj.h
+@@ -454,6 +454,9 @@ struct mobj_t
+ 
+ 	INT32 po_movecount; // Polyobject carrying (NOT savegame, NOT Lua)
+ 
++	// [UWP]: 1 + where this is in r_fps.cpp's list of interpolated mobjs, or 0 (NOT savegame, NOT Lua)
++	size_t interpolatorslot;
++
+ 	// WARNING: New fields must be added separately to savegame and Lua.
+ };
+ 
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
 index e5208ce77..9ca086d67 100644
 --- a/src/p_setup.cpp
@@ -1722,11 +1746,291 @@ index e5208ce77..9ca086d67 100644
  	if (numsectors)
  	{
  		F_EndTextPrompt(false, true);
+diff --git a/src/r_fps.cpp b/src/r_fps.cpp
+index 08750043b..d38fe5405 100644
+--- a/src/r_fps.cpp
++++ b/src/r_fps.cpp
+@@ -608,6 +608,7 @@ static std::vector<mobj_t*> interpolated_mobjs;
+ void R_AddMobjInterpolator(mobj_t *mobj)
+ {
+ 	interpolated_mobjs.push_back(mobj);
++	mobj->interpolatorslot = interpolated_mobjs.size();
+ 
+ 	R_ResetMobjInterpolationState(mobj);
+ 	mobj->resetinterp = true;
+@@ -615,15 +616,31 @@ void R_AddMobjInterpolator(mobj_t *mobj)
+ 
+ void R_RemoveMobjInterpolator(mobj_t *mobj)
+ {
+-	for (size_t i = 0; i < interpolated_mobjs.size(); i++)
++	// [UWP]: Find the mobj where it recorded it is, instead of searching the whole list for every mobj removed, which
++	// was 1.5% of game logic on Xbox. Searches as before if that's out of date.
++	size_t i = mobj->interpolatorslot - 1;
++
++	if (i >= interpolated_mobjs.size() || interpolated_mobjs[i] != mobj)
+ 	{
+-		if (interpolated_mobjs[i] == mobj)
++		for (i = 0; i < interpolated_mobjs.size(); i++)
++		{
++			if (interpolated_mobjs[i] == mobj)
++			{
++				break;
++			}
++		}
++
++		if (i == interpolated_mobjs.size())
+ 		{
+-			interpolated_mobjs[i] = *interpolated_mobjs.rbegin();
+-			interpolated_mobjs.pop_back();
+ 			return;
+ 		}
+ 	}
++
++	mobj_t *last = *interpolated_mobjs.rbegin();
++	interpolated_mobjs[i] = last;
++	last->interpolatorslot = i + 1;
++	interpolated_mobjs.pop_back();
++	mobj->interpolatorslot = 0;
+ }
+ 
+ void R_InitMobjInterpolators(void)
 diff --git a/src/r_main.cpp b/src/r_main.cpp
-index 639f74437..aa63767e1 100644
+index 639f74437..ba57ff5be 100644
 --- a/src/r_main.cpp
 +++ b/src/r_main.cpp
-@@ -1148,17 +1148,57 @@ void R_Init(void)
+@@ -597,19 +597,13 @@ static inline void R_InitLightTables(void)
+ //#define WOUGHMP_WOUGHMP // I got a fish-eye lens - I'll make a rap video with a couple of friends
+ // it's kinda laggy sometimes
+ 
+-#ifdef WOUGHMP_WOUGHMP
+-#define AHHHH_IM_SO_MAAAAD { 0U, 0, FRACUNIT, NULL, 0, 0, {0}, {0}, false }
+-#else
+-#define AHHHH_IM_SO_MAAAAD { 0U,    FRACUNIT, NULL, 0, 0, {0}, {0}, false }
+-#endif
+-
+ static struct viewmorph {
+ 	angle_t rollangle; // pre-shifted by fineshift
+ #ifdef WOUGHMP_WOUGHMP
+ 	fixed_t fisheye;
+ #endif
+ 
+-	fixed_t zoomneeded;
++	fixed_t zoomneeded = FRACUNIT;
+ 	INT32 *scrmap;
+ 	INT32 scrmapsize;
+ 
+@@ -617,14 +611,15 @@ static struct viewmorph {
+ 	INT16 ceilingclip[MAXVIDWIDTH], floorclip[MAXVIDWIDTH];
+ 
+ 	boolean use;
+-} viewmorph[MAXSPLITSCREENPLAYERS] = {
+-	AHHHH_IM_SO_MAAAAD,
+-	AHHHH_IM_SO_MAAAAD,
+-	AHHHH_IM_SO_MAAAAD,
+-	AHHHH_IM_SO_MAAAAD,
+-};
+ 
+-#undef AHHHH_IM_SO_MAAAAD
++	// [UWP]: Store the start of each source row and step along it when drawing, instead of rebuilding and reading
++	// a full-screen pixel map. Row starts use the original float additions so parallel rows sample the same pixels.
++	boolean straight;
++	float mapx[MAXVIDHEIGHT / 2 + 1], mapy[MAXVIDHEIGHT / 2 + 1];
++	float mapcos, mapsin;
++	INT32 mapend, maprealend;
++	INT32 mapwidth, mapheight, mappitch;
++} viewmorph[MAXSPLITSCREENPLAYERS] = {};
+ 
+ void R_CheckViewMorph(int s)
+ {
+@@ -633,9 +628,12 @@ void R_CheckViewMorph(int s)
+ 	float zoomfactor, rollcos, rollsin;
+ 	float x1, y1, x2, y2;
+ 	fixed_t temp;
+-	INT32 end, vx, vy, pos, usedpos;
++	INT32 end, vx, vy;
+ 	INT32 realend;
++#ifdef WOUGHMP_WOUGHMP
++	INT32 pos, usedpos;
+ 	INT32 usedx, usedy;
++#endif
+ 
+ 	INT32 width = vid.width;
+ 	INT32 height = vid.height;
+@@ -676,10 +674,13 @@ void R_CheckViewMorph(int s)
+ #ifdef WOUGHMP_WOUGHMP
+ 		fisheye == v->fisheye &&
+ #endif
+-		v->scrmapsize == width * height)
++		v->mapwidth == width && v->mapheight == height && v->mappitch == vid.width)
+ 		return; // No change
+ 
+ 	v->rollangle = rollangle;
++	v->mapwidth = width;
++	v->mapheight = height;
++	v->mappitch = vid.width;
+ #ifdef WOUGHMP_WOUGHMP
+ 	v->fisheye = fisheye;
+ #endif
+@@ -699,13 +700,15 @@ void R_CheckViewMorph(int s)
+ 		return;
+ 	}
+ 
+-	if (v->scrmapsize != width * height)
++#ifdef WOUGHMP_WOUGHMP
++	if (fisheye && v->scrmapsize != width * height)
+ 	{
+ 		if (v->scrmap)
+ 			free(v->scrmap);
+ 		v->scrmap = static_cast<INT32*>(malloc(width * height * sizeof(INT32)));
+ 		v->scrmapsize = width * height;
+ 	}
++#endif
+ 
+ 	temp = FINECOSINE(rollangle);
+ 	rollcos = FIXED_TO_FLOAT(temp);
+@@ -755,7 +758,10 @@ void R_CheckViewMorph(int s)
+ 		realend = ( realend << 1 ) - width;
+ 	}
+ 
++	v->straight = true;
++#ifdef WOUGHMP_WOUGHMP
+ 	pos = 0;
++#endif
+ 
+ 	// Pre-multiply rollcos and rollsin to use for positional stuff
+ 	rollcos /= zoomfactor;
+@@ -818,6 +824,7 @@ void R_CheckViewMorph(int s)
+ #ifdef WOUGHMP_WOUGHMP
+ 	if (fisheye)
+ 	{
++		v->straight = false;
+ 		for (vy = 0; vy < halfheight; vy++)
+ 		{
+ 			x2 = x1;
+@@ -846,29 +853,17 @@ void R_CheckViewMorph(int s)
+ #endif
+ 	x1 += halfwidth;
+ 	y1 += halfheight;
+-
+-	for (vy = 0; vy < halfheight; vy++)
++	for (vy = 0; vy < (height + 1) / 2; vy++)
+ 	{
+-		x2 = x1;
+-		y2 = y1;
++		v->mapx[vy] = x1;
++		v->mapy[vy] = y1;
+ 		x1 -= rollsin;
+ 		y1 += rollcos;
+-
+-		for (vx = 0; vx < width; vx++)
+-		{
+-			usedx = x2;
+-			usedy = y2;
+-
+-			usedpos = usedx + usedy * vid.width;
+-
+-			v->scrmap[pos] = usedpos;
+-			v->scrmap[end-pos] = realend-usedpos;
+-
+-			x2 += rollcos;
+-			y2 += rollsin;
+-			pos++;
+-		}
+ 	}
++	v->mapcos = rollcos;
++	v->mapsin = rollsin;
++	v->mapend = end;
++	v->maprealend = realend;
+ #ifdef WOUGHMP_WOUGHMP
+ 	}
+ #endif
+@@ -883,7 +878,9 @@ void R_ApplyViewMorph(int s)
+ 	INT32 width = vid.width;
+ 	INT32 height = vid.height;
+ 	INT32 p;
++#ifdef WOUGHMP_WOUGHMP
+ 	INT32 end;
++#endif
+ 
+ 	if (!viewmorph[s].use)
+ 		return;
+@@ -913,12 +910,73 @@ void R_ApplyViewMorph(int s)
+ 		}
+ 	}
+ 
++#ifdef WOUGHMP_WOUGHMP
+ 	end = width * height;
++#endif
++
++	const struct viewmorph *v = &viewmorph[s];
++	if (v->straight)
++	{
++		const INT32 pitch = vid.width;
++		auto drawrows = [v, tmpscr, srcscr, width, pitch](INT32 first, INT32 last) {
++			for (INT32 y = first; y < last; y++)
++			{
++				float x2 = v->mapx[y];
++				float y2 = v->mapy[y];
++				INT32 pos = y * width;
++				for (INT32 x = 0; x < width; x++, pos++)
++				{
++					// Keep the original float additions and truncation, including the mirrored lower half.
++					const INT32 usedpos = (INT32)x2 + (INT32)y2 * pitch;
++					tmpscr[pos] = srcscr[usedpos];
++					tmpscr[v->mapend - pos] = srcscr[v->maprealend - usedpos];
++					x2 += v->mapcos;
++					y2 += v->mapsin;
++				}
++			}
++		};
++
++		if (cv_parallelsoftware.value && width * height >= 640 * 400)
++		{
++			srb2::g_main_threadpool->begin_sema();
++			for (INT32 first = 0; first < height / 2; first += 64)
++			{
++				const INT32 last = std::min(first + 64, height / 2);
++				srb2::g_main_threadpool->schedule([drawrows, first, last]() { drawrows(first, last); });
++			}
++			const auto sema = srb2::g_main_threadpool->end_sema();
++			srb2::g_main_threadpool->notify_sema(sema);
++			srb2::g_main_threadpool->wait_sema(sema);
++		}
++		else
++		{
++			drawrows(0, height / 2);
++		}
+ 
+-	for (p = 0; p < end; p++)
++		// An odd-height split view has a center row which the mirrored halves don't cover.
++		if (height & 1)
++		{
++			float rowx = v->mapx[height / 2];
++			float rowy = v->mapy[height / 2];
++			p = (height / 2) * width;
++			for (INT32 x = 0; x < width; x++, p++)
++			{
++				const INT32 usedpos = (INT32)rowx + (INT32)rowy * vid.width;
++				tmpscr[p] = srcscr[usedpos];
++				rowx += v->mapcos;
++				rowy += v->mapsin;
++			}
++		}
++	}
++#ifdef WOUGHMP_WOUGHMP
++	else
+ 	{
+-		tmpscr[p] = srcscr[viewmorph[s].scrmap[p]];
++		for (p = 0; p < end; p++)
++		{
++			tmpscr[p] = srcscr[v->scrmap[p]];
++		}
+ 	}
++#endif
+ 
+ 	VID_BlitLinearScreen(tmpscr, srcscr,
+ 			width*vid.bpp, height, width*vid.bpp, vid.width);
+@@ -1148,17 +1206,57 @@ void R_Init(void)
  	framecount = 0;
  }
  
@@ -3334,10 +3638,10 @@ index 827f493b1..d3b30c4a3 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 000000000..0b4f2fafd
+index 000000000..9470341e1
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
-@@ -0,0 +1,861 @@
+@@ -0,0 +1,863 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -3974,16 +4278,18 @@ index 000000000..0b4f2fafd
 +
 +unsigned int I_UWPUsableProcessors(void)
 +{
-+	unsigned int usable = 0;
++	unsigned int ours = 0;
 +
++	// Only trusted when some processors are marked as the game's: right after launch, Xbox has listed the game's
++	// processors as allocated to no one in particular, and the system's as free
 +	for (const CpuSet& set : ReadCpuSets(false))
 +	{
-+		if (!(set.flags & kCpuSetAllocated) || (set.flags & kCpuSetAllocatedToUs))
++		if (set.flags & kCpuSetAllocatedToUs)
 +		{
-+			usable++;
++			ours++;
 +		}
 +	}
-+	return usable;
++	return ours >= 2 ? ours : 0;
 +}
 +
 +void I_UWPLogCpuSets(void)
