@@ -1,6 +1,6 @@
-From b3b8e17acc432c050ddb3ea5f05385113cb76982 Mon Sep 17 00:00:00 2001
+From d7033398a5ce724fb7998312b274068504b4362b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
-Date: Sat, 3 Oct 2026 21:14:13 -0500
+Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
  launcher
 
@@ -12,7 +12,8 @@ RingRacers-dev, rebased onto v2.4.
 - Pull SDL2 (UWP), Mesa, and libuwp from worleydl/uwp-dep instead of vcpkg
 - Read game data and save files from E:\ringracers
 - Use the libuwp display size and refresh rate instead of SDL's
-- Force WASAPI audio and disable log files
+- Force WASAPI audio and disable log files, creating the save folder
+  that log setup normally creates
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
 - Show only the error in the crash dialog, which the Xbox cuts off,
@@ -22,7 +23,7 @@ RingRacers-dev, rebased onto v2.4.
  CMakeLists.txt         | 19 +++++++++--
  CMakePresets.json      | 17 ++++++++++
  src/CMakeLists.txt     | 38 ++++++++++++++-------
- src/d_main.cpp         |  7 ++++
+ src/d_main.cpp         | 12 +++++++
  src/doomdef.h          |  2 ++
  src/http-mserv.c       |  2 ++
  src/sdl/CMakeLists.txt |  4 +++
@@ -31,7 +32,7 @@ RingRacers-dev, rebased onto v2.4.
  src/sdl/i_video.cpp    | 19 +++++++++++
  src/sdl/mixer_sound.c  |  4 ++-
  src/sdl/ogl_sdl.c      |  8 +++++
- 12 files changed, 185 insertions(+), 18 deletions(-)
+ 12 files changed, 190 insertions(+), 18 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -212,7 +213,7 @@ index 9eb0bcbf1..a9e5d6d33 100644
  
  # Setup clang-tidy
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..7419169e8 100644
+index 19fcfe0a7..416f4f523 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -1187,8 +1187,13 @@ void D_SRB2Loop(void)
@@ -229,7 +230,19 @@ index 19fcfe0a7..7419169e8 100644
  
  			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
  			{
-@@ -2323,6 +2328,8 @@ const char *D_Home(void)
+@@ -1661,6 +1666,11 @@ void D_SRB2Main(void)
+ 		configfile[sizeof configfile - 1] = '\0';
+ 	}
+ 
++#ifdef _UWP
++	// [UWP]: Log setup normally creates this folder, but logging is disabled
++	I_mkdir(srb2home, 0755);
++#endif
++
+ 	// If config isn't writable, tons of behavior will be broken.
+ 	// Fail loudly before things get confusing!
+ 	{
+@@ -2323,6 +2333,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
