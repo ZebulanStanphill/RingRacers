@@ -1,4 +1,4 @@
-From 2d47a6ec85f74a52b5f9bcef9092f4c6caa0a6b9 Mon Sep 17 00:00:00 2001
+From 183bbf003b95337247768faea8f25f802b11a7ca Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -25,6 +25,8 @@ RingRacers-dev, rebased onto v2.4.
   Its startup, presentation path, and errors are logged, and the perf
   summary adds Legacy GL's renderer timings and the driver's draws, state
   changes, texture uploads, CPU time, presentation timings, and GPU time
+- Leave precipitation and things with RF_HIDEINSKYBOX out of Legacy GL's
+  skybox view, as the software renderer does
 - Make fewer GL calls, which are expensive through ANGLE on the Xbox's
   CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
   change anything, cache uniform locations, keep framebuffers between
@@ -110,7 +112,8 @@ Model: gpt-6.1-sol
  src/d_clisrv.c                     |   19 +
  src/d_main.cpp                     |   84 +-
  src/hardware/CMakeLists.txt        |   35 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 4366 ++++++++++++++++++++++++++++
+ src/hardware/hw_main.c             |   18 +
+ src/hardware/r_d3d11/r_d3d11.cpp   | 4368 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   37 +
  src/hardware/r_d3d11/shaders.hlsl  |  335 +++
  src/http-mserv.c                   |    2 +
@@ -155,7 +158,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 53 files changed, 7820 insertions(+), 369 deletions(-)
+ 54 files changed, 7840 insertions(+), 369 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -698,12 +701,63 @@ index a0a0f280c..3c57c2199 100644
 +	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp)
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
 +endif()
+diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
+index b5e8fca5a..13ee36883 100644
+--- a/src/hardware/hw_main.c
++++ b/src/hardware/hw_main.c
+@@ -4597,6 +4597,10 @@ static void HWR_DrawSprites(void)
+ // HWR_AddSprites
+ // During BSP traversal, this adds sprites by sector.
+ // --------------------------------------------------------------------------
++// [UWP]: Whether the skybox's view is being rendered, which, as in the software renderer (portalskipprecipmobjs),
++// leaves out precipitation and things with RF_HIDEINSKYBOX
++static boolean gl_skyboxview = false;
++
+ static UINT8 sectorlight;
+ static void HWR_AddSprites(sector_t *sec)
+ {
+@@ -4621,6 +4625,12 @@ static void HWR_AddSprites(sector_t *sec)
+ 	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
+ 	for (thing = sec->thinglist; thing; thing = thing->snext)
+ 	{
++		// do not render in skybox
++		if ((thing->renderflags & RF_HIDEINSKYBOX) && gl_skyboxview)
++		{
++			continue;
++		}
++
+ 		if (R_ThingWithinDist(thing, limit_dist))
+ 		{
+ 			if (R_ThingVisible(thing))
+@@ -4653,6 +4663,12 @@ static void HWR_AddPrecipitationSprites(void)
+ 		return;
+ 	}
+ 
++	// do not render in skybox
++	if (gl_skyboxview)
++	{
++		return;
++	}
++
+ 	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
+ 
+ 	for (bx = xl; bx <= xh; bx++)
+@@ -5973,7 +5989,9 @@ void HWR_RenderSkyboxView(player_t *player)
+ 	// note: sets viewangle, viewx, viewy, viewz
+ 	R_SkyboxFrame(viewssnum);
+ 
++	gl_skyboxview = true;
+ 	HWR_RenderViewpoint(player, drawsky, false);
++	gl_skyboxview = false;
+ }
+ 
+ // ==========================================================================
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..445b16c06
+index 000000000..e1a1a59f8
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,4366 @@
+@@ -0,0 +1,4368 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -834,6 +888,7 @@ index 000000000..445b16c06
 +	int texturesCreated, textureUploads, texturesDeleted, flushes;
 +	INT64 textureUploadBytes;
 +	int modelFallbacks, modelLerps;
++	int skyBuilds;
 +	precise_t drawTime, textureTime;
 +	precise_t copyTime, waitTime, worstWait, glTime, swapTime;
 +	double gpuMs, worstGpuMs;
@@ -3964,7 +4019,9 @@ index 000000000..445b16c06
 +		CreateStaticBuffer(sky->data, (UINT)(sky->vertex_count * sizeof(sky->data[0])), D3D11_BIND_VERTEX_BUFFER, g_skyBuffer);
 +		sky->vbo = 1;
 +		sky->rebuild = false;
-+		Log("built a sky dome of %d vertices in %d loops", sky->vertex_count, sky->loopcount);
++		g_stats.skyBuilds++;
++		LOG_ONCE("built a sky dome of %d vertices in %d loops (counted in the perf summary after this)", sky->vertex_count,
++			sky->loopcount);
 +	}
 +
 +	if (!g_skyBuffer)
@@ -4136,8 +4193,7 @@ index 000000000..445b16c06
 +	switch (IdState)
 +	{
 +		case HWD_SET_MODEL_LIGHTING:
-+			if (g_modelLighting != (Value != 0))
-+				Log("model lighting %s", Value ? "on" : "off");
++			// Set around each model, so not logged
 +			g_modelLighting = Value;
 +			break;
 +
@@ -5054,8 +5110,8 @@ index 000000000..445b16c06
 +	if (!g_device)
 +		return;
 +
-+	I_OutputMsg("UWP perf:   D3D11: %.1f frames/s; per frame %.0f polygons, %.0f batches, %.1f models, %.1f skies, %.1f lines, %.1f screen copies or draws\n",
-+		s.frames / seconds, s.polygons / n, s.batches / n, s.models / n, s.skies / n, s.lines / n, s.screens / n);
++	I_OutputMsg("UWP perf:   D3D11: %.1f frames/s; per frame %.0f polygons, %.0f batches, %.1f models, %.1f skies (%.1f rebuilt), %.1f lines, %.1f screen copies or draws\n",
++		s.frames / seconds, s.polygons / n, s.batches / n, s.models / n, s.skies / n, s.skyBuilds / n, s.lines / n, s.screens / n);
 +	I_OutputMsg("UWP perf:   D3D11: per frame %.0f vertices, %.0f indices, %.0f KB uploaded, %.0f constant updates, %.0f shader, %.0f blend, %.0f depth, %.0f raster changes, %.0f texture binds; %d buffer wraps\n",
 +		s.vertices / n, s.indices / n, s.uploadBytes / n / 1024.0, s.constantUpdates / n, s.shaderChanges / n,
 +		s.blendChanges / n, s.depthChanges / n, s.rasterChanges / n, s.textureBinds / n, s.ringWraps);
