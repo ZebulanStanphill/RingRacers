@@ -1,4 +1,4 @@
-From 2bca8509ab9ff540c0f1b86b2f8d25629ff34346 Mon Sep 17 00:00:00 2001
+From ae0c2c9d54d405cc32618a16c6ca802b42ffb8cb Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -41,6 +41,13 @@ RingRacers-dev, rebased onto v2.4.
   and shift rows with Encore's bottom-origin wiggle while clamping
   screen sampling to the captured image. Keep the two-pass wipe as a
   fallback if the full wipe's resources are unavailable
+- Show each Legacy GL wipe frame immediately instead of presenting the
+  previous frame, so Encore's inversion circle reaches the screen edges
+  before presenting stops; keep normal shared presentation a frame late
+- Refresh the pre-level title card's clock after loading on UWP and run
+  its animation once per elapsed tic. Let its HUD timer catch up by up to
+  TICRATE/2 tics per drawn frame, keeping time at low FPS while limiting
+  how much a long hitch skips. These changes do not affect game logic
 - Make fewer GL calls, which are expensive through ANGLE on the Xbox's
   CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
   change anything, cache uniform locations, keep framebuffers between
@@ -91,8 +98,8 @@ RingRacers-dev, rebased onto v2.4.
 - Create the save folder before checking that the config is writable
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
-- Log the track title animation's frame count and drawing/presentation
-  timings, to diagnose slow or uneven animation
+- Log the track title animation's tic and frame counts and
+  drawing/presentation timings, to diagnose slow or uneven animation
 - Log how long each loading step and asset file takes and how much of
   that was spent logging, the thread pool size, the process memory
   budget, and every 5 seconds a summary of the perfstats frame and tic timings, the parts of
@@ -129,7 +136,7 @@ Model: gpt-6.1-sol
  src/d_clisrv.c                     |   19 +
  src/d_main.cpp                     |   84 +-
  src/f_wipe.cpp                     |   20 +-
- src/g_game.c                       |   36 +
+ src/g_game.c                       |   50 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_cache.c            |  196 +-
@@ -140,7 +147,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.c             |   60 +-
  src/hardware/hw_main.h             |    5 +
  src/hardware/hw_md2.c              |   11 +-
- src/hardware/r_d3d11/r_d3d11.cpp   | 4825 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 4831 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   37 +
  src/hardware/r_d3d11/shaders.hlsl  |  438 +++
  src/http-mserv.c                   |    2 +
@@ -183,11 +190,11 @@ Model: gpt-6.1-sol
  src/sdl/mixer_sound.c              |    4 +-
  src/sdl/ogl_sdl.c                  |    8 +
  src/sdl/rhi_gl2_platform.cpp       |    9 +
- src/st_stuff.c                     |   10 +-
+ src/st_stuff.c                     |   16 +-
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 67 files changed, 8753 insertions(+), 409 deletions(-)
+ 67 files changed, 8779 insertions(+), 409 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -740,28 +747,43 @@ index 2b7d95d41..67fcb98de 100644
  			hwr2::HardwareState* hw_state = srb2::sys::main_hardware_state();
  
 diff --git a/src/g_game.c b/src/g_game.c
-index ce69d80c0..2e29e11c6 100644
+index ce69d80c0..49d26dfee 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
-@@ -1296,12 +1296,37 @@ void G_PreLevelTitleCard(void)
+@@ -1292,16 +1292,52 @@ void G_StartTitleCard(void)
+ void G_PreLevelTitleCard(void)
+ {
+ #ifndef NOWIPE
++#ifdef _UWP
++	// Level loading leaves I_GetTime's cached clock stale.
++	I_UpdateTime();
++#endif
+ 	tic_t strtime = I_GetTime();
  	tic_t endtime = strtime + (PRELEVELTIME*NEWTICRATERATIO);
  	tic_t nowtime = strtime;
  	tic_t lasttime = strtime;
 +#ifdef _UWP
-+	// The animation advances once per rendered frame, but this loop ends on wall time.
-+	// Log whether drawing or presenting leaves it short of its expected tic count.
++	// Advance on elapsed tics and log them separately from rendered frames.
 +	const precise_t uwp_title_start = I_GetPreciseTime();
 +	precise_t uwp_title_draw = 0, uwp_title_present = 0;
 +	precise_t uwp_title_worst_draw = 0, uwp_title_worst_present = 0;
 +	INT32 uwp_title_frames = 0;
++	INT32 uwp_title_tics = 0;
++	tic_t uwp_title_elapsed = 1; // run once on the first iteration
 +#endif
  	while (nowtime < endtime)
  	{
  		// draw loop
 +#ifdef _UWP
 +		const precise_t uwp_draw_start = I_GetPreciseTime();
-+#endif
++		for (tic_t i = 0; i < uwp_title_elapsed; i++)
++		{
++			ST_runTitleCard();
++			uwp_title_tics++;
++		}
++#else
  		ST_runTitleCard();
++#endif
  		ST_preLevelTitleCardDrawer();
 +#ifdef _UWP
 +		const precise_t uwp_present_start = I_GetPreciseTime();
@@ -781,16 +803,21 @@ index ce69d80c0..2e29e11c6 100644
  		NetKeepAlive();		// Prevent timeouts
  
  #ifdef HWRENDER
-@@ -1319,6 +1344,17 @@ void G_PreLevelTitleCard(void)
+@@ -1317,8 +1353,22 @@ void G_PreLevelTitleCard(void)
+ 			I_Sleep(cv_sleep.value);
+ 			I_UpdateTime();
  		}
++#ifdef _UWP
++		uwp_title_elapsed = nowtime - lasttime;
++#endif
  		lasttime = nowtime;
  	}
 +#ifdef _UWP
 +	{
 +		const double uwp_ms = 1000.0 / I_GetPrecisePrecision();
 +		const double uwp_frames = uwp_title_frames ? uwp_title_frames : 1;
-+		I_OutputMsg("UWP: track title: %s; %d frames in %.1f ms (target %d); draw %.2f ms/frame (worst %.2f), present %.2f ms/frame (worst %.2f)\n",
-+			rendermode == render_opengl ? "Direct3D 11" : "Software", uwp_title_frames,
++		I_OutputMsg("UWP: track title: %s; %d tics, %d frames in %.1f ms (target %d tics); draw %.2f ms/frame (worst %.2f), present %.2f ms/frame (worst %.2f)\n",
++			rendermode == render_opengl ? "Direct3D 11" : "Software", uwp_title_tics, uwp_title_frames,
 +			(I_GetPreciseTime() - uwp_title_start) * uwp_ms, PRELEVELTIME,
 +			uwp_title_draw * uwp_ms / uwp_frames, uwp_title_worst_draw * uwp_ms,
 +			uwp_title_present * uwp_ms / uwp_frames, uwp_title_worst_present * uwp_ms);
@@ -1510,10 +1537,10 @@ index 81a7d9a49..ce26e94e6 100644
  						r = (INT32)(nextcolor.s.red - blendcolor.s.red);
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..9c4cf7c32
+index 000000000..90438a886
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,4825 @@
+@@ -0,0 +1,4831 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -3880,6 +3907,7 @@ index 000000000..9c4cf7c32
 +	bool failed = false; // couldn't set up presenting, so stop trying
 +};
 +Presenter g_present;
++bool g_presentImmediately = false; // wipes must reach the window before presenting stops
 +
 +const char *DescribeFormat(DXGI_FORMAT format)
 +{
@@ -4412,7 +4440,7 @@ index 000000000..9c4cf7c32
 +		Log("  drew the frame to the %dx%d window (GL error 0x%X)", windowWidth, windowHeight, gl.GetError());
 +}
 +
-+// Shows the screen, a frame late when shared, so the GPU has finished copying it by then
++// Shows the screen, normally a frame late when shared, so the GPU has finished copying it by then
 +void Present()
 +{
 +	const bool trace = g_tracedFrames < kTraceFrames;
@@ -4489,9 +4517,13 @@ index 000000000..9c4cf7c32
 +	g_stats.copyTime += now - t;
 +	t = now;
 +
-+	// The previous frame, which the GPU has most likely finished, except the first time
-+	PresentSlot &shown = (g_present.shared && g_present.frame > 0)
++	// Wipes show the current copy: presenting can stop after their last frame.
++	// The next normal frame will show that wipe frame again once, which is acceptable.
++	PresentSlot &shown = (g_present.shared && g_present.frame > 0 && !g_presentImmediately)
 +		? g_present.slots[(g_present.frame - 1) % kPresentSlots] : slot;
++	if (trace && g_presentImmediately)
++		Log("  showing the current wipe frame immediately");
++	g_presentImmediately = false;
 +
 +	if (!WaitForQuery(shown.copied.Get(), trace))
 +	{
@@ -5993,6 +6025,7 @@ index 000000000..9c4cf7c32
 +void D3D_DoScreenWipe(void)
 +{
 +	CpuTimer timer(g_stats.drawTime);
++	g_presentImmediately = true; // applies to both the full wipe and the fallback below
 +	if (DrawWipeFull())
 +	{
 +		g_texDownloaded = g_endScreenWipe;
@@ -11631,7 +11664,7 @@ index f3f10fe90..c85cbe0b4 100644
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
 diff --git a/src/st_stuff.c b/src/st_stuff.c
-index 6f67d6a8f..0a95580e2 100644
+index 6f67d6a8f..af892ec2e 100644
 --- a/src/st_stuff.c
 +++ b/src/st_stuff.c
 @@ -129,7 +129,7 @@ void ST_doPaletteStuff(void)
@@ -11665,6 +11698,21 @@ index 6f67d6a8f..0a95580e2 100644
  #endif
  		V_SetPalette(0);
  
+@@ -1023,8 +1027,14 @@ void ST_drawTitleCard(void)
+ 	if (lt_ticker >= (lt_endtime + TICRATE))
+ 		goto luahook;
+ 
++#ifdef _UWP
++	// Keep HUD animation in time at low FPS, but don't skip it wholesale after a long hitch.
++	if ((lt_ticker-lt_lasttic) > TICRATE/2)
++		lt_ticker = lt_lasttic+TICRATE/2;
++#else
+ 	if ((lt_ticker-lt_lasttic) > 1)
+ 		lt_ticker = lt_lasttic+1;
++#endif
+ 
+ 	// Avoid HOMs while drawing the start of the titlecard
+ 	if (lt_ticker < TTANIMSTART)
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
 index 3c68b1378..2444f431c 100644
 --- a/src/w_wad.cpp

@@ -62,8 +62,9 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - Toggled by `gr_paletterendering` (Options → Video → Advanced → Palette Rendering). It's on by default and needs Shaders on.
   - As in the Software renderer, colors are limited to the palette, and surfaces are lit through the colormaps.
   - Palette flashes and the color profile apply to the whole frame. Without palette rendering, Legacy GL shows flashes as a white or pink overlay and has no other flash palettes.
-- **Legacy GL: Encore screen inversion** *(untested)*. Encore level starts invert the screen instead of turning it white.
-- **Legacy GL: screen wipes** *(untested)*. Level and menu transitions use the Software renderer's Mega Drive-style fades to black and white, inversion, Encore wiggle, and reversed fades.
+- **Legacy GL: Encore screen inversion.** Encore level starts invert the screen instead of turning it white.
+- **Legacy GL: screen wipes.** Level and menu transitions use the Software renderer's Mega Drive-style fades to black and white, inversion, Encore wiggle, and reversed fades.
+- **Legacy GL: final transition frame** *(untested)*. Screen wipes show the current frame instead of the previous one, so Encore's inversion circle reaches the screen edges before presenting stops.
 - **Audio.** The audio driver is WASAPI instead of DirectSound.
 
 ## Files and startup
@@ -130,7 +131,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
   - how long each loading step and asset file took, and how much of that was logging
   - the thread pool size, the process memory budget, and the CPU sets Windows lists for the game
   - Legacy GL's driver startup, presentation path, and errors (the `UWP D3D11:` lines)
-  - the track title animation's frame count, elapsed time, and average and worst drawing/presentation times (`UWP: track title:`), for diagnosing uneven animation
+  - the track title animation's tic and frame counts, elapsed time, and average and worst drawing/presentation times (`UWP: track title:`), for diagnosing uneven animation
 - **Perf summary.** Every 5 seconds, the log gets a summary with:
   - the frame rate
   - the perfstats frame and tic timings
@@ -150,6 +151,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
 
 ## Fixes
 
+- **Track title timing** *(untested)*. On UWP, the animation before a race starts with a fresh clock after loading and advances once per elapsed tic. Its HUD timer can catch up by up to half a second per drawn frame, so low frame rates keep it in time without skipping the animation wholesale after a long hitch. These changes are HUD-only and have no effect on game logic.
 - **Duplicate controllers** (`patches/sdl-controller-duplicates.patch`). Each controller no longer shows up twice when running as a game instead of an app, which made each press count twice.
 - **State-change bookkeeping.** The `P_SetMobjState`/`P_SetPlayerMobjState` change under [Game logic](#game-logic) also fixes upstream's unbalanced call count.
 
