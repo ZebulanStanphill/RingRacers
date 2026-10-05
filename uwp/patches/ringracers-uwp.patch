@@ -1,4 +1,4 @@
-From d94992193c32dd4f0a79051b0d0b9340d0e48eca Mon Sep 17 00:00:00 2001
+From e80bc4b5f891e476a33053587f87ab64c5e9c3d7 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -51,11 +51,14 @@ RingRacers-dev, rebased onto v2.4.
   Each nested call now uses a table for its depth, and erases only the
   states it recorded
 - Read game data and save files from E:\ringracers
-- Warn in the startup file-check prompt when Xbox grants an App-level
-  memory budget. Query MemoryManager.AppMemoryUsageLimit through the
-  launcher, instead of treating GlobalMemoryStatusEx physical memory as
-  the process quota; log query failures as unknown, and limit the warning
-  to Xbox. Keep the check/skip choices and put the warning first
+- Warn in the startup file-check prompt when Xbox runs the game with App
+  resources: when it holds processors for another process but none for
+  the game (as every launch with App type App did on an Xbox One X), or
+  grants an Xbox memory budget under 4 GB. Query
+  MemoryManager.AppMemoryUsageLimit through the launcher, instead of
+  treating GlobalMemoryStatusEx physical memory as the process quota, and
+  log what each check found. Keep the check/skip choices and put the
+  warning first
 - Ask at launch whether to check the main asset files, since that reads
   all of them from the USB drive. Skipping uses the expected MD5s instead
   of hashing the files, hashes only the names of the music and sound
@@ -108,7 +111,7 @@ Model: gpt-6.1-sol
  src/hwr2/patch_atlas.cpp         |   8 +
  src/hwr2/resource_management.cpp | 105 ++--
  src/hwr2/resource_management.hpp |  31 +-
- src/i_system.h                   |  66 +++
+ src/i_system.h                   |  71 +++
  src/i_video_common.cpp           |  48 +-
  src/lua_script.c                 | 127 +++++
  src/m_fixed.h                    |  11 +
@@ -121,7 +124,7 @@ Model: gpt-6.1-sol
  src/r_draw.h                     |  38 +-
  src/r_draw_column.cpp            |  18 +-
  src/r_fps.cpp                    |  25 +-
- src/r_main.cpp                   | 174 +++++--
+ src/r_main.cpp                   | 174 ++++--
  src/r_main.h                     |   8 +
  src/r_plane.cpp                  |  19 +-
  src/r_segs.cpp                   |  15 +-
@@ -129,21 +132,21 @@ Model: gpt-6.1-sol
  src/r_textures.h                 |  10 +
  src/r_things.cpp                 | 158 ++++--
  src/r_things.h                   |   5 +
- src/rhi/gl2/gl2_rhi.cpp          | 618 ++++++++++++++++------
+ src/rhi/gl2/gl2_rhi.cpp          | 618 +++++++++++++++------
  src/rhi/gl2/gl2_rhi.hpp          |  36 ++
  src/screen.c                     |   2 +-
  src/sdl/CMakeLists.txt           |   5 +
  src/sdl/i_main.cpp               |  11 +-
- src/sdl/i_system.cpp             | 151 +++++-
- src/sdl/i_uwpprofile.cpp         | 863 +++++++++++++++++++++++++++++++
+ src/sdl/i_system.cpp             | 167 +++++-
+ src/sdl/i_uwpprofile.cpp         | 887 +++++++++++++++++++++++++++++++
  src/sdl/i_video.cpp              |  74 +++
  src/sdl/mixer_sound.c            |   4 +-
  src/sdl/ogl_sdl.c                |   8 +
  src/sdl/rhi_gl2_platform.cpp     |   9 +
- src/w_wad.cpp                    | 117 +++++
+ src/w_wad.cpp                    | 117 ++++
  src/w_wad.h                      |  10 +
  src/z_zone.cpp                   |   5 +
- 46 files changed, 2970 insertions(+), 368 deletions(-)
+ 46 files changed, 3015 insertions(+), 368 deletions(-)
  create mode 100644 src/sdl/i_uwpprofile.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -917,10 +920,10 @@ index 3fd6666cf..3cfcb18f1 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..3d1986b0e 100644
+index 56d507e90..141a198e5 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,8 +313,74 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,79 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
@@ -953,6 +956,11 @@ index 56d507e90..3d1986b0e 100644
 +// [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
 +// doesn't mark any
 +unsigned int I_UWPUsableProcessors(void);
++
++// [UWP]: How Xbox has given out processors: 1 if some are the game's own (Game resources), 0 if it holds some for
++// another process and none for the game (App resources: seen on Xbox One X every time the app type was App), or -1
++// if it doesn't say
++int I_UWPCpuSetMode(void);
 +
 +// [UWP]: Logs crashes, with their call stacks, to the log, which the game's signal handler misses on Xbox.
 +// Call from the main thread.
@@ -3941,7 +3949,7 @@ index f2fa2fce9..73f659db8 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..06fe37c25 100644
+index 827f493b1..b25d3750c 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -3954,7 +3962,7 @@ index 827f493b1..06fe37c25 100644
  #define USE_DBGHELP
  #include <DbgHelp.h>
  #endif
-@@ -287,6 +288,117 @@ static void write_backtrace(INT32 signal)
+@@ -287,6 +288,133 @@ static void write_backtrace(INT32 signal)
  #undef CRASHLOG_STDERR_WRITE
  #endif // UNIXBACKTRACE
  
@@ -4004,9 +4012,22 @@ index 827f493b1..06fe37c25 100644
 +
 +static boolean UWPHasAppMemoryBudget(int isXbox, UINT64 limit)
 +{
-+	// Foreground Xbox apps get 1 GiB; games get 5 GiB. Do not infer a mode
-+	// from a failed query, a zero budget, or a non-Xbox device.
-+	return isXbox && limit > 0 && limit <= (UINT64(1) << 30);
++	// Foreground Xbox apps get about 1 GiB; games get 5 GiB. Anything under 4 GiB is App resources, since the
++	// exact app budget can be a little over 1 GiB. Do not infer a mode from a failed query, a zero budget, or a
++	// non-Xbox device.
++	return isXbox && limit > 0 && limit < (UINT64(4) << 30);
++}
++
++// Whether Xbox runs the game with App resources, by its memory budget or by how it gave out processors (see
++// I_UWPCpuSetMode). Either is enough: the memory warning alone never showed on an Xbox One X set to App.
++static boolean UWPLaunchedAsApp(int budgetresult, int isXbox, UINT64 limit, int cpusetmode)
++{
++	return cpusetmode == 0 || (budgetresult == 0 && UWPHasAppMemoryBudget(isXbox, limit));
++}
++
++static const char *UWPCpuSetModeName(int cpusetmode)
++{
++	return cpusetmode == 1 ? "some are the game's" : cpusetmode == 0 ? "none are the game's" : "not reported";
 +}
 +
 +boolean I_UWPAskSkipAssetCheck(void)
@@ -4023,7 +4044,8 @@ index 827f493b1..06fe37c25 100644
 +	UINT64 limit = 0, usage = 0;
 +	int isXbox = 0;
 +	const int result = I_UWPGetMemoryBudget(&limit, &usage, &isXbox);
-+	const boolean appmode = result == 0 && UWPHasAppMemoryBudget(isXbox, limit);
++	const int cpusetmode = I_UWPCpuSetMode();
++	const boolean appmode = UWPLaunchedAsApp(result, isXbox, limit, cpusetmode);
 +	SDL_MessageBoxData data = {};
 +	int button = 0;
 +
@@ -4037,10 +4059,12 @@ index 827f493b1..06fe37c25 100644
 +			"App mode detected: Xbox limits performance and memory.\n"
 +			"Close the game, set App type to Game in Dev Home, then relaunch.\n\n%s", question);
 +		data.message = message;
-+		I_OutputMsg("UWP: App-mode resources detected at the file-check prompt (%llu MB budget)\n", limit >> 20);
 +	}
-+	else if (result != 0)
-+		I_OutputMsg("UWP: could not check launch resources for the file-check prompt (HRESULT 0x%08x)\n", (unsigned)result);
++	I_OutputMsg("UWP: file-check prompt: %s (memory budget %s%llu MB, Xbox %s, processors: %s)\n",
++		appmode ? "warning about App mode" : "no App-mode warning",
++		result == 0 ? "" : "unknown, ", limit >> 20, isXbox ? "yes" : "no", UWPCpuSetModeName(cpusetmode));
++	if (result != 0)
++		I_OutputMsg("UWP: memory budget query failed (HRESULT 0x%08x)\n", (unsigned)result);
 +	data.numbuttons = (int)SDL_arraysize(buttons);
 +	data.buttons = buttons;
 +
@@ -4055,16 +4079,16 @@ index 827f493b1..06fe37c25 100644
 +	UINT64 limit = 0, usage = 0;
 +	int isXbox = 0;
 +	const int result = I_UWPGetMemoryBudget(&limit, &usage, &isXbox);
++	const int cpusetmode = I_UWPCpuSetMode();
++	const char *resources = UWPLaunchedAsApp(result, isXbox, limit, cpusetmode) ? "App"
++		: (cpusetmode == 1 || (result == 0 && isXbox && limit >= (UINT64(4) << 30))) ? "Game" : "unknown";
 +
 +	if (result == 0)
-+	{
-+		const char *resources = !isXbox ? "not Xbox" : UWPHasAppMemoryBudget(isXbox, limit)
-+			? "Xbox App" : limit >= (UINT64(4) << 30) ? "Xbox Game" : "Xbox unknown";
-+		I_OutputMsg("UWP: process memory budget %llu MB, usage %llu MB, headroom %llu MB (%s resources, inferred from budget)\n",
-+			limit >> 20, usage >> 20, (limit > usage ? limit - usage : 0) >> 20, resources);
-+	}
++		I_OutputMsg("UWP: process memory budget %llu MB, usage %llu MB, headroom %llu MB\n",
++			limit >> 20, usage >> 20, (limit > usage ? limit - usage : 0) >> 20);
 +	else
-+		I_OutputMsg("UWP: process memory budget unavailable (HRESULT 0x%08x); launch resources unknown\n", (unsigned)result);
++		I_OutputMsg("UWP: process memory budget unavailable (HRESULT 0x%08x)\n", (unsigned)result);
++	I_OutputMsg("UWP: %s resources (Xbox %s; processors: %s)\n", resources, isXbox ? "yes" : "no", UWPCpuSetModeName(cpusetmode));
 +}
 +
 +#endif
@@ -4072,7 +4096,7 @@ index 827f493b1..06fe37c25 100644
  static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
  {
  	static char finalmessage[2048];
-@@ -295,6 +407,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
+@@ -295,6 +423,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
  	if (M_CheckParm("-dedicated"))
  		return;
  
@@ -4102,7 +4126,7 @@ index 827f493b1..06fe37c25 100644
  	snprintf(
  		finalmessage,
  		sizeof(finalmessage),
-@@ -1071,6 +1206,10 @@ void I_OutputMsg(const char *fmt, ...)
+@@ -1071,6 +1222,10 @@ void I_OutputMsg(const char *fmt, ...)
  	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
  #endif
  
@@ -4113,7 +4137,7 @@ index 827f493b1..06fe37c25 100644
  #if defined (_WIN32) && defined (_MSC_VER)
  	OutputDebugStringA(txt);
  #endif
-@@ -1086,6 +1225,10 @@ void I_OutputMsg(const char *fmt, ...)
+@@ -1086,6 +1241,10 @@ void I_OutputMsg(const char *fmt, ...)
  	}
  #endif
  
@@ -4124,7 +4148,7 @@ index 827f493b1..06fe37c25 100644
  #if defined (_WIN32)
  #ifdef DEBUGFILE
  	if (debugfile != stderr)
-@@ -2083,6 +2226,7 @@ static void Shittycopyerror(const char *name)
+@@ -2083,6 +2242,7 @@ static void Shittycopyerror(const char *name)
  
  static void Shittylogcopy(void)
  {
@@ -4132,7 +4156,7 @@ index 827f493b1..06fe37c25 100644
  	char buf[8192];
  	FILE *fp;
  	size_t r;
-@@ -2110,6 +2254,7 @@ static void Shittylogcopy(void)
+@@ -2110,6 +2270,7 @@ static void Shittylogcopy(void)
  	{
  		Shittycopyerror(logfilename);
  	}
@@ -4140,7 +4164,7 @@ index 827f493b1..06fe37c25 100644
  }
  #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
  
-@@ -2374,6 +2519,10 @@ static const char *locateWad(void)
+@@ -2374,6 +2535,10 @@ static const char *locateWad(void)
  	const char *envstr;
  	const char *WadPath;
  
@@ -4153,10 +4177,10 @@ index 827f493b1..06fe37c25 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 000000000..9470341e1
+index 000000000..c90987de7
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
-@@ -0,0 +1,863 @@
+@@ -0,0 +1,887 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -4795,8 +4819,8 @@ index 000000000..9470341e1
 +{
 +	unsigned int ours = 0;
 +
-+	// Only trusted when some processors are marked as the game's: right after launch, Xbox has listed the game's
-+	// processors as allocated to no one in particular, and the system's as free
++	// Only trusted when some processors are marked as the game's. As an app, Xbox marks none: it lists the
++	// processors it keeps for games as allocated to someone else, and the system's as free.
 +	for (const CpuSet& set : ReadCpuSets(false))
 +	{
 +		if (set.flags & kCpuSetAllocatedToUs)
@@ -4805,6 +4829,30 @@ index 000000000..9470341e1
 +		}
 +	}
 +	return ours >= 2 ? ours : 0;
++}
++
++int I_UWPCpuSetMode(void)
++{
++	const std::vector<CpuSet> sets = ReadCpuSets(false);
++	unsigned int ours = 0, others = 0;
++
++	for (const CpuSet& set : sets)
++	{
++		if (set.flags & kCpuSetAllocatedToUs)
++		{
++			ours++;
++		}
++		else if (set.flags & kCpuSetAllocated)
++		{
++			others++;
++		}
++	}
++
++	if (ours)
++	{
++		return 1;
++	}
++	return others ? 0 : -1;
 +}
 +
 +void I_UWPLogCpuSets(void)
