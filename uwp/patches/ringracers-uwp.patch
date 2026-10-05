@@ -1,4 +1,4 @@
-From ae0c2c9d54d405cc32618a16c6ca802b42ffb8cb Mon Sep 17 00:00:00 2001
+From 7a6b12d6375b37e8105536aff9bafbeb62dbf777 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -44,10 +44,17 @@ RingRacers-dev, rebased onto v2.4.
 - Show each Legacy GL wipe frame immediately instead of presenting the
   previous frame, so Encore's inversion circle reaches the screen edges
   before presenting stops; keep normal shared presentation a frame late
-- Refresh the pre-level title card's clock after loading on UWP and run
-  its animation once per elapsed tic. Let its HUD timer catch up by up to
-  TICRATE/2 tics per drawn frame, keeping time at low FPS while limiting
-  how much a long hitch skips. These changes do not affect game logic
+- Refresh the pre-level title card's clock after loading on UWP, so its
+  animation plays in full; retain upstream's one step per frame and HUD
+  timer clamp. This does not affect game logic
+- Log local and non-local video memory budgets, usage and reservations at
+  Legacy GL startup and in perf summaries, alongside tracked texture,
+  model/static buffer, ring buffer and approximate screen allocations.
+  Rate-limit immediate GPU-frame and copy-timeout warnings, including
+  local usage and budget and counts of suppressed warnings
+- Request a Legacy GL texture-cache flush when local video memory usage
+  exceeds its budget, consuming it before frame drawing or wipe capture
+  in D_Display, at most once every five seconds. Retain model buffers
 - Make fewer GL calls, which are expensive through ANGLE on the Xbox's
   CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
   change anything, cache uniform locations, keep framebuffers between
@@ -98,7 +105,7 @@ RingRacers-dev, rebased onto v2.4.
 - Create the save folder before checking that the config is writable
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
-- Log the track title animation's tic and frame counts and
+- Log the track title animation's frame count and elapsed time, with
   drawing/presentation timings, to diagnose slow or uneven animation
 - Log how long each loading step and asset file takes and how much of
   that was spent logging, the thread pool size, the process memory
@@ -134,9 +141,9 @@ Model: gpt-6.1-sol
  src/core/thread_pool.cpp           |   19 +
  src/cvars.cpp                      |    3 +
  src/d_clisrv.c                     |   19 +
- src/d_main.cpp                     |   84 +-
+ src/d_main.cpp                     |   94 +-
  src/f_wipe.cpp                     |   20 +-
- src/g_game.c                       |   50 +
+ src/g_game.c                       |   39 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_cache.c            |  196 +-
@@ -147,8 +154,8 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.c             |   60 +-
  src/hardware/hw_main.h             |    5 +
  src/hardware/hw_md2.c              |   11 +-
- src/hardware/r_d3d11/r_d3d11.cpp   | 4831 ++++++++++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h     |   37 +
+ src/hardware/r_d3d11/r_d3d11.cpp   | 4989 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h     |   40 +
  src/hardware/r_d3d11/shaders.hlsl  |  438 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
@@ -190,11 +197,11 @@ Model: gpt-6.1-sol
  src/sdl/mixer_sound.c              |    4 +-
  src/sdl/ogl_sdl.c                  |    8 +
  src/sdl/rhi_gl2_platform.cpp       |    9 +
- src/st_stuff.c                     |   16 +-
+ src/st_stuff.c                     |   10 +-
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 67 files changed, 8779 insertions(+), 409 deletions(-)
+ 67 files changed, 8933 insertions(+), 409 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -520,10 +527,21 @@ index 1166b3c99..3cc0c59a9 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..38e109869 100644
+index 19fcfe0a7..5c7554bd8 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
-@@ -369,6 +369,10 @@ static bool D_Display(bool world)
+@@ -96,6 +96,10 @@
+ 
+ #ifdef HWRENDER
+ #include "hardware/hw_main.h" // 3D View Rendering
++#ifdef _UWP
++#include "hardware/hw_glob.h"
++#include "hardware/r_d3d11/r_d3d11.h"
++#endif
+ #endif
+ 
+ #include "lua_script.h"
+@@ -369,6 +373,10 @@ static bool D_Display(bool world)
  
  	ZoneScoped;
  
@@ -534,7 +552,20 @@ index 19fcfe0a7..38e109869 100644
  	if (g_takemapthumbnail != TMT_NO)
  	{
  		forcerefresh = true;
-@@ -554,6 +558,9 @@ static bool D_Display(bool world)
+@@ -424,6 +432,12 @@ static bool D_Display(bool world)
+ 		I_UpdateNoBlit();
+ 	}
+ 
++#if defined(_UWP) && defined(HWRENDER)
++	// Before any frame drawing or wipe capture: no in-flight batches hold GLMipmap pointers here.
++	if (rendermode == render_opengl && D3D11_TakeTextureFlushRequest())
++		HWR_ClearAllTextures();
++#endif
++
+ 	// save the current screen if about to wipe
+ 	wipe = (gamestate != wipegamestate);
+ 	if (wipe)
+@@ -554,6 +568,9 @@ static bool D_Display(bool world)
  				objectsdrawn = 0;
  
  				ps_rendercalltime = I_GetPreciseTime();
@@ -544,7 +575,7 @@ index 19fcfe0a7..38e109869 100644
  
  				if (rendermode == render_soft)
  				{
-@@ -685,7 +692,13 @@ static bool D_Display(bool world)
+@@ -685,7 +702,13 @@ static bool D_Display(bool world)
  
  			if (rendermode == render_soft)
  			{
@@ -558,7 +589,7 @@ index 19fcfe0a7..38e109869 100644
  			}
  
  			if (lastdraw)
-@@ -903,6 +916,10 @@ void D_SRB2Loop(void)
+@@ -903,6 +926,10 @@ void D_SRB2Loop(void)
  	S_SetMusicVolume();
  	S_SetSfxVolume();
  
@@ -569,7 +600,7 @@ index 19fcfe0a7..38e109869 100644
  	for (;;)
  	{
  		// capbudget is the minimum precise_t duration of a single loop iteration
-@@ -922,6 +939,10 @@ void D_SRB2Loop(void)
+@@ -922,6 +949,10 @@ void D_SRB2Loop(void)
  
  		bool ranwipe = false;
  		bool world = false;
@@ -580,7 +611,7 @@ index 19fcfe0a7..38e109869 100644
  
  		I_UpdateTime();
  
-@@ -954,6 +975,9 @@ void D_SRB2Loop(void)
+@@ -954,6 +985,9 @@ void D_SRB2Loop(void)
  		renderisnewtic = (realtics > 0 || singletics);
  
  		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
@@ -590,24 +621,24 @@ index 19fcfe0a7..38e109869 100644
  
  		if (renderisnewtic)
  		{
-@@ -1067,7 +1091,16 @@ void D_SRB2Loop(void)
+@@ -1067,7 +1101,16 @@ void D_SRB2Loop(void)
  			}
  
  			ranwipe = D_Display(world);
 +#ifdef _UWP
 +			displayed = true;
 +#endif
-+		}
+ 		}
 +#ifdef _UWP
 +		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
 +		{
 +			skippedframe = true;
- 		}
++		}
 +#endif
  
  #ifdef HWRENDER
  		// Only take screenshots after drawing.
-@@ -1183,14 +1216,30 @@ void D_SRB2Loop(void)
+@@ -1183,14 +1226,30 @@ void D_SRB2Loop(void)
  			skiplaggyworld = false;
  		}
  
@@ -639,7 +670,7 @@ index 19fcfe0a7..38e109869 100644
  			{
  				I_SleepDuration(capbudget - (finishprecise - enterprecise));
  			}
-@@ -1199,6 +1248,10 @@ void D_SRB2Loop(void)
+@@ -1199,6 +1258,10 @@ void D_SRB2Loop(void)
  		finishprecise = I_GetPreciseTime();
  		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
  		deltatics = deltasecs * NEWTICRATE;
@@ -650,7 +681,7 @@ index 19fcfe0a7..38e109869 100644
  	}
  }
  
-@@ -1661,6 +1714,11 @@ void D_SRB2Main(void)
+@@ -1661,6 +1724,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -662,7 +693,7 @@ index 19fcfe0a7..38e109869 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1757,6 +1815,16 @@ void D_SRB2Main(void)
+@@ -1757,6 +1825,16 @@ void D_SRB2Main(void)
  	// Make backups of some SOCcable tables.
  	P_BackupTables();
  
@@ -679,7 +710,7 @@ index 19fcfe0a7..38e109869 100644
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
-@@ -1774,7 +1842,19 @@ void D_SRB2Main(void)
+@@ -1774,7 +1852,19 @@ void D_SRB2Main(void)
  	//
  	// search for mainwad maps
  	//
@@ -699,7 +730,7 @@ index 19fcfe0a7..38e109869 100644
  	basenummapheaders = nummapheaders;
  	basenumkartcupheaders = numkartcupheaders;
  
-@@ -2323,6 +2403,8 @@ const char *D_Home(void)
+@@ -2323,6 +2413,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -747,10 +778,10 @@ index 2b7d95d41..67fcb98de 100644
  			hwr2::HardwareState* hw_state = srb2::sys::main_hardware_state();
  
 diff --git a/src/g_game.c b/src/g_game.c
-index ce69d80c0..49d26dfee 100644
+index ce69d80c0..ad52379c5 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
-@@ -1292,16 +1292,52 @@ void G_StartTitleCard(void)
+@@ -1292,16 +1292,44 @@ void G_StartTitleCard(void)
  void G_PreLevelTitleCard(void)
  {
  #ifndef NOWIPE
@@ -763,27 +794,19 @@ index ce69d80c0..49d26dfee 100644
  	tic_t nowtime = strtime;
  	tic_t lasttime = strtime;
 +#ifdef _UWP
-+	// Advance on elapsed tics and log them separately from rendered frames.
++	// Log the animation's rendered frames and drawing/presentation time.
 +	const precise_t uwp_title_start = I_GetPreciseTime();
 +	precise_t uwp_title_draw = 0, uwp_title_present = 0;
 +	precise_t uwp_title_worst_draw = 0, uwp_title_worst_present = 0;
 +	INT32 uwp_title_frames = 0;
-+	INT32 uwp_title_tics = 0;
-+	tic_t uwp_title_elapsed = 1; // run once on the first iteration
 +#endif
  	while (nowtime < endtime)
  	{
  		// draw loop
 +#ifdef _UWP
 +		const precise_t uwp_draw_start = I_GetPreciseTime();
-+		for (tic_t i = 0; i < uwp_title_elapsed; i++)
-+		{
-+			ST_runTitleCard();
-+			uwp_title_tics++;
-+		}
-+#else
- 		ST_runTitleCard();
 +#endif
+ 		ST_runTitleCard();
  		ST_preLevelTitleCardDrawer();
 +#ifdef _UWP
 +		const precise_t uwp_present_start = I_GetPreciseTime();
@@ -803,22 +826,17 @@ index ce69d80c0..49d26dfee 100644
  		NetKeepAlive();		// Prevent timeouts
  
  #ifdef HWRENDER
-@@ -1317,8 +1353,22 @@ void G_PreLevelTitleCard(void)
- 			I_Sleep(cv_sleep.value);
- 			I_UpdateTime();
+@@ -1319,6 +1347,17 @@ void G_PreLevelTitleCard(void)
  		}
-+#ifdef _UWP
-+		uwp_title_elapsed = nowtime - lasttime;
-+#endif
  		lasttime = nowtime;
  	}
 +#ifdef _UWP
 +	{
 +		const double uwp_ms = 1000.0 / I_GetPrecisePrecision();
 +		const double uwp_frames = uwp_title_frames ? uwp_title_frames : 1;
-+		I_OutputMsg("UWP: track title: %s; %d tics, %d frames in %.1f ms (target %d tics); draw %.2f ms/frame (worst %.2f), present %.2f ms/frame (worst %.2f)\n",
-+			rendermode == render_opengl ? "Direct3D 11" : "Software", uwp_title_tics, uwp_title_frames,
-+			(I_GetPreciseTime() - uwp_title_start) * uwp_ms, PRELEVELTIME,
++		I_OutputMsg("UWP: track title: %s; %d frames in %.1f ms; draw %.2f ms/frame (worst %.2f), present %.2f ms/frame (worst %.2f)\n",
++			rendermode == render_opengl ? "Direct3D 11" : "Software", uwp_title_frames,
++			(I_GetPreciseTime() - uwp_title_start) * uwp_ms,
 +			uwp_title_draw * uwp_ms / uwp_frames, uwp_title_worst_draw * uwp_ms,
 +			uwp_title_present * uwp_ms / uwp_frames, uwp_title_worst_present * uwp_ms);
 +	}
@@ -1537,10 +1555,10 @@ index 81a7d9a49..ce26e94e6 100644
  						r = (INT32)(nextcolor.s.red - blendcolor.s.red);
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..90438a886
+index 000000000..5e61771ea
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,4831 @@
+@@ -0,0 +1,4989 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -1566,7 +1584,7 @@ index 000000000..90438a886
 +#define WIN32_LEAN_AND_MEAN
 +#include <windows.h>
 +#include <d3d11.h>
-+#include <dxgi.h>
++#include <dxgi1_4.h>
 +#include <wrl/client.h>
 +
 +#include <algorithm>
@@ -1703,6 +1721,89 @@ index 000000000..90438a886
 +double PreciseToMs(precise_t t)
 +{
 +	return t * 1000.0 / I_GetPrecisePrecision();
++}
++
++// DXGI's usage is for the process on this adapter, including ANGLE, rather than just this device.
++ComPtr<IDXGIAdapter3> g_memoryAdapter;
++DXGI_QUERY_VIDEO_MEMORY_INFO g_localMemory = {};
++bool g_localMemoryValid = false;
++bool g_textureFlushRequested = false;
++bool g_budgetTextureFlush = false;
++precise_t g_lastTextureFlush = 0;
++bool g_textureFlushed = false;
++
++bool QueryMemory(DXGI_MEMORY_SEGMENT_GROUP segment, DXGI_QUERY_VIDEO_MEMORY_INFO &info)
++{
++	info = {};
++	if (!g_memoryAdapter)
++		return false;
++	const HRESULT hr = g_memoryAdapter->QueryVideoMemoryInfo(0, segment, &info);
++	if (SUCCEEDED(hr))
++		return true;
++	if (segment == DXGI_MEMORY_SEGMENT_GROUP_LOCAL)
++		LOG_ONCE("QueryVideoMemoryInfo (local) unavailable: 0x%08X", (unsigned)hr);
++	else
++		LOG_ONCE("QueryVideoMemoryInfo (non-local) unavailable: 0x%08X", (unsigned)hr);
++	return false;
++}
++
++void DescribeMemory(char *text, size_t size, const DXGI_QUERY_VIDEO_MEMORY_INFO &info, bool valid)
++{
++	if (valid)
++		snprintf(text, size, "budget %.1f, usage %.1f, available for reservation %.1f, reservation %.1f MB",
++			info.Budget / 1048576.0, info.CurrentUsage / 1048576.0,
++			info.AvailableForReservation / 1048576.0, info.CurrentReservation / 1048576.0);
++	else
++		snprintf(text, size, "unavailable");
++}
++
++void InitVideoMemory()
++{
++	ComPtr<IDXGIDevice> device;
++	ComPtr<IDXGIAdapter> adapter;
++	if (FAILED(g_device.As(&device)) || FAILED(device->GetAdapter(&adapter)) || FAILED(adapter.As(&g_memoryAdapter)))
++	{
++		LOG_ONCE("video memory budgets unavailable (IDXGIAdapter3 not supported)");
++		return;
++	}
++	g_localMemoryValid = QueryMemory(DXGI_MEMORY_SEGMENT_GROUP_LOCAL, g_localMemory);
++	DXGI_QUERY_VIDEO_MEMORY_INFO nonlocal;
++	const bool nonlocalValid = QueryMemory(DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, nonlocal);
++	char localText[192], nonlocalText[192];
++	DescribeMemory(localText, sizeof localText, g_localMemory, g_localMemoryValid);
++	DescribeMemory(nonlocalText, sizeof nonlocalText, nonlocal, nonlocalValid);
++	Log("video memory: local %s; non-local %s", localText, nonlocalText);
++}
++
++// One local query per Present, also on frames whose copy times out. Warnings reuse this snapshot.
++void CheckVideoMemory()
++{
++	g_localMemoryValid = QueryMemory(DXGI_MEMORY_SEGMENT_GROUP_LOCAL, g_localMemory);
++	g_textureFlushRequested = g_localMemoryValid && g_localMemory.CurrentUsage > g_localMemory.Budget;
++}
++
++// Shared limiter for both stall warnings: at most one line per second, with suppressed events counted.
++void WarnGpuStall(const char *event, double ms)
++{
++	static precise_t lastWarning = 0;
++	static bool warned = false;
++	static UINT64 suppressed = 0;
++	const precise_t now = I_GetPreciseTime();
++	if (warned && now - lastWarning < I_GetPrecisePrecision())
++	{
++		suppressed++;
++		return;
++	}
++	if (g_localMemoryValid)
++		Log("%s (%.1f ms); local usage %.1f MB, budget %.1f MB; %llu stall warnings suppressed",
++			event, ms, g_localMemory.CurrentUsage / 1048576.0, g_localMemory.Budget / 1048576.0,
++			(unsigned long long)suppressed);
++	else
++		Log("%s (%.1f ms); local usage/budget unavailable; %llu stall warnings suppressed",
++			event, ms, (unsigned long long)suppressed);
++	lastWarning = now;
++	warned = true;
++	suppressed = 0;
 +}
 +
 +// ==========================================================================
@@ -2120,8 +2221,16 @@ index 000000000..90438a886
 +};
 +Ring g_vertexRing, g_indexRing;
 +
++// Store requested bytes with each retained static buffer; perf summaries tally live owners only.
++struct StaticBuffer
++{
++	ComPtr<ID3D11Buffer> buffer;
++	UINT bytes = 0;
++	ID3D11Buffer *Get() const { return buffer.Get(); }
++	explicit operator bool() const { return buffer.Get() != nullptr; }
++};
 +// 16-bit indices that draw a triangle fan as a list: 0 1 2, 0 2 3, ...
-+ComPtr<ID3D11Buffer> g_fanIndices;
++StaticBuffer g_fanIndices;
 +constexpr UINT kMaxFanVertices = 65535;
 +
 +ComPtr<ID3D11Texture2D> g_blackTexture;
@@ -3240,6 +3349,12 @@ index 000000000..90438a886
 +	g_textureBuffer.clear();
 +	g_textureBuffer.shrink_to_fit();
 +	g_stats.flushes++;
++	if (g_budgetTextureFlush)
++	{
++		Log("over the video memory budget (usage %.1f MB, budget %.1f MB); flushed Legacy GL's textures",
++			g_localMemory.CurrentUsage / 1048576.0, g_localMemory.Budget / 1048576.0);
++		g_budgetTextureFlush = false;
++	}
 +}
 +
 +// ==========================================================================
@@ -4323,7 +4438,7 @@ index 000000000..90438a886
 +			return false;
 +		if (PreciseToMs(I_GetPreciseTime() - start) > 500.0)
 +		{
-+			Log("gave up waiting for a frame's copy after 500 ms");
++			WarnGpuStall("gave up waiting for a frame's copy after 500 ms", PreciseToMs(I_GetPreciseTime() - start));
 +			return false;
 +		}
 +		spins++;
@@ -4361,6 +4476,8 @@ index 000000000..90438a886
 +	const double ms = (end - begin) * 1000.0 / disjoint.Frequency;
 +	g_stats.gpuMs += ms;
 +	g_stats.gpuFrames++;
++	if (ms > 250.0)
++		WarnGpuStall("GPU frame exceeded 250 ms", ms);
 +	if (ms > g_stats.worstGpuMs)
 +		g_stats.worstGpuMs = ms;
 +}
@@ -4445,6 +4562,7 @@ index 000000000..90438a886
 +{
 +	const bool trace = g_tracedFrames < kTraceFrames;
 +	precise_t t = I_GetPreciseTime();
++	CheckVideoMemory(); // included in the presenting copy timer
 +
 +	if (trace)
 +		Log("presenting frame %d: %d polygons, %d batches, %d models so far", g_tracedFrames, g_stats.polygons, g_stats.batches,
@@ -4580,12 +4698,12 @@ index 000000000..90438a886
 +//                                                                     MODELS
 +// ==========================================================================
 +
-+std::unordered_map<unsigned int, ComPtr<ID3D11Buffer>> g_modelBuffers; // by the vboID given to frames
++std::unordered_map<unsigned int, StaticBuffer> g_modelBuffers; // by the vboID given to frames
 +unsigned int g_nextModelBuffer = 1;
-+std::unordered_map<const void *, ComPtr<ID3D11Buffer>> g_meshIndexBuffers; // by mesh_t::indices
++std::unordered_map<const void *, StaticBuffer> g_meshIndexBuffers; // by mesh_t::indices
 +std::vector<ModelVertex> g_modelVertices;
 +
-+ID3D11Buffer *CreateStaticBuffer(const void *data, UINT bytes, UINT bind, ComPtr<ID3D11Buffer> &buffer)
++ID3D11Buffer *CreateStaticBuffer(const void *data, UINT bytes, UINT bind, StaticBuffer &buffer)
 +{
 +	D3D11_BUFFER_DESC desc = {};
 +	desc.ByteWidth = bytes;
@@ -4593,9 +4711,11 @@ index 000000000..90438a886
 +	desc.BindFlags = bind;
 +	D3D11_SUBRESOURCE_DATA initial = {data, 0, 0};
 +
-+	buffer.Reset();
-+	if (bytes == 0 || Failed(g_device->CreateBuffer(&desc, &initial, &buffer), "CreateBuffer (static)"))
++	buffer.buffer.Reset();
++	buffer.bytes = 0;
++	if (bytes == 0 || Failed(g_device->CreateBuffer(&desc, &initial, &buffer.buffer), "CreateBuffer (static)"))
 +		return nullptr;
++	buffer.bytes = bytes;
 +	return buffer.Get();
 +}
 +
@@ -4608,7 +4728,7 @@ index 000000000..90438a886
 +	if (it != g_meshIndexBuffers.end())
 +		return it->second.Get();
 +
-+	ComPtr<ID3D11Buffer> buffer;
++	StaticBuffer buffer;
 +	CreateStaticBuffer(mesh->indices, mesh->numTriangles * 3 * sizeof(unsigned short), D3D11_BIND_INDEX_BUFFER, buffer);
 +	g_meshIndexBuffers[mesh->indices] = buffer;
 +	return buffer.Get();
@@ -4752,6 +4872,8 @@ index 000000000..90438a886
 +		else
 +			Log("device: feature level 0x%X", (unsigned)level);
 +	}
++
++	InitVideoMemory();
 +
 +	if (!CreateDeviceObjects())
 +	{
@@ -5069,7 +5191,7 @@ index 000000000..90438a886
 +	g_stats.indices += iNumPts;
 +}
 +
-+ComPtr<ID3D11Buffer> g_skyBuffer;
++StaticBuffer g_skyBuffer;
 +
 +void D3D_RenderSkyDome(gl_sky_t *sky)
 +{
@@ -5596,7 +5718,7 @@ index 000000000..90438a886
 +				g_modelBuffers.erase(*vboID);
 +			*vboID = 0;
 +
-+			ComPtr<ID3D11Buffer> buffer;
++			StaticBuffer buffer;
 +			if (CreateStaticBuffer(g_modelVertices.data(), (UINT)(g_modelVertices.size() * sizeof(ModelVertex)),
 +				D3D11_BIND_VERTEX_BUFFER, buffer))
 +			{
@@ -6341,6 +6463,21 @@ index 000000000..90438a886
 +	D3D_GClipRect(0, 0, g_screenWidth, g_screenHeight, NZCLIP_PLANE);
 +}
 +
++boolean D3D11_TakeTextureFlushRequest(void)
++{
++	const bool requested = g_textureFlushRequested;
++	g_textureFlushRequested = false;
++	if (!requested)
++		return false;
++	const precise_t now = I_GetPreciseTime();
++	if (g_textureFlushed && now - g_lastTextureFlush < 5 * I_GetPrecisePrecision())
++		return false;
++	g_lastTextureFlush = now;
++	g_textureFlushed = true;
++	g_budgetTextureFlush = true; // Flush logs once the driver has actually released the textures
++	return true;
++}
++
 +void D3D11_LogPerf(double seconds)
 +{
 +	const Stats &s = g_stats;
@@ -6370,14 +6507,53 @@ index 000000000..90438a886
 +			s.lightTablesCreated, s.lightTablesUpdated);
 +	}
 +
++	DXGI_QUERY_VIDEO_MEMORY_INFO local, nonlocal;
++	const bool localValid = QueryMemory(DXGI_MEMORY_SEGMENT_GROUP_LOCAL, local);
++	const bool nonlocalValid = QueryMemory(DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, nonlocal);
++	char localText[192], nonlocalText[192];
++	DescribeMemory(localText, sizeof localText, local, localValid);
++	DescribeMemory(nonlocalText, sizeof nonlocalText, nonlocal, nonlocalValid);
++	UINT64 staticBytes = 0;
++	size_t staticCount = 0;
++	const auto countBuffer = [&](const StaticBuffer &buffer)
++	{
++		if (buffer)
++		{
++			staticBytes += buffer.bytes;
++			staticCount++;
++		}
++	};
++	countBuffer(g_fanIndices);
++	countBuffer(g_skyBuffer);
++	for (const auto &entry : g_modelBuffers)
++		countBuffer(entry.second);
++	for (const auto &entry : g_meshIndexBuffers)
++		countBuffer(entry.second);
++	// Approximate allocation sizes, without querying resources every frame or double-counting screen textures.
++	UINT64 targets = (g_rt ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0)
++		+ (g_depth ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0);
++	if (g_postTexture)
++	{
++		D3D11_TEXTURE2D_DESC desc;
++		g_postTexture->GetDesc(&desc);
++		targets += (UINT64)desc.Width * desc.Height * 4;
++	}
++	for (const auto &slot : g_present.slots)
++		if (slot.texture)
++			targets += (UINT64)g_present.width * g_present.height * 4;
++	I_OutputMsg("UWP perf:   D3D11: memory: local %s; non-local %s; tracked textures %.1f MB; model/static buffers %.1f MB (%llu alive); rings %.1f MB; render targets/present slots ~%.1f MB\n",
++		localText, nonlocalText, g_textureBytes / 1048576.0, staticBytes / 1048576.0,
++		(unsigned long long)staticCount, ((UINT64)g_vertexRing.size + g_indexRing.size) / 1048576.0,
++		targets / 1048576.0);
++
 +	memset(&g_stats, 0, sizeof g_stats);
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 000000000..58abc8704
+index 000000000..1af7fc6d4
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,40 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -6406,6 +6582,9 @@ index 000000000..58abc8704
 +
 +// Replaces OglSdlFinishUpdate: shows the frame through ANGLE's window surface
 +void D3D11_FinishUpdate(INT32 waitvbl);
++
++// Returns and clears an over-budget request; permits at most one texture flush per five seconds.
++boolean D3D11_TakeTextureFlushRequest(void);
 +
 +// Logs the driver's counters and timings since the last call, for the UWP perf summary
 +void D3D11_LogPerf(double seconds);
@@ -11664,7 +11843,7 @@ index f3f10fe90..c85cbe0b4 100644
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
 diff --git a/src/st_stuff.c b/src/st_stuff.c
-index 6f67d6a8f..af892ec2e 100644
+index 6f67d6a8f..0a95580e2 100644
 --- a/src/st_stuff.c
 +++ b/src/st_stuff.c
 @@ -129,7 +129,7 @@ void ST_doPaletteStuff(void)
@@ -11698,21 +11877,6 @@ index 6f67d6a8f..af892ec2e 100644
  #endif
  		V_SetPalette(0);
  
-@@ -1023,8 +1027,14 @@ void ST_drawTitleCard(void)
- 	if (lt_ticker >= (lt_endtime + TICRATE))
- 		goto luahook;
- 
-+#ifdef _UWP
-+	// Keep HUD animation in time at low FPS, but don't skip it wholesale after a long hitch.
-+	if ((lt_ticker-lt_lasttic) > TICRATE/2)
-+		lt_ticker = lt_lasttic+TICRATE/2;
-+#else
- 	if ((lt_ticker-lt_lasttic) > 1)
- 		lt_ticker = lt_lasttic+1;
-+#endif
- 
- 	// Avoid HOMs while drawing the start of the titlecard
- 	if (lt_ticker < TTANIMSTART)
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
 index 3c68b1378..2444f431c 100644
 --- a/src/w_wad.cpp

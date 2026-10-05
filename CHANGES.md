@@ -64,7 +64,8 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - Palette flashes and the color profile apply to the whole frame. Without palette rendering, Legacy GL shows flashes as a white or pink overlay and has no other flash palettes.
 - **Legacy GL: Encore screen inversion.** Encore level starts invert the screen instead of turning it white.
 - **Legacy GL: screen wipes.** Level and menu transitions use the Software renderer's Mega Drive-style fades to black and white, inversion, Encore wiggle, and reversed fades.
-- **Legacy GL: final transition frame** *(untested)*. Screen wipes show the current frame instead of the previous one, so Encore's inversion circle reaches the screen edges before presenting stops.
+- **Legacy GL: final transition frame**. Screen wipes show the current frame instead of the previous one, so Encore's inversion circle reaches the screen edges before presenting stops.
+- **Legacy GL: video memory safeguard** *(untested)*. If local video memory usage exceeds its budget, the next frame clears the texture cache, at most once every five seconds. This may cause a brief hitch instead of sustained slowdowns. Model buffers are retained.
 - **Audio.** The audio driver is WASAPI instead of DirectSound.
 
 ## Files and startup
@@ -131,7 +132,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
   - how long each loading step and asset file took, and how much of that was logging
   - the thread pool size, the process memory budget, and the CPU sets Windows lists for the game
   - Legacy GL's driver startup, presentation path, and errors (the `UWP D3D11:` lines)
-  - the track title animation's tic and frame counts, elapsed time, and average and worst drawing/presentation times (`UWP: track title:`), for diagnosing uneven animation
+  - the track title animation's frame count, elapsed time, and average and worst drawing/presentation times (`UWP: track title:`), for diagnosing uneven animation
 - **Perf summary.** Every 5 seconds, the log gets a summary with:
   - the frame rate
   - the perfstats frame and tic timings
@@ -141,6 +142,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
   - `R_PointInSubsector` cache hits
   - which processors the main thread ran on, and how long the profiler paused it
   - with Legacy GL, its renderer timings, and the driver's draws, state changes, texture uploads, CPU time, presentation timings, and GPU time
+- **Legacy GL video memory diagnostics.** Startup logs local and non-local budgets, usage, and reservation figures when DXGI supports them. Each perf summary adds these figures and tracked texture bytes, model/static buffer bytes and counts, ring buffer bytes, and approximate render target/present slot bytes. GPU frames over 250 ms and copy waits that give up after 500 ms log immediate warnings with local usage/budget, limited to one line per second with suppressed warnings counted.
 - **Sampling profiler** (`src/sdl/i_uwpprofile.cpp`). While a level is being played, the profiler samples the main thread about 50 times a second. It writes what code was running, with call stacks and what the game was doing, to `E:\ringracers\uwp-profile.txt`.
 - **Crash logging.** Crashes and their call stacks are logged from a vectored exception handler. The app runtime, not the C runtime, starts the main thread, so the game's signal handler never sees an access violation on Xbox.
 - **Error dialog.**
@@ -151,7 +153,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
 
 ## Fixes
 
-- **Track title timing** *(untested)*. On UWP, the animation before a race starts with a fresh clock after loading and advances once per elapsed tic. Its HUD timer can catch up by up to half a second per drawn frame, so low frame rates keep it in time without skipping the animation wholesale after a long hitch. These changes are HUD-only and have no effect on game logic.
+- **Track title timing** *(untested)*. On UWP, the animation before a race starts with a fresh clock after loading, so it plays in full. It retains upstream's one animation step per frame and HUD timer clamp. This clock fix has no effect on game logic.
 - **Duplicate controllers** (`patches/sdl-controller-duplicates.patch`). Each controller no longer shows up twice when running as a game instead of an app, which made each press count twice.
 - **State-change bookkeeping.** The `P_SetMobjState`/`P_SetPlayerMobjState` change under [Game logic](#game-logic) also fixes upstream's unbalanced call count.
 
