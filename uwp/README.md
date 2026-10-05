@@ -34,6 +34,13 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 3. In Dev Home, set the app type to Game: under Games and Apps, highlight Ring Racers, press the View button, choose View details, and change App type to Game. As an app, it shares 2 to 4 CPU cores with the system and gets 1 GB of memory and part of the GPU; as a game, it gets 4 dedicated CPU cores plus 2 shared, 5 GB of memory, and the whole GPU. Reinstalling resets this, and the game can't tell which type it's running as, so check it after each install.
 4. At launch, the game asks whether to check its files. Checking reads all of them in full, which is slow from a USB drive, so once the files have passed a check, you can skip it on later launches. Quit (or B) closes the game instead.
 
+## Untested changes
+
+These are in the latest build but haven't been tried on an Xbox yet:
+
+- **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
+- **Legacy GL: palette rendering**, ported from SRB2's hardware renderer (Options → Video → Advanced → Palette Rendering; on by default, needs Shaders on). Like the Software renderer, colors are limited to the palette and surfaces are lit through its colormaps, and palette flashes (such as teleports and explosions) and the color profile apply to the whole screen. Turning it off goes back to Legacy GL's smooth lighting. Its cost shows in the perf summary's `D3D11: palette rendering` line.
+
 ## Notes
 
 - Legacy GL is available as **Legacy GL (Direct3D 11 port)** (Options → Video → Advanced → Renderer). Legacy GL needs desktop OpenGL, which ANGLE doesn't provide, so the port draws its hardware renderer with Direct3D 11 instead, following the OpenGL driver's state and shaders, and shows each frame through ANGLE. Custom shaders from add-ons aren't supported. If it misbehaves, switch back to Software, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`. Its startup and any errors are logged as `UWP D3D11:` lines in `latest-log.txt`, and while it's on, the perf summary adds `Legacy GL:` and `D3D11:` lines (Legacy GL's timings, and the driver's draws, texture uploads, CPU and GPU time, and how long presenting took).

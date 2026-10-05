@@ -1,4 +1,4 @@
-From 183bbf003b95337247768faea8f25f802b11a7ca Mon Sep 17 00:00:00 2001
+From a2cf6724db37c4fd748738068c12ee8679af3832 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -27,6 +27,12 @@ RingRacers-dev, rebased onto v2.4.
   changes, texture uploads, CPU time, presentation timings, and GPU time
 - Leave precipitation and things with RF_HIDEINSKYBOX out of Legacy GL's
   skybox view, as the software renderer does
+- Port SRB2's palette rendering to Legacy GL (gr_paletterendering, on by
+  default, in Legacy GL's options): textures are made in the palette
+  lump's colors, shaders turn texels back into palette indices with a
+  64x64x64 lookup table and light them through each colormap's light
+  table, and the finished frame is turned into the screen palette, which
+  brings palette flashes and color correction without remaking textures
 - Make fewer GL calls, which are expensive through ANGLE on the Xbox's
   CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
   change anything, cache uniform locations, keep framebuffers between
@@ -109,25 +115,35 @@ Model: gpt-6.1-sol
  src/CMakeLists.txt                 |   44 +-
  src/console.c                      |   18 +
  src/core/thread_pool.cpp           |   19 +
+ src/cvars.cpp                      |    3 +
  src/d_clisrv.c                     |   19 +
  src/d_main.cpp                     |   84 +-
  src/hardware/CMakeLists.txt        |   35 +
- src/hardware/hw_main.c             |   18 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 4368 ++++++++++++++++++++++++++++
+ src/hardware/hw_batching.c         |   11 +-
+ src/hardware/hw_cache.c            |  196 +-
+ src/hardware/hw_defs.h             |    5 +
+ src/hardware/hw_draw.c             |   14 +-
+ src/hardware/hw_drv.h              |   13 +
+ src/hardware/hw_glob.h             |    9 +
+ src/hardware/hw_main.c             |   60 +-
+ src/hardware/hw_main.h             |    5 +
+ src/hardware/hw_md2.c              |   11 +-
+ src/hardware/r_d3d11/r_d3d11.cpp   | 4640 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   37 +
- src/hardware/r_d3d11/shaders.hlsl  |  335 +++
+ src/hardware/r_d3d11/shaders.hlsl  |  384 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
  src/hwr2/resource_management.cpp   |  105 +-
  src/hwr2/resource_management.hpp   |   31 +-
  src/i_system.h                     |   66 +
- src/i_video_common.cpp             |   55 +-
+ src/i_video_common.cpp             |   60 +-
+ src/k_menu.h                       |    1 +
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  238 ++
  src/m_perfstats.h                  |   11 +
- src/menus/options-video-advanced.c |   15 +
+ src/menus/options-video-advanced.c |   18 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
  src/p_setup.cpp                    |    7 +
@@ -151,14 +167,15 @@ Model: gpt-6.1-sol
  src/sdl/i_main.cpp                 |   11 +-
  src/sdl/i_system.cpp               |  132 +-
  src/sdl/i_uwpprofile.cpp           |  863 ++++++
- src/sdl/i_video.cpp                |   89 +-
+ src/sdl/i_video.cpp                |   98 +-
  src/sdl/mixer_sound.c              |    4 +-
  src/sdl/ogl_sdl.c                  |    8 +
  src/sdl/rhi_gl2_platform.cpp       |    9 +
+ src/st_stuff.c                     |   10 +-
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 54 files changed, 7840 insertions(+), 369 deletions(-)
+ 65 files changed, 8471 insertions(+), 396 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -422,6 +439,20 @@ index 8a434ba63..0e3c54d64 100644
  }
  
  void I_ThreadPoolShutdown(void)
+diff --git a/src/cvars.cpp b/src/cvars.cpp
+index d589b33d5..9f09579ab 100644
+--- a/src/cvars.cpp
++++ b/src/cvars.cpp
+@@ -1479,6 +1479,9 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+ 
+ 	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
+ 
++	// [UWP]: Palette rendering, from SRB2, which needs shaders
++	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
++
+ #ifdef ALAM_LIGHTING
+ 		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
+ 		consvar_t cv_glcoronasize = OpenGL("gr_coronasize", "1").floating_point();
 diff --git a/src/d_clisrv.c b/src/d_clisrv.c
 index 1166b3c99..3cc0c59a9 100644
 --- a/src/d_clisrv.c
@@ -659,7 +690,7 @@ index 19fcfe0a7..38e109869 100644
  
  	if (M_CheckParm("-home") && M_IsNextParm())
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..3c57c2199 100644
+index a0a0f280c..53db3b8b0 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -680,8 +711,8 @@ index a0a0f280c..3c57c2199 100644
 +	set(d3d11_shader_headers "")
 +	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
 +
-+	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe
-+		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe)
++	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSPalettePostprocess)
 +		string(SUBSTRING "${entry}" 0 2 stage)
 +		string(TOLOWER "${stage}" stage)
 +		set(header "${d3d11_shader_dir}/${entry}.h")
@@ -701,11 +732,538 @@ index a0a0f280c..3c57c2199 100644
 +	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp)
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
 +endif()
+diff --git a/src/hardware/hw_batching.c b/src/hardware/hw_batching.c
+index 9c0e2f6e9..58bd38e24 100644
+--- a/src/hardware/hw_batching.c
++++ b/src/hardware/hw_batching.c
+@@ -206,8 +206,13 @@ static int comparePolygons(const void *p1, const void *p2)
+ 	if (diff != 0) return diff;
+ 
+ 	diff = poly1->surf.LightInfo.directional - poly2->surf.LightInfo.directional;
++	if (diff != 0) return diff;
++
++	// [UWP]: palette rendering
++	if (poly1->surf.LightTableId != poly2->surf.LightTableId)
++		return poly1->surf.LightTableId < poly2->surf.LightTableId ? -1 : 1;
+ 
+-	return diff;
++	return 0;
+ }
+ 
+ static int comparePolygonsNoShaders(const void *p1, const void *p2)
+@@ -275,6 +280,7 @@ void HWR_RenderBatches(void)
+ 	nextSurfaceInfo.LightInfo.fade_start = 0;
+ 	nextSurfaceInfo.LightInfo.light_level = 0;
+ 	nextSurfaceInfo.LightInfo.directional = false;
++	nextSurfaceInfo.LightTableId = 0;
+ 
+ 	currently_batching = false;// no longer collecting batches
+ 	if (!polygonArraySize)
+@@ -431,7 +437,8 @@ void HWR_RenderBatches(void)
+ 					currentSurfaceInfo.LightInfo.light_level != nextSurfaceInfo.LightInfo.light_level ||
+ 					currentSurfaceInfo.LightInfo.fade_start != nextSurfaceInfo.LightInfo.fade_start ||
+ 					currentSurfaceInfo.LightInfo.fade_end != nextSurfaceInfo.LightInfo.fade_end ||
+-					currentSurfaceInfo.LightInfo.directional != nextSurfaceInfo.LightInfo.directional)
++					currentSurfaceInfo.LightInfo.directional != nextSurfaceInfo.LightInfo.directional ||
++					currentSurfaceInfo.LightTableId != nextSurfaceInfo.LightTableId)
+ 				{
+ 					changeState = true;
+ 					changeSurfaceInfo = true;
+diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
+index aee197ab5..98b7717b8 100644
+--- a/src/hardware/hw_cache.c
++++ b/src/hardware/hw_cache.c
+@@ -25,6 +25,7 @@
+ #include "../r_textures.h"
+ #include "../w_wad.h"
+ #include "../z_zone.h"
++#include "../i_system.h" // [UWP]: I_GetPreciseTime
+ #include "../v_video.h"
+ #include "../r_draw.h"
+ #include "../r_patch.h"
+@@ -123,7 +124,7 @@ static void HWR_DrawColumnInCache(const column_t *patchcol, UINT8 *block, GLMipm
+ 						 texelu16 = (UINT16)((alpha<<8) | texel);
+ 						 memcpy(dest, &texelu16, sizeof(UINT16));
+ 						 break;
+-				case 3 : colortemp = V_GetColor(texel);
++				case 3 : colortemp = HWR_GetColor(texel);
+ 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
+ 						 {
+ 							 RGBA_t rgbatexel;
+@@ -132,7 +133,7 @@ static void HWR_DrawColumnInCache(const column_t *patchcol, UINT8 *block, GLMipm
+ 						 }
+ 						 memcpy(dest, &colortemp, sizeof(RGBA_t)-sizeof(UINT8));
+ 						 break;
+-				case 4 : colortemp = V_GetColor(texel);
++				case 4 : colortemp = HWR_GetColor(texel);
+ 						 colortemp.s.alpha = alpha;
+ 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
+ 						 {
+@@ -233,7 +234,7 @@ static void HWR_DrawFlippedColumnInCache(const column_t *patchcol, UINT8 *block,
+ 						 texelu16 = (UINT16)((alpha<<8) | texel);
+ 						 memcpy(dest, &texelu16, sizeof(UINT16));
+ 						 break;
+-				case 3 : colortemp = V_GetColor(texel);
++				case 3 : colortemp = HWR_GetColor(texel);
+ 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
+ 						 {
+ 							 RGBA_t rgbatexel;
+@@ -242,7 +243,7 @@ static void HWR_DrawFlippedColumnInCache(const column_t *patchcol, UINT8 *block,
+ 						 }
+ 						 memcpy(dest, &colortemp, sizeof(RGBA_t)-sizeof(UINT8));
+ 						 break;
+-				case 4 : colortemp = V_GetColor(texel);
++				case 4 : colortemp = HWR_GetColor(texel);
+ 						 colortemp.s.alpha = alpha;
+ 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
+ 						 {
+@@ -495,7 +496,7 @@ static void HWR_GenerateTexture(GLMapTexture_t *grtex, INT32 texnum, boolean noe
+ 		INT32 j;
+ 		RGBA_t col;
+ 
+-		col = V_GetColor(HWR_PATCHES_CHROMAKEY_COLORINDEX);
++		col = HWR_GetColor(HWR_PATCHES_CHROMAKEY_COLORINDEX);
+ 		for (j = 0; j < blockheight; j++)
+ 		{
+ 			for (i = 0; i < blockwidth; i++)
+@@ -709,6 +710,7 @@ void HWR_ClearAllTextures(void)
+ {
+ 	HWD.pfnClearMipMapCache(); // free references to the textures
+ 	HWR_FreePatchCache(true);
++	HWR_ClearLightTables(); // [UWP]: their colormaps may be freed next
+ }
+ 
+ void HWR_FreeColormapCache(void)
+@@ -768,9 +770,31 @@ void HWR_LoadMapTextures(size_t pnumtextures)
+ 	gl_maptexturesloaded = true;
+ }
+ 
++// =================================================
++//             PALETTE HANDLING
++// =================================================
++
++// [UWP]: The palette textures are made with in palette rendering: the current palette lump's
++static RGBA_t mapPalette[256];
++
++RGBA_t *HWR_GetTexturePalette(void)
++{
++	return HWR_ShouldUsePaletteRendering() ? mapPalette : pLocalPalette;
++}
++
+ void HWR_SetPalette(RGBA_t *palette)
+ {
++	if (HWR_ShouldUsePaletteRendering())
++	{
++		// [UWP]: The palette the frame is turned into, which can change without changing the textures
++		HWD.pfnSetScreenPalette(palette);
++		HWR_SetMapPalette();
++		return;
++	}
++
+ 	HWD.pfnSetPalette(palette);
++	// [UWP]: so the next HWR_SetMapPalette updates everything
++	memset(mapPalette, 0, sizeof(mapPalette));
+ 
+ 	// hardware driver will flush there own cache if cache is non paletized
+ 	// now flush data texture cache so 32 bit texture are recomputed
+@@ -781,6 +805,162 @@ void HWR_SetPalette(RGBA_t *palette)
+ 	}
+ }
+ 
++// [UWP]: Makes the RGB -> palette index lookup table palette rendering's shaders use, from SRB2
++static void HWR_SetPaletteLookup(RGBA_t *palette)
++{
++	const precise_t start = I_GetPreciseTime();
++	UINT8 *lut = Z_Malloc(HWR_PALETTE_LUT_SIZE*HWR_PALETTE_LUT_SIZE*HWR_PALETTE_LUT_SIZE*sizeof(UINT8), PU_STATIC, NULL);
++	int r, g, b;
++
++#define STEP_SIZE (256/HWR_PALETTE_LUT_SIZE)
++	for (b = 0; b < HWR_PALETTE_LUT_SIZE; b++)
++	{
++		for (g = 0; g < HWR_PALETTE_LUT_SIZE; g++)
++		{
++			for (r = 0; r < HWR_PALETTE_LUT_SIZE; r++)
++			{
++				lut[b*HWR_PALETTE_LUT_SIZE*HWR_PALETTE_LUT_SIZE+g*HWR_PALETTE_LUT_SIZE+r] =
++					NearestPaletteColor(r*STEP_SIZE, g*STEP_SIZE, b*STEP_SIZE, palette);
++			}
++		}
++	}
++#undef STEP_SIZE
++
++	HWD.pfnSetPaletteLookup(lut);
++	Z_Free(lut);
++	I_OutputMsg("UWP: made the palette rendering lookup table in %.1f ms\n",
++		(I_GetPreciseTime() - start) * 1000.0 / I_GetPrecisePrecision());
++}
++
++// [UWP]: Updates the palette textures are made with to the current palette lump's, remaking the textures and
++// light tables if it changed. Only for palette rendering.
++void HWR_SetMapPalette(void)
++{
++	if (!pMasterPalette || !memcmp(mapPalette, pMasterPalette, sizeof(mapPalette)))
++		return;
++
++	memcpy(mapPalette, pMasterPalette, sizeof(mapPalette));
++	HWR_SetPaletteLookup(mapPalette);
++	HWD.pfnSetPalette(mapPalette); // flushes the driver's textures if it changed
++	HWR_ClearLightTables();
++
++	if (patchformat == GL_TEXFMT_RGBA || textureformat == GL_TEXFMT_RGBA)
++	{
++		Z_FreeTag(PU_HWRCACHE);
++		Z_FreeTag(PU_HWRCACHE_UNLOCKED);
++	}
++}
++
++// [UWP]: Palette rendering's light tables: each colormap's 32 light levels of 256 palette indices, as the colors
++// they stand for. Encore's remap is already in the textures, so only the first, unremapped levels are used.
++typedef struct
++{
++	const extracolormap_t *colormap; // NULL for the default colormap
++	const lighttable_t *source;
++	INT32 rgba, fadergba;
++	UINT8 fadestart, fadeend, flags;
++	UINT32 id;
++} hwlighttable_t;
++
++static hwlighttable_t *gl_lighttables = NULL;
++static size_t gl_numlighttables = 0, gl_maxlighttables = 0;
++static size_t gl_lastlighttable = 0;
++
++static boolean HWR_LightTableMatches(const hwlighttable_t *table, const extracolormap_t *colormap, const lighttable_t *source)
++{
++	if (table->colormap != colormap || table->source != source)
++		return false;
++	if (colormap == NULL)
++		return true;
++	// A colormap can be changed in place
++	return table->rgba == colormap->rgba && table->fadergba == colormap->fadergba
++		&& table->fadestart == colormap->fadestart && table->fadeend == colormap->fadeend && table->flags == colormap->flags;
++}
++
++static void HWR_ConvertLightTable(const lighttable_t *source, RGBA_t *hw_lighttable)
++{
++	size_t i;
++
++	for (i = 0; i < 256 * LIGHTLEVELS; i++)
++		hw_lighttable[i] = mapPalette[source[i]];
++}
++
++UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
++{
++	static RGBA_t hw_lighttable[256 * LIGHTLEVELS];
++	const lighttable_t *source = (colormap && colormap->colormap) ? colormap->colormap : colormaps;
++	hwlighttable_t *table;
++	size_t i;
++
++	if (!source || !HWD.pfnCreateLightTable)
++		return 0;
++
++	if (gl_lastlighttable < gl_numlighttables
++		&& HWR_LightTableMatches(&gl_lighttables[gl_lastlighttable], colormap, source))
++		return gl_lighttables[gl_lastlighttable].id;
++
++	for (i = 0; i < gl_numlighttables; i++)
++	{
++		table = &gl_lighttables[i];
++
++		if (table->colormap == colormap)
++		{
++			if (!HWR_LightTableMatches(table, colormap, source))
++			{
++				// Changed: update its texture
++				HWR_ConvertLightTable(source, hw_lighttable);
++				HWD.pfnUpdateLightTable(table->id, hw_lighttable);
++				table->source = source;
++				if (colormap)
++				{
++					table->rgba = colormap->rgba;
++					table->fadergba = colormap->fadergba;
++					table->fadestart = colormap->fadestart;
++					table->fadeend = colormap->fadeend;
++					table->flags = colormap->flags;
++				}
++			}
++			gl_lastlighttable = i;
++			return table->id;
++		}
++	}
++
++	if (gl_numlighttables == gl_maxlighttables)
++	{
++		gl_maxlighttables = gl_maxlighttables ? gl_maxlighttables * 2 : 64;
++		gl_lighttables = Z_Realloc(gl_lighttables, gl_maxlighttables * sizeof(*gl_lighttables), PU_STATIC, NULL);
++	}
++
++	table = &gl_lighttables[gl_numlighttables];
++	memset(table, 0, sizeof(*table));
++	table->colormap = colormap;
++	table->source = source;
++	if (colormap)
++	{
++		table->rgba = colormap->rgba;
++		table->fadergba = colormap->fadergba;
++		table->fadestart = colormap->fadestart;
++		table->fadeend = colormap->fadeend;
++		table->flags = colormap->flags;
++	}
++
++	HWR_ConvertLightTable(source, hw_lighttable);
++	table->id = HWD.pfnCreateLightTable(hw_lighttable);
++
++	gl_lastlighttable = gl_numlighttables++;
++	return table->id;
++}
++
++// [UWP]: Forgets the light tables, whose ids become invalid. Call when colormaps are freed or the palette changes.
++void HWR_ClearLightTables(void)
++{
++	gl_numlighttables = 0;
++	gl_lastlighttable = 0;
++
++	if (vid.glstate == VID_GL_LIBRARY_LOADED && HWD.pfnClearLightTables)
++		HWD.pfnClearLightTables();
++}
++
+ // --------------------------------------------------------------------------
+ // Make sure texture is downloaded and set it as the source
+ // --------------------------------------------------------------------------
+@@ -1225,12 +1405,12 @@ static void HWR_DrawPicInCache(UINT8 *block, INT32 pblockwidth, INT32 pblockheig
+ 							dest += sizeof(UINT16);
+ 							break;
+ 						case 3 :
+-							col = V_GetColor(texel);
++							col = HWR_GetColor(texel);
+ 							memcpy(dest, &col, sizeof(RGBA_t)-sizeof(UINT8));
+ 							dest += sizeof(RGBA_t)-sizeof(UINT8);
+ 							break;
+ 						case 4 :
+-							memcpy(dest, &V_GetColor(texel), sizeof(RGBA_t));
++							memcpy(dest, &HWR_GetColor(texel), sizeof(RGBA_t));
+ 							dest += sizeof(RGBA_t);
+ 							break;
+ 					}
+@@ -1357,7 +1537,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
+ 		{
+ 			// fademask bpp is always 1, and is used just for alpha
+ 			texel = src[(posx)>>FRACBITS];
+-			col = V_GetColor(texel);
++			col = HWR_GetColor(texel);
+ 			*dest = col.s.red; // take the red level of the colour and use it for alpha, as fademasks do
+ 
+ 			dest++;
+diff --git a/src/hardware/hw_defs.h b/src/hardware/hw_defs.h
+index 1ce225f19..34702a64c 100644
+--- a/src/hardware/hw_defs.h
++++ b/src/hardware/hw_defs.h
+@@ -21,6 +21,9 @@ extern "C" {
+ #endif
+ 
+ #define ZCLIP_PLANE 4.0f // Used for the actual game drawing
++
++// [UWP]: Palette rendering's RGB -> palette index lookup table is this many entries on each side (from SRB2)
++#define HWR_PALETTE_LUT_SIZE 64
+ #define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
+ 
+ // ==========================================================================
+@@ -291,6 +294,7 @@ struct FSurfaceInfo
+ 	RGBA_t			TintColor;
+ 	RGBA_t			FadeColor;
+ 	FLightInfo		LightInfo;
++	UINT32			LightTableId; // [UWP]: the surface's light table for palette rendering (from SRB2), or 0
+ };
+ typedef struct FSurfaceInfo FSurfaceInfo;
+ 
+@@ -304,6 +308,7 @@ enum hwdsetspecialstate
+ 	HWD_SET_SHADERS,
+ 	HWD_SET_TEXTUREFILTERMODE,
+ 	HWD_SET_TEXTUREANISOTROPICMODE,
++	HWD_SET_PALETTE_RENDERING, // [UWP]
+ 
+ 	HWD_NUMSTATE
+ };
+diff --git a/src/hardware/hw_draw.c b/src/hardware/hw_draw.c
+index d4ba78614..5f6d1a565 100644
+--- a/src/hardware/hw_draw.c
++++ b/src/hardware/hw_draw.c
+@@ -617,7 +617,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
+ 	}
+ 	else // Do TRANSMAP** fade.
+ 	{
+-		Surf.PolyColor.rgba = V_GetColor(color).rgba;
++		Surf.PolyColor.rgba = HWR_GetColor(color).rgba;
+ 		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
+ 	}
+ 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
+@@ -703,7 +703,7 @@ void HWR_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color, UINT16 ac
+ 	}
+ 	else // Do TRANSMAP** fade.
+ 	{
+-		Surf.PolyColor.rgba = V_GetColor(actualcolor).rgba;
++		Surf.PolyColor.rgba = HWR_GetColor(actualcolor).rgba;
+ 		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
+ 	}
+ 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
+@@ -773,7 +773,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
+ 	v[0].t = v[1].t = 1.0f;
+ 	v[2].t = v[3].t = 0.0f;
+ 
+-	Surf.PolyColor.rgba = V_GetColor(color).rgba;
++	Surf.PolyColor.rgba = HWR_GetColor(color).rgba;
+ 
+ 	UINT16 workingstrength = (strength*12);
+ 	if (workingstrength > 0xFF)
+@@ -958,7 +958,7 @@ void HWR_drawAMline(const fline_t *fl, INT32 color)
+ 	F2DCoord v1, v2;
+ 	RGBA_t color_rgba;
+ 
+-	color_rgba = V_GetColor(color);
++	color_rgba = HWR_GetColor(color);
+ 
+ 	v1.x = ((float)fl->a.x-(vid.width/2.0f))*(2.0f/vid.width);
+ 	v1.y = ((float)fl->a.y-(vid.height/2.0f))*(2.0f/vid.height);
+@@ -1048,7 +1048,7 @@ void HWR_DrawDiag(INT32 x, INT32 y, INT32 wh, INT32 color)
+ 	v[0].t = v[1].t = 0.0f;
+ 	v[2].t = v[3].t = 1.0f;
+ 
+-	Surf.PolyColor = V_GetColor(color);
++	Surf.PolyColor = HWR_GetColor(color);
+ 
+ 	HWD.pfnDrawPolygon(&Surf, v, 4,
+ 		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
+@@ -1159,7 +1159,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+ 
+ 		if (x == 0 && y == 0 && w == BASEVIDWIDTH && h == BASEVIDHEIGHT)
+ 		{
+-			RGBA_t rgbaColour = V_GetColor(color);
++			RGBA_t rgbaColour = HWR_GetColor(color);
+ 			FRGBAFloat clearColour;
+ 			clearColour.red = (float)rgbaColour.s.red / 255;
+ 			clearColour.green = (float)rgbaColour.s.green / 255;
+@@ -1218,7 +1218,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+ 	v[0].t = v[1].t = 0.0f;
+ 	v[2].t = v[3].t = 1.0f;
+ 
+-	Surf.PolyColor = V_GetColor(color);
++	Surf.PolyColor = HWR_GetColor(color);
+ 
+ 	HWD.pfnDrawPolygon(&Surf, v, 4,
+ 		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
+diff --git a/src/hardware/hw_drv.h b/src/hardware/hw_drv.h
+index c4396c8e5..4ace846ad 100644
+--- a/src/hardware/hw_drv.h
++++ b/src/hardware/hw_drv.h
+@@ -78,6 +78,13 @@ EXPORT void HWRAPI(UnSetShader) (void);
+ EXPORT void HWRAPI(SetShaderInfo) (hwdshaderinfo_t info, INT32 value);
+ EXPORT void HWRAPI(LoadCustomShader) (int number, char *code, size_t size, boolean isfragment);
+ 
++// [UWP]: Palette rendering, from SRB2
++EXPORT void HWRAPI(SetScreenPalette) (RGBA_t *palette);
++EXPORT void HWRAPI(SetPaletteLookup) (UINT8 *lut);
++EXPORT UINT32 HWRAPI(CreateLightTable) (RGBA_t *hw_lighttable);
++EXPORT void HWRAPI(UpdateLightTable) (UINT32 id, RGBA_t *hw_lighttable);
++EXPORT void HWRAPI(ClearLightTables) (void);
++
+ // ==========================================================================
+ //                                      HWR DRIVER OBJECT, FOR CLIENT PROGRAM
+ // ==========================================================================
+@@ -126,6 +133,12 @@ struct hwdriver_s
+ 
+ 	SetShaderInfo       pfnSetShaderInfo;
+ 	LoadCustomShader    pfnLoadCustomShader;
++
++	SetScreenPalette    pfnSetScreenPalette;
++	SetPaletteLookup    pfnSetPaletteLookup;
++	CreateLightTable    pfnCreateLightTable;
++	UpdateLightTable    pfnUpdateLightTable;
++	ClearLightTables    pfnClearLightTables;
+ };
+ 
+ extern struct hwdriver_s hwdriver;
+diff --git a/src/hardware/hw_glob.h b/src/hardware/hw_glob.h
+index 07dfb7a16..6df0269ce 100644
+--- a/src/hardware/hw_glob.h
++++ b/src/hardware/hw_glob.h
+@@ -142,6 +142,15 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
+ 
+ void HWR_SetPalette(RGBA_t *palette);
+ 
++// [UWP]: Palette rendering, from SRB2. Textures are made with the current palette lump's colors
++// (pMasterPalette), which shaders turn back into palette indices to light through the colormaps, as the
++// software renderer does; the frame is then turned into the screen's palette (gamma, flashes).
++RGBA_t *HWR_GetTexturePalette(void);
++#define HWR_GetColor(color) (HWR_GetTexturePalette()[(color)&0xFF])
++void HWR_SetMapPalette(void);
++UINT32 HWR_GetLightTableID(extracolormap_t *colormap);
++void HWR_ClearLightTables(void);
++
+ 
+ // --------
+ // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..13ee36883 100644
+index b5e8fca5a..4c7b154b1 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
-@@ -4597,6 +4597,10 @@ static void HWR_DrawSprites(void)
+@@ -194,6 +194,38 @@ static boolean HWR_UseShader(void)
+ 	return (cv_glshaders.value && gl_shadersavailable);
+ }
+ 
++// [UWP]: Palette rendering, from SRB2: whether it's on
++static boolean gl_palette_rendering_state = false;
++
++boolean HWR_ShouldUsePaletteRendering(void)
++{
++	return gl_palette_rendering_state;
++}
++
++// [UWP]: Turns palette rendering on or off to follow its setting, which needs shaders and a driver that has it.
++// Textures are made again in the palette for the new state.
++void HWR_UpdatePaletteRendering(void)
++{
++	const boolean wanted = (pMasterPalette != NULL && cv_glpaletterendering.value && HWR_UseShader()
++		&& HWD.pfnSetScreenPalette && HWD.pfnSetPaletteLookup && HWD.pfnCreateLightTable);
++
++	if (wanted == gl_palette_rendering_state)
++		return;
++
++	I_OutputMsg("UWP: palette rendering %s\n", wanted ? "on" : "off");
++	gl_palette_rendering_state = wanted;
++	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, wanted);
++
++	// Every texture was made in the other palette
++	HWR_ClearAllTextures();
++	Z_FreeTag(PU_HWRCACHE);
++	Z_FreeTag(PU_HWRCACHE_UNLOCKED);
++
++	// Sets the palettes for the new state, without a flash, which ST_doPaletteStuff sets again if needed
++	st_palette = 0;
++	V_SetPalette(0);
++}
++
+ boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
+ {
+ 	if (R_ThingIsFullBright(thing))
+@@ -318,6 +350,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+ 	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
+ 
+ 	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
++
++	// [UWP]: palette rendering
++	Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(colormap) : 0;
+ }
+ 
+ UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
+@@ -3656,7 +3691,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+ 	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
+ 		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
+ 
+-	Surf.PolyColor = V_GetColor(R_GetBoundingBoxColor(vis->mobj));
++	Surf.PolyColor = HWR_GetColor(R_GetBoundingBoxColor(vis->mobj));
+ 
+ 	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
+ }
+@@ -4597,6 +4632,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -716,7 +1274,7 @@ index b5e8fca5a..13ee36883 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4625,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +4660,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -729,7 +1287,7 @@ index b5e8fca5a..13ee36883 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +4663,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +4698,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -742,7 +1300,7 @@ index b5e8fca5a..13ee36883 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -5973,7 +5989,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6024,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -752,12 +1310,100 @@ index b5e8fca5a..13ee36883 100644
  }
  
  // ==========================================================================
+@@ -6138,6 +6191,8 @@ void HWR_Switch(void)
+ 	// Set special states from CVARs
+ 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
+ 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
++	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, gl_palette_rendering_state); // [UWP]
++	HWR_UpdatePaletteRendering(); // [UWP]
+ 
+ 	// Load textures
+ 	if (!gl_maptexturesloaded)
+@@ -6257,7 +6312,8 @@ void HWR_DoPostProcessor(player_t *player)
+ 
+ 	// Armageddon Blast Flash!
+ 	// Could this even be considered postprocessor?
+-	if (player->flashcount)
++	// [UWP]: Palette rendering shows the flash's palette instead
++	if (player->flashcount && !HWR_ShouldUsePaletteRendering())
+ 	{
+ 		FOutVector      v[4];
+ 		FSurfaceInfo Surf;
+diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
+index 652b40947..dc289e55e 100644
+--- a/src/hardware/hw_main.h
++++ b/src/hardware/hw_main.h
+@@ -100,6 +100,11 @@ extern consvar_t cv_glcoronasize;
+ #endif
+ 
+ extern consvar_t cv_glshaders, cv_glallowshaders;
++extern consvar_t cv_glpaletterendering; // [UWP]
++
++// [UWP]: Palette rendering, from SRB2
++boolean HWR_ShouldUsePaletteRendering(void);
++void HWR_UpdatePaletteRendering(void);
+ extern consvar_t cv_glmodels;
+ 
+ // SRB2Kart: We don't like these options.
+diff --git a/src/hardware/hw_md2.c b/src/hardware/hw_md2.c
+index 81a7d9a49..ce26e94e6 100644
+--- a/src/hardware/hw_md2.c
++++ b/src/hardware/hw_md2.c
+@@ -29,6 +29,7 @@
+ #include "hw_drv.h"
+ #include "hw_light.h"
+ #include "hw_md2.h"
++#include "hw_glob.h" // [UWP]: HWR_GetColor
+ #include "../d_main.h"
+ #include "../r_bsp.h"
+ #include "../r_fps.h"
+@@ -725,7 +726,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+ 	UINT8 colorbrightnesses[17];
+ 	UINT8 color_match_lookup[256]; // optimization attempt
+ 
+-	blendcolor = V_GetColor(0); // initialize
++	blendcolor = HWR_GetColor(0); // initialize
+ 	memset(translation, 0, sizeof(translation));
+ 	memset(cutoff, 0, sizeof(cutoff));
+ 
+@@ -805,7 +806,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+ 
+ 		for (i = 0; i < translen; i++) // moved from inside the loop to here
+ 		{
+-			RGBA_t tempc = V_GetColor(translation[i]);
++			RGBA_t tempc = HWR_GetColor(translation[i]);
+ 			colorbrightnesses[i] = BlendLuminance(tempc.s.red, tempc.s.green, tempc.s.blue); // store brightnesses for comparison
+ 		}
+ 
+@@ -834,7 +835,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+ 	}
+ 
+ 	if (skinnum == TC_BLINK)
+-		blendcolor = V_GetColor(skincolors[color].ramp[3]);
++		blendcolor = HWR_GetColor(skincolors[color].ramp[3]);
+ 
+ 	while (size--)
+ 	{
+@@ -1032,11 +1033,11 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+ 						mul = cutoff[firsti] - brightness;
+ 					}
+ 
+-					blendcolor = V_GetColor(translation[firsti]);
++					blendcolor = HWR_GetColor(translation[firsti]);
+ 
+ 					if (mul > 0) // If it's 0, then we only need the first color.
+ 					{
+-						nextcolor = V_GetColor(translation[secondi]);
++						nextcolor = HWR_GetColor(translation[secondi]);
+ 
+ 						// Find difference between points
+ 						r = (INT32)(nextcolor.s.red - blendcolor.s.red);
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..e1a1a59f8
+index 000000000..a996605c7
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,4368 @@
+@@ -0,0 +1,4640 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -822,6 +1468,7 @@ index 000000000..e1a1a59f8
 +#include "VSModel.h"
 +#include "VSModelLight.h"
 +#include "VSWipe.h"
++#include "VSFullscreen.h"
 +#include "PSFixed.h"
 +#include "PSDefault.h"
 +#include "PSSoftware.h"
@@ -830,6 +1477,7 @@ index 000000000..e1a1a59f8
 +#include "PSFog.h"
 +#include "PSSky.h"
 +#include "PSWipe.h"
++#include "PSPalettePostprocess.h"
 +
 +extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
 +
@@ -889,6 +1537,8 @@ index 000000000..e1a1a59f8
 +	INT64 textureUploadBytes;
 +	int modelFallbacks, modelLerps;
 +	int skyBuilds;
++	int lightTablesCreated, lightTablesUpdated;
++	precise_t paletteTime;
 +	precise_t drawTime, textureTime;
 +	precise_t copyTime, waitTime, worstWait, glTime, swapTime;
 +	double gpuMs, worstGpuMs;
@@ -1244,8 +1894,8 @@ index 000000000..e1a1a59f8
 +//                                                         DIRECT3D RESOURCES
 +// ==========================================================================
 +
-+enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, NUMVS };
-+enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, NUMPS };
++enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, NUMVS };
++enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_PALETTEPOST, NUMPS };
 +enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
 +
 +struct ShaderCode
@@ -1263,6 +1913,7 @@ index 000000000..e1a1a59f8
 +	{g_VSModel, sizeof g_VSModel, "VSModel"},
 +	{g_VSModelLight, sizeof g_VSModelLight, "VSModelLight"},
 +	{g_VSWipe, sizeof g_VSWipe, "VSWipe"},
++	{g_VSFullscreen, sizeof g_VSFullscreen, "VSFullscreen"},
 +};
 +
 +const ShaderCode kPixelShaders[NUMPS] =
@@ -1275,6 +1926,7 @@ index 000000000..e1a1a59f8
 +	{g_PSFog, sizeof g_PSFog, "PSFog"},
 +	{g_PSSky, sizeof g_PSSky, "PSSky"},
 +	{g_PSWipe, sizeof g_PSWipe, "PSWipe"},
++	{g_PSPalettePostprocess, sizeof g_PSPalettePostprocess, "PSPalettePostprocess"},
 +};
 +
 +ComPtr<ID3D11VertexShader> g_vertexShaders[NUMVS];
@@ -1297,7 +1949,8 @@ index 000000000..e1a1a59f8
 +	float lightBacklight, leveltime, alphaRef;
 +	INT32 alphaFunc;
 +	INT32 texMode;
-+	INT32 pad[3];
++	INT32 palette; // palette rendering, with a light table
++	INT32 pad[2];
 +};
 +static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
 +
@@ -1365,8 +2018,45 @@ index 000000000..e1a1a59f8
 +	ID3D11ShaderResourceView *srvs[2] = {nullptr, nullptr};
 +	ID3D11SamplerState *samplers[2] = {nullptr, nullptr};
 +	int viewport[4] = {-1, -1, -1, -1};
++	ID3D11ShaderResourceView *paletteSrvs[2] = {nullptr, nullptr}; // the lookup table and light table, at t2 and t3
 +};
 +Bound g_bound;
++
++// Palette rendering, from SRB2: shaders turn texels back into palette indices with a lookup table, light them through
++// the surface's light table, and the finished frame is turned into the screen's palette
++bool g_paletteRendering = false;
++ComPtr<ID3D11Texture3D> g_paletteLookup;
++ComPtr<ID3D11ShaderResourceView> g_paletteLookupSrv;
++ComPtr<ID3D11Texture2D> g_screenPalette;
++ComPtr<ID3D11ShaderResourceView> g_screenPaletteSrv;
++RGBA_t g_screenPaletteColors[256];
++
++struct LightTable
++{
++	ComPtr<ID3D11Texture2D> texture;
++	ComPtr<ID3D11ShaderResourceView> srv;
++};
++std::unordered_map<UINT32, LightTable> g_lightTables;
++// Unlikely values for the uninitialized LightTableIds of surfaces that never get one
++constexpr UINT32 kFirstLightTableId = 0x4C540001;
++UINT32 g_nextLightTableId = kFirstLightTableId;
++ID3D11ShaderResourceView *g_currentLightTable = nullptr;
++
++// Where the finished frame is turned into the screen's palette, keeping the screen as drawn
++ComPtr<ID3D11ShaderResourceView> g_rtSrv;
++ComPtr<ID3D11Texture2D> g_postTexture;
++ComPtr<ID3D11RenderTargetView> g_postRtv;
++ComPtr<ID3D11BlendState> g_opaqueBlend;
++ComPtr<ID3D11DepthStencilState> g_noDepth;
++ComPtr<ID3D11RasterizerState> g_noCull;
++
++void SetLightTable(UINT32 id)
++{
++	if (!id)
++		return;
++	auto it = g_lightTables.find(id);
++	g_currentLightTable = it != g_lightTables.end() ? it->second.srv.Get() : nullptr;
++}
 +
 +// ==========================================================================
 +//                                                                    SHADERS
@@ -1774,6 +2464,8 @@ index 000000000..e1a1a59f8
 +	else
 +		c.texMode = 0;
 +
++	c.palette = (g_paletteRendering && g_paletteLookupSrv && g_currentLightTable) ? 1 : 0;
++
 +	if (g_constantsValid && memcmp(&c, &g_lastConstants, sizeof c) == 0)
 +		return;
 +
@@ -1907,6 +2599,17 @@ index 000000000..e1a1a59f8
 +		viewport.MaxDepth = 1.0f;
 +		g_context->RSSetViewports(1, &viewport);
 +		memcpy(g_bound.viewport, g_gl.viewport, sizeof g_bound.viewport);
++	}
++
++	if (g_paletteRendering)
++	{
++		ID3D11ShaderResourceView *srvs[2] = {g_paletteLookupSrv.Get(), g_currentLightTable};
++		if (srvs[0] != g_bound.paletteSrvs[0] || srvs[1] != g_bound.paletteSrvs[1])
++		{
++			g_context->PSSetShaderResources(2, 2, srvs);
++			g_bound.paletteSrvs[0] = srvs[0];
++			g_bound.paletteSrvs[1] = srvs[1];
++		}
 +	}
 +
 +	ApplyConstants();
@@ -2510,6 +3213,7 @@ index 000000000..e1a1a59f8
 +	UnbindAll();
 +	g_rt.Reset();
 +	g_rtv.Reset();
++	g_rtSrv.Reset();
 +	g_depth.Reset();
 +	g_dsv.Reset();
 +	g_rtWidth = g_rtHeight = 0;
@@ -2525,9 +3229,11 @@ index 000000000..e1a1a59f8
 +	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 +
 +	if (Failed(g_device->CreateTexture2D(&desc, nullptr, &g_rt), "CreateTexture2D (screen)")
-+		|| Failed(g_device->CreateRenderTargetView(g_rt.Get(), nullptr, &g_rtv), "CreateRenderTargetView (screen)"))
++		|| Failed(g_device->CreateRenderTargetView(g_rt.Get(), nullptr, &g_rtv), "CreateRenderTargetView (screen)")
++		|| Failed(g_device->CreateShaderResourceView(g_rt.Get(), nullptr, &g_rtSrv), "CreateShaderResourceView (screen)"))
 +	{
 +		g_rt.Reset();
++		g_rtv.Reset();
 +		return false;
 +	}
 +
@@ -2552,6 +3258,181 @@ index 000000000..e1a1a59f8
 +
 +	Log("render target %ux%u (format %d)", width, height, (int)g_rtFormat);
 +	return true;
++}
++
++// ==========================================================================
++//                                                          PALETTE RENDERING
++// ==========================================================================
++
++// Turns the finished frame into the screen's palette, in g_postTexture. Returns whether it did.
++bool PalettePostprocess()
++{
++	if (!g_paletteRendering || !g_paletteLookupSrv || !g_screenPaletteSrv || !g_rtSrv)
++		return false;
++
++	CpuTimer timer(g_stats.paletteTime);
++
++	D3D11_TEXTURE2D_DESC desc = {};
++	if (g_postTexture)
++		g_postTexture->GetDesc(&desc);
++	if (!g_postTexture || desc.Width != g_rtWidth || desc.Height != g_rtHeight || desc.Format != g_rtFormat)
++	{
++		g_postTexture.Reset();
++		g_postRtv.Reset();
++		desc = {};
++		desc.Width = g_rtWidth;
++		desc.Height = g_rtHeight;
++		desc.MipLevels = 1;
++		desc.ArraySize = 1;
++		desc.Format = g_rtFormat;
++		desc.SampleDesc.Count = 1;
++		desc.Usage = D3D11_USAGE_DEFAULT;
++		desc.BindFlags = D3D11_BIND_RENDER_TARGET;
++		if (Failed(g_device->CreateTexture2D(&desc, nullptr, &g_postTexture), "CreateTexture2D (palette)")
++			|| Failed(g_device->CreateRenderTargetView(g_postTexture.Get(), nullptr, &g_postRtv), "CreateRenderTargetView (palette)"))
++		{
++			g_postTexture.Reset();
++			return false;
++		}
++		Log("made a %ux%u texture for palette rendering's last step", g_rtWidth, g_rtHeight);
++	}
++
++	ID3D11RenderTargetView *rtv = g_postRtv.Get();
++	ID3D11ShaderResourceView *srvs[5] = {g_rtSrv.Get(), nullptr, g_paletteLookupSrv.Get(), nullptr, g_screenPaletteSrv.Get()};
++	D3D11_VIEWPORT viewport = {0.0f, 0.0f, (float)g_rtWidth, (float)g_rtHeight, 0.0f, 1.0f};
++
++	g_context->OMSetRenderTargets(1, &rtv, nullptr);
++	g_context->PSSetShaderResources(0, 5, srvs);
++	g_context->IASetInputLayout(nullptr);
++	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	g_context->VSSetShader(g_vertexShaders[VS_FULLSCREEN].Get(), nullptr, 0);
++	g_context->PSSetShader(g_pixelShaders[PS_PALETTEPOST].Get(), nullptr, 0);
++	g_context->OMSetBlendState(g_opaqueBlend.Get(), nullptr, 0xFFFFFFFF);
++	g_context->OMSetDepthStencilState(g_noDepth.Get(), 0);
++	g_context->RSSetState(g_noCull.Get());
++	g_context->RSSetViewports(1, &viewport);
++	g_context->Draw(3, 0);
++
++	// Back to drawing the screen
++	ID3D11ShaderResourceView *none[5] = {};
++	g_context->PSSetShaderResources(0, 5, none);
++	BindRenderTarget();
++	const Bound previous = g_bound;
++	g_bound = Bound();
++	g_bound.vertexBuffer = previous.vertexBuffer;
++	g_bound.stride = previous.stride;
++	g_bound.indexBuffer = previous.indexBuffer;
++	g_bound.indexFormat = previous.indexFormat;
++	g_bound.samplers[0] = previous.samplers[0];
++	g_bound.samplers[1] = previous.samplers[1];
++	return true;
++}
++
++void D3D_SetScreenPalette(RGBA_t *palette)
++{
++	if (!g_device || (g_screenPaletteSrv && !memcmp(g_screenPaletteColors, palette, sizeof g_screenPaletteColors)))
++		return;
++
++	memcpy(g_screenPaletteColors, palette, sizeof g_screenPaletteColors);
++
++	if (!g_screenPalette)
++	{
++		D3D11_TEXTURE2D_DESC desc = {};
++		desc.Width = 256;
++		desc.Height = 1;
++		desc.MipLevels = 1;
++		desc.ArraySize = 1;
++		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++		desc.SampleDesc.Count = 1;
++		desc.Usage = D3D11_USAGE_DEFAULT;
++		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		if (Failed(g_device->CreateTexture2D(&desc, nullptr, &g_screenPalette), "CreateTexture2D (screen palette)")
++			|| Failed(g_device->CreateShaderResourceView(g_screenPalette.Get(), nullptr, &g_screenPaletteSrv), "CreateShaderResourceView (screen palette)"))
++		{
++			g_screenPalette.Reset();
++			return;
++		}
++	}
++
++	g_context->UpdateSubresource(g_screenPalette.Get(), 0, nullptr, palette, 256 * sizeof(RGBA_t), 0);
++}
++
++void D3D_SetPaletteLookup(UINT8 *lut)
++{
++	constexpr UINT size = HWR_PALETTE_LUT_SIZE;
++
++	if (!g_device)
++		return;
++
++	if (!g_paletteLookup)
++	{
++		D3D11_TEXTURE3D_DESC desc = {};
++		desc.Width = desc.Height = desc.Depth = size;
++		desc.MipLevels = 1;
++		desc.Format = DXGI_FORMAT_R8_UNORM;
++		desc.Usage = D3D11_USAGE_DEFAULT;
++		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		if (Failed(g_device->CreateTexture3D(&desc, nullptr, &g_paletteLookup), "CreateTexture3D (palette lookup)")
++			|| Failed(g_device->CreateShaderResourceView(g_paletteLookup.Get(), nullptr, &g_paletteLookupSrv), "CreateShaderResourceView (palette lookup)"))
++		{
++			g_paletteLookup.Reset();
++			return;
++		}
++	}
++
++	// Indexed [b][g][r], so r is x
++	g_context->UpdateSubresource(g_paletteLookup.Get(), 0, nullptr, lut, size, size * size);
++	Log("palette lookup table updated");
++}
++
++UINT32 D3D_CreateLightTable(RGBA_t *hw_lighttable)
++{
++	if (!g_device)
++		return 0;
++
++	D3D11_TEXTURE2D_DESC desc = {};
++	desc.Width = 256;
++	desc.Height = 32;
++	desc.MipLevels = 1;
++	desc.ArraySize = 1;
++	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++	desc.SampleDesc.Count = 1;
++	desc.Usage = D3D11_USAGE_DEFAULT;
++	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++	D3D11_SUBRESOURCE_DATA data = {hw_lighttable, 256 * sizeof(RGBA_t), 0};
++
++	LightTable table;
++	if (Failed(g_device->CreateTexture2D(&desc, &data, &table.texture), "CreateTexture2D (light table)")
++		|| Failed(g_device->CreateShaderResourceView(table.texture.Get(), nullptr, &table.srv), "CreateShaderResourceView (light table)"))
++		return 0;
++
++	const UINT32 id = g_nextLightTableId++;
++	g_lightTables[id] = table;
++	g_stats.lightTablesCreated++;
++	return id;
++}
++
++void D3D_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
++{
++	auto it = g_lightTables.find(id);
++	if (it == g_lightTables.end())
++		return;
++	g_context->UpdateSubresource(it->second.texture.Get(), 0, nullptr, hw_lighttable, 256 * sizeof(RGBA_t), 0);
++	g_stats.lightTablesUpdated++;
++}
++
++void D3D_ClearLightTables(void)
++{
++	if (g_context)
++	{
++		ID3D11ShaderResourceView *none[2] = {};
++		g_context->PSSetShaderResources(2, 2, none);
++	}
++	g_bound.paletteSrvs[0] = g_bound.paletteSrvs[1] = nullptr;
++	g_currentLightTable = nullptr;
++	if (!g_lightTables.empty())
++		Log("cleared %d light tables", (int)g_lightTables.size());
++	g_lightTables.clear();
 +}
 +
 +// ==========================================================================
@@ -3459,7 +4340,10 @@ index 000000000..e1a1a59f8
 +
 +	PresentSlot &slot = g_present.slots[g_present.frame % kPresentSlots];
 +
-+	g_context->CopyResource(slot.texture.Get(), g_rt.Get());
++	if (PalettePostprocess())
++		g_context->CopyResource(slot.texture.Get(), g_postTexture.Get());
++	else
++		g_context->CopyResource(slot.texture.Get(), g_rt.Get());
 +	if (slot.timing)
 +	{
 +		g_context->End(slot.end.Get());
@@ -3793,6 +4677,18 @@ index 000000000..e1a1a59f8
 +	if (Failed(g_device->CreateSamplerState(&sampler, &g_defaultSampler), "CreateSamplerState (default)"))
 +		return false;
 +
++	D3D11_BLEND_DESC opaque = {};
++	opaque.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
++	D3D11_DEPTH_STENCIL_DESC noDepth = {};
++	D3D11_RASTERIZER_DESC noCull = {};
++	noCull.FillMode = D3D11_FILL_SOLID;
++	noCull.CullMode = D3D11_CULL_NONE;
++	noCull.DepthClipEnable = TRUE;
++	if (Failed(g_device->CreateBlendState(&opaque, &g_opaqueBlend), "CreateBlendState (opaque)")
++		|| Failed(g_device->CreateDepthStencilState(&noDepth, &g_noDepth), "CreateDepthStencilState (none)")
++		|| Failed(g_device->CreateRasterizerState(&noCull, &g_noCull), "CreateRasterizerState (no culling)"))
++		return false;
++
 +	Log("made %d vertex shaders, %d pixel shaders, 3 input layouts, and 8 MB vertex and 2 MB index buffers", NUMVS, NUMPS);
 +	return true;
 +}
@@ -3933,6 +4829,8 @@ index 000000000..e1a1a59f8
 +		// Only if the surface is colormapped
 +		if (g_currentPolyFlags & PF_ColorMapped)
 +		{
++			SetLightTable(pSurf->LightTableId);
++
 +			tint[0] = pSurf->TintColor.s.red / 255.0f;
 +			tint[1] = pSurf->TintColor.s.green / 255.0f;
 +			tint[2] = pSurf->TintColor.s.blue / 255.0f;
@@ -4245,6 +5143,13 @@ index 000000000..e1a1a59f8
 +			}
 +			break;
 +
++		case HWD_SET_PALETTE_RENDERING:
++			if (g_paletteRendering != (Value != 0))
++				Log("palette rendering %s", Value ? "on" : "off");
++			g_paletteRendering = Value != 0;
++			g_bound.paletteSrvs[0] = g_bound.paletteSrvs[1] = nullptr;
++			break;
++
 +		case HWD_SET_TEXTUREANISOTROPICMODE:
 +			g_anisotropicFilter = std::min((int)Value, kMaximumAnisotropy);
 +			Log("anisotropic filtering %d", g_anisotropicFilter);
@@ -4342,6 +5247,7 @@ index 000000000..e1a1a59f8
 +
 +	D3D_SetBlend(flags);
 +	SetUniforms(Surface, poly, tint, fade);
++	SetLightTable(Surface->LightTableId);
 +
 +	g_gl.cullFace = true;
 +
@@ -5019,6 +5925,11 @@ index 000000000..e1a1a59f8
 +	DRIVERFUNCTION(UnSetShader),
 +	DRIVERFUNCTION(SetShaderInfo),
 +	DRIVERFUNCTION(LoadCustomShader),
++	DRIVERFUNCTION(SetScreenPalette),
++	DRIVERFUNCTION(SetPaletteLookup),
++	DRIVERFUNCTION(CreateLightTable),
++	DRIVERFUNCTION(UpdateLightTable),
++	DRIVERFUNCTION(ClearLightTables),
 +};
 +#undef DRIVERFUNCTION
 +
@@ -5124,6 +6035,13 @@ index 000000000..e1a1a59f8
 +		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames,
 +		g_present.shared ? "shared texture" : "read back", g_errors);
 +
++	if (g_paletteRendering || s.lightTablesCreated)
++	{
++		I_OutputMsg("UWP perf:   D3D11: palette rendering %s; last step %.2f ms per frame; light tables: %d alive, %d created, %d updated\n",
++			g_paletteRendering ? "on" : "off", PreciseToMs(s.paletteTime) / n, (int)g_lightTables.size(),
++			s.lightTablesCreated, s.lightTablesUpdated);
++	}
++
 +	memset(&g_stats, 0, sizeof g_stats);
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
@@ -5171,10 +6089,10 @@ index 000000000..58abc8704
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..1195a0f88
+index 000000000..089bacbba
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,384 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -5211,11 +6129,16 @@ index 000000000..1195a0f88
 +	float u_alpha_ref;
 +	int u_alpha_func; // 0: GL_ALWAYS, 1: GL_GREATER, 2: GL_NOTEQUAL
 +	int u_tex_mode; // fixed-function texturing: 0: none (the vertex color), 1: GL_MODULATE, 2: GL_REPLACE
-+	int3 u_pad;
++	int u_palette; // palette rendering, with a light table
++	int2 u_pad;
 +};
 +
 +Texture2D t_tex : register(t0);
 +Texture2D t_brightmap : register(t1); // also the fade mask of screen wipes
++// Palette rendering, from SRB2
++Texture3D<float> t_palette_lookup : register(t2); // RGB -> palette index / 255, 64 on each side
++Texture2D t_lighttable : register(t3); // a colormap's 32 light levels of 256 colors
++Texture2D t_screen_palette : register(t4); // 256 colors: the palette the finished frame is shown in
 +SamplerState s_tex : register(s0);
 +SamplerState s_brightmap : register(s1);
 +
@@ -5307,6 +6230,18 @@ index 000000000..1195a0f88
 +	return Finish(Transform(pos), float4(light, light, light, 1.0), uv);
 +}
 +
++// A triangle covering the screen, for palette rendering's last step
++VSOut VSFullscreen(uint id : SV_VertexID)
++{
++	VSOut o;
++	o.pos = float4(id == 2 ? 3.0 : -1.0, id == 1 ? 3.0 : -1.0, 0.0, 1.0);
++	o.color = float4(1.0, 1.0, 1.0, 1.0);
++	o.uv = float2(0.0, 0.0);
++	o.uv1 = float2(0.0, 0.0);
++	o.fragz = 0.0;
++	return o;
++}
++
 +// The second pass of DoScreenWipe: the fade mask's texture coordinates come from the corners of the screen
 +VSOut VSWipe(float3 pos : POSITION, float2 uv : TEXCOORD0)
 +{
@@ -5349,6 +6284,24 @@ index 000000000..1195a0f88
 +{
 +	float colormap = floor(R_DoomColormap(light, z)) + 0.5;
 +	return clamp(colormap, 0.0, 31.0) / 32.0;
++}
++
++// Palette rendering, from SRB2: the palette index nearest a color
++int PaletteIndex(float3 rgb)
++{
++	int3 c = (int3)(saturate(rgb) * 63.0 + 0.5);
++	return (int)(t_palette_lookup.Load(int4(c, 0)) * 255.0 + 0.5);
++}
++
++// Palette rendering: the texel's palette index, lit through the surface's light table like the software renderer's
++// colormaps
++float4 PaletteLight(float4 texel, float lighting, float z)
++{
++	int level = (int)clamp(floor(R_DoomColormap(lighting, z)), 0.0, 31.0);
++	float4 color = t_lighttable.Load(int3(PaletteIndex(texel.rgb), level, 0));
++	color.rgb *= u_poly_color.rgb;
++	color.a = texel.a * u_poly_color.a;
++	return color;
 +}
 +
 +// GLSL_SOFTWARE_TINT_EQUATION
@@ -5444,6 +6397,8 @@ index 000000000..1195a0f88
 +	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
 +	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 +	float final_lighting = u_lighting + light_gain;
++	if (u_palette)
++		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz));
 +	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 +	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 +	final_color.a = texel.a * u_poly_color.a;
@@ -5459,6 +6414,8 @@ index 000000000..1195a0f88
 +	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
 +	float light_gain = (255.0 - final_lighting) * brightmap_mix;
 +	final_lighting += light_gain;
++	if (u_palette)
++		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz));
 +	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 +	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 +	final_color.a = texel.a * u_poly_color.a;
@@ -5482,6 +6439,8 @@ index 000000000..1195a0f88
 +	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
 +	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 +	float final_lighting = u_lighting + light_gain;
++	if (u_palette)
++		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz));
 +	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 +	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 +	final_color.a = texel.a * u_poly_color.a;
@@ -5509,6 +6468,14 @@ index 000000000..1195a0f88
 +float4 PSWipe(VSOut i) : SV_Target
 +{
 +	return AlphaTest(t_tex.Sample(s_tex, i.uv) * t_brightmap.Sample(s_brightmap, i.uv1));
++}
++
++// Palette rendering's last step, from SRB2: each pixel of the finished frame becomes the screen palette's color for
++// its nearest palette index, which also shows palette flashes and color correction
++float4 PSPalettePostprocess(VSOut i) : SV_Target
++{
++	float3 rgb = t_tex.Load(int3(i.pos.xy, 0)).rgb;
++	return float4(t_screen_palette.Load(int3(PaletteIndex(rgb), 0, 0)).rgb, 1.0);
 +}
 diff --git a/src/http-mserv.c b/src/http-mserv.c
 index 4f9f9cb39..6854fc5e7 100644
@@ -5866,20 +6833,23 @@ index 56d507e90..3d1986b0e 100644
 +
  #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
-index f52f9298e..9df59a4aa 100644
+index f52f9298e..ff724f09e 100644
 --- a/src/i_video_common.cpp
 +++ b/src/i_video_common.cpp
-@@ -33,6 +33,9 @@
+@@ -33,6 +33,12 @@
  #include "s_sound.h"  // kill
  #include "sdl/ogl_sdl.h"
  #include "st_stuff.h" // kill
 +#ifdef _UWP
 +#include "hardware/r_d3d11/r_d3d11.h"
++#ifdef HWRENDER
++#include "hardware/hw_main.h"
++#endif
 +#endif
  
  // Legacy FinishUpdate Draws
  #include "d_netcmd.h"
-@@ -48,6 +51,10 @@
+@@ -48,6 +54,10 @@
  #include "st_stuff.h"
  #include "v_video.h"
  
@@ -5890,7 +6860,7 @@ index f52f9298e..9df59a4aa 100644
  extern "C" consvar_t cv_scr_scale, cv_scr_x, cv_scr_y;
  
  using namespace srb2;
-@@ -105,7 +112,7 @@ static void preframe_update(Rhi& rhi)
+@@ -105,7 +115,7 @@ static void preframe_update(Rhi& rhi)
  
  static void postframe_update(Rhi& rhi)
  {
@@ -5899,11 +6869,13 @@ index f52f9298e..9df59a4aa 100644
  }
  
  static void temp_legacy_finishupdate_draws()
-@@ -170,7 +177,11 @@ static void temp_legacy_finishupdate_draws()
+@@ -170,7 +180,13 @@ static void temp_legacy_finishupdate_draws()
  static void finish_legacy_ogl_update()
  {
  	temp_legacy_finishupdate_draws();
 +#ifdef _UWP
++	// [UWP]: Follows the palette rendering setting, which the driver applies as it presents
++	HWR_UpdatePaletteRendering();
 +	D3D11_FinishUpdate(cv_vidwait.value);
 +#else
  	OglSdlFinishUpdate(cv_vidwait.value);
@@ -5911,7 +6883,7 @@ index f52f9298e..9df59a4aa 100644
  }
  #endif
  
-@@ -208,6 +219,22 @@ void I_CaptureVideoFrame()
+@@ -208,6 +224,22 @@ void I_CaptureVideoFrame()
  	hw_state->screen_capture->capture(*rhi);
  }
  
@@ -5934,7 +6906,7 @@ index f52f9298e..9df59a4aa 100644
  void I_StartDisplayUpdate(void)
  {
  	if (rendermode == render_none)
-@@ -230,6 +257,7 @@ void I_StartDisplayUpdate(void)
+@@ -230,6 +262,7 @@ void I_StartDisplayUpdate(void)
  		return;
  	}
  
@@ -5942,7 +6914,7 @@ index f52f9298e..9df59a4aa 100644
  	if (rhi_changed(rhi))
  	{
  		// Reset all hardware 2 state
-@@ -245,6 +273,10 @@ void I_StartDisplayUpdate(void)
+@@ -245,6 +278,10 @@ void I_StartDisplayUpdate(void)
  
  void I_FinishUpdate(void)
  {
@@ -5953,7 +6925,7 @@ index f52f9298e..9df59a4aa 100644
  	ZoneScoped;
  	if (rendermode == render_none)
  	{
-@@ -261,6 +293,9 @@ void I_FinishUpdate(void)
+@@ -261,6 +298,9 @@ void I_FinishUpdate(void)
  	}
  #endif
  
@@ -5963,7 +6935,7 @@ index f52f9298e..9df59a4aa 100644
  	temp_legacy_finishupdate_draws();
  
  	rhi::Rhi* rhi = sys::get_rhi(sys::g_current_rhi);
-@@ -272,10 +307,13 @@ void I_FinishUpdate(void)
+@@ -272,10 +312,13 @@ void I_FinishUpdate(void)
  		return;
  	}
  
@@ -5977,7 +6949,7 @@ index f52f9298e..9df59a4aa 100644
  	rhi->push_default_render_pass(true);
  
  	// Upscale draw the backbuffer (with postprocessing maybe?)
-@@ -304,6 +342,7 @@ void I_FinishUpdate(void)
+@@ -304,6 +347,7 @@ void I_FinishUpdate(void)
  	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  
@@ -5985,7 +6957,7 @@ index f52f9298e..9df59a4aa 100644
  	switch (cv_scr_effect.value)
  	{
  	case 1:
-@@ -323,18 +362,32 @@ void I_FinishUpdate(void)
+@@ -323,18 +367,32 @@ void I_FinishUpdate(void)
  		g_hw_state.blit_rect->draw(*rhi);
  		break;
  	}
@@ -6018,6 +6990,18 @@ index f52f9298e..9df59a4aa 100644
  	I_StartDisplayUpdate();
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
+diff --git a/src/k_menu.h b/src/k_menu.h
+index d52750abb..e9e82dbe0 100644
+--- a/src/k_menu.h
++++ b/src/k_menu.h
+@@ -425,6 +425,7 @@ typedef enum
+ 	vaopt_spacer10 = vaopt_legacygl_begin,
+ 	vaopt_3dmodels,
+ 	vaopt_shaders,
++	vaopt_paletterendering, // [UWP]
+ 	vaopt_spacer11,
+ 	vaopt_texturequal,
+ 	vaopt_anisotropic,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
 index 812c7f80e..8a9a1f346 100644
 --- a/src/k_menufunc.c
@@ -6494,7 +7478,7 @@ index f92b1d8e0..4e4f82a8f 100644
  } // extern "C"
  #endif
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..0adaf735d 100644
+index c2e40ae04..0994e80e6 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,16 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -6534,6 +7518,16 @@ index c2e40ae04..0adaf735d 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
+@@ -74,6 +89,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+ 	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
+ 		NULL, {.cvar = &cv_glshaders}, 0, 0},
+ 
++	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
++		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
++
+ 	{IT_SPACE | IT_NOTHING, NULL,  NULL,
+ 		NULL, {NULL}, 0, 0},
+ 
 diff --git a/src/p_mobj.c b/src/p_mobj.c
 index 305a75e0e..9da767720 100644
 --- a/src/p_mobj.c
@@ -10026,7 +11020,7 @@ index 000000000..24cc8f49c
 +	}
 +}
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c3f..aa6754011 100644
+index 7fa8e0c3f..6feb76f06 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
 @@ -29,6 +29,12 @@
@@ -10202,6 +11196,22 @@ index 7fa8e0c3f..aa6754011 100644
  }
  
  INT32 VID_SetMode(INT32 modeNum)
+@@ -1674,6 +1761,15 @@ void VID_StartupOpenGL(void)
+ 
+ 		*(void**)&HWD.pfnSetShaderInfo    = hwSym("SetShaderInfo",NULL);
+ 		*(void**)&HWD.pfnLoadCustomShader = hwSym("LoadCustomShader",NULL);
++
++#ifdef _UWP
++		// [UWP]: Palette rendering, which only the Direct3D 11 driver has
++		*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
++		*(void**)&HWD.pfnSetPaletteLookup = hwSym("SetPaletteLookup",NULL);
++		*(void**)&HWD.pfnCreateLightTable = hwSym("CreateLightTable",NULL);
++		*(void**)&HWD.pfnUpdateLightTable = hwSym("UpdateLightTable",NULL);
++		*(void**)&HWD.pfnClearLightTables = hwSym("ClearLightTables",NULL);
++#endif
+ 		glstartup = true;
+ 	}
+ 
 diff --git a/src/sdl/mixer_sound.c b/src/sdl/mixer_sound.c
 index b6b9e72f9..40105963c 100644
 --- a/src/sdl/mixer_sound.c
@@ -10271,6 +11281,41 @@ index f3f10fe90..c85cbe0b4 100644
 +#endif
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
+diff --git a/src/st_stuff.c b/src/st_stuff.c
+index 6f67d6a8f..0a95580e2 100644
+--- a/src/st_stuff.c
++++ b/src/st_stuff.c
+@@ -129,7 +129,7 @@ void ST_doPaletteStuff(void)
+ 		palette = 0;
+ 
+ #ifdef HWRENDER
+-	if (rendermode == render_opengl)
++	if (rendermode == render_opengl && !HWR_ShouldUsePaletteRendering()) // [UWP]: palette rendering has them
+ 		palette = 0; // No flashpals here in OpenGL
+ #endif
+ 
+@@ -137,7 +137,11 @@ void ST_doPaletteStuff(void)
+ 	{
+ 		st_palette = palette;
+ 
+-		if (rendermode == render_soft)
++		if (rendermode == render_soft
++#ifdef HWRENDER
++			|| (rendermode == render_opengl && HWR_ShouldUsePaletteRendering())
++#endif
++			)
+ 		{
+ 			//V_SetPaletteLump(GetPalette()); // Reset the palette -- is this needed?
+ 			if (!r_splitscreen)
+@@ -224,7 +228,7 @@ static inline void ST_Stop(void)
+ 		return;
+ 
+ #ifdef HWRENDER
+-	if (rendermode != render_opengl)
++	if (rendermode != render_opengl || HWR_ShouldUsePaletteRendering()) // [UWP]: palette rendering
+ #endif
+ 		V_SetPalette(0);
+ 
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
 index 3c68b1378..2444f431c 100644
 --- a/src/w_wad.cpp
