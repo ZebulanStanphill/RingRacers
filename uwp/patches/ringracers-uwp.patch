@@ -1,4 +1,4 @@
-From 9bee18e5be3c8f8d2f5b86e3488cbc84912a3300 Mon Sep 17 00:00:00 2001
+From 241ef556a14bc2853e2264ab85e5d55a136a98bd Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -13,8 +13,18 @@ RingRacers-dev, rebased onto v2.4.
 - Compile for the Xbox One's Jaguar CPU (btver2), whose instructions
   Xbox Series X|S CPUs also support
 - Render through OpenGL ES 2 (ANGLE on Direct3D 11): support OpenGL ES 2
-  contexts in the GL2 RHI backend, request one, render at the size of
-  ANGLE's surface, and hide Legacy GL, which needs desktop OpenGL
+  contexts in the GL2 RHI backend, request one, and render at the size of
+  ANGLE's surface
+- Draw Legacy GL with Direct3D 11, since it needs desktop OpenGL, which
+  ANGLE doesn't have, and name it "Legacy GL (Direct3D 11 port)": a
+  driver for its hardware renderer interface (hardware/r_d3d11) that
+  follows r_opengl.c's OpenGL state call for call, with its GLSL shaders
+  ported to HLSL and compiled by fxc at build time. Each frame is copied
+  to a texture shared with ANGLE's device and drawn to the window through
+  OpenGL ES a frame later, or read back if ANGLE can't open the texture.
+  Its startup, presentation path, and errors are logged, and the perf
+  summary adds Legacy GL's renderer timings and the driver's draws, state
+  changes, texture uploads, CPU time, presentation timings, and GPU time
 - Make fewer GL calls, which are expensive through ANGLE on the Xbox's
   CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
   change anything, cache uniform locations, keep framebuffers between
@@ -92,53 +102,63 @@ Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
 Model: gpt-6.1-sol
 ---
- CMakeLists.txt                   |  19 +-
- CMakePresets.json                |  17 +
- src/CMakeLists.txt               |  44 +-
- src/console.c                    |  18 +
- src/core/thread_pool.cpp         |  19 +
- src/d_clisrv.c                   |  19 +
- src/d_main.cpp                   |  84 ++-
- src/http-mserv.c                 |   2 +
- src/hwr2/patch_atlas.cpp         |   8 +
- src/hwr2/resource_management.cpp | 105 ++--
- src/hwr2/resource_management.hpp |  31 +-
- src/i_system.h                   |  66 +++
- src/i_video_common.cpp           |  48 +-
- src/lua_script.c                 | 127 +++++
- src/m_fixed.h                    |  11 +
- src/m_perfstats.c                | 193 +++++++
- src/m_perfstats.h                |  11 +
- src/p_mobj.c                     |  98 +++-
- src/p_mobj.h                     |  11 +
- src/p_setup.cpp                  |   7 +
- src/p_tick.h                     |  15 +
- src/r_draw.h                     |  38 +-
- src/r_draw_column.cpp            |  18 +-
- src/r_fps.cpp                    |  25 +-
- src/r_main.cpp                   | 174 +++++--
- src/r_main.h                     |   8 +
- src/r_plane.cpp                  |  19 +-
- src/r_segs.cpp                   |  15 +-
- src/r_textures.cpp               |   2 +
- src/r_textures.h                 |  10 +
- src/r_things.cpp                 | 158 ++++--
- src/r_things.h                   |   5 +
- src/rhi/gl2/gl2_rhi.cpp          | 618 ++++++++++++++++------
- src/rhi/gl2/gl2_rhi.hpp          |  36 ++
- src/screen.c                     |   2 +-
- src/sdl/CMakeLists.txt           |   5 +
- src/sdl/i_main.cpp               |  11 +-
- src/sdl/i_system.cpp             | 132 ++++-
- src/sdl/i_uwpprofile.cpp         | 863 +++++++++++++++++++++++++++++++
- src/sdl/i_video.cpp              |  74 +++
- src/sdl/mixer_sound.c            |   4 +-
- src/sdl/ogl_sdl.c                |   8 +
- src/sdl/rhi_gl2_platform.cpp     |   9 +
- src/w_wad.cpp                    | 117 +++++
- src/w_wad.h                      |  10 +
- src/z_zone.cpp                   |   5 +
- 46 files changed, 2951 insertions(+), 368 deletions(-)
+ CMakeLists.txt                     |   19 +-
+ CMakePresets.json                  |   17 +
+ src/CMakeLists.txt                 |   44 +-
+ src/console.c                      |   18 +
+ src/core/thread_pool.cpp           |   19 +
+ src/d_clisrv.c                     |   19 +
+ src/d_main.cpp                     |   84 +-
+ src/hardware/CMakeLists.txt        |   32 +
+ src/hardware/r_d3d11/r_d3d11.cpp   | 4366 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h     |   37 +
+ src/hardware/r_d3d11/shaders.hlsl  |  335 +++
+ src/http-mserv.c                   |    2 +
+ src/hwr2/patch_atlas.cpp           |    8 +
+ src/hwr2/resource_management.cpp   |  105 +-
+ src/hwr2/resource_management.hpp   |   31 +-
+ src/i_system.h                     |   66 +
+ src/i_video_common.cpp             |   55 +-
+ src/k_menufunc.c                   |    6 +
+ src/lua_script.c                   |  127 +
+ src/m_fixed.h                      |   11 +
+ src/m_perfstats.c                  |  238 ++
+ src/m_perfstats.h                  |   11 +
+ src/menus/options-video-advanced.c |   15 +
+ src/p_mobj.c                       |   98 +-
+ src/p_mobj.h                       |   11 +
+ src/p_setup.cpp                    |    7 +
+ src/p_tick.h                       |   15 +
+ src/r_draw.h                       |   38 +-
+ src/r_draw_column.cpp              |   18 +-
+ src/r_fps.cpp                      |   25 +-
+ src/r_main.cpp                     |  174 +-
+ src/r_main.h                       |    8 +
+ src/r_plane.cpp                    |   19 +-
+ src/r_segs.cpp                     |   15 +-
+ src/r_textures.cpp                 |    2 +
+ src/r_textures.h                   |   10 +
+ src/r_things.cpp                   |  158 +-
+ src/r_things.h                     |    5 +
+ src/rhi/gl2/gl2_rhi.cpp            |  618 +++-
+ src/rhi/gl2/gl2_rhi.hpp            |   36 +
+ src/screen.c                       |    4 +-
+ src/sdl/CMakeLists.txt             |    5 +
+ src/sdl/hwsym_sdl.c                |    7 +
+ src/sdl/i_main.cpp                 |   11 +-
+ src/sdl/i_system.cpp               |  132 +-
+ src/sdl/i_uwpprofile.cpp           |  863 ++++++
+ src/sdl/i_video.cpp                |   89 +-
+ src/sdl/mixer_sound.c              |    4 +-
+ src/sdl/ogl_sdl.c                  |    8 +
+ src/sdl/rhi_gl2_platform.cpp       |    9 +
+ src/w_wad.cpp                      |  117 +
+ src/w_wad.h                        |   10 +
+ src/z_zone.cpp                     |    5 +
+ 53 files changed, 7817 insertions(+), 369 deletions(-)
+ create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
+ create mode 100644 src/hardware/r_d3d11/r_d3d11.h
+ create mode 100644 src/hardware/r_d3d11/shaders.hlsl
  create mode 100644 src/sdl/i_uwpprofile.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -635,6 +655,4802 @@ index 19fcfe0a7..38e109869 100644
  #endif
  
  	if (M_CheckParm("-home") && M_IsNextParm())
+diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
+index a0a0f280c..0d91921d9 100644
+--- a/src/hardware/CMakeLists.txt
++++ b/src/hardware/CMakeLists.txt
+@@ -13,3 +13,35 @@ target_sources(SRB2SDL2 PRIVATE
+ 	hw_batching.c
+ 	r_opengl/r_opengl.c
+ )
++
++if(SRB2_CONFIG_UWP)
++	# [UWP]: Legacy GL's Direct3D 11 driver, whose shaders fxc compiles to headers
++	find_program(SRB2_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
++	if(NOT SRB2_FXC)
++		message(FATAL_ERROR "fxc (from the Windows SDK) wasn't found; it compiles Legacy GL's Direct3D 11 shaders")
++	endif()
++	message(STATUS "Compiling Legacy GL's Direct3D 11 shaders with ${SRB2_FXC}")
++
++	set(d3d11_shader_source "${CMAKE_CURRENT_SOURCE_DIR}/r_d3d11/shaders.hlsl")
++	set(d3d11_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/r_d3d11_shaders")
++	set(d3d11_shader_headers "")
++	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
++
++	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe)
++		string(SUBSTRING "${entry}" 0 2 stage)
++		string(TOLOWER "${stage}" stage)
++		set(header "${d3d11_shader_dir}/${entry}.h")
++		add_custom_command(
++			OUTPUT "${header}"
++			COMMAND "${SRB2_FXC}" /nologo /O3 /T ${stage}_4_0 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d11_shader_source}"
++			DEPENDS "${d3d11_shader_source}"
++			COMMENT "Compiling the ${entry} shader"
++			VERBATIM
++		)
++		list(APPEND d3d11_shader_headers "${header}")
++	endforeach()
++
++	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp ${d3d11_shader_headers})
++	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
++endif()
+diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
+new file mode 100644
+index 000000000..445b16c06
+--- /dev/null
++++ b/src/hardware/r_d3d11/r_d3d11.cpp
+@@ -0,0 +1,4366 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++// Copyright (C) 2020 by Sonic Team Junior.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file r_d3d11.cpp
++/// \brief [UWP]: Legacy GL's driver for Direct3D 11, presented through ANGLE
++///
++/// Legacy GL draws through struct hwdriver_s, whose only implementation, r_opengl.c, needs desktop OpenGL's fixed
++/// function, which ANGLE (OpenGL ES 2 on Direct3D 11) doesn't have. This implements the same functions with
++/// Direct3D 11, following r_opengl.c call for call: it keeps the OpenGL state r_opengl.c would have set (matrices,
++/// blending, texture bindings and parameters, shader uniforms) and draws with that, so its quirks carry over too.
++///
++/// It renders with its own device to a texture the size of the game's screen. Each frame is copied to a texture
++/// shared with ANGLE's device, which draws it to the window through OpenGL ES, a frame later so the copy has
++/// finished. If ANGLE can't open the shared texture, the frame is read back and uploaded instead.
++
++#define NOMINMAX
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#include <d3d11.h>
++#include <dxgi.h>
++#include <wrl/client.h>
++
++#include <algorithm>
++#include <cfloat>
++#include <climits>
++#include <cmath>
++#include <cstdarg>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <thread>
++#include <unordered_map>
++#include <vector>
++
++#include "SDL.h"
++
++#include "../../doomdef.h"
++#include "../../i_system.h"
++#include "../../m_fixed.h"
++#include "../../screen.h"
++#include "../../sdl/sdlmain.h"
++#include "../hw_drv.h"
++#include "../hw_main.h"
++#include "r_d3d11.h"
++
++// doomdef.h's
++#undef min
++#undef max
++#undef clamp
++
++// Compiled from shaders.hlsl by fxc at build time
++#include "VSPoly.h"
++#include "VSPolyClip.h"
++#include "VSSky.h"
++#include "VSModel.h"
++#include "VSModelLight.h"
++#include "VSWipe.h"
++#include "PSFixed.h"
++#include "PSDefault.h"
++#include "PSSoftware.h"
++#include "PSSoftwareModelLight.h"
++#include "PSWater.h"
++#include "PSFog.h"
++#include "PSSky.h"
++#include "PSWipe.h"
++
++extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
++
++namespace
++{
++
++using Microsoft::WRL::ComPtr;
++
++// ==========================================================================
++//                                                                    LOGGING
++// ==========================================================================
++
++void Log(const char *format, ...)
++{
++	char message[2048];
++	va_list args;
++
++	va_start(args, format);
++	vsnprintf(message, sizeof message, format, args);
++	va_end(args);
++	I_OutputMsg("UWP D3D11: %s\n", message);
++}
++
++// Logs something the driver doesn't do like r_opengl.c, the first time it happens
++#define LOG_ONCE(...) do { static bool logged = false; if (!logged) { logged = true; Log(__VA_ARGS__); } } while (0)
++
++ComPtr<ID3D11Device> g_device;
++ComPtr<ID3D11DeviceContext> g_context;
++int g_errors = 0;
++bool g_deviceLost = false;
++
++bool Failed(HRESULT hr, const char *what)
++{
++	if (SUCCEEDED(hr))
++		return false;
++
++	g_errors++;
++	if (g_errors <= 50 || g_errors % 1000 == 0)
++	{
++		const HRESULT reason = g_device ? g_device->GetDeviceRemovedReason() : S_OK;
++		Log("%s failed: 0x%08X (device removed reason 0x%08X; error %d)", what, (unsigned)hr, (unsigned)reason, g_errors);
++	}
++	return true;
++}
++
++// What the driver did since the last perf summary
++struct Stats
++{
++	int frames;
++	int polygons, batches, skies, models, lines, screens;
++	INT64 vertices, indices;
++	int constantUpdates;
++	INT64 uploadBytes;
++	int ringWraps;
++	int shaderChanges, blendChanges, depthChanges, rasterChanges, textureBinds;
++	int texturesCreated, textureUploads, texturesDeleted, flushes;
++	INT64 textureUploadBytes;
++	int modelFallbacks, modelLerps;
++	precise_t drawTime, textureTime;
++	precise_t copyTime, waitTime, worstWait, glTime, swapTime;
++	double gpuMs, worstGpuMs;
++	int gpuFrames;
++};
++Stats g_stats;
++
++// The first frames, to diagnose startup
++int g_tracedFrames = 0;
++constexpr int kTraceFrames = 3;
++
++// Adds the time until the end of the scope to a total
++struct CpuTimer
++{
++	precise_t &total;
++	precise_t start;
++
++	explicit CpuTimer(precise_t &t) : total(t), start(I_GetPreciseTime()) {}
++	~CpuTimer() { total += I_GetPreciseTime() - start; }
++};
++
++double PreciseToMs(precise_t t)
++{
++	return t * 1000.0 / I_GetPrecisePrecision();
++}
++
++// ==========================================================================
++//                                                                   MATRICES
++// ==========================================================================
++
++// Column-major, like OpenGL's
++struct Mat4
++{
++	float m[16];
++};
++
++constexpr Mat4 kIdentity = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
++
++Mat4 Multiply(const Mat4 &a, const Mat4 &b)
++{
++	Mat4 r;
++
++	for (int column = 0; column < 4; column++)
++	{
++		for (int row = 0; row < 4; row++)
++		{
++			r.m[column*4 + row] =
++				a.m[0*4 + row] * b.m[column*4 + 0] +
++				a.m[1*4 + row] * b.m[column*4 + 1] +
++				a.m[2*4 + row] * b.m[column*4 + 2] +
++				a.m[3*4 + row] * b.m[column*4 + 3];
++		}
++	}
++	return r;
++}
++
++// OpenGL's matrix stacks, of which Legacy GL uses the modelview's
++enum { MODE_MODELVIEW, MODE_PROJECTION };
++std::vector<Mat4> g_modelview(1, kIdentity);
++Mat4 g_projection = kIdentity;
++int g_matrixMode = MODE_MODELVIEW;
++
++Mat4 &CurrentMatrix()
++{
++	return g_matrixMode == MODE_PROJECTION ? g_projection : g_modelview.back();
++}
++
++void MatLoadIdentity()
++{
++	CurrentMatrix() = kIdentity;
++}
++
++void MatMultiply(const float *m)
++{
++	Mat4 b;
++	memcpy(b.m, m, sizeof b.m);
++	CurrentMatrix() = Multiply(CurrentMatrix(), b);
++}
++
++void MatScale(float x, float y, float z)
++{
++	Mat4 &m = CurrentMatrix();
++
++	for (int i = 0; i < 4; i++)
++	{
++		m.m[0*4 + i] *= x;
++		m.m[1*4 + i] *= y;
++		m.m[2*4 + i] *= z;
++	}
++}
++
++void MatTranslate(float x, float y, float z)
++{
++	Mat4 &m = CurrentMatrix();
++
++	for (int i = 0; i < 4; i++)
++		m.m[3*4 + i] += m.m[0*4 + i] * x + m.m[1*4 + i] * y + m.m[2*4 + i] * z;
++}
++
++// glRotatef
++void MatRotate(float angle, float x, float y, float z)
++{
++	const float mag = sqrtf(x*x + y*y + z*z);
++	Mat4 r = kIdentity;
++
++	if (mag <= 1.0e-4f)
++		return;
++
++	x /= mag;
++	y /= mag;
++	z /= mag;
++
++	const float radians = angle * (float)(M_PI / 180.0);
++	const float s = sinf(radians);
++	const float c = cosf(radians);
++	const float one_c = 1.0f - c;
++
++#define R(row, column) r.m[(column)*4 + (row)]
++	R(0, 0) = (one_c * x * x) + c;
++	R(0, 1) = (one_c * x * y) - z * s;
++	R(0, 2) = (one_c * z * x) + y * s;
++	R(1, 0) = (one_c * x * y) + z * s;
++	R(1, 1) = (one_c * y * y) + c;
++	R(1, 2) = (one_c * y * z) - x * s;
++	R(2, 0) = (one_c * z * x) - y * s;
++	R(2, 1) = (one_c * y * z) + x * s;
++	R(2, 2) = (one_c * z * z) + c;
++#undef R
++
++	CurrentMatrix() = Multiply(CurrentMatrix(), r);
++}
++
++void MatPush()
++{
++	if (g_matrixMode == MODE_MODELVIEW)
++		g_modelview.push_back(g_modelview.back());
++}
++
++void MatPop()
++{
++	if (g_matrixMode == MODE_MODELVIEW && g_modelview.size() > 1)
++		g_modelview.pop_back();
++}
++
++constexpr float kFarClippingPlane = 32768.0f;
++float g_nearClippingPlane = NZCLIP_PLANE;
++const float g_fov = 90.0f;
++
++// r_opengl.c's GLPerspective
++void Perspective(float fovy, float aspect)
++{
++	float m[16] =
++	{
++		1.0f, 0.0f, 0.0f, 0.0f,
++		0.0f, 1.0f, 0.0f, 0.0f,
++		0.0f, 0.0f, 1.0f, -1.0f,
++		0.0f, 0.0f, 0.0f, 0.0f,
++	};
++	const float zNear = g_nearClippingPlane;
++	const float zFar = kFarClippingPlane;
++	const float radians = (float)(fovy / 2.0f * M_PI / 180.0f);
++	const float sine = (float)sin(radians);
++	const float deltaZ = zFar - zNear;
++
++	if ((fabsf(deltaZ) < 1.0E-36f) || sine == 0.0f || aspect == 0.0f)
++		return;
++
++	const float cotangent = cosf(radians) / sine;
++	m[0] = cotangent / aspect;
++	m[5] = cotangent;
++	m[10] = -(zFar + zNear) / deltaZ;
++	m[14] = -2.0f * zNear * zFar / deltaZ;
++	MatMultiply(m);
++}
++
++// ==========================================================================
++//                                                               OPENGL STATE
++// ==========================================================================
++
++enum BlendFactor : UINT8 { BF_ZERO, BF_ONE, BF_SRC_ALPHA, BF_ONE_MINUS_SRC_ALPHA, BF_SRC_COLOR, BF_DST_COLOR };
++enum BlendEquation : UINT8 { BE_ADD, BE_SUBTRACT, BE_REVERSE_SUBTRACT };
++enum AlphaFunc { AF_ALWAYS = 0, AF_GREATER = 1, AF_NOTEQUAL = 2 };
++enum TexEnv { TE_MODULATE, TE_REPLACE };
++
++// What r_opengl.c would have set
++struct GLState
++{
++	UINT8 blendSrc = BF_ONE, blendDst = BF_ZERO, blendEquation = BE_ADD;
++	bool blend = false;
++	int alphaFunc = AF_ALWAYS;
++	float alphaRef = 0.0f;
++	bool alphaTest = false;
++	bool polygonOffset = false;
++	bool depthTest = false;
++	bool depthAlways = false; // GL_ALWAYS rather than GL_LEQUAL
++	bool depthMask = true;
++	int texEnv = TE_MODULATE; // of texture unit 0
++	bool texture2D = false; // texturing enabled on unit 0
++	bool cullFace = false;
++	bool cullFront = false;
++	bool lighting = false; // GL_LIGHTING, for models without shaders
++	float lightDir[3] = {0.0f, 1.0f, 0.0f}; // GL_LIGHT0's eye-space direction
++	float material[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // the ambient and diffuse material
++	UINT8 color[4] = {255, 255, 255, 255}; // glColor
++	float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
++	int viewport[4] = {0, 0, 0, 0}; // x, y from the bottom (as in OpenGL), width, height
++};
++GLState g_gl;
++FBITFIELD g_currentPolyFlags = 0;
++
++INT32 g_screenWidth = 0, g_screenHeight = 0; // r_opengl.c's screen_width and screen_height
++RGBA_t g_palette[256];
++
++void SetViewport(int x, int y, int width, int height)
++{
++	g_gl.viewport[0] = x;
++	g_gl.viewport[1] = y;
++	g_gl.viewport[2] = width;
++	g_gl.viewport[3] = height;
++}
++
++void SetColor(const UINT8 *color)
++{
++	memcpy(g_gl.color, color, sizeof g_gl.color);
++}
++
++const UINT8 kWhite[4] = {255, 255, 255, 255};
++
++// ==========================================================================
++//                                                                   TEXTURES
++// ==========================================================================
++
++enum Filter : UINT8 { FILTER_NEAREST, FILTER_LINEAR, FILTER_LINEAR_MIPMAP_LINEAR, FILTER_NEAREST_MIPMAP_LINEAR };
++
++// An OpenGL texture object
++struct Texture
++{
++	UINT32 id = 0;
++	ComPtr<ID3D11Texture2D> texture;
++	ComPtr<ID3D11ShaderResourceView> srv;
++	UINT width = 0, height = 0;
++	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
++	bool mipmapped = false;
++	UINT64 bytes = 0;
++
++	// Its parameters, with OpenGL's defaults
++	UINT8 minFilter = FILTER_NEAREST_MIPMAP_LINEAR, magFilter = FILTER_LINEAR;
++	bool repeatS = true, repeatT = true;
++	float maxLod = 1000.0f;
++	int anisotropy = 1;
++	ID3D11SamplerState *sampler = nullptr; // for these parameters, from the cache; null to look up again
++
++	// In r_opengl.c's list of textures (TexCacheHead), which Flush deletes
++	bool listed = false;
++	GLMipmap_t *mipmap = nullptr;
++	UINT32 listFormat = 0, listWidth = 0, listHeight = 0;
++};
++
++// Keyed by name, as in OpenGL. Pointers to them stay valid until they're erased.
++std::unordered_map<UINT32, Texture> g_textures;
++UINT32 g_nextTextureName = 1;
++UINT64 g_textureBytes = 0;
++
++// r_opengl.c's NOTEXTURE_NUM, the texture bound to stop texturing (it never gets any data)
++constexpr UINT32 kNoTexture = 0xFFFFFFFFu;
++
++UINT32 g_texDownloaded = 0; // r_opengl.c's tex_downloaded
++Texture *g_units[2] = {nullptr, nullptr}; // what's bound to texture units 0 and 1
++
++// Legacy GL's settings for new textures
++UINT8 g_minFilter = FILTER_LINEAR, g_magFilter = FILTER_LINEAR;
++bool g_mipmap = false;
++int g_anisotropicFilter = 0;
++constexpr int kMaximumAnisotropy = 16;
++
++std::vector<RGBA_t> g_textureBuffer;
++
++Texture *FindTexture(UINT32 name)
++{
++	auto it = g_textures.find(name);
++	return it == g_textures.end() ? nullptr : &it->second;
++}
++
++UINT32 GenTexture()
++{
++	UINT32 name;
++
++	do
++	{
++		name = g_nextTextureName++;
++		if (g_nextTextureName == kNoTexture)
++			g_nextTextureName = 1;
++	} while (name == 0 || name == kNoTexture || g_textures.count(name));
++
++	g_textures[name].id = name;
++	return name;
++}
++
++void BindTexture(int unit, UINT32 name)
++{
++	g_units[unit] = (name == 0 || name == kNoTexture) ? nullptr : FindTexture(name);
++}
++
++// glDeleteTextures: what it's bound to reverts to no texture
++void DeleteTextureObject(UINT32 name)
++{
++	auto it = g_textures.find(name);
++
++	if (it == g_textures.end())
++		return;
++
++	for (Texture *&unit : g_units)
++	{
++		if (unit == &it->second)
++			unit = nullptr;
++	}
++
++	if (it->second.texture)
++		g_stats.texturesDeleted++;
++	g_textureBytes -= it->second.bytes;
++	g_textures.erase(it);
++}
++
++void SetNoTexture(int unit)
++{
++	if (g_texDownloaded != kNoTexture)
++	{
++		BindTexture(unit, kNoTexture);
++		g_texDownloaded = kNoTexture;
++	}
++}
++
++// glTexParameteri on unit 0's texture
++void SetRepeatS(bool repeat)
++{
++	if (g_units[0] && g_units[0]->repeatS != repeat)
++	{
++		g_units[0]->repeatS = repeat;
++		g_units[0]->sampler = nullptr;
++	}
++}
++
++void SetRepeatT(bool repeat)
++{
++	if (g_units[0] && g_units[0]->repeatT != repeat)
++	{
++		g_units[0]->repeatT = repeat;
++		g_units[0]->sampler = nullptr;
++	}
++}
++
++// ==========================================================================
++//                                                         DIRECT3D RESOURCES
++// ==========================================================================
++
++enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, NUMVS };
++enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, NUMPS };
++enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
++
++struct ShaderCode
++{
++	const BYTE *code;
++	size_t size;
++	const char *name;
++};
++
++const ShaderCode kVertexShaders[NUMVS] =
++{
++	{g_VSPoly, sizeof g_VSPoly, "VSPoly"},
++	{g_VSPolyClip, sizeof g_VSPolyClip, "VSPolyClip"},
++	{g_VSSky, sizeof g_VSSky, "VSSky"},
++	{g_VSModel, sizeof g_VSModel, "VSModel"},
++	{g_VSModelLight, sizeof g_VSModelLight, "VSModelLight"},
++	{g_VSWipe, sizeof g_VSWipe, "VSWipe"},
++};
++
++const ShaderCode kPixelShaders[NUMPS] =
++{
++	{g_PSFixed, sizeof g_PSFixed, "PSFixed"},
++	{g_PSDefault, sizeof g_PSDefault, "PSDefault"},
++	{g_PSSoftware, sizeof g_PSSoftware, "PSSoftware"},
++	{g_PSSoftwareModelLight, sizeof g_PSSoftwareModelLight, "PSSoftwareModelLight"},
++	{g_PSWater, sizeof g_PSWater, "PSWater"},
++	{g_PSFog, sizeof g_PSFog, "PSFog"},
++	{g_PSSky, sizeof g_PSSky, "PSSky"},
++	{g_PSWipe, sizeof g_PSWipe, "PSWipe"},
++};
++
++ComPtr<ID3D11VertexShader> g_vertexShaders[NUMVS];
++ComPtr<ID3D11PixelShader> g_pixelShaders[NUMPS];
++ComPtr<ID3D11InputLayout> g_layouts[NUMLAYOUTS];
++const UINT kLayoutStrides[NUMLAYOUTS] = {sizeof(FOutVector), sizeof(gl_skyvertex_t), 32};
++
++// Must match DrawConstants in shaders.hlsl
++struct Constants
++{
++	float projection[16];
++	float modelview[16];
++	float poly[4];
++	float tint[4];
++	float fade[4];
++	float color[4];
++	float lightDir[4];
++	float ffLight[4];
++	float lighting, fadeStart, fadeEnd, lightContrast;
++	float lightBacklight, leveltime, alphaRef;
++	INT32 alphaFunc;
++	INT32 texMode;
++	INT32 pad[3];
++};
++static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
++
++ComPtr<ID3D11Buffer> g_constantBuffer;
++Constants g_lastConstants;
++bool g_constantsValid = false;
++
++// The vertex of models' buffers
++struct ModelVertex
++{
++	float x, y, z;
++	float nx, ny, nz;
++	float s, t;
++};
++static_assert(sizeof(ModelVertex) == 32, "The model layout's stride is 32");
++
++// Dynamic buffers that each draw's data is appended to
++struct Ring
++{
++	ComPtr<ID3D11Buffer> buffer;
++	UINT size = 0;
++	UINT position = 0;
++	UINT bind = 0;
++	bool fresh = true;
++	const char *name = "";
++};
++Ring g_vertexRing, g_indexRing;
++
++// 16-bit indices that draw a triangle fan as a list: 0 1 2, 0 2 3, ...
++ComPtr<ID3D11Buffer> g_fanIndices;
++constexpr UINT kMaxFanVertices = 65535;
++
++ComPtr<ID3D11Texture2D> g_blackTexture;
++ComPtr<ID3D11ShaderResourceView> g_blackSrv; // what shaders sample without a texture, like OpenGL: (0, 0, 0, 1)
++ComPtr<ID3D11SamplerState> g_defaultSampler;
++
++std::unordered_map<UINT32, ComPtr<ID3D11SamplerState>> g_samplers;
++std::unordered_map<UINT32, ComPtr<ID3D11BlendState>> g_blendStates;
++std::unordered_map<UINT32, ComPtr<ID3D11DepthStencilState>> g_depthStates;
++std::unordered_map<UINT32, ComPtr<ID3D11RasterizerState>> g_rasterStates;
++
++// The screen
++DXGI_FORMAT g_rtFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
++ComPtr<ID3D11Texture2D> g_rt;
++ComPtr<ID3D11RenderTargetView> g_rtv;
++ComPtr<ID3D11Texture2D> g_depth;
++ComPtr<ID3D11DepthStencilView> g_dsv;
++UINT g_rtWidth = 0, g_rtHeight = 0;
++DXGI_FORMAT g_rtCreatedFormat = DXGI_FORMAT_UNKNOWN;
++
++// What's set on the context, to skip setting it again
++struct Bound
++{
++	ID3D11InputLayout *layout = nullptr;
++	ID3D11VertexShader *vs = nullptr;
++	ID3D11PixelShader *ps = nullptr;
++	D3D11_PRIMITIVE_TOPOLOGY topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
++	ID3D11Buffer *vertexBuffer = nullptr;
++	UINT stride = 0;
++	ID3D11Buffer *indexBuffer = nullptr;
++	DXGI_FORMAT indexFormat = DXGI_FORMAT_UNKNOWN;
++	ID3D11BlendState *blend = nullptr;
++	ID3D11DepthStencilState *depth = nullptr;
++	ID3D11RasterizerState *raster = nullptr;
++	ID3D11ShaderResourceView *srvs[2] = {nullptr, nullptr};
++	ID3D11SamplerState *samplers[2] = {nullptr, nullptr};
++	int viewport[4] = {-1, -1, -1, -1};
++};
++Bound g_bound;
++
++// ==========================================================================
++//                                                                    SHADERS
++// ==========================================================================
++
++// The uniforms of one of r_opengl.c's shader programs, which keep their values while other programs are used
++struct ProgramUniforms
++{
++	float poly[4], tint[4], fade[4];
++	float lighting, fadeStart, fadeEnd;
++	float lightDir[3];
++	float lightContrast, lightBacklight;
++	float leveltime;
++};
++ProgramUniforms g_uniforms[NUMBASESHADERS];
++
++hwdshaderoption_t g_allowShaders = HWD_SHADEROPTION_OFF; // gl_allowshaders
++bool g_shadersEnabled = false; // gl_shadersenabled
++bool g_modelLighting = false;
++int g_shaderCurrent = -1; // gl_shaderstate.current, as its type, or -1 for NULL
++int g_shaderType = 0; // gl_shaderstate.type
++bool g_shaderChanged = false; // gl_shaderstate.changed
++int g_program = -1; // the program glUseProgram last set, as its type, or -1 for none
++
++INT32 g_shaderLeveltime = 0;
++float g_shaderLightX = 0.0f, g_shaderLightY = 0.0f, g_shaderLightZ = 0.0f;
++INT32 g_shaderLightContrast = 0, g_shaderLightBacklight = 0;
++
++bool ProgramExists(int type)
++{
++	// Custom shaders aren't supported, so only the base shaders have programs
++	return type >= 0 && type < NUMBASESHADERS;
++}
++
++// r_opengl.c's Shader_SetUniforms
++void SetUniforms(const FSurfaceInfo *surface, const float *poly, const float *tint, const float *fade)
++{
++	static const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
++
++	if (!g_shadersEnabled || g_shaderCurrent < 0)
++		return;
++
++	if (!ProgramExists(g_shaderCurrent))
++	{
++		g_program = -1;
++		return;
++	}
++
++	if (g_shaderChanged)
++	{
++		g_program = g_shaderCurrent;
++		g_shaderChanged = false;
++	}
++
++	if (g_program < 0)
++		return;
++
++	ProgramUniforms &u = g_uniforms[g_program];
++	boolean directional = false;
++
++	memcpy(u.poly, poly ? poly : white, sizeof u.poly);
++	memcpy(u.tint, tint ? tint : white, sizeof u.tint);
++	memcpy(u.fade, fade ? fade : white, sizeof u.fade);
++
++	if (surface != NULL)
++	{
++		u.lighting = (float)surface->LightInfo.light_level;
++		u.fadeStart = (float)surface->LightInfo.fade_start;
++		u.fadeEnd = (float)surface->LightInfo.fade_end;
++		directional = surface->LightInfo.directional;
++	}
++	else
++	{
++		u.lighting = 255.0f;
++		u.fadeStart = 0.0f;
++		u.fadeEnd = 31.0f;
++	}
++
++	if (directional)
++	{
++		u.lightDir[0] = g_shaderLightX;
++		u.lightDir[1] = g_shaderLightY;
++		u.lightDir[2] = g_shaderLightZ;
++		u.lightContrast = (float)g_shaderLightContrast;
++		u.lightBacklight = (float)g_shaderLightBacklight;
++	}
++	else
++	{
++		u.lightDir[0] = u.lightDir[1] = u.lightDir[2] = 0.0f;
++		u.lightContrast = u.lightBacklight = 0.0f;
++	}
++
++	u.leveltime = ((float)g_shaderLeveltime) / TICRATE;
++}
++
++// ==========================================================================
++//                                                              STATE OBJECTS
++// ==========================================================================
++
++D3D11_BLEND ToD3DBlend(UINT8 factor)
++{
++	switch (factor)
++	{
++		case BF_ZERO: return D3D11_BLEND_ZERO;
++		case BF_ONE: return D3D11_BLEND_ONE;
++		case BF_SRC_ALPHA: return D3D11_BLEND_SRC_ALPHA;
++		case BF_ONE_MINUS_SRC_ALPHA: return D3D11_BLEND_INV_SRC_ALPHA;
++		case BF_SRC_COLOR: return D3D11_BLEND_SRC_COLOR;
++		case BF_DST_COLOR: return D3D11_BLEND_DEST_COLOR;
++		default: return D3D11_BLEND_ONE;
++	}
++}
++
++ID3D11BlendState *GetBlendState()
++{
++	UINT32 key = 0;
++
++	// GL_ONE, GL_ZERO, GL_FUNC_ADD is the same as not blending
++	if (g_gl.blend && !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
++		key = 1 | (g_gl.blendSrc << 1) | (g_gl.blendDst << 4) | (g_gl.blendEquation << 7);
++
++	static UINT32 lastKey = UINT32_MAX;
++	static ID3D11BlendState *last = nullptr;
++	if (key == lastKey)
++		return last;
++
++	auto it = g_blendStates.find(key);
++	if (it != g_blendStates.end())
++	{
++		lastKey = key;
++		return last = it->second.Get();
++	}
++
++	D3D11_BLEND_DESC desc = {};
++	D3D11_RENDER_TARGET_BLEND_DESC &target = desc.RenderTarget[0];
++
++	target.BlendEnable = key != 0;
++	target.SrcBlend = ToD3DBlend(g_gl.blendSrc);
++	target.DestBlend = ToD3DBlend(g_gl.blendDst);
++	target.BlendOp = g_gl.blendEquation == BE_SUBTRACT ? D3D11_BLEND_OP_SUBTRACT
++		: g_gl.blendEquation == BE_REVERSE_SUBTRACT ? D3D11_BLEND_OP_REV_SUBTRACT : D3D11_BLEND_OP_ADD;
++	target.SrcBlendAlpha = D3D11_BLEND_ONE;
++	target.DestBlendAlpha = D3D11_BLEND_ZERO;
++	target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
++	// The screen's alpha stays 1, like the GL_RGB textures r_opengl.c copies the screen to
++	target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
++
++	ComPtr<ID3D11BlendState> state;
++	if (Failed(g_device->CreateBlendState(&desc, &state), "CreateBlendState"))
++		return nullptr;
++	g_blendStates[key] = state;
++	return state.Get();
++}
++
++ID3D11DepthStencilState *GetDepthState()
++{
++	const UINT32 key = (g_gl.depthTest ? 1 : 0) | (g_gl.depthAlways ? 2 : 0) | (g_gl.depthMask ? 4 : 0);
++
++	static UINT32 lastKey = UINT32_MAX;
++	static ID3D11DepthStencilState *last = nullptr;
++	if (key == lastKey)
++		return last;
++
++	auto it = g_depthStates.find(key);
++	if (it != g_depthStates.end())
++	{
++		lastKey = key;
++		return last = it->second.Get();
++	}
++
++	D3D11_DEPTH_STENCIL_DESC desc = {};
++	desc.DepthEnable = g_gl.depthTest; // which, like OpenGL, also stops depth writes
++	desc.DepthWriteMask = g_gl.depthMask ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
++	desc.DepthFunc = g_gl.depthAlways ? D3D11_COMPARISON_ALWAYS : D3D11_COMPARISON_LESS_EQUAL;
++	desc.StencilEnable = FALSE;
++
++	ComPtr<ID3D11DepthStencilState> state;
++	if (Failed(g_device->CreateDepthStencilState(&desc, &state), "CreateDepthStencilState"))
++		return nullptr;
++	g_depthStates[key] = state;
++	return state.Get();
++}
++
++ID3D11RasterizerState *GetRasterState()
++{
++	const UINT32 cull = g_gl.cullFace ? (g_gl.cullFront ? 2 : 1) : 0;
++	const UINT32 key = cull | (g_gl.polygonOffset ? 4 : 0);
++
++	static UINT32 lastKey = UINT32_MAX;
++	static ID3D11RasterizerState *last = nullptr;
++	if (key == lastKey)
++		return last;
++
++	auto it = g_rasterStates.find(key);
++	if (it != g_rasterStates.end())
++	{
++		lastKey = key;
++		return last = it->second.Get();
++	}
++
++	D3D11_RASTERIZER_DESC desc = {};
++	desc.FillMode = D3D11_FILL_SOLID;
++	desc.CullMode = cull == 2 ? D3D11_CULL_FRONT : cull == 1 ? D3D11_CULL_BACK : D3D11_CULL_NONE;
++	desc.FrontCounterClockwise = TRUE; // like OpenGL
++	// glPolygonOffset(-1.0f, -1.0f)
++	desc.DepthBias = g_gl.polygonOffset ? -1 : 0;
++	desc.SlopeScaledDepthBias = g_gl.polygonOffset ? -1.0f : 0.0f;
++	desc.DepthBiasClamp = 0.0f;
++	desc.DepthClipEnable = TRUE;
++
++	ComPtr<ID3D11RasterizerState> state;
++	if (Failed(g_device->CreateRasterizerState(&desc, &state), "CreateRasterizerState"))
++		return nullptr;
++	g_rasterStates[key] = state;
++	return state.Get();
++}
++
++ID3D11SamplerState *GetSampler(Texture *texture)
++{
++	if (texture->sampler)
++		return texture->sampler;
++
++	const UINT32 lod = texture->maxLod >= 15.0f ? 15 : (UINT32)texture->maxLod;
++	const UINT32 anisotropy = (UINT32)std::min(std::max(texture->anisotropy, 1), kMaximumAnisotropy);
++	const UINT32 key = texture->minFilter | (texture->magFilter << 2) | (texture->repeatS ? 1 << 4 : 0)
++		| (texture->repeatT ? 1 << 5 : 0) | (lod << 6) | (anisotropy << 10);
++
++	auto it = g_samplers.find(key);
++	if (it != g_samplers.end())
++		return texture->sampler = it->second.Get();
++
++	const bool mipmap = texture->minFilter == FILTER_LINEAR_MIPMAP_LINEAR || texture->minFilter == FILTER_NEAREST_MIPMAP_LINEAR;
++	const bool minLinear = texture->minFilter == FILTER_LINEAR || texture->minFilter == FILTER_LINEAR_MIPMAP_LINEAR;
++	const bool magLinear = texture->magFilter == FILTER_LINEAR;
++	D3D11_SAMPLER_DESC desc = {};
++
++	if (anisotropy > 1 && texture->minFilter != FILTER_NEAREST)
++	{
++		desc.Filter = D3D11_FILTER_ANISOTROPIC;
++		desc.MaxAnisotropy = anisotropy;
++	}
++	else
++	{
++		static const D3D11_FILTER filters[2][2][2] = // [minLinear][magLinear][mipmap]
++		{
++			{
++				{D3D11_FILTER_MIN_MAG_MIP_POINT, D3D11_FILTER_MIN_MAG_POINT_MIP_LINEAR},
++				{D3D11_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT, D3D11_FILTER_MIN_POINT_MAG_MIP_LINEAR},
++			},
++			{
++				{D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT, D3D11_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR},
++				{D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT, D3D11_FILTER_MIN_MAG_MIP_LINEAR},
++			},
++		};
++		desc.Filter = filters[minLinear][magLinear][mipmap];
++		desc.MaxAnisotropy = 1;
++	}
++
++	desc.AddressU = texture->repeatS ? D3D11_TEXTURE_ADDRESS_WRAP : D3D11_TEXTURE_ADDRESS_CLAMP;
++	desc.AddressV = texture->repeatT ? D3D11_TEXTURE_ADDRESS_WRAP : D3D11_TEXTURE_ADDRESS_CLAMP;
++	desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
++	desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
++	desc.MinLOD = 0.0f;
++	// Without a mipmap filter, OpenGL samples only the base level
++	desc.MaxLOD = mipmap ? (float)lod : 0.0f;
++	if (mipmap && lod == 15)
++		desc.MaxLOD = D3D11_FLOAT32_MAX;
++
++	ComPtr<ID3D11SamplerState> state;
++	if (Failed(g_device->CreateSamplerState(&desc, &state), "CreateSamplerState"))
++		return g_defaultSampler.Get();
++	g_samplers[key] = state;
++	return texture->sampler = state.Get();
++}
++
++// ==========================================================================
++//                                                                    DRAWING
++// ==========================================================================
++
++bool CreateRing(Ring &ring, UINT size, UINT bind, const char *name)
++{
++	D3D11_BUFFER_DESC desc = {};
++	desc.ByteWidth = size;
++	desc.Usage = D3D11_USAGE_DYNAMIC;
++	desc.BindFlags = bind;
++	desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
++
++	ring.buffer.Reset();
++	if (Failed(g_device->CreateBuffer(&desc, nullptr, &ring.buffer), name))
++	{
++		ring.size = 0;
++		return false;
++	}
++
++	ring.size = size;
++	ring.position = 0;
++	ring.bind = bind;
++	ring.fresh = true;
++	ring.name = name;
++	return true;
++}
++
++// Appends data to a ring, returning its offset, or UINT_MAX if it couldn't
++UINT RingWrite(Ring &ring, const void *data, UINT bytes, UINT align)
++{
++	if (bytes > ring.size)
++	{
++		const UINT size = std::max(bytes * 2, ring.size * 2);
++		Log("growing the %s buffer from %u to %u bytes for a draw of %u bytes", ring.name, ring.size, size, bytes);
++		if (!CreateRing(ring, size, ring.bind, ring.name))
++			return UINT_MAX;
++		// It might be bound
++		if (ring.bind == D3D11_BIND_VERTEX_BUFFER)
++			g_bound.vertexBuffer = nullptr;
++		else
++			g_bound.indexBuffer = nullptr;
++	}
++
++	UINT start = (ring.position + align - 1) / align * align;
++	D3D11_MAP map = ring.fresh ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
++
++	if (start + bytes > ring.size)
++	{
++		start = 0;
++		map = D3D11_MAP_WRITE_DISCARD;
++		g_stats.ringWraps++;
++	}
++
++	D3D11_MAPPED_SUBRESOURCE mapped;
++	if (Failed(g_context->Map(ring.buffer.Get(), 0, map, 0, &mapped), "Map"))
++		return UINT_MAX;
++	memcpy(static_cast<BYTE*>(mapped.pData) + start, data, bytes);
++	g_context->Unmap(ring.buffer.Get(), 0);
++
++	ring.fresh = false;
++	ring.position = start + bytes;
++	g_stats.uploadBytes += bytes;
++	return start;
++}
++
++void BindVertexBuffer(ID3D11Buffer *buffer, UINT stride)
++{
++	if (g_bound.vertexBuffer != buffer || g_bound.stride != stride)
++	{
++		const UINT offset = 0;
++		g_context->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
++		g_bound.vertexBuffer = buffer;
++		g_bound.stride = stride;
++	}
++}
++
++void BindIndexBuffer(ID3D11Buffer *buffer, DXGI_FORMAT format)
++{
++	if (g_bound.indexBuffer != buffer || g_bound.indexFormat != format)
++	{
++		g_context->IASetIndexBuffer(buffer, format, 0);
++		g_bound.indexBuffer = buffer;
++		g_bound.indexFormat = format;
++	}
++}
++
++void ApplyConstants()
++{
++	Constants c;
++	const bool lit = g_gl.lighting;
++
++	memset(&c, 0, sizeof c);
++	memcpy(c.projection, g_projection.m, sizeof c.projection);
++	memcpy(c.modelview, g_modelview.back().m, sizeof c.modelview);
++
++	if (g_program >= 0)
++	{
++		const ProgramUniforms &u = g_uniforms[g_program];
++
++		memcpy(c.poly, u.poly, sizeof c.poly);
++		memcpy(c.tint, u.tint, sizeof c.tint);
++		memcpy(c.fade, u.fade, sizeof c.fade);
++		memcpy(c.lightDir, u.lightDir, sizeof u.lightDir);
++		c.lighting = u.lighting;
++		c.fadeStart = u.fadeStart;
++		c.fadeEnd = u.fadeEnd;
++		c.lightContrast = u.lightContrast;
++		c.lightBacklight = u.lightBacklight;
++		c.leveltime = u.leveltime;
++	}
++
++	if (lit)
++	{
++		memcpy(c.color, g_gl.material, sizeof c.color);
++		memcpy(c.ffLight, g_gl.lightDir, sizeof g_gl.lightDir);
++		c.ffLight[3] = 1.0f;
++	}
++	else
++	{
++		for (int i = 0; i < 4; i++)
++			c.color[i] = g_gl.color[i] / 255.0f;
++	}
++
++	c.alphaFunc = g_gl.alphaTest ? g_gl.alphaFunc : AF_ALWAYS;
++	c.alphaRef = g_gl.alphaRef;
++
++	// Without a texture with data, or with texturing off, OpenGL's fixed function uses just the vertex color
++	if (g_gl.texture2D && g_units[0] && g_units[0]->srv)
++		c.texMode = g_gl.texEnv == TE_MODULATE ? 1 : 2;
++	else
++		c.texMode = 0;
++
++	if (g_constantsValid && memcmp(&c, &g_lastConstants, sizeof c) == 0)
++		return;
++
++	D3D11_MAPPED_SUBRESOURCE mapped;
++	if (Failed(g_context->Map(g_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map constants"))
++		return;
++	memcpy(mapped.pData, &c, sizeof c);
++	g_context->Unmap(g_constantBuffer.Get(), 0);
++
++	g_lastConstants = c;
++	g_constantsValid = true;
++	g_stats.constantUpdates++;
++}
++
++// Sets everything a draw needs from the OpenGL state
++void ApplyState(Layout layout, D3D11_PRIMITIVE_TOPOLOGY topology, bool wipe = false)
++{
++	VSKind vs;
++	PSKind ps;
++
++	if (g_program >= 0)
++	{
++		switch (g_program)
++		{
++			case SHADER_DEFAULT: ps = PS_DEFAULT; break;
++			case SHADER_MODEL_LIGHTING: ps = PS_MODELLIGHT; break;
++			case SHADER_WATER: ps = PS_WATER; break;
++			case SHADER_FOG: ps = PS_FOG; break;
++			case SHADER_SKY: ps = PS_SKY; break;
++			default: ps = PS_SOFTWARE; break; // floors, walls, sprites, models
++		}
++
++		if (layout == LAYOUT_SKY)
++			vs = VS_SKY;
++		else if (layout == LAYOUT_MODEL)
++			vs = g_program == SHADER_MODEL_LIGHTING ? VS_MODELLIGHT : VS_MODEL;
++		else
++			vs = g_program == SHADER_SPRITECLIPHACK ? VS_POLYCLIP : VS_POLY;
++	}
++	else
++	{
++		ps = wipe ? PS_WIPE : PS_FIXED;
++		vs = layout == LAYOUT_SKY ? VS_SKY : layout == LAYOUT_MODEL ? VS_MODEL : wipe ? VS_WIPE : VS_POLY;
++	}
++
++	ID3D11InputLayout *inputLayout = g_layouts[layout].Get();
++	if (g_bound.layout != inputLayout)
++	{
++		g_context->IASetInputLayout(inputLayout);
++		g_bound.layout = inputLayout;
++	}
++
++	if (g_bound.topology != topology)
++	{
++		g_context->IASetPrimitiveTopology(topology);
++		g_bound.topology = topology;
++	}
++
++	if (g_bound.vs != g_vertexShaders[vs].Get())
++	{
++		g_context->VSSetShader(g_vertexShaders[vs].Get(), nullptr, 0);
++		g_bound.vs = g_vertexShaders[vs].Get();
++		g_stats.shaderChanges++;
++	}
++
++	if (g_bound.ps != g_pixelShaders[ps].Get())
++	{
++		g_context->PSSetShader(g_pixelShaders[ps].Get(), nullptr, 0);
++		g_bound.ps = g_pixelShaders[ps].Get();
++		g_stats.shaderChanges++;
++	}
++
++	ID3D11BlendState *blend = GetBlendState();
++	if (g_bound.blend != blend)
++	{
++		g_context->OMSetBlendState(blend, nullptr, 0xFFFFFFFF);
++		g_bound.blend = blend;
++		g_stats.blendChanges++;
++	}
++
++	ID3D11DepthStencilState *depth = GetDepthState();
++	if (g_bound.depth != depth)
++	{
++		g_context->OMSetDepthStencilState(depth, 0);
++		g_bound.depth = depth;
++		g_stats.depthChanges++;
++	}
++
++	ID3D11RasterizerState *raster = GetRasterState();
++	if (g_bound.raster != raster)
++	{
++		g_context->RSSetState(raster);
++		g_bound.raster = raster;
++		g_stats.rasterChanges++;
++	}
++
++	for (int unit = 0; unit < 2; unit++)
++	{
++		Texture *texture = g_units[unit];
++		ID3D11ShaderResourceView *srv = g_blackSrv.Get();
++		ID3D11SamplerState *sampler = g_defaultSampler.Get();
++
++		if (texture && texture->srv)
++		{
++			srv = texture->srv.Get();
++			sampler = GetSampler(texture);
++		}
++
++		if (g_bound.srvs[unit] != srv)
++		{
++			g_context->PSSetShaderResources(unit, 1, &srv);
++			g_bound.srvs[unit] = srv;
++			g_stats.textureBinds++;
++		}
++
++		if (g_bound.samplers[unit] != sampler)
++		{
++			g_context->PSSetSamplers(unit, 1, &sampler);
++			g_bound.samplers[unit] = sampler;
++		}
++	}
++
++	if (memcmp(g_bound.viewport, g_gl.viewport, sizeof g_bound.viewport) != 0)
++	{
++		D3D11_VIEWPORT viewport;
++		viewport.TopLeftX = (float)g_gl.viewport[0];
++		viewport.TopLeftY = (float)((int)g_rtHeight - (g_gl.viewport[1] + g_gl.viewport[3]));
++		viewport.Width = (float)std::max(g_gl.viewport[2], 0);
++		viewport.Height = (float)std::max(g_gl.viewport[3], 0);
++		viewport.MinDepth = 0.0f;
++		viewport.MaxDepth = 1.0f;
++		g_context->RSSetViewports(1, &viewport);
++		memcpy(g_bound.viewport, g_gl.viewport, sizeof g_bound.viewport);
++	}
++
++	ApplyConstants();
++}
++
++bool CanDraw()
++{
++	return g_context && g_rtv && !g_deviceLost;
++}
++
++enum Primitive { PRIM_FAN, PRIM_LINES, PRIM_STRIP };
++
++// Draws vertices with the current state, like glDrawArrays
++void DrawArrays(Layout layout, Primitive primitive, const void *vertices, UINT count, bool wipe = false)
++{
++	const UINT stride = kLayoutStrides[layout];
++
++	if (!CanDraw() || count == 0)
++		return;
++
++	if (primitive == PRIM_FAN && count < 3)
++		return;
++
++	const UINT offset = RingWrite(g_vertexRing, vertices, count * stride, stride);
++	if (offset == UINT_MAX)
++		return;
++	const UINT base = offset / stride;
++
++	BindVertexBuffer(g_vertexRing.buffer.Get(), stride);
++	g_stats.vertices += count;
++
++	switch (primitive)
++	{
++		case PRIM_LINES:
++			ApplyState(layout, D3D11_PRIMITIVE_TOPOLOGY_LINELIST, wipe);
++			g_context->Draw(count & ~1u, base);
++			break;
++
++		case PRIM_STRIP:
++			ApplyState(layout, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, wipe);
++			g_context->Draw(count, base);
++			break;
++
++		case PRIM_FAN:
++			ApplyState(layout, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, wipe);
++			if (count <= kMaxFanVertices)
++			{
++				BindIndexBuffer(g_fanIndices.Get(), DXGI_FORMAT_R16_UINT);
++				g_context->DrawIndexed((count - 2) * 3, 0, base);
++			}
++			else
++			{
++				std::vector<UINT32> indices;
++				indices.reserve((count - 2) * 3);
++				for (UINT i = 1; i + 1 < count; i++)
++				{
++					indices.push_back(0);
++					indices.push_back(i);
++					indices.push_back(i + 1);
++				}
++				const UINT indexOffset = RingWrite(g_indexRing, indices.data(), (UINT)(indices.size() * sizeof(UINT32)), sizeof(UINT32));
++				if (indexOffset == UINT_MAX)
++					return;
++				BindIndexBuffer(g_indexRing.buffer.Get(), DXGI_FORMAT_R32_UINT);
++				g_context->DrawIndexed((UINT)indices.size(), indexOffset / sizeof(UINT32), base);
++			}
++			break;
++	}
++}
++
++// ==========================================================================
++//                                                                 BLEND MODE
++// ==========================================================================
++
++// r_opengl.c's SetBlendMode
++void SetBlendMode(FBITFIELD flags)
++{
++	// Set blending function
++	if (flags & PF_Fog)
++	{
++		// Sryder: Fog
++		// multiplies input colour by input alpha, and destination colour by input colour, then adds them
++		g_gl.blendSrc = BF_SRC_ALPHA;
++		g_gl.blendDst = BF_SRC_COLOR;
++	}
++	else
++	{
++		boolean blending = true;
++		switch (flags & (PF_Blending & ~(PF_Masked | PF_Occlude)))
++		{
++			case PF_Translucent:
++				g_gl.blendSrc = BF_SRC_ALPHA; // alpha = level of transparency
++				g_gl.blendDst = BF_ONE_MINUS_SRC_ALPHA;
++				break;
++			case PF_Additive:
++			case PF_Subtractive:
++			case PF_ReverseSubtract:
++				g_gl.blendSrc = BF_SRC_ALPHA; // src * alpha + dest
++				g_gl.blendDst = BF_ONE;
++				break;
++			case PF_Environment:
++				g_gl.blendSrc = BF_ONE;
++				g_gl.blendDst = BF_ONE_MINUS_SRC_ALPHA;
++				break;
++			case PF_Multiplicative:
++				g_gl.blendSrc = BF_DST_COLOR;
++				g_gl.blendDst = BF_ZERO;
++				break;
++			default:
++				blending = false;
++				break;
++		}
++
++		if (!blending)
++		{
++			if (flags & PF_Masked)
++			{
++				g_gl.blendSrc = BF_SRC_ALPHA; // 0 alpha = holes in texture
++				g_gl.blendDst = BF_ZERO;
++			}
++			else
++			{
++				g_gl.blendSrc = BF_ONE; // the same as no blending
++				g_gl.blendDst = BF_ZERO;
++			}
++		}
++	}
++
++	// Set blending equation
++	switch (flags & (PF_Blending & ~(PF_Masked | PF_Occlude)))
++	{
++		case PF_Subtractive & PF_Blending:
++			g_gl.blendEquation = BE_SUBTRACT;
++			break;
++		case PF_ReverseSubtract & PF_Blending:
++			g_gl.blendEquation = BE_REVERSE_SUBTRACT;
++			break;
++		default:
++			g_gl.blendEquation = BE_ADD;
++			break;
++	}
++
++	// Alpha test
++	if (flags & PF_Fog)
++	{
++		g_gl.alphaFunc = AF_ALWAYS; // Don't discard zero alpha fragments
++		g_gl.alphaRef = 0.0f;
++	}
++	else
++	{
++		switch (flags & (PF_Blending & ~(PF_Masked | PF_Occlude)))
++		{
++			case PF_Translucent:
++			case PF_Additive:
++			case PF_Subtractive:
++			case PF_ReverseSubtract:
++			case PF_Environment:
++			case PF_Multiplicative:
++				g_gl.alphaFunc = AF_NOTEQUAL;
++				g_gl.alphaRef = 0.0f;
++				break;
++			default:
++				g_gl.alphaFunc = AF_GREATER;
++				g_gl.alphaRef = 0.5f;
++				break;
++		}
++	}
++}
++
++// r_opengl.c's SetBlend
++void D3D_SetBlend(FBITFIELD PolyFlags)
++{
++	const FBITFIELD Xor = g_currentPolyFlags ^ PolyFlags;
++
++	if (Xor & (PF_Blending|PF_RemoveYWrap|PF_ForceWrapX|PF_ForceWrapY|PF_Occlude|PF_NoTexture|PF_Modulated|PF_NoDepthTest|PF_Decal|PF_Invisible))
++	{
++		if (Xor & PF_Blending) // if blending mode must be changed
++			SetBlendMode(PolyFlags & PF_Blending);
++
++		if (Xor & PF_NoAlphaTest)
++			g_gl.alphaTest = !(PolyFlags & PF_NoAlphaTest);
++
++		if (Xor & PF_Decal)
++			g_gl.polygonOffset = (PolyFlags & PF_Decal) != 0;
++
++		if (Xor & PF_NoDepthTest)
++			g_gl.depthAlways = (PolyFlags & PF_NoDepthTest) != 0;
++
++		if ((Xor & PF_RemoveYWrap) && (PolyFlags & PF_RemoveYWrap))
++			SetRepeatT(false);
++
++		if ((Xor & PF_ForceWrapX) && (PolyFlags & PF_ForceWrapX))
++			SetRepeatS(true);
++
++		if ((Xor & PF_ForceWrapY) && (PolyFlags & PF_ForceWrapY))
++			SetRepeatT(true);
++
++		if (Xor & PF_Modulated)
++			g_gl.texEnv = (PolyFlags & PF_Modulated) ? TE_MODULATE : TE_REPLACE;
++
++		if (Xor & PF_Occlude) // depth test but (no) depth write
++			g_gl.depthMask = (PolyFlags & PF_Occlude) != 0;
++
++		if (Xor & PF_Invisible)
++		{
++			if (PolyFlags & PF_Invisible)
++			{
++				g_gl.blendSrc = BF_ZERO; // transparent blending
++				g_gl.blendDst = BF_ONE;
++			}
++			else if ((PolyFlags & PF_Blending) == PF_Masked)
++			{
++				g_gl.blendSrc = BF_SRC_ALPHA;
++				g_gl.blendDst = BF_ZERO;
++			}
++		}
++
++		if (PolyFlags & PF_NoTexture)
++			SetNoTexture(0);
++	}
++	g_currentPolyFlags = PolyFlags;
++}
++
++// ==========================================================================
++//                                                              TEXTURE SETUP
++// ==========================================================================
++
++// Creates the Direct3D texture for a texture object, replacing any it had
++bool CreateTextureStorage(Texture *texture, UINT width, UINT height, DXGI_FORMAT format, bool mipmapped, bool renderTarget,
++	const void *data)
++{
++	D3D11_TEXTURE2D_DESC desc = {};
++	desc.Width = width;
++	desc.Height = height;
++	desc.MipLevels = mipmapped ? 0 : 1;
++	desc.ArraySize = 1;
++	desc.Format = format;
++	desc.SampleDesc.Count = 1;
++	desc.Usage = D3D11_USAGE_DEFAULT;
++	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | ((mipmapped || renderTarget) ? D3D11_BIND_RENDER_TARGET : 0);
++	desc.MiscFlags = mipmapped ? D3D11_RESOURCE_MISC_GENERATE_MIPS : 0;
++
++	D3D11_SUBRESOURCE_DATA initial = {data, width * 4, 0};
++	ComPtr<ID3D11Texture2D> d3dTexture;
++	ComPtr<ID3D11ShaderResourceView> srv;
++
++	if (Failed(g_device->CreateTexture2D(&desc, (data && !mipmapped) ? &initial : nullptr, &d3dTexture), "CreateTexture2D"))
++	{
++		Log("  (texture %ux%u, format %d, mipmapped %d)", width, height, (int)format, (int)mipmapped);
++		return false;
++	}
++	if (Failed(g_device->CreateShaderResourceView(d3dTexture.Get(), nullptr, &srv), "CreateShaderResourceView"))
++		return false;
++
++	if (data && mipmapped)
++	{
++		g_context->UpdateSubresource(d3dTexture.Get(), 0, nullptr, data, width * 4, 0);
++		g_context->GenerateMips(srv.Get());
++	}
++
++	// It might be bound
++	for (ID3D11ShaderResourceView *&bound : g_bound.srvs)
++	{
++		if (texture->srv && bound == texture->srv.Get())
++			bound = nullptr;
++	}
++
++	g_textureBytes -= texture->bytes;
++	texture->texture = d3dTexture;
++	texture->srv = srv;
++	texture->width = width;
++	texture->height = height;
++	texture->format = format;
++	texture->mipmapped = mipmapped;
++	texture->bytes = (UINT64)width * height * 4 * (mipmapped ? 4 : 3) / 3;
++	g_textureBytes += texture->bytes;
++	g_stats.texturesCreated++;
++	return true;
++}
++
++// r_opengl.c's UpdateTexture
++void UpdateTextureInternal(GLMipmap_t *pTexInfo)
++{
++	UINT32 num = pTexInfo->downloaded;
++	const INT32 w = pTexInfo->width, h = pTexInfo->height;
++	const UINT8 *pImgData = (const UINT8 *)pTexInfo->data;
++	const void *ptex = NULL;
++
++	// Generate a new texture name.
++	if (!num || !FindTexture(num))
++	{
++		num = GenTexture();
++		pTexInfo->downloaded = num;
++	}
++
++	if (w > 0 && h > 0 && pImgData)
++	{
++		if ((pTexInfo->format == GL_TEXFMT_P_8) || (pTexInfo->format == GL_TEXFMT_AP_88))
++		{
++			g_textureBuffer.resize((size_t)w * h);
++			RGBA_t *tex = g_textureBuffer.data();
++			ptex = tex;
++
++			for (INT32 j = 0; j < h; j++)
++			{
++				for (INT32 i = 0; i < w; i++)
++				{
++					if ((*pImgData == HWR_PATCHES_CHROMAKEY_COLORINDEX) && (pTexInfo->flags & TF_CHROMAKEYED))
++					{
++						tex[w*j+i].rgba = 0;
++						pTexInfo->flags |= TF_TRANSPARENT; // there is a hole in it
++					}
++					else
++						tex[w*j+i] = g_palette[*pImgData];
++
++					pImgData++;
++
++					if (pTexInfo->format == GL_TEXFMT_AP_88)
++					{
++						if (!(pTexInfo->flags & TF_CHROMAKEYED))
++							tex[w*j+i].s.alpha = *pImgData;
++						pImgData++;
++					}
++				}
++			}
++		}
++		else if (pTexInfo->format == GL_TEXFMT_RGBA)
++		{
++			// Directly upload the texture data without any kind of conversion.
++			ptex = pImgData;
++		}
++		else if (pTexInfo->format == GL_TEXFMT_ALPHA_INTENSITY_88)
++		{
++			g_textureBuffer.resize((size_t)w * h);
++			RGBA_t *tex = g_textureBuffer.data();
++			ptex = tex;
++
++			for (INT32 j = 0; j < h; j++)
++			{
++				for (INT32 i = 0; i < w; i++)
++				{
++					tex[w*j+i].s.red = tex[w*j+i].s.green = tex[w*j+i].s.blue = *pImgData++;
++					tex[w*j+i].s.alpha = *pImgData++;
++				}
++			}
++		}
++		else if (pTexInfo->format == GL_TEXFMT_ALPHA_8) // Used for fade masks
++		{
++			g_textureBuffer.resize((size_t)w * h);
++			RGBA_t *tex = g_textureBuffer.data();
++			ptex = tex;
++
++			for (INT32 j = 0; j < h; j++)
++			{
++				for (INT32 i = 0; i < w; i++)
++				{
++					// 255 because the fade mask is modulated with the screen texture, so alpha affects it while the colours don't
++					tex[w*j+i].s.red = tex[w*j+i].s.green = tex[w*j+i].s.blue = 255;
++					tex[w*j+i].s.alpha = *pImgData++;
++				}
++			}
++		}
++		else
++			LOG_ONCE("UpdateTexture: bad format %d (logged once)", (int)pTexInfo->format);
++	}
++
++	if (!(pTexInfo->flags & TF_BRIGHTMAP))
++	{
++		g_texDownloaded = 0; // force update
++		SetNoTexture(1); // will be assigned later, if needed
++	}
++
++	const int unit = (pTexInfo->flags & TF_BRIGHTMAP) ? 1 : 0;
++	BindTexture(unit, num);
++	g_texDownloaded = num;
++
++	Texture *texture = FindTexture(num);
++
++	// disable texture filtering on any texture that has holes so there's no dumb borders or blending issues
++	if (pTexInfo->flags & TF_TRANSPARENT)
++	{
++		texture->magFilter = FILTER_NEAREST;
++		texture->minFilter = FILTER_NEAREST;
++	}
++	else
++	{
++		texture->magFilter = g_magFilter;
++		texture->minFilter = g_minFilter;
++	}
++
++	if (ptex)
++	{
++		const bool mipmapped = g_mipmap;
++
++		if (texture->texture && texture->width == (UINT)w && texture->height == (UINT)h && texture->mipmapped == mipmapped)
++		{
++			g_context->UpdateSubresource(texture->texture.Get(), 0, nullptr, ptex, w * 4, 0);
++			if (mipmapped)
++				g_context->GenerateMips(texture->srv.Get());
++		}
++		else
++			CreateTextureStorage(texture, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, mipmapped, false, ptex);
++
++		g_stats.textureUploads++;
++		g_stats.textureUploadBytes += (INT64)w * h * 4;
++
++		if (mipmapped)
++		{
++			if (pTexInfo->flags & TF_TRANSPARENT)
++				texture->maxLod = 0.0f; // No mippmaps on transparent stuff
++			else
++				texture->maxLod = (pTexInfo->format == GL_TEXFMT_ALPHA_INTENSITY_88 || pTexInfo->format == GL_TEXFMT_ALPHA_8) ? 4.0f : 5.0f;
++		}
++	}
++
++	texture->repeatS = (pTexInfo->flags & TF_WRAPX) != 0;
++	texture->repeatT = (pTexInfo->flags & TF_WRAPY) != 0;
++	texture->anisotropy = g_anisotropicFilter;
++	texture->sampler = nullptr;
++}
++
++// r_opengl.c's SetTexture
++void SetTextureInternal(GLMipmap_t *pTexInfo)
++{
++	if (!pTexInfo)
++	{
++		SetNoTexture(0);
++		return;
++	}
++	else if (pTexInfo->downloaded)
++	{
++		if (pTexInfo->downloaded != g_texDownloaded)
++		{
++			if (!(pTexInfo->flags & TF_BRIGHTMAP))
++			{
++				g_texDownloaded = 0; // force update
++				SetNoTexture(1); // will be assigned later, if needed
++			}
++
++			BindTexture((pTexInfo->flags & TF_BRIGHTMAP) ? 1 : 0, pTexInfo->downloaded);
++			g_texDownloaded = pTexInfo->downloaded;
++		}
++	}
++	else
++	{
++		UpdateTextureInternal(pTexInfo);
++
++		Texture *texture = FindTexture(pTexInfo->downloaded);
++		if (texture)
++		{
++			texture->listed = true;
++			texture->mipmap = pTexInfo;
++			texture->listFormat = pTexInfo->format;
++			texture->listWidth = pTexInfo->width;
++			texture->listHeight = pTexInfo->height;
++		}
++	}
++}
++
++// r_opengl.c's Flush
++void Flush()
++{
++	std::vector<UINT32> names;
++
++	for (auto &entry : g_textures)
++	{
++		if (entry.second.listed)
++			names.push_back(entry.first);
++	}
++
++	for (UINT32 name : names)
++	{
++		Texture *texture = FindTexture(name);
++		if (texture->mipmap)
++			texture->mipmap->downloaded = 0;
++		DeleteTextureObject(name);
++	}
++
++	g_texDownloaded = 0;
++	g_textureBuffer.clear();
++	g_textureBuffer.shrink_to_fit();
++	g_stats.flushes++;
++}
++
++// ==========================================================================
++//                                                            SCREEN TEXTURES
++// ==========================================================================
++
++UINT32 g_screenTexture = 0, g_startScreenWipe = 0, g_endScreenWipe = 0, g_finalScreenTexture = 0;
++
++int ScreenTextureSize()
++{
++	// Use a power of two texture, dammit
++	if (g_screenWidth <= 512)
++		return 512;
++	else if (g_screenWidth <= 1024)
++		return 1024;
++	return 2048;
++}
++
++// glCopyTexImage2D or glCopyTexSubImage2D of the bottom-left of the screen to a texture texsize pixels square.
++// Direct3D's rows go down, so here the screen's top-left goes to the texture's top-left, and drawing it needs t
++// flipped.
++void CopyScreenToTexture(UINT32 &name)
++{
++	const int texsize = ScreenTextureSize();
++	const bool firstTime = (name == 0) || !FindTexture(name);
++
++	if (firstTime)
++		name = GenTexture();
++
++	BindTexture(0, name);
++	Texture *texture = FindTexture(name);
++
++	if (firstTime)
++	{
++		texture->magFilter = texture->minFilter = FILTER_NEAREST;
++		texture->repeatS = texture->repeatT = false;
++		texture->sampler = nullptr;
++	}
++
++	if (!texture->texture || texture->width != (UINT)texsize || texture->format != g_rtFormat)
++	{
++		if (!CreateTextureStorage(texture, texsize, texsize, g_rtFormat, false, false, nullptr))
++			return;
++	}
++
++	if (g_rt)
++	{
++		D3D11_BOX box;
++		box.left = 0;
++		box.top = 0;
++		box.front = 0;
++		box.right = std::min<UINT>(g_rtWidth, texsize);
++		box.bottom = std::min<UINT>(g_rtHeight, texsize);
++		box.back = 1;
++		g_context->CopySubresourceRegion(texture->texture.Get(), 0, 0, 0, 0, g_rt.Get(), 0, &box);
++	}
++	g_stats.screens++;
++}
++
++// Draws a quad of the screen's texture with OpenGL's texture coordinates, whose t goes up from the bottom of the
++// screen, at yfix
++void DrawScreenQuad(const float vertices[12], const float st[8], float yfix, bool wipe = false)
++{
++	FOutVector v[4];
++
++	for (int i = 0; i < 4; i++)
++	{
++		v[i].x = vertices[i*3];
++		v[i].y = vertices[i*3 + 1];
++		v[i].z = vertices[i*3 + 2];
++		v[i].s = st[i*2];
++		v[i].t = yfix - st[i*2 + 1];
++	}
++
++	DrawArrays(LAYOUT_POLY, PRIM_FAN, v, 4, wipe);
++}
++
++void ClearScreenColor()
++{
++	if (!g_rtv)
++		return;
++	// The screen's alpha stays 1 (see GetBlendState)
++	const float color[4] = {g_gl.clearColor[0], g_gl.clearColor[1], g_gl.clearColor[2], 1.0f};
++	g_context->ClearRenderTargetView(g_rtv.Get(), color);
++}
++
++void ClearScreenDepth()
++{
++	if (g_dsv)
++		g_context->ClearDepthStencilView(g_dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
++}
++
++// ==========================================================================
++//                                                               RENDER TARGET
++// ==========================================================================
++
++void UnbindAll()
++{
++	g_context->ClearState();
++	g_bound = Bound();
++	g_constantsValid = false;
++}
++
++void BindRenderTarget()
++{
++	ID3D11RenderTargetView *rtv = g_rtv.Get();
++	ID3D11Buffer *constants = g_constantBuffer.Get();
++
++	g_context->OMSetRenderTargets(1, &rtv, g_dsv.Get());
++	g_context->VSSetConstantBuffers(0, 1, &constants);
++	g_context->PSSetConstantBuffers(0, 1, &constants);
++}
++
++bool CreateRenderTarget(UINT width, UINT height)
++{
++	if (g_rt && g_rtWidth == width && g_rtHeight == height && g_rtCreatedFormat == g_rtFormat)
++		return true;
++
++	UnbindAll();
++	g_rt.Reset();
++	g_rtv.Reset();
++	g_depth.Reset();
++	g_dsv.Reset();
++	g_rtWidth = g_rtHeight = 0;
++
++	D3D11_TEXTURE2D_DESC desc = {};
++	desc.Width = width;
++	desc.Height = height;
++	desc.MipLevels = 1;
++	desc.ArraySize = 1;
++	desc.Format = g_rtFormat;
++	desc.SampleDesc.Count = 1;
++	desc.Usage = D3D11_USAGE_DEFAULT;
++	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
++
++	if (Failed(g_device->CreateTexture2D(&desc, nullptr, &g_rt), "CreateTexture2D (screen)")
++		|| Failed(g_device->CreateRenderTargetView(g_rt.Get(), nullptr, &g_rtv), "CreateRenderTargetView (screen)"))
++	{
++		g_rt.Reset();
++		return false;
++	}
++
++	desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
++	desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
++	if (Failed(g_device->CreateTexture2D(&desc, nullptr, &g_depth), "CreateTexture2D (depth)")
++		|| Failed(g_device->CreateDepthStencilView(g_depth.Get(), nullptr, &g_dsv), "CreateDepthStencilView"))
++	{
++		g_rt.Reset();
++		g_rtv.Reset();
++		return false;
++	}
++
++	g_rtWidth = width;
++	g_rtHeight = height;
++	g_rtCreatedFormat = g_rtFormat;
++	BindRenderTarget();
++
++	const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
++	g_context->ClearRenderTargetView(g_rtv.Get(), black);
++	ClearScreenDepth();
++
++	Log("render target %ux%u (format %d)", width, height, (int)g_rtFormat);
++	return true;
++}
++
++// ==========================================================================
++//                                                                 PRESENTING
++// ==========================================================================
++
++// EGL and OpenGL ES, loaded at runtime from ANGLE
++typedef void *EGLDisplay;
++typedef void *EGLConfig;
++typedef void *EGLSurface;
++typedef void *EGLClientBuffer;
++typedef void *EGLDeviceEXT;
++typedef int32_t EGLint;
++typedef unsigned int EGLBoolean;
++typedef unsigned int EGLenum;
++typedef intptr_t EGLAttrib;
++
++constexpr EGLint EGL_ALPHA_SIZE = 0x3021;
++constexpr EGLint EGL_BLUE_SIZE = 0x3022;
++constexpr EGLint EGL_GREEN_SIZE = 0x3023;
++constexpr EGLint EGL_RED_SIZE = 0x3024;
++constexpr EGLint EGL_DEPTH_SIZE = 0x3025;
++constexpr EGLint EGL_CONFIG_ID = 0x3028;
++constexpr EGLint EGL_NATIVE_VISUAL_ID = 0x302E;
++constexpr EGLint EGL_SURFACE_TYPE = 0x3033;
++constexpr EGLint EGL_NONE = 0x3038;
++constexpr EGLint EGL_BIND_TO_TEXTURE_RGBA = 0x303A;
++constexpr EGLint EGL_RENDERABLE_TYPE = 0x3040;
++constexpr EGLint EGL_VENDOR = 0x3053;
++constexpr EGLint EGL_VERSION = 0x3054;
++constexpr EGLint EGL_EXTENSIONS = 0x3055;
++constexpr EGLint EGL_HEIGHT = 0x3056;
++constexpr EGLint EGL_WIDTH = 0x3057;
++constexpr EGLint EGL_TEXTURE_RGBA = 0x305E;
++constexpr EGLint EGL_TEXTURE_2D = 0x305F;
++constexpr EGLint EGL_TEXTURE_FORMAT = 0x3080;
++constexpr EGLint EGL_TEXTURE_TARGET = 0x3081;
++constexpr EGLint EGL_BACK_BUFFER = 0x3084;
++constexpr EGLint EGL_PBUFFER_BIT = 0x0001;
++constexpr EGLint EGL_OPENGL_ES2_BIT = 0x0004;
++constexpr EGLint EGL_TRUE = 1;
++constexpr EGLenum EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE = 0x3200;
++constexpr EGLint EGL_DEVICE_EXT = 0x322C;
++constexpr EGLint EGL_D3D11_DEVICE_ANGLE = 0x33A1;
++
++#define EGLAPIENTRY WINAPI
++using PFNEGLGETCURRENTDISPLAY = EGLDisplay (EGLAPIENTRY *)(void);
++using PFNEGLQUERYSTRING = const char *(EGLAPIENTRY *)(EGLDisplay, EGLint);
++using PFNEGLCHOOSECONFIG = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
++using PFNEGLGETCONFIGATTRIB = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLConfig, EGLint, EGLint *);
++using PFNEGLCREATEPBUFFERFROMCLIENTBUFFER = EGLSurface (EGLAPIENTRY *)(EGLDisplay, EGLenum, EGLClientBuffer, EGLConfig, const EGLint *);
++using PFNEGLDESTROYSURFACE = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface);
++using PFNEGLBINDTEXIMAGE = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface, EGLint);
++using PFNEGLGETERROR = EGLint (EGLAPIENTRY *)(void);
++using PFNEGLGETPROCADDRESS = void *(EGLAPIENTRY *)(const char *);
++using PFNEGLQUERYDISPLAYATTRIBEXT = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLint, EGLAttrib *);
++using PFNEGLQUERYDEVICEATTRIBEXT = EGLBoolean (EGLAPIENTRY *)(EGLDeviceEXT, EGLint, EGLAttrib *);
++
++struct Egl
++{
++	bool loaded = false;
++	PFNEGLGETCURRENTDISPLAY GetCurrentDisplay = nullptr;
++	PFNEGLQUERYSTRING QueryString = nullptr;
++	PFNEGLCHOOSECONFIG ChooseConfig = nullptr;
++	PFNEGLGETCONFIGATTRIB GetConfigAttrib = nullptr;
++	PFNEGLCREATEPBUFFERFROMCLIENTBUFFER CreatePbufferFromClientBuffer = nullptr;
++	PFNEGLDESTROYSURFACE DestroySurface = nullptr;
++	PFNEGLBINDTEXIMAGE BindTexImage = nullptr;
++	PFNEGLBINDTEXIMAGE ReleaseTexImage = nullptr;
++	PFNEGLGETERROR GetError = nullptr;
++	PFNEGLGETPROCADDRESS GetProcAddress = nullptr;
++	PFNEGLQUERYDISPLAYATTRIBEXT QueryDisplayAttribEXT = nullptr;
++	PFNEGLQUERYDEVICEATTRIBEXT QueryDeviceAttribEXT = nullptr;
++};
++Egl egl;
++
++void *GetEglFunction(HMODULE module, const char *name)
++{
++	void *function = module ? reinterpret_cast<void *>(::GetProcAddress(module, name)) : nullptr;
++
++	if (!function && egl.GetProcAddress)
++		function = egl.GetProcAddress(name);
++	if (!function)
++		function = SDL_GL_GetProcAddress(name);
++	return function;
++}
++
++bool LoadEgl()
++{
++	if (egl.loaded)
++		return egl.GetCurrentDisplay != nullptr;
++	egl.loaded = true;
++
++	HMODULE module = GetModuleHandleW(L"libEGL.dll");
++	if (!module)
++		Log("libEGL.dll isn't loaded (%lu); looking up EGL through SDL", (unsigned long)GetLastError());
++
++#define LOADEGL(member, name) *reinterpret_cast<void **>(&egl.member) = GetEglFunction(module, name)
++	LOADEGL(GetProcAddress, "eglGetProcAddress");
++	LOADEGL(GetCurrentDisplay, "eglGetCurrentDisplay");
++	LOADEGL(QueryString, "eglQueryString");
++	LOADEGL(ChooseConfig, "eglChooseConfig");
++	LOADEGL(GetConfigAttrib, "eglGetConfigAttrib");
++	LOADEGL(CreatePbufferFromClientBuffer, "eglCreatePbufferFromClientBuffer");
++	LOADEGL(DestroySurface, "eglDestroySurface");
++	LOADEGL(BindTexImage, "eglBindTexImage");
++	LOADEGL(ReleaseTexImage, "eglReleaseTexImage");
++	LOADEGL(GetError, "eglGetError");
++	LOADEGL(QueryDisplayAttribEXT, "eglQueryDisplayAttribEXT");
++	LOADEGL(QueryDeviceAttribEXT, "eglQueryDeviceAttribEXT");
++#undef LOADEGL
++
++	Log("EGL functions: GetCurrentDisplay %d, ChooseConfig %d, CreatePbufferFromClientBuffer %d, BindTexImage %d, "
++		"QueryDisplayAttribEXT %d, QueryDeviceAttribEXT %d",
++		egl.GetCurrentDisplay != nullptr, egl.ChooseConfig != nullptr, egl.CreatePbufferFromClientBuffer != nullptr,
++		egl.BindTexImage != nullptr, egl.QueryDisplayAttribEXT != nullptr, egl.QueryDeviceAttribEXT != nullptr);
++	return egl.GetCurrentDisplay != nullptr;
++}
++
++// OpenGL ES 2
++typedef unsigned int GLenum;
++typedef unsigned int GLuint;
++typedef int GLint;
++typedef int GLsizei;
++typedef unsigned char GLboolean;
++typedef float GLfloat;
++typedef char GLchar;
++typedef ptrdiff_t GLsizeiptr;
++typedef unsigned int GLbitfield;
++
++constexpr GLenum GL_TRIANGLE_STRIP = 0x0005;
++constexpr GLenum GL_CULL_FACE = 0x0B44;
++constexpr GLenum GL_DEPTH_TEST = 0x0B71;
++constexpr GLenum GL_STENCIL_TEST = 0x0B90;
++constexpr GLenum GL_VIEWPORT = 0x0BA2;
++constexpr GLenum GL_BLEND = 0x0BE2;
++constexpr GLenum GL_SCISSOR_TEST = 0x0C11;
++constexpr GLenum GL_COLOR_CLEAR_VALUE = 0x0C22;
++constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
++constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
++constexpr GLenum GL_TEXTURE_2D = 0x0DE1;
++constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
++constexpr GLenum GL_FLOAT = 0x1406;
++constexpr GLenum GL_RGBA = 0x1908;
++constexpr GLenum GL_NEAREST = 0x2600;
++constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
++constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
++constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
++constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
++constexpr GLenum GL_COLOR_BUFFER_BIT = 0x4000;
++constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
++constexpr GLenum GL_BGRA_EXT = 0x80E1;
++constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
++constexpr GLenum GL_TEXTURE0 = 0x84C0;
++constexpr GLenum GL_ACTIVE_TEXTURE = 0x84E0;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_ENABLED = 0x8622;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_SIZE = 0x8623;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_STRIDE = 0x8624;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_TYPE = 0x8625;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_POINTER = 0x8645;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_NORMALIZED = 0x886A;
++constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
++constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING = 0x889F;
++constexpr GLenum GL_STATIC_DRAW = 0x88E4;
++constexpr GLenum GL_FRAGMENT_SHADER = 0x8B30;
++constexpr GLenum GL_VERTEX_SHADER = 0x8B31;
++constexpr GLenum GL_COMPILE_STATUS = 0x8B81;
++constexpr GLenum GL_LINK_STATUS = 0x8B82;
++constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
++constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
++constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
++
++#define GLAPIENTRY WINAPI
++struct Gles
++{
++	bool loaded = false;
++	void (GLAPIENTRY *ActiveTexture)(GLenum);
++	void (GLAPIENTRY *AttachShader)(GLuint, GLuint);
++	void (GLAPIENTRY *BindAttribLocation)(GLuint, GLuint, const GLchar *);
++	void (GLAPIENTRY *BindBuffer)(GLenum, GLuint);
++	void (GLAPIENTRY *BindFramebuffer)(GLenum, GLuint);
++	void (GLAPIENTRY *BindTexture)(GLenum, GLuint);
++	void (GLAPIENTRY *BufferData)(GLenum, GLsizeiptr, const void *, GLenum);
++	void (GLAPIENTRY *Clear)(GLbitfield);
++	void (GLAPIENTRY *ClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
++	void (GLAPIENTRY *ColorMask)(GLboolean, GLboolean, GLboolean, GLboolean);
++	void (GLAPIENTRY *CompileShader)(GLuint);
++	GLuint (GLAPIENTRY *CreateProgram)(void);
++	GLuint (GLAPIENTRY *CreateShader)(GLenum);
++	void (GLAPIENTRY *DeleteShader)(GLuint);
++	void (GLAPIENTRY *DeleteTextures)(GLsizei, const GLuint *);
++	void (GLAPIENTRY *Disable)(GLenum);
++	void (GLAPIENTRY *DisableVertexAttribArray)(GLuint);
++	void (GLAPIENTRY *DrawArrays)(GLenum, GLint, GLsizei);
++	void (GLAPIENTRY *Enable)(GLenum);
++	void (GLAPIENTRY *EnableVertexAttribArray)(GLuint);
++	void (GLAPIENTRY *GenBuffers)(GLsizei, GLuint *);
++	void (GLAPIENTRY *GenTextures)(GLsizei, GLuint *);
++	void (GLAPIENTRY *GetBooleanv)(GLenum, GLboolean *);
++	GLenum (GLAPIENTRY *GetError)(void);
++	void (GLAPIENTRY *GetFloatv)(GLenum, GLfloat *);
++	void (GLAPIENTRY *GetIntegerv)(GLenum, GLint *);
++	void (GLAPIENTRY *GetProgramiv)(GLuint, GLenum, GLint *);
++	void (GLAPIENTRY *GetShaderInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
++	void (GLAPIENTRY *GetShaderiv)(GLuint, GLenum, GLint *);
++	GLint (GLAPIENTRY *GetUniformLocation)(GLuint, const GLchar *);
++	void (GLAPIENTRY *GetVertexAttribiv)(GLuint, GLenum, GLint *);
++	void (GLAPIENTRY *GetVertexAttribPointerv)(GLuint, GLenum, void **);
++	GLboolean (GLAPIENTRY *IsEnabled)(GLenum);
++	void (GLAPIENTRY *LinkProgram)(GLuint);
++	void (GLAPIENTRY *PixelStorei)(GLenum, GLint);
++	void (GLAPIENTRY *ShaderSource)(GLuint, GLsizei, const GLchar *const *, const GLint *);
++	void (GLAPIENTRY *TexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
++	void (GLAPIENTRY *TexParameteri)(GLenum, GLenum, GLint);
++	void (GLAPIENTRY *TexSubImage2D)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void *);
++	void (GLAPIENTRY *Uniform1i)(GLint, GLint);
++	void (GLAPIENTRY *UseProgram)(GLuint);
++	void (GLAPIENTRY *VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void *);
++	void (GLAPIENTRY *Viewport)(GLint, GLint, GLsizei, GLsizei);
++};
++Gles gl;
++
++bool LoadGles()
++{
++	if (gl.loaded)
++		return true;
++
++	bool ok = true;
++#define LOADGL(name) \
++	if (!(*reinterpret_cast<void **>(&gl.name) = SDL_GL_GetProcAddress("gl" #name))) \
++	{ \
++		Log("couldn't find gl" #name); \
++		ok = false; \
++	}
++	LOADGL(ActiveTexture)
++	LOADGL(AttachShader)
++	LOADGL(BindAttribLocation)
++	LOADGL(BindBuffer)
++	LOADGL(BindFramebuffer)
++	LOADGL(BindTexture)
++	LOADGL(BufferData)
++	LOADGL(Clear)
++	LOADGL(ClearColor)
++	LOADGL(ColorMask)
++	LOADGL(CompileShader)
++	LOADGL(CreateProgram)
++	LOADGL(CreateShader)
++	LOADGL(DeleteShader)
++	LOADGL(DeleteTextures)
++	LOADGL(Disable)
++	LOADGL(DisableVertexAttribArray)
++	LOADGL(DrawArrays)
++	LOADGL(Enable)
++	LOADGL(EnableVertexAttribArray)
++	LOADGL(GenBuffers)
++	LOADGL(GenTextures)
++	LOADGL(GetBooleanv)
++	LOADGL(GetError)
++	LOADGL(GetFloatv)
++	LOADGL(GetIntegerv)
++	LOADGL(GetProgramiv)
++	LOADGL(GetShaderInfoLog)
++	LOADGL(GetShaderiv)
++	LOADGL(GetUniformLocation)
++	LOADGL(GetVertexAttribiv)
++	LOADGL(GetVertexAttribPointerv)
++	LOADGL(IsEnabled)
++	LOADGL(LinkProgram)
++	LOADGL(PixelStorei)
++	LOADGL(ShaderSource)
++	LOADGL(TexImage2D)
++	LOADGL(TexParameteri)
++	LOADGL(TexSubImage2D)
++	LOADGL(Uniform1i)
++	LOADGL(UseProgram)
++	LOADGL(VertexAttribPointer)
++	LOADGL(Viewport)
++#undef LOADGL
++
++	gl.loaded = ok;
++	return ok;
++}
++
++constexpr int kPresentSlots = 4;
++
++struct PresentSlot
++{
++	ComPtr<ID3D11Texture2D> texture; // shared with ANGLE, or a staging texture to read back
++	EGLSurface surface = nullptr;
++	GLuint glTexture = 0;
++	ComPtr<ID3D11Query> copied;
++	ComPtr<ID3D11Query> disjoint, begin, end; // the GPU time of the frame
++	bool timing = false;
++};
++
++struct Presenter
++{
++	bool probed = false;
++	bool shared = false; // through a texture shared with ANGLE, rather than read back
++	EGLDisplay display = nullptr;
++	EGLConfig config = nullptr;
++	PresentSlot slots[kPresentSlots];
++	UINT width = 0, height = 0;
++	UINT64 frame = 0;
++	GLuint program = 0;
++	GLuint quad = 0;
++	float quadSize[2] = {0.0f, 0.0f};
++	std::vector<BYTE> readback;
++	bool vsync = false;
++	bool vsyncSet = false;
++	bool failed = false; // couldn't set up presenting, so stop trying
++};
++Presenter g_present;
++
++const char *DescribeFormat(DXGI_FORMAT format)
++{
++	switch (format)
++	{
++		case DXGI_FORMAT_R8G8B8A8_UNORM: return "R8G8B8A8";
++		case DXGI_FORMAT_B8G8R8A8_UNORM: return "B8G8R8A8";
++		default: return "other";
++	}
++}
++
++bool CreateSharedTexture(UINT width, UINT height, DXGI_FORMAT format, ComPtr<ID3D11Texture2D> &texture, HANDLE *handle)
++{
++	D3D11_TEXTURE2D_DESC desc = {};
++	desc.Width = width;
++	desc.Height = height;
++	desc.MipLevels = 1;
++	desc.ArraySize = 1;
++	desc.Format = format;
++	desc.SampleDesc.Count = 1;
++	desc.Usage = D3D11_USAGE_DEFAULT;
++	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
++	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
++
++	texture.Reset();
++	if (Failed(g_device->CreateTexture2D(&desc, nullptr, &texture), "CreateTexture2D (shared)"))
++		return false;
++
++	ComPtr<IDXGIResource> resource;
++	if (Failed(texture.As(&resource), "QueryInterface IDXGIResource")
++		|| Failed(resource->GetSharedHandle(handle), "GetSharedHandle"))
++	{
++		texture.Reset();
++		return false;
++	}
++	return true;
++}
++
++EGLSurface CreatePbuffer(HANDLE handle, EGLConfig config, UINT width, UINT height)
++{
++	const EGLint attributes[] =
++	{
++		EGL_WIDTH, (EGLint)width,
++		EGL_HEIGHT, (EGLint)height,
++		EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
++		EGL_TEXTURE_TARGET, EGL_TEXTURE_2D,
++		EGL_NONE,
++	};
++	return egl.CreatePbufferFromClientBuffer(g_present.display, EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, handle, config, attributes);
++}
++
++// Finds an EGL config and texture format that ANGLE opens shared textures with. Call with ANGLE's context current.
++void ProbeSharing()
++{
++	if (g_present.probed)
++		return;
++
++	if (!LoadEgl() || !egl.ChooseConfig || !egl.CreatePbufferFromClientBuffer || !egl.BindTexImage)
++	{
++		g_present.probed = true;
++		Log("presenting by reading frames back: EGL functions are missing");
++		return;
++	}
++
++	g_present.display = egl.GetCurrentDisplay();
++	if (!g_present.display)
++	{
++		// Try again when presenting
++		LOG_ONCE("no current EGL display yet");
++		return;
++	}
++	g_present.probed = true;
++
++	const char *extensions = egl.QueryString ? egl.QueryString(g_present.display, EGL_EXTENSIONS) : nullptr;
++	Log("EGL vendor %s, version %s", egl.QueryString ? egl.QueryString(g_present.display, EGL_VENDOR) : "?",
++		egl.QueryString ? egl.QueryString(g_present.display, EGL_VERSION) : "?");
++	Log("EGL extensions: %s", extensions ? extensions : "(none)");
++
++	const EGLint attributes[] =
++	{
++		EGL_RED_SIZE, 8,
++		EGL_GREEN_SIZE, 8,
++		EGL_BLUE_SIZE, 8,
++		EGL_ALPHA_SIZE, 8,
++		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++		EGL_BIND_TO_TEXTURE_RGBA, EGL_TRUE,
++		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++		EGL_NONE,
++	};
++	EGLConfig configs[64];
++	EGLint count = 0;
++
++	if (!egl.ChooseConfig(g_present.display, attributes, configs, 64, &count) || count <= 0)
++	{
++		Log("presenting by reading frames back: no RGBA8 pbuffer config (EGL error 0x%X)", egl.GetError ? egl.GetError() : 0);
++		return;
++	}
++
++	for (EGLint i = 0; i < count && egl.GetConfigAttrib; i++)
++	{
++		EGLint id = 0, visual = 0, depth = 0;
++		egl.GetConfigAttrib(g_present.display, configs[i], EGL_CONFIG_ID, &id);
++		egl.GetConfigAttrib(g_present.display, configs[i], EGL_NATIVE_VISUAL_ID, &visual);
++		egl.GetConfigAttrib(g_present.display, configs[i], EGL_DEPTH_SIZE, &depth);
++		Log("pbuffer config %d: id %d, native visual 0x%X, depth %d", (int)i, (int)id, (unsigned)visual, (int)depth);
++	}
++
++	const DXGI_FORMAT formats[] = {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM};
++	constexpr UINT kProbeSize = 64;
++
++	for (DXGI_FORMAT format : formats)
++	{
++		UINT support = 0;
++		g_device->CheckFormatSupport(format, &support);
++		if (!(support & D3D11_FORMAT_SUPPORT_RENDER_TARGET))
++		{
++			Log("%s can't be rendered to (support 0x%X)", DescribeFormat(format), support);
++			continue;
++		}
++
++		ComPtr<ID3D11Texture2D> texture;
++		HANDLE handle = nullptr;
++		if (!CreateSharedTexture(kProbeSize, kProbeSize, format, texture, &handle))
++			continue;
++
++		for (EGLint i = 0; i < count; i++)
++		{
++			EGLSurface surface = CreatePbuffer(handle, configs[i], kProbeSize, kProbeSize);
++			if (surface)
++			{
++				egl.DestroySurface(g_present.display, surface);
++				g_present.config = configs[i];
++				g_present.shared = true;
++				g_rtFormat = format;
++				Log("presenting through a texture shared with ANGLE: %s, pbuffer config %d", DescribeFormat(format), (int)i);
++				return;
++			}
++			Log("ANGLE couldn't open a shared %s texture with config %d (EGL error 0x%X)", DescribeFormat(format), (int)i,
++				egl.GetError ? egl.GetError() : 0);
++		}
++	}
++
++	Log("presenting by reading frames back: ANGLE couldn't open any shared texture");
++}
++
++void DestroySlots()
++{
++	for (PresentSlot &slot : g_present.slots)
++	{
++		if (slot.surface)
++		{
++			if (slot.glTexture)
++			{
++				gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++				egl.ReleaseTexImage(g_present.display, slot.surface, EGL_BACK_BUFFER);
++			}
++			egl.DestroySurface(g_present.display, slot.surface);
++		}
++		if (slot.glTexture)
++			gl.DeleteTextures(1, &slot.glTexture);
++		slot = PresentSlot();
++	}
++	g_present.width = g_present.height = 0;
++}
++
++bool CreateQuery(D3D11_QUERY type, ComPtr<ID3D11Query> &query)
++{
++	D3D11_QUERY_DESC desc = {type, 0};
++	return !Failed(g_device->CreateQuery(&desc, &query), "CreateQuery");
++}
++
++// Makes the textures frames are presented from, at the size of the screen. Call with ANGLE's context current.
++bool CreateSlots(UINT width, UINT height)
++{
++	GLint previousTexture = 0;
++
++	DestroySlots();
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
++
++	for (PresentSlot &slot : g_present.slots)
++	{
++		if (!CreateQuery(D3D11_QUERY_EVENT, slot.copied))
++			return false;
++		CreateQuery(D3D11_QUERY_TIMESTAMP_DISJOINT, slot.disjoint);
++		CreateQuery(D3D11_QUERY_TIMESTAMP, slot.begin);
++		CreateQuery(D3D11_QUERY_TIMESTAMP, slot.end);
++
++		gl.GenTextures(1, &slot.glTexture);
++		gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++		// Like DrawScreenFinalTexture's
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++
++		if (g_present.shared)
++		{
++			HANDLE handle = nullptr;
++			if (!CreateSharedTexture(width, height, g_rtFormat, slot.texture, &handle))
++				return false;
++
++			slot.surface = CreatePbuffer(handle, g_present.config, width, height);
++			if (!slot.surface)
++			{
++				Log("ANGLE couldn't open the %ux%u shared texture (EGL error 0x%X)", width, height, egl.GetError ? egl.GetError() : 0);
++				return false;
++			}
++			// The texture's storage stays the shared texture's, so it shows whatever was last copied to it
++			if (!egl.BindTexImage(g_present.display, slot.surface, EGL_BACK_BUFFER))
++			{
++				Log("eglBindTexImage failed (EGL error 0x%X)", egl.GetError ? egl.GetError() : 0);
++				return false;
++			}
++		}
++		else
++		{
++			D3D11_TEXTURE2D_DESC desc = {};
++			desc.Width = width;
++			desc.Height = height;
++			desc.MipLevels = 1;
++			desc.ArraySize = 1;
++			desc.Format = g_rtFormat;
++			desc.SampleDesc.Count = 1;
++			desc.Usage = D3D11_USAGE_STAGING;
++			desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++			if (Failed(g_device->CreateTexture2D(&desc, nullptr, &slot.texture), "CreateTexture2D (readback)"))
++				return false;
++			const GLenum format = g_rtFormat == DXGI_FORMAT_B8G8R8A8_UNORM ? GL_BGRA_EXT : GL_RGBA;
++			gl.TexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, nullptr);
++		}
++	}
++
++	gl.BindTexture(GL_TEXTURE_2D, previousTexture);
++	g_present.width = width;
++	g_present.height = height;
++	g_present.frame = 0;
++
++	const GLenum error = gl.GetError();
++	Log("made %d %ux%u presentation textures (%s; GL error 0x%X)", kPresentSlots, width, height,
++		g_present.shared ? "shared" : "read back", error);
++	return true;
++}
++
++GLuint CompileGlShader(GLenum type, const char *source)
++{
++	GLuint shader = gl.CreateShader(type);
++	GLint status = 0;
++
++	gl.ShaderSource(shader, 1, &source, nullptr);
++	gl.CompileShader(shader);
++	gl.GetShaderiv(shader, GL_COMPILE_STATUS, &status);
++	if (!status)
++	{
++		char info[1024] = "";
++		gl.GetShaderInfoLog(shader, sizeof info, nullptr, info);
++		Log("presentation shader didn't compile: %s", info);
++		gl.DeleteShader(shader);
++		return 0;
++	}
++	return shader;
++}
++
++bool CreatePresentProgram()
++{
++	static const char *vertexSource =
++		"attribute vec2 a_position;\n"
++		"attribute vec2 a_texcoord;\n"
++		"varying vec2 v_texcoord;\n"
++		"void main()\n"
++		"{\n"
++		"	v_texcoord = a_texcoord;\n"
++		"	gl_Position = vec4(a_position, 0.0, 1.0);\n"
++		"}\n";
++	static const char *fragmentSource =
++		"precision mediump float;\n"
++		"uniform sampler2D u_texture;\n"
++		"varying vec2 v_texcoord;\n"
++		"void main()\n"
++		"{\n"
++		"	gl_FragColor = vec4(texture2D(u_texture, v_texcoord).rgb, 1.0);\n"
++		"}\n";
++
++	if (g_present.program)
++		return true;
++
++	GLuint vertex = CompileGlShader(GL_VERTEX_SHADER, vertexSource);
++	GLuint fragment = CompileGlShader(GL_FRAGMENT_SHADER, fragmentSource);
++	if (!vertex || !fragment)
++		return false;
++
++	GLuint program = gl.CreateProgram();
++	GLint status = 0, previousProgram = 0;
++
++	gl.AttachShader(program, vertex);
++	gl.AttachShader(program, fragment);
++	gl.BindAttribLocation(program, 0, "a_position");
++	gl.BindAttribLocation(program, 1, "a_texcoord");
++	gl.LinkProgram(program);
++	gl.DeleteShader(vertex);
++	gl.DeleteShader(fragment);
++	gl.GetProgramiv(program, GL_LINK_STATUS, &status);
++	if (!status)
++	{
++		Log("presentation shader didn't link");
++		return false;
++	}
++
++	gl.GetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
++	gl.UseProgram(program);
++	gl.Uniform1i(gl.GetUniformLocation(program, "u_texture"), 0);
++	gl.UseProgram(previousProgram);
++
++	g_present.program = program;
++	gl.GenBuffers(1, &g_present.quad);
++	return true;
++}
++
++// The OpenGL ES state of the GL2 RHI that presenting changes, to put it back
++struct SavedGlState
++{
++	GLint program, activeTexture, texture, arrayBuffer, framebuffer, viewport[4], unpackAlignment;
++	GLboolean blend, depthTest, scissorTest, cullFace, stencilTest, colorMask[4];
++	GLfloat clearColor[4];
++	struct
++	{
++		GLint enabled, size, type, normalized, stride, buffer;
++		void *pointer;
++	} attributes[2];
++};
++
++void SaveGlState(SavedGlState &s)
++{
++	gl.GetIntegerv(GL_CURRENT_PROGRAM, &s.program);
++	gl.GetIntegerv(GL_ACTIVE_TEXTURE, &s.activeTexture);
++	gl.ActiveTexture(GL_TEXTURE0);
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &s.texture);
++	gl.GetIntegerv(GL_ARRAY_BUFFER_BINDING, &s.arrayBuffer);
++	gl.GetIntegerv(GL_FRAMEBUFFER_BINDING, &s.framebuffer);
++	gl.GetIntegerv(GL_VIEWPORT, s.viewport);
++	gl.GetIntegerv(GL_UNPACK_ALIGNMENT, &s.unpackAlignment);
++	s.blend = gl.IsEnabled(GL_BLEND);
++	s.depthTest = gl.IsEnabled(GL_DEPTH_TEST);
++	s.scissorTest = gl.IsEnabled(GL_SCISSOR_TEST);
++	s.cullFace = gl.IsEnabled(GL_CULL_FACE);
++	s.stencilTest = gl.IsEnabled(GL_STENCIL_TEST);
++	gl.GetBooleanv(GL_COLOR_WRITEMASK, s.colorMask);
++	gl.GetFloatv(GL_COLOR_CLEAR_VALUE, s.clearColor);
++
++	for (GLuint i = 0; i < 2; i++)
++	{
++		auto &a = s.attributes[i];
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &a.enabled);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_SIZE, &a.size);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_TYPE, &a.type);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &a.normalized);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &a.stride);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &a.buffer);
++		gl.GetVertexAttribPointerv(i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &a.pointer);
++	}
++}
++
++void SetEnabled(GLenum capability, GLboolean enabled)
++{
++	if (enabled)
++		gl.Enable(capability);
++	else
++		gl.Disable(capability);
++}
++
++void RestoreGlState(const SavedGlState &s)
++{
++	for (GLuint i = 0; i < 2; i++)
++	{
++		const auto &a = s.attributes[i];
++		gl.BindBuffer(GL_ARRAY_BUFFER, a.buffer);
++		gl.VertexAttribPointer(i, a.size, a.type, (GLboolean)a.normalized, a.stride, a.pointer);
++		if (a.enabled)
++			gl.EnableVertexAttribArray(i);
++		else
++			gl.DisableVertexAttribArray(i);
++	}
++
++	gl.BindBuffer(GL_ARRAY_BUFFER, s.arrayBuffer);
++	gl.UseProgram(s.program);
++	gl.BindTexture(GL_TEXTURE_2D, s.texture);
++	gl.ActiveTexture(s.activeTexture);
++	gl.BindFramebuffer(GL_FRAMEBUFFER, s.framebuffer);
++	gl.Viewport(s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3]);
++	gl.PixelStorei(GL_UNPACK_ALIGNMENT, s.unpackAlignment);
++	SetEnabled(GL_BLEND, s.blend);
++	SetEnabled(GL_DEPTH_TEST, s.depthTest);
++	SetEnabled(GL_SCISSOR_TEST, s.scissorTest);
++	SetEnabled(GL_CULL_FACE, s.cullFace);
++	SetEnabled(GL_STENCIL_TEST, s.stencilTest);
++	gl.ColorMask(s.colorMask[0], s.colorMask[1], s.colorMask[2], s.colorMask[3]);
++	gl.ClearColor(s.clearColor[0], s.clearColor[1], s.clearColor[2], s.clearColor[3]);
++}
++
++// Waits for the GPU to finish what came before a query, returning whether it did
++bool WaitForQuery(ID3D11Query *query, bool trace)
++{
++	const precise_t start = I_GetPreciseTime();
++	int spins = 0;
++
++	for (;;)
++	{
++		BOOL done = FALSE;
++		const HRESULT hr = g_context->GetData(query, &done, sizeof done, 0);
++
++		if (hr == S_OK && done)
++			break;
++		if (Failed(hr, "GetData (copy finished)"))
++			return false;
++		if (PreciseToMs(I_GetPreciseTime() - start) > 500.0)
++		{
++			Log("gave up waiting for a frame's copy after 500 ms");
++			return false;
++		}
++		spins++;
++		std::this_thread::yield();
++	}
++
++	const precise_t waited = I_GetPreciseTime() - start;
++	g_stats.waitTime += waited;
++	if (waited > g_stats.worstWait)
++		g_stats.worstWait = waited;
++	if (trace)
++		Log("  waited %.2f ms (%d spins) for the frame's copy", PreciseToMs(waited), spins);
++	return true;
++}
++
++// Reads the GPU time of the frame a slot timed, if it's ready
++void ReadGpuTime(PresentSlot &slot)
++{
++	if (!slot.timing)
++		return;
++
++	D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint;
++	UINT64 begin = 0, end = 0;
++	const UINT flags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
++
++	if (g_context->GetData(slot.disjoint.Get(), &disjoint, sizeof disjoint, flags) != S_OK
++		|| g_context->GetData(slot.begin.Get(), &begin, sizeof begin, flags) != S_OK
++		|| g_context->GetData(slot.end.Get(), &end, sizeof end, flags) != S_OK)
++		return; // not ready; skip it
++
++	slot.timing = false;
++	if (disjoint.Disjoint || !disjoint.Frequency || end < begin)
++		return;
++
++	const double ms = (end - begin) * 1000.0 / disjoint.Frequency;
++	g_stats.gpuMs += ms;
++	g_stats.gpuFrames++;
++	if (ms > g_stats.worstGpuMs)
++		g_stats.worstGpuMs = ms;
++}
++
++void BeginGpuTime(PresentSlot &slot)
++{
++	if (!slot.disjoint || !slot.begin || !slot.end)
++		return;
++	g_context->Begin(slot.disjoint.Get());
++	g_context->End(slot.begin.Get());
++	slot.timing = true;
++}
++
++// Draws a slot's frame to ANGLE's window surface and shows it
++void DrawToWindow(PresentSlot &slot, bool trace)
++{
++	int windowWidth = 0, windowHeight = 0;
++	uwp_GetScreenSize(&windowWidth, &windowHeight);
++	if (windowWidth <= 0 || windowHeight <= 0)
++	{
++		windowWidth = (int)g_present.width;
++		windowHeight = (int)g_present.height;
++	}
++
++	// Letterbox it like DrawScreenFinalTexture
++	const float origaspect = (float)g_present.width / g_present.height;
++	const float newaspect = (float)windowWidth / windowHeight;
++	float xoff = 1.0f, yoff = 1.0f;
++	if (origaspect < newaspect)
++		xoff = origaspect / newaspect;
++	else if (origaspect > newaspect)
++		yoff = newaspect / origaspect;
++
++	SavedGlState saved;
++	SaveGlState(saved);
++
++	gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
++	gl.Viewport(0, 0, windowWidth, windowHeight);
++	gl.Disable(GL_BLEND);
++	gl.Disable(GL_DEPTH_TEST);
++	gl.Disable(GL_SCISSOR_TEST);
++	gl.Disable(GL_CULL_FACE);
++	gl.Disable(GL_STENCIL_TEST);
++	gl.ColorMask(1, 1, 1, 1);
++	gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
++	gl.Clear(GL_COLOR_BUFFER_BIT);
++
++	gl.UseProgram(g_present.program);
++	gl.ActiveTexture(GL_TEXTURE0);
++	gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++	gl.BindBuffer(GL_ARRAY_BUFFER, g_present.quad);
++
++	if (g_present.quadSize[0] != xoff || g_present.quadSize[1] != yoff)
++	{
++		// The top of the frame is its first row, which is where OpenGL ES's t is 0
++		const GLfloat quad[] =
++		{
++			-xoff, yoff, 0.0f, 0.0f,
++			-xoff, -yoff, 0.0f, 1.0f,
++			xoff, yoff, 1.0f, 0.0f,
++			xoff, -yoff, 1.0f, 1.0f,
++		};
++		gl.BufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
++		g_present.quadSize[0] = xoff;
++		g_present.quadSize[1] = yoff;
++	}
++
++	gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 4 * sizeof(GLfloat), reinterpret_cast<void *>(0));
++	gl.VertexAttribPointer(1, 2, GL_FLOAT, 0, 4 * sizeof(GLfloat), reinterpret_cast<void *>(2 * sizeof(GLfloat)));
++	gl.EnableVertexAttribArray(0);
++	gl.EnableVertexAttribArray(1);
++	gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++
++	RestoreGlState(saved);
++
++	if (trace)
++		Log("  drew the frame to the %dx%d window (GL error 0x%X)", windowWidth, windowHeight, gl.GetError());
++}
++
++// Shows the screen, a frame late when shared, so the GPU has finished copying it by then
++void Present()
++{
++	const bool trace = g_tracedFrames < kTraceFrames;
++	precise_t t = I_GetPreciseTime();
++
++	if (trace)
++		Log("presenting frame %d: %d polygons, %d batches, %d models so far", g_tracedFrames, g_stats.polygons, g_stats.batches,
++			g_stats.models);
++
++	if (g_present.failed)
++		return;
++
++	if (!LoadGles() || (!g_present.program && !CreatePresentProgram()))
++	{
++		Log("can't present frames, so the screen will stay black");
++		g_present.failed = true;
++		return;
++	}
++
++	if (!g_present.probed)
++	{
++		ProbeSharing();
++		// Made for reading back
++		DestroySlots();
++	}
++
++	// The probe can change the format, if it couldn't run before the screen was made
++	if (g_rtCreatedFormat != g_rtFormat)
++	{
++		Log("remaking the screen in the format ANGLE opens");
++		CreateRenderTarget(g_rtWidth, g_rtHeight);
++		DestroySlots();
++	}
++
++	if (g_present.width != g_rtWidth || g_present.height != g_rtHeight)
++	{
++		if (!CreateSlots(g_rtWidth, g_rtHeight))
++		{
++			if (!g_present.shared)
++			{
++				DestroySlots();
++				g_present.failed = true;
++				Log("can't present frames, so the screen will stay black");
++				return;
++			}
++			Log("falling back to reading frames back");
++			DestroySlots();
++			g_present.shared = false;
++			if (!CreateSlots(g_rtWidth, g_rtHeight))
++			{
++				DestroySlots();
++				g_present.failed = true;
++				Log("can't present frames, so the screen will stay black");
++				return;
++			}
++		}
++	}
++
++	PresentSlot &slot = g_present.slots[g_present.frame % kPresentSlots];
++
++	g_context->CopyResource(slot.texture.Get(), g_rt.Get());
++	if (slot.timing)
++	{
++		g_context->End(slot.end.Get());
++		g_context->End(slot.disjoint.Get());
++	}
++	g_context->End(slot.copied.Get());
++	g_context->Flush();
++
++	precise_t now = I_GetPreciseTime();
++	g_stats.copyTime += now - t;
++	t = now;
++
++	// The previous frame, which the GPU has most likely finished, except the first time
++	PresentSlot &shown = (g_present.shared && g_present.frame > 0)
++		? g_present.slots[(g_present.frame - 1) % kPresentSlots] : slot;
++
++	if (!WaitForQuery(shown.copied.Get(), trace))
++	{
++		g_present.frame++;
++		return;
++	}
++
++	if (!g_present.shared)
++	{
++		D3D11_MAPPED_SUBRESOURCE mapped;
++		if (!Failed(g_context->Map(shown.texture.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Map (readback)"))
++		{
++			const UINT rowBytes = g_present.width * 4;
++			const BYTE *source = static_cast<const BYTE *>(mapped.pData);
++
++			if (mapped.RowPitch != rowBytes)
++			{
++				g_present.readback.resize((size_t)rowBytes * g_present.height);
++				for (UINT y = 0; y < g_present.height; y++)
++					memcpy(&g_present.readback[(size_t)y * rowBytes], source + (size_t)y * mapped.RowPitch, rowBytes);
++				source = g_present.readback.data();
++			}
++
++			GLint previousTexture = 0;
++			gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
++			gl.BindTexture(GL_TEXTURE_2D, shown.glTexture);
++			gl.TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_present.width, g_present.height,
++				g_rtFormat == DXGI_FORMAT_B8G8R8A8_UNORM ? GL_BGRA_EXT : GL_RGBA, GL_UNSIGNED_BYTE, source);
++			gl.BindTexture(GL_TEXTURE_2D, previousTexture);
++			g_context->Unmap(shown.texture.Get(), 0);
++		}
++	}
++
++	DrawToWindow(shown, trace);
++
++	now = I_GetPreciseTime();
++	g_stats.glTime += now - t;
++	t = now;
++
++	SDL_GL_SwapWindow(window);
++
++	now = I_GetPreciseTime();
++	g_stats.swapTime += now - t;
++
++	g_present.frame++;
++
++	// Time the next frame with the slot it'll be copied to, whose last timing has had a few frames to finish
++	PresentSlot &next = g_present.slots[g_present.frame % kPresentSlots];
++	ReadGpuTime(next);
++	BeginGpuTime(next);
++}
++
++// ==========================================================================
++//                                                                     MODELS
++// ==========================================================================
++
++std::unordered_map<unsigned int, ComPtr<ID3D11Buffer>> g_modelBuffers; // by the vboID given to frames
++unsigned int g_nextModelBuffer = 1;
++std::unordered_map<const void *, ComPtr<ID3D11Buffer>> g_meshIndexBuffers; // by mesh_t::indices
++std::vector<ModelVertex> g_modelVertices;
++
++ID3D11Buffer *CreateStaticBuffer(const void *data, UINT bytes, UINT bind, ComPtr<ID3D11Buffer> &buffer)
++{
++	D3D11_BUFFER_DESC desc = {};
++	desc.ByteWidth = bytes;
++	desc.Usage = D3D11_USAGE_IMMUTABLE;
++	desc.BindFlags = bind;
++	D3D11_SUBRESOURCE_DATA initial = {data, 0, 0};
++
++	buffer.Reset();
++	if (bytes == 0 || Failed(g_device->CreateBuffer(&desc, &initial, &buffer), "CreateBuffer (static)"))
++		return nullptr;
++	return buffer.Get();
++}
++
++ID3D11Buffer *GetMeshIndices(const mesh_t *mesh)
++{
++	if (!mesh->indices)
++		return nullptr;
++
++	auto it = g_meshIndexBuffers.find(mesh->indices);
++	if (it != g_meshIndexBuffers.end())
++		return it->second.Get();
++
++	ComPtr<ID3D11Buffer> buffer;
++	CreateStaticBuffer(mesh->indices, mesh->numTriangles * 3 * sizeof(unsigned short), D3D11_BIND_INDEX_BUFFER, buffer);
++	g_meshIndexBuffers[mesh->indices] = buffer;
++	return buffer.Get();
++}
++
++void FillVertices(int count, const float *vertices, const float *normals, const float *uvs)
++{
++	g_modelVertices.resize(count);
++	for (int i = 0; i < count; i++)
++	{
++		ModelVertex &v = g_modelVertices[i];
++		v.x = vertices[i*3];
++		v.y = vertices[i*3 + 1];
++		v.z = vertices[i*3 + 2];
++		v.nx = normals ? normals[i*3] : 0.0f;
++		v.ny = normals ? normals[i*3 + 1] : 0.0f;
++		v.nz = normals ? normals[i*3 + 2] : 1.0f;
++		v.s = uvs ? uvs[i*2] : 0.0f;
++		v.t = uvs ? uvs[i*2 + 1] : 0.0f;
++	}
++}
++
++void FillTinyVertices(int count, const short *vertices, const char *normals, const float *uvs)
++{
++	g_modelVertices.resize(count);
++	for (int i = 0; i < count; i++)
++	{
++		ModelVertex &v = g_modelVertices[i];
++		v.x = vertices[i*3];
++		v.y = vertices[i*3 + 1];
++		v.z = vertices[i*3 + 2];
++		v.nx = normals ? normals[i*3] : 0.0f;
++		v.ny = normals ? normals[i*3 + 1] : 0.0f;
++		v.nz = normals ? normals[i*3 + 2] : 1.0f;
++		v.s = uvs ? uvs[i*2] : 0.0f;
++		v.t = uvs ? uvs[i*2 + 1] : 0.0f;
++	}
++}
++
++// Draws a model's mesh from a buffer, or from g_modelVertices if it's null
++void DrawMesh(ID3D11Buffer *buffer, const mesh_t *mesh, bool indexed, UINT count)
++{
++	UINT base = 0;
++
++	if (!buffer)
++	{
++		const UINT offset = RingWrite(g_vertexRing, g_modelVertices.data(), (UINT)(g_modelVertices.size() * sizeof(ModelVertex)),
++			sizeof(ModelVertex));
++		if (offset == UINT_MAX)
++			return;
++		buffer = g_vertexRing.buffer.Get();
++		base = offset / sizeof(ModelVertex);
++	}
++
++	BindVertexBuffer(buffer, sizeof(ModelVertex));
++	ApplyState(LAYOUT_MODEL, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++
++	if (indexed)
++	{
++		ID3D11Buffer *indices = GetMeshIndices(mesh);
++		if (!indices)
++			return;
++		BindIndexBuffer(indices, DXGI_FORMAT_R16_UINT);
++		g_context->DrawIndexed(count, 0, base);
++		g_stats.indices += count;
++	}
++	else
++	{
++		g_context->Draw(count, base);
++		g_stats.vertices += count;
++	}
++}
++
++// ==========================================================================
++//                                                            DRIVER FUNCTIONS
++// ==========================================================================
++
++bool CreateDeviceObjects();
++
++boolean D3D_Init(void)
++{
++	if (g_device)
++		return true;
++
++	Log("starting Legacy GL's Direct3D 11 driver");
++
++	// On the same adapter as ANGLE, which the window's frames go through
++	ComPtr<IDXGIAdapter> adapter;
++	if (LoadEgl() && egl.QueryDisplayAttribEXT && egl.QueryDeviceAttribEXT && egl.GetCurrentDisplay())
++	{
++		EGLAttrib device = 0, d3dDevice = 0;
++		if (egl.QueryDisplayAttribEXT(egl.GetCurrentDisplay(), EGL_DEVICE_EXT, &device) && device
++			&& egl.QueryDeviceAttribEXT(reinterpret_cast<EGLDeviceEXT>(device), EGL_D3D11_DEVICE_ANGLE, &d3dDevice) && d3dDevice)
++		{
++			ID3D11Device *angleDevice = reinterpret_cast<ID3D11Device *>(d3dDevice);
++			ComPtr<IDXGIDevice> dxgiDevice;
++			Log("ANGLE's device has feature level 0x%X", (unsigned)angleDevice->GetFeatureLevel());
++			if (SUCCEEDED(angleDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
++				dxgiDevice->GetAdapter(&adapter);
++		}
++		else
++			Log("couldn't get ANGLE's device (EGL error 0x%X)", egl.GetError ? egl.GetError() : 0);
++	}
++
++	const D3D_FEATURE_LEVEL levels[] =
++	{
++		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
++	};
++	const UINT flags = D3D11_CREATE_DEVICE_SINGLETHREADED;
++	D3D_FEATURE_LEVEL level = D3D_FEATURE_LEVEL_10_0;
++	const D3D_DRIVER_TYPE driver = adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
++
++	HRESULT hr = D3D11CreateDevice(adapter.Get(), driver, nullptr, flags, levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
++		&g_device, &level, &g_context);
++	if (hr == E_INVALIDARG)
++	{
++		// Without 11.1, which older runtimes don't know
++		hr = D3D11CreateDevice(adapter.Get(), driver, nullptr, flags, levels + 1, ARRAYSIZE(levels) - 1, D3D11_SDK_VERSION,
++			&g_device, &level, &g_context);
++	}
++	if (Failed(hr, "D3D11CreateDevice"))
++	{
++		g_device.Reset();
++		g_context.Reset();
++		return false;
++	}
++
++	{
++		ComPtr<IDXGIDevice> dxgiDevice;
++		ComPtr<IDXGIAdapter> deviceAdapter;
++		DXGI_ADAPTER_DESC desc;
++		if (SUCCEEDED(g_device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&deviceAdapter))
++			&& SUCCEEDED(deviceAdapter->GetDesc(&desc)))
++		{
++			char name[256];
++			WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof name, nullptr, nullptr);
++			Log("device: feature level 0x%X on %s (vendor 0x%04X, device 0x%04X; %llu MB video memory, %llu MB shared)",
++				(unsigned)level, name, desc.VendorId, desc.DeviceId, (unsigned long long)(desc.DedicatedVideoMemory >> 20),
++				(unsigned long long)(desc.SharedSystemMemory >> 20));
++		}
++		else
++			Log("device: feature level 0x%X", (unsigned)level);
++	}
++
++	if (!CreateDeviceObjects())
++	{
++		g_device.Reset();
++		g_context.Reset();
++		return false;
++	}
++
++	ProbeSharing();
++	return true;
++}
++
++bool CreateDeviceObjects()
++{
++	for (int i = 0; i < NUMVS; i++)
++	{
++		if (Failed(g_device->CreateVertexShader(kVertexShaders[i].code, kVertexShaders[i].size, nullptr, &g_vertexShaders[i]),
++			kVertexShaders[i].name))
++			return false;
++	}
++
++	for (int i = 0; i < NUMPS; i++)
++	{
++		if (Failed(g_device->CreatePixelShader(kPixelShaders[i].code, kPixelShaders[i].size, nullptr, &g_pixelShaders[i]),
++			kPixelShaders[i].name))
++			return false;
++	}
++
++	const D3D11_INPUT_ELEMENT_DESC poly[] =
++	{
++		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FOutVector, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FOutVector, s), D3D11_INPUT_PER_VERTEX_DATA, 0},
++	};
++	const D3D11_INPUT_ELEMENT_DESC sky[] =
++	{
++		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(gl_skyvertex_t, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(gl_skyvertex_t, u), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, offsetof(gl_skyvertex_t, r), D3D11_INPUT_PER_VERTEX_DATA, 0},
++	};
++	const D3D11_INPUT_ELEMENT_DESC model[] =
++	{
++		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ModelVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ModelVertex, nx), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ModelVertex, s), D3D11_INPUT_PER_VERTEX_DATA, 0},
++	};
++
++	if (Failed(g_device->CreateInputLayout(poly, ARRAYSIZE(poly), g_VSPoly, sizeof g_VSPoly, &g_layouts[LAYOUT_POLY]), "CreateInputLayout (polygons)")
++		|| Failed(g_device->CreateInputLayout(sky, ARRAYSIZE(sky), g_VSSky, sizeof g_VSSky, &g_layouts[LAYOUT_SKY]), "CreateInputLayout (sky)")
++		|| Failed(g_device->CreateInputLayout(model, ARRAYSIZE(model), g_VSModel, sizeof g_VSModel, &g_layouts[LAYOUT_MODEL]), "CreateInputLayout (models)"))
++		return false;
++
++	D3D11_BUFFER_DESC constants = {};
++	constants.ByteWidth = sizeof(Constants);
++	constants.Usage = D3D11_USAGE_DYNAMIC;
++	constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++	constants.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
++	if (Failed(g_device->CreateBuffer(&constants, nullptr, &g_constantBuffer), "CreateBuffer (constants)"))
++		return false;
++
++	if (!CreateRing(g_vertexRing, 8 << 20, D3D11_BIND_VERTEX_BUFFER, "vertex")
++		|| !CreateRing(g_indexRing, 2 << 20, D3D11_BIND_INDEX_BUFFER, "index"))
++		return false;
++
++	std::vector<UINT16> fan;
++	fan.reserve((kMaxFanVertices - 2) * 3);
++	for (UINT i = 1; i + 1 < kMaxFanVertices; i++)
++	{
++		fan.push_back(0);
++		fan.push_back((UINT16)i);
++		fan.push_back((UINT16)(i + 1));
++	}
++	if (!CreateStaticBuffer(fan.data(), (UINT)(fan.size() * sizeof(UINT16)), D3D11_BIND_INDEX_BUFFER, g_fanIndices))
++		return false;
++
++	const UINT32 black = 0xFF000000; // R, G, B 0; A 255
++	Texture blackTexture;
++	if (!CreateTextureStorage(&blackTexture, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, false, false, &black))
++		return false;
++	g_blackTexture = blackTexture.texture;
++	g_blackSrv = blackTexture.srv;
++	g_textureBytes -= blackTexture.bytes;
++
++	D3D11_SAMPLER_DESC sampler = {};
++	sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
++	sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
++	sampler.ComparisonFunc = D3D11_COMPARISON_NEVER;
++	sampler.MaxAnisotropy = 1;
++	if (Failed(g_device->CreateSamplerState(&sampler, &g_defaultSampler), "CreateSamplerState (default)"))
++		return false;
++
++	Log("made %d vertex shaders, %d pixel shaders, 3 input layouts, and 8 MB vertex and 2 MB index buffers", NUMVS, NUMPS);
++	return true;
++}
++
++void D3D_FlushScreenTextures(void);
++
++// r_opengl.c's SetModelView
++void SetModelView(INT32 w, INT32 h)
++{
++	// The screen textures need to be flushed if the width or height change so that they be remade for the correct size
++	if (g_screenWidth != w || g_screenHeight != h)
++	{
++		D3D_FlushScreenTextures();
++		Log("screen size %dx%d", (int)w, (int)h);
++	}
++
++	g_screenWidth = w;
++	g_screenHeight = h;
++	CreateRenderTarget(w, h);
++
++	SetViewport(0, 0, w, h);
++
++	g_matrixMode = MODE_PROJECTION;
++	MatLoadIdentity();
++
++	g_matrixMode = MODE_MODELVIEW;
++	MatLoadIdentity();
++
++	Perspective(g_fov, 1.0f);
++}
++
++// r_opengl.c's SetStates
++void SetStates()
++{
++	g_gl.texture2D = true;
++	g_gl.texEnv = TE_MODULATE;
++
++	g_gl.alphaTest = true;
++	g_gl.alphaFunc = AF_NOTEQUAL;
++	g_gl.alphaRef = 0.0f;
++
++	g_gl.blend = true;
++
++	g_gl.depthTest = true;
++	g_gl.depthMask = true;
++	g_gl.depthAlways = false;
++
++	// this set CurrentPolyFlags to the actual configuration
++	g_currentPolyFlags = 0xffffffff;
++	D3D_SetBlend(0);
++
++	g_texDownloaded = 0;
++	SetNoTexture(0);
++
++	g_gl.lighting = false;
++
++	// bp : when no t&l :)
++	MatLoadIdentity();
++	MatScale(1.0f, 1.0f, -1.0f);
++}
++
++void D3D_SetPalette(RGBA_t *palette)
++{
++	// on a palette change, you have to reload all of the textures
++	if (memcmp(g_palette, palette, sizeof g_palette))
++	{
++		CpuTimer timer(g_stats.textureTime);
++		memcpy(g_palette, palette, sizeof g_palette);
++		Flush();
++	}
++}
++
++void D3D_FinishUpdate(INT32 waitvbl)
++{
++	D3D11_FinishUpdate(waitvbl);
++}
++
++void D3D_Draw2DLine(F2DCoord *v1, F2DCoord *v2, RGBA_t Color)
++{
++	CpuTimer timer(g_stats.drawTime);
++	FOutVector p[4];
++	float angle;
++
++	g_gl.texture2D = false;
++
++	// This is the preferred, 'modern' way of rendering lines -- creating a polygon.
++	if (fabsf(v2->x - v1->x) > FLT_EPSILON)
++		angle = (float)atan((v2->y-v1->y)/(v2->x-v1->x));
++	else
++		angle = (float)(M_PI / 2.0);
++	const float dx = (float)sin(angle) / (float)g_screenWidth;
++	const float dy = (float)cos(angle) / (float)g_screenHeight;
++
++	memset(p, 0, sizeof p);
++	p[0].x = v1->x - dx;  p[0].y = -(v1->y + dy); p[0].z = 1;
++	p[1].x = v2->x - dx;  p[1].y = -(v2->y + dy); p[1].z = 1;
++	p[2].x = v2->x + dx;  p[2].y = -(v2->y - dy); p[2].z = 1;
++	p[3].x = v1->x + dx;  p[3].y = -(v1->y - dy); p[3].z = 1;
++
++	SetColor(&Color.s.red);
++	DrawArrays(LAYOUT_POLY, PRIM_FAN, p, 4);
++	g_stats.lines++;
++
++	g_gl.texture2D = true;
++}
++
++// r_opengl.c's PreparePolygon
++void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags)
++{
++	static float poly[4] = {0, 0, 0, 0};
++	static float tint[4] = {0, 0, 0, 0};
++	static float fade[4] = {0, 0, 0, 0};
++
++	// Coronas read back the depth buffer in r_opengl.c, unless it can't (GLF_NOZBUFREAD), which is what this does
++	if (PolyFlags & PF_Corona)
++	{
++		LOG_ONCE("drawing coronas as if the depth buffer can't be read (logged once)");
++		PolyFlags &= ~(PF_NoDepthTest|PF_Corona);
++	}
++
++	D3D_SetBlend(PolyFlags);
++
++	if (pSurf)
++	{
++		// If modulated, mix the surface colour to the texture
++		if (g_currentPolyFlags & PF_Modulated)
++			SetColor(&pSurf->PolyColor.s.red);
++
++		// If the surface is either modulated or colormapped, or both
++		if (g_currentPolyFlags & (PF_Modulated | PF_ColorMapped))
++		{
++			poly[0] = pSurf->PolyColor.s.red / 255.0f;
++			poly[1] = pSurf->PolyColor.s.green / 255.0f;
++			poly[2] = pSurf->PolyColor.s.blue / 255.0f;
++			poly[3] = pSurf->PolyColor.s.alpha / 255.0f;
++		}
++
++		// Only if the surface is colormapped
++		if (g_currentPolyFlags & PF_ColorMapped)
++		{
++			tint[0] = pSurf->TintColor.s.red / 255.0f;
++			tint[1] = pSurf->TintColor.s.green / 255.0f;
++			tint[2] = pSurf->TintColor.s.blue / 255.0f;
++			tint[3] = pSurf->TintColor.s.alpha / 255.0f;
++
++			fade[0] = pSurf->FadeColor.s.red / 255.0f;
++			fade[1] = pSurf->FadeColor.s.green / 255.0f;
++			fade[2] = pSurf->FadeColor.s.blue / 255.0f;
++			fade[3] = pSurf->FadeColor.s.alpha / 255.0f;
++		}
++	}
++
++	SetUniforms(pSurf, poly, tint, fade);
++}
++
++void D3D_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
++{
++	CpuTimer timer(g_stats.drawTime);
++
++	PreparePolygon(pSurf, PolyFlags);
++
++	if (PolyFlags & PF_WireFrame)
++		DrawArrays(LAYOUT_POLY, PRIM_LINES, pOutVerts, (UINT)iNumPts);
++	else
++		DrawArrays(LAYOUT_POLY, PRIM_FAN, pOutVerts, (UINT)iNumPts);
++	g_stats.polygons++;
++
++	if (PolyFlags & PF_RemoveYWrap)
++		SetRepeatT(true);
++
++	if (PolyFlags & PF_ForceWrapX)
++		SetRepeatS(false);
++
++	if (PolyFlags & PF_ForceWrapY)
++		SetRepeatT(false);
++}
++
++void D3D_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, UINT32 *IndexArray)
++{
++	CpuTimer timer(g_stats.drawTime);
++
++	PreparePolygon(pSurf, PolyFlags);
++	g_stats.batches++;
++
++	if (!CanDraw() || iNumPts == 0)
++		return;
++
++	// Only the indices' count is given
++	UINT32 vertexCount = 0;
++	for (FUINT i = 0; i < iNumPts; i++)
++	{
++		if (IndexArray[i] >= vertexCount)
++			vertexCount = IndexArray[i] + 1;
++	}
++
++	const UINT stride = sizeof(FOutVector);
++	const UINT vertexOffset = RingWrite(g_vertexRing, pOutVerts, vertexCount * stride, stride);
++	const UINT indexOffset = RingWrite(g_indexRing, IndexArray, (UINT)(iNumPts * sizeof(UINT32)), sizeof(UINT32));
++	if (vertexOffset == UINT_MAX || indexOffset == UINT_MAX)
++		return;
++
++	BindVertexBuffer(g_vertexRing.buffer.Get(), stride);
++	BindIndexBuffer(g_indexRing.buffer.Get(), DXGI_FORMAT_R32_UINT);
++	ApplyState(LAYOUT_POLY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	g_context->DrawIndexed((UINT)iNumPts, indexOffset / sizeof(UINT32), vertexOffset / stride);
++	g_stats.vertices += vertexCount;
++	g_stats.indices += iNumPts;
++}
++
++ComPtr<ID3D11Buffer> g_skyBuffer;
++
++void D3D_RenderSkyDome(gl_sky_t *sky)
++{
++	CpuTimer timer(g_stats.drawTime);
++
++	SetUniforms(NULL, NULL, NULL, NULL);
++
++	if (!CanDraw())
++		return;
++
++	// Build the sky dome! Yes!
++	if (sky->rebuild || !g_skyBuffer)
++	{
++		CreateStaticBuffer(sky->data, (UINT)(sky->vertex_count * sizeof(sky->data[0])), D3D11_BIND_VERTEX_BUFFER, g_skyBuffer);
++		sky->vbo = 1;
++		sky->rebuild = false;
++		Log("built a sky dome of %d vertices in %d loops", sky->vertex_count, sky->loopcount);
++	}
++
++	if (!g_skyBuffer)
++		return;
++
++	// set transforms
++	MatScale(1.0f, (float)sky->height / 200.0f, 1.0f);
++	MatRotate(270.0f, 0.0f, 1.0f, 0.0f);
++
++	BindVertexBuffer(g_skyBuffer.Get(), sizeof(gl_skyvertex_t));
++
++	for (int j = 0; j < 2; j++)
++	{
++		for (int i = 0; i < sky->loopcount; i++)
++		{
++			gl_skyloopdef_t *loop = &sky->loops[i];
++
++			if (j == 0 ? loop->use_texture : !loop->use_texture)
++				continue;
++
++			if (loop->mode == HWD_SKYLOOP_FAN)
++			{
++				if (loop->vertexcount < 3 || (UINT)loop->vertexcount > kMaxFanVertices)
++					continue;
++				ApplyState(LAYOUT_SKY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++				BindIndexBuffer(g_fanIndices.Get(), DXGI_FORMAT_R16_UINT);
++				g_context->DrawIndexed((loop->vertexcount - 2) * 3, 0, loop->vertexindex);
++			}
++			else if (loop->mode == HWD_SKYLOOP_STRIP)
++			{
++				ApplyState(LAYOUT_SKY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
++				g_context->Draw(loop->vertexcount, loop->vertexindex);
++			}
++			else
++				continue;
++
++			g_stats.vertices += loop->vertexcount;
++		}
++	}
++
++	SetColor(kWhite);
++	g_stats.skies++;
++}
++
++void D3D_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *ClearColor)
++{
++	if (ColorMask && ClearColor)
++	{
++		g_gl.clearColor[0] = ClearColor->red;
++		g_gl.clearColor[1] = ClearColor->green;
++		g_gl.clearColor[2] = ClearColor->blue;
++		g_gl.clearColor[3] = ClearColor->alpha;
++	}
++
++	D3D_SetBlend(DepthMask ? PF_Occlude | g_currentPolyFlags : g_currentPolyFlags&~PF_Occlude);
++
++	if (ColorMask)
++		ClearScreenColor();
++	if (DepthMask)
++		ClearScreenDepth();
++}
++
++void D3D_SetTexture(GLMipmap_t *pTexInfo)
++{
++	CpuTimer timer(g_stats.textureTime);
++	SetTextureInternal(pTexInfo);
++}
++
++void D3D_UpdateTexture(GLMipmap_t *pTexInfo)
++{
++	CpuTimer timer(g_stats.textureTime);
++	UpdateTextureInternal(pTexInfo);
++}
++
++// r_opengl.c's DeleteTexture
++void D3D_DeleteTexture(GLMipmap_t *pTexInfo)
++{
++	CpuTimer timer(g_stats.textureTime);
++
++	if (!pTexInfo)
++		return;
++	else if (pTexInfo->downloaded)
++		DeleteTextureObject(pTexInfo->downloaded);
++
++	pTexInfo->downloaded = 0;
++}
++
++void D3D_ReadRect(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
++{
++	if (!g_rt || width <= 0 || height <= 0)
++		return;
++
++	// OpenGL's y goes up from the bottom of the screen
++	const INT32 top = (INT32)g_rtHeight - (y + height);
++	if (x < 0 || top < 0 || x + width > (INT32)g_rtWidth || top + height > (INT32)g_rtHeight)
++	{
++		Log("ReadRect(%d, %d, %d, %d) is outside the %ux%u screen", (int)x, (int)y, (int)width, (int)height, g_rtWidth, g_rtHeight);
++		return;
++	}
++
++	D3D11_TEXTURE2D_DESC desc = {};
++	desc.Width = width;
++	desc.Height = height;
++	desc.MipLevels = 1;
++	desc.ArraySize = 1;
++	desc.Format = g_rtFormat;
++	desc.SampleDesc.Count = 1;
++	desc.Usage = D3D11_USAGE_STAGING;
++	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++
++	ComPtr<ID3D11Texture2D> staging;
++	if (Failed(g_device->CreateTexture2D(&desc, nullptr, &staging), "CreateTexture2D (ReadRect)"))
++		return;
++
++	D3D11_BOX box = {(UINT)x, (UINT)top, 0, (UINT)(x + width), (UINT)(top + height), 1};
++	g_context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, g_rt.Get(), 0, &box);
++
++	D3D11_MAPPED_SUBRESOURCE mapped;
++	if (Failed(g_context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Map (ReadRect)"))
++		return;
++
++	const bool bgra = g_rtFormat == DXGI_FORMAT_B8G8R8A8_UNORM;
++	UINT8 *rgb = reinterpret_cast<UINT8 *>(dst_data);
++
++	// Top row first, like r_opengl.c leaves it
++	for (INT32 row = 0; row < height; row++)
++	{
++		const UINT8 *source = static_cast<const UINT8 *>(mapped.pData) + (size_t)row * mapped.RowPitch;
++
++		for (INT32 column = 0; column < width; column++)
++		{
++			const UINT8 *pixel = source + column * 4;
++			const UINT8 r = bgra ? pixel[2] : pixel[0], g = pixel[1], b = bgra ? pixel[0] : pixel[2];
++
++			if (dst_stride == width*3)
++			{
++				UINT8 *out = rgb + (size_t)row * dst_stride + column * 3;
++				out[0] = r;
++				out[1] = g;
++				out[2] = b;
++			}
++			else
++				dst_data[row*width + column] = (UINT16)(((r>>3)<<11) | ((g>>2)<<5) | (b>>3));
++		}
++	}
++
++	g_context->Unmap(staging.Get(), 0);
++}
++
++void D3D_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)
++{
++	SetViewport(minx, g_screenHeight-maxy, maxx-minx, maxy-miny);
++	g_nearClippingPlane = nearclip;
++
++	g_matrixMode = MODE_PROJECTION;
++	MatLoadIdentity();
++	Perspective(g_fov, 1.0f);
++	g_matrixMode = MODE_MODELVIEW;
++}
++
++void D3D_ClearMipMapCache(void)
++{
++	CpuTimer timer(g_stats.textureTime);
++	Flush();
++}
++
++void D3D_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
++{
++	switch (IdState)
++	{
++		case HWD_SET_MODEL_LIGHTING:
++			if (g_modelLighting != (Value != 0))
++				Log("model lighting %s", Value ? "on" : "off");
++			g_modelLighting = Value;
++			break;
++
++		case HWD_SET_SHADERS:
++			if (g_allowShaders != (hwdshaderoption_t)Value)
++				Log("shaders %s", Value == HWD_SHADEROPTION_OFF ? "off" : Value == HWD_SHADEROPTION_ON ? "on" : "on (no custom)");
++			g_allowShaders = (hwdshaderoption_t)Value;
++			break;
++
++		case HWD_SET_TEXTUREFILTERMODE:
++			switch (Value)
++			{
++				case HWD_SET_TEXTUREFILTER_TRILINEAR:
++					g_minFilter = FILTER_LINEAR_MIPMAP_LINEAR;
++					g_magFilter = FILTER_LINEAR;
++					g_mipmap = true;
++					break;
++				case HWD_SET_TEXTUREFILTER_BILINEAR:
++					g_minFilter = g_magFilter = FILTER_LINEAR;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_POINTSAMPLED:
++					g_minFilter = g_magFilter = FILTER_NEAREST;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_MIXED1:
++					g_minFilter = FILTER_NEAREST;
++					g_magFilter = FILTER_LINEAR;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_MIXED2:
++					g_minFilter = FILTER_LINEAR;
++					g_magFilter = FILTER_NEAREST;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_MIXED3:
++					g_minFilter = FILTER_LINEAR_MIPMAP_LINEAR;
++					g_magFilter = FILTER_NEAREST;
++					g_mipmap = true;
++					break;
++				default:
++					g_magFilter = FILTER_LINEAR;
++					g_minFilter = FILTER_NEAREST;
++			}
++			Log("texture filter mode %d", (int)Value);
++			{
++				CpuTimer timer(g_stats.textureTime);
++				Flush(); //??? if we want to change filter mode by texture, remove this
++			}
++			break;
++
++		case HWD_SET_TEXTUREANISOTROPICMODE:
++			g_anisotropicFilter = std::min((int)Value, kMaximumAnisotropy);
++			Log("anisotropic filtering %d", g_anisotropicFilter);
++			{
++				CpuTimer timer(g_stats.textureTime);
++				Flush(); //??? if we want to change filter mode by texture, remove this
++			}
++			break;
++
++		default:
++			break;
++	}
++}
++
++void D3D_DrawModel(model_t *model, INT32 frameIndex, float duration, float tics, INT32 nextFrameIndex, FTransform *pos, float hscale,
++	float vscale, UINT8 flipped, UINT8 hflipped, FSurfaceInfo *Surface)
++{
++	CpuTimer timer(g_stats.drawTime);
++	static float poly[4] = {0, 0, 0, 0};
++	static float tint[4] = {0, 0, 0, 0};
++	static float fade[4] = {0, 0, 0, 0};
++
++	float pol = 0.0f;
++	bool lit = false;
++
++	if (!CanDraw() || model->numMeshes <= 0)
++		return;
++
++	// Affect input model scaling
++	hscale *= 0.5f;
++	vscale *= 0.5f;
++	float scalex = hscale;
++	float scaley = vscale;
++	float scalez = hscale;
++
++	if (duration > 0.0 && tics >= 0.0) // don't interpolate if instantaneous or infinite in length
++	{
++		float newtime = (duration - tics); // + 1;
++
++		pol = newtime / duration;
++
++		if (pol > 1.0f)
++			pol = 1.0f;
++
++		if (pol < 0.0f)
++			pol = 0.0f;
++	}
++
++	poly[0] = Surface->PolyColor.s.red / 255.0f;
++	poly[1] = Surface->PolyColor.s.green / 255.0f;
++	poly[2] = Surface->PolyColor.s.blue / 255.0f;
++	poly[3] = Surface->PolyColor.s.alpha / 255.0f;
++
++	if (g_modelLighting)
++	{
++		if (!g_shadersEnabled)
++		{
++			// Because otherwise, scaling the screen negatively vertically breaks the lighting:
++			// GL_LIGHT0 at (0, 1, 0, 0), a direction, which the modelview matrix takes to eye space
++			const Mat4 &modelview = g_modelview.back();
++			float x = modelview.m[4], y = modelview.m[5], z = modelview.m[6];
++			const float length = sqrtf(x*x + y*y + z*z);
++
++			if (length > 0.0f)
++			{
++				x /= length;
++				y /= length;
++				z /= length;
++			}
++			g_gl.lightDir[0] = x;
++			g_gl.lightDir[1] = y;
++			g_gl.lightDir[2] = z;
++			memcpy(g_gl.material, poly, sizeof g_gl.material);
++			g_gl.lighting = lit = true;
++		}
++	}
++	else
++		SetColor(&Surface->PolyColor.s.red);
++
++	tint[0] = Surface->TintColor.s.red / 255.0f;
++	tint[1] = Surface->TintColor.s.green / 255.0f;
++	tint[2] = Surface->TintColor.s.blue / 255.0f;
++	tint[3] = Surface->TintColor.s.alpha / 255.0f;
++
++	fade[0] = Surface->FadeColor.s.red / 255.0f;
++	fade[1] = Surface->FadeColor.s.green / 255.0f;
++	fade[2] = Surface->FadeColor.s.blue / 255.0f;
++	fade[3] = Surface->FadeColor.s.alpha / 255.0f;
++
++	FBITFIELD flags = (Surface->PolyFlags | PF_Modulated);
++	if (Surface->PolyFlags & (PF_Additive|PF_Subtractive|PF_ReverseSubtract|PF_Multiplicative))
++		flags |= PF_Occlude;
++	else if (Surface->PolyColor.s.alpha == 0xFF)
++		flags |= (PF_Occlude | PF_Masked);
++
++	D3D_SetBlend(flags);
++	SetUniforms(Surface, poly, tint, fade);
++
++	g_gl.cullFace = true;
++
++	// flipped is if the object is vertically flipped
++	// hflipped is if the object is horizontally flipped
++	// pos->flip is if the screen is flipped vertically
++	// pos->mirror is if the screen is flipped horizontally
++	// XOR all the flips together to figure out what culling to use!
++	g_gl.cullFront = (flipped ^ hflipped ^ pos->flip ^ pos->mirror) != 0;
++
++	MatPush(); // should be the same as glLoadIdentity
++	MatTranslate(pos->x, pos->z, pos->y);
++	if (flipped)
++		scaley = -scaley;
++	if (hflipped)
++		scalez = -scalez;
++
++	MatRotate(pos->anglez, 0.0f, 0.0f, -1.0f);
++	MatRotate(pos->anglex, 1.0f, 0.0f, 0.0f);
++	MatRotate(pos->angley, 0.0f, -1.0f, 0.0f);
++
++	if (pos->roll)
++	{
++		MatTranslate(pos->centerx, pos->centery, 0);
++		MatRotate(pos->rollangle, pos->rollx, 0.0f, pos->rollz);
++		MatTranslate(-pos->centerx, -pos->centery, 0);
++	}
++
++	MatScale(scalex, scaley, scalez);
++
++	const bool useTinyFrames = model->meshes[0].tinyframes != NULL;
++
++	if (useTinyFrames)
++		MatScale(1 / 64.0f, 1 / 64.0f, 1 / 64.0f);
++
++	// Don't use the VBO if it does not have the correct texture coordinates.
++	// (Can happen when model uses a sprite as a texture and the sprite changes)
++	const bool useVBO = memcmp(&(model->vbo_max_s), &(model->max_s), sizeof(model->max_s)) == 0
++		&& memcmp(&(model->vbo_max_t), &(model->max_t), sizeof(model->max_t)) == 0;
++
++	for (int i = 0; i < model->numMeshes; i++)
++	{
++		mesh_t *mesh = &model->meshes[i];
++
++		if (mesh->numFrames <= 0)
++			continue;
++
++		if (useTinyFrames)
++		{
++			tinyframe_t *frame = &mesh->tinyframes[frameIndex % mesh->numFrames];
++			tinyframe_t *nextframe = NULL;
++
++			if (nextFrameIndex != -1)
++				nextframe = &mesh->tinyframes[nextFrameIndex % mesh->numFrames];
++
++			if (!nextframe || pol == 0.0f)
++			{
++				auto buffer = useVBO ? g_modelBuffers.find(frame->vboID) : g_modelBuffers.end();
++				if (buffer != g_modelBuffers.end() && buffer->second)
++					DrawMesh(buffer->second.Get(), mesh, true, mesh->numTriangles * 3);
++				else
++				{
++					g_stats.modelFallbacks++;
++					FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs);
++					DrawMesh(nullptr, mesh, true, mesh->numTriangles * 3);
++				}
++			}
++			else
++			{
++				g_stats.modelLerps++;
++				g_modelVertices.resize(mesh->numVertices);
++				for (int j = 0; j < mesh->numVertices; j++)
++				{
++					ModelVertex &v = g_modelVertices[j];
++					float *position = &v.x;
++					float *normal = &v.nx;
++
++					for (int k = 0; k < 3; k++)
++					{
++						const int c = j*3 + k;
++						// Interpolate
++						position[k] = (short)(frame->vertices[c] + (pol * (nextframe->vertices[c] - frame->vertices[c])));
++						normal[k] = (char)(frame->normals[c] + (pol * (nextframe->normals[c] - frame->normals[c])));
++					}
++					v.s = mesh->uvs[j*2];
++					v.t = mesh->uvs[j*2 + 1];
++				}
++				DrawMesh(nullptr, mesh, true, mesh->numTriangles * 3);
++			}
++		}
++		else
++		{
++			mdlframe_t *frame = &mesh->frames[frameIndex % mesh->numFrames];
++			mdlframe_t *nextframe = NULL;
++
++			if (nextFrameIndex != -1)
++				nextframe = &mesh->frames[nextFrameIndex % mesh->numFrames];
++
++			if (!nextframe || pol == 0.0f)
++			{
++				auto buffer = useVBO ? g_modelBuffers.find(frame->vboID) : g_modelBuffers.end();
++				if (buffer != g_modelBuffers.end() && buffer->second)
++					DrawMesh(buffer->second.Get(), mesh, false, mesh->numTriangles * 3);
++				else
++				{
++					g_stats.modelFallbacks++;
++					FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs);
++					DrawMesh(nullptr, mesh, false, mesh->numTriangles * 3);
++				}
++			}
++			else
++			{
++				g_stats.modelLerps++;
++				g_modelVertices.resize(mesh->numVertices);
++				for (int j = 0; j < mesh->numVertices; j++)
++				{
++					ModelVertex &v = g_modelVertices[j];
++					float *position = &v.x;
++					float *normal = &v.nx;
++
++					for (int k = 0; k < 3; k++)
++					{
++						const int c = j*3 + k;
++						// Interpolate
++						position[k] = frame->vertices[c] + (pol * (nextframe->vertices[c] - frame->vertices[c]));
++						normal[k] = frame->normals[c] + (pol * (nextframe->normals[c] - frame->normals[c]));
++					}
++					v.s = mesh->uvs[j*2];
++					v.t = mesh->uvs[j*2 + 1];
++				}
++				DrawMesh(nullptr, mesh, false, mesh->numVertices);
++			}
++		}
++	}
++
++	MatPop(); // should be the same as glLoadIdentity
++	g_gl.cullFace = false;
++
++	if (lit)
++		g_gl.lighting = false;
++
++	g_stats.models++;
++}
++
++void D3D_CreateModelVBOs(model_t *model)
++{
++	CpuTimer timer(g_stats.drawTime);
++	int buffers = 0;
++
++	if (!g_device)
++		return;
++
++	for (int i = 0; i < model->numMeshes; i++)
++	{
++		mesh_t *mesh = &model->meshes[i];
++
++		for (int j = 0; j < mesh->numFrames; j++)
++		{
++			unsigned int *vboID;
++
++			if (mesh->frames)
++			{
++				mdlframe_t *frame = &mesh->frames[j];
++				FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs);
++				vboID = &frame->vboID;
++			}
++			else if (mesh->tinyframes)
++			{
++				tinyframe_t *frame = &mesh->tinyframes[j];
++				FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs);
++				vboID = &frame->vboID;
++			}
++			else
++				break;
++
++			if (*vboID)
++				g_modelBuffers.erase(*vboID);
++			*vboID = 0;
++
++			ComPtr<ID3D11Buffer> buffer;
++			if (CreateStaticBuffer(g_modelVertices.data(), (UINT)(g_modelVertices.size() * sizeof(ModelVertex)),
++				D3D11_BIND_VERTEX_BUFFER, buffer))
++			{
++				*vboID = g_nextModelBuffer++;
++				g_modelBuffers[*vboID] = buffer;
++				buffers++;
++			}
++		}
++	}
++
++	Log("made %d vertex buffers for model %s", buffers, model->mdlFilename ? model->mdlFilename : "?");
++}
++
++// r_opengl.c's SetTransform
++void D3D_SetTransform(FTransform *stransform)
++{
++	static boolean special_splitscreen;
++	boolean shearing = false;
++	float used_fov;
++
++	MatLoadIdentity();
++
++	if (stransform)
++	{
++		used_fov = stransform->fovxangle;
++		if (stransform->mirror)
++			MatScale(-stransform->scalex, stransform->scaley, -stransform->scalez);
++		else if (stransform->flip)
++			MatScale(stransform->scalex, -stransform->scaley, -stransform->scalez);
++		else
++			MatScale(stransform->scalex, stransform->scaley, -stransform->scalez);
++
++		if (stransform->roll)
++			MatRotate(stransform->rollangle, 0.0f, 0.0f, 1.0f);
++		MatRotate(stransform->anglex       , 1.0f, 0.0f, 0.0f);
++		MatRotate(stransform->angley+270.0f, 0.0f, 1.0f, 0.0f);
++		MatTranslate(-stransform->x, -stransform->z, -stransform->y);
++
++		special_splitscreen = (stransform->splitscreen == 1);
++		shearing = stransform->shearing;
++	}
++	else
++	{
++		used_fov = g_fov;
++		MatScale(1.0f, 1.0f, -1.0f);
++	}
++
++	g_matrixMode = MODE_PROJECTION;
++	MatLoadIdentity();
++
++	// Simulate Software's y-shearing
++	// https://zdoom.org/wiki/Y-shearing
++	if (shearing)
++	{
++		float fdy = stransform->viewaiming * 2;
++		if (stransform->flip)
++			fdy *= -1.0f;
++		MatTranslate(0.0f, -fdy/BASEVIDHEIGHT, 0.0f);
++	}
++
++	if (special_splitscreen)
++	{
++		used_fov = (float)(atan(tan(used_fov*M_PI/360)*0.8)*360/M_PI);
++		Perspective(used_fov, 2.0f);
++	}
++	else
++		Perspective(used_fov, 1.0f);
++
++	g_matrixMode = MODE_MODELVIEW;
++}
++
++INT32 D3D_GetTextureUsed(void)
++{
++	INT32 res = 0;
++
++	for (const auto &entry : g_textures)
++	{
++		const Texture &texture = entry.second;
++
++		if (!texture.listed)
++			continue;
++
++		// Figure out the correct bytes-per-pixel for this texture
++		// I don't know which one the game actually _uses_ but this
++		// follows format2bpp in hw_cache.c
++		int bpp = 1;
++		const UINT32 format = texture.listFormat;
++		if (format == GL_TEXFMT_RGBA)
++			bpp = 4;
++		else if (format == GL_TEXFMT_ALPHA_INTENSITY_88 || format == GL_TEXFMT_AP_88)
++			bpp = 2;
++
++		// Add it up!
++		res += texture.listHeight*texture.listWidth*bpp;
++	}
++
++	return res;
++}
++
++void D3D_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
++{
++	CpuTimer timer(g_stats.drawTime);
++	const int texsize = ScreenTextureSize();
++
++	// X/Y stretch fix for all resolutions(!)
++	const float xfix = (float)(texsize)/((float)((g_screenWidth)/(float)(SCREENVERTS-1)));
++	const float yfix = (float)(texsize)/((float)((g_screenHeight)/(float)(SCREENVERTS-1)));
++	// Where the screen's top is in the texture, in OpenGL's t
++	const float top = (float)g_screenHeight / texsize;
++
++	g_gl.depthTest = false;
++	g_gl.blend = false;
++
++	// Draw a black square behind the screen texture,
++	// so nothing shows through the edges
++	{
++		static const UINT8 black[4] = {0, 0, 0, 255};
++		const bool texture2D = g_gl.texture2D;
++		FOutVector blackBack[4] = {};
++
++		blackBack[0].x = -16.0f; blackBack[0].y = -16.0f; blackBack[0].z = 6.0f;
++		blackBack[1].x = -16.0f; blackBack[1].y = 16.0f; blackBack[1].z = 6.0f;
++		blackBack[2].x = 16.0f; blackBack[2].y = 16.0f; blackBack[2].z = 6.0f;
++		blackBack[3].x = 16.0f; blackBack[3].y = -16.0f; blackBack[3].z = 6.0f;
++
++		SetColor(black);
++		g_gl.texture2D = false;
++		DrawArrays(LAYOUT_POLY, PRIM_FAN, blackBack, 4);
++		g_gl.texture2D = texture2D;
++		SetColor(kWhite);
++	}
++
++	// The grid, in one draw
++	std::vector<FOutVector> vertices;
++	std::vector<UINT32> indices;
++	vertices.reserve((SCREENVERTS-1) * (SCREENVERTS-1) * 4);
++	indices.reserve((SCREENVERTS-1) * (SCREENVERTS-1) * 6);
++
++	for (int x = 0; x < SCREENVERTS-1; x++)
++	{
++		for (int y = 0; y < SCREENVERTS-1; y++)
++		{
++			// Used for texture coordinates
++			// Annoying magic numbers to scale the square texture to
++			// a non-square screen..
++			const float float_x = (float)(x/(xfix));
++			const float float_y = (float)(y/(yfix));
++			const float float_nextx = (float)(x+1)/(xfix);
++			const float float_nexty = (float)(y+1)/(yfix);
++			const UINT32 first = (UINT32)vertices.size();
++			FOutVector v[4];
++
++			v[0].x = points[x][y][0];
++			v[0].y = points[x][y][1];
++			v[0].s = float_x;
++			v[0].t = top - float_y;
++			v[1].x = points[x][y + 1][0];
++			v[1].y = points[x][y + 1][1];
++			v[1].s = float_x;
++			v[1].t = top - float_nexty;
++			v[2].x = points[x + 1][y + 1][0];
++			v[2].y = points[x + 1][y + 1][1];
++			v[2].s = float_nextx;
++			v[2].t = top - float_nexty;
++			v[3].x = points[x + 1][y][0];
++			v[3].y = points[x + 1][y][1];
++			v[3].s = float_nextx;
++			v[3].t = top - float_y;
++
++			for (FOutVector &vertex : v)
++			{
++				vertex.z = 4.4f;
++				vertices.push_back(vertex);
++			}
++
++			const UINT32 fan[6] = {first, first + 1, first + 2, first, first + 2, first + 3};
++			indices.insert(indices.end(), fan, fan + 6);
++		}
++	}
++
++	if (CanDraw())
++	{
++		const UINT stride = sizeof(FOutVector);
++		const UINT vertexOffset = RingWrite(g_vertexRing, vertices.data(), (UINT)(vertices.size() * stride), stride);
++		const UINT indexOffset = RingWrite(g_indexRing, indices.data(), (UINT)(indices.size() * sizeof(UINT32)), sizeof(UINT32));
++
++		if (vertexOffset != UINT_MAX && indexOffset != UINT_MAX)
++		{
++			BindVertexBuffer(g_vertexRing.buffer.Get(), stride);
++			BindIndexBuffer(g_indexRing.buffer.Get(), DXGI_FORMAT_R32_UINT);
++			ApplyState(LAYOUT_POLY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++			g_context->DrawIndexed((UINT)indices.size(), indexOffset / sizeof(UINT32), vertexOffset / stride);
++		}
++	}
++
++	g_gl.depthTest = true;
++	g_gl.blend = true;
++	g_stats.screens++;
++}
++
++// Sryder:	This needs to be called whenever the screen changes resolution in order to reset the screen textures to use
++//			a new size
++void D3D_FlushScreenTextures(void)
++{
++	DeleteTextureObject(g_screenTexture);
++	DeleteTextureObject(g_startScreenWipe);
++	DeleteTextureObject(g_endScreenWipe);
++	DeleteTextureObject(g_finalScreenTexture);
++	g_screenTexture = 0;
++	g_startScreenWipe = 0;
++	g_endScreenWipe = 0;
++	g_finalScreenTexture = 0;
++}
++
++// Create Screen to fade from
++void D3D_StartScreenWipe(void)
++{
++	CopyScreenToTexture(g_startScreenWipe);
++	g_texDownloaded = g_startScreenWipe;
++}
++
++// Create Screen to fade to
++void D3D_EndScreenWipe(void)
++{
++	CopyScreenToTexture(g_endScreenWipe);
++	g_texDownloaded = g_endScreenWipe;
++}
++
++const float kScreenVerts[12] =
++{
++	-1.0f, -1.0f, 1.0f,
++	-1.0f, 1.0f, 1.0f,
++	1.0f, 1.0f, 1.0f,
++	1.0f, -1.0f, 1.0f
++};
++
++// The texture coordinates of the screen in its texture, in OpenGL's t
++void ScreenFix(float fix[8], float *yfix)
++{
++	const int texsize = ScreenTextureSize();
++	const float xfix = 1/((float)(texsize)/((float)((g_screenWidth))));
++	*yfix = 1/((float)(texsize)/((float)((g_screenHeight))));
++
++	fix[0] = 0.0f;
++	fix[1] = 0.0f;
++	fix[2] = 0.0f;
++	fix[3] = *yfix;
++	fix[4] = xfix;
++	fix[5] = *yfix;
++	fix[6] = xfix;
++	fix[7] = 0.0f;
++}
++
++// Draw the last scene under the intermission
++void D3D_DrawIntermissionBG(void)
++{
++	CpuTimer timer(g_stats.drawTime);
++	float fix[8], yfix;
++
++	ScreenFix(fix, &yfix);
++
++	ClearScreenColor();
++	ClearScreenDepth();
++
++	BindTexture(0, g_screenTexture);
++	SetColor(kWhite);
++
++	DrawScreenQuad(kScreenVerts, fix, yfix);
++
++	g_texDownloaded = g_screenTexture;
++	g_stats.screens++;
++}
++
++// Do screen fades!
++void D3D_DoScreenWipe(void)
++{
++	CpuTimer timer(g_stats.drawTime);
++	float fix[8], yfix;
++	const UINT32 fademaskdownloaded = g_texDownloaded; // the fade mask that has been set
++
++	ScreenFix(fix, &yfix);
++
++	ClearScreenColor();
++	ClearScreenDepth();
++
++	D3D_SetBlend(PF_Modulated|PF_NoDepthTest);
++	g_gl.texture2D = true;
++
++	// Draw the original screen
++	BindTexture(0, g_startScreenWipe);
++	SetColor(kWhite);
++	DrawScreenQuad(kScreenVerts, fix, yfix);
++
++	D3D_SetBlend(PF_Modulated|PF_Translucent|PF_NoDepthTest);
++
++	// Draw the end screen that fades in
++	g_gl.texture2D = true;
++	BindTexture(0, g_endScreenWipe);
++	g_gl.texEnv = TE_REPLACE;
++
++	// The fade mask, on the second texture unit, modulated
++	BindTexture(1, fademaskdownloaded);
++	DrawScreenQuad(kScreenVerts, fix, yfix, g_program < 0);
++
++	g_texDownloaded = g_endScreenWipe;
++	g_stats.screens++;
++}
++
++// Create a texture from the screen.
++void D3D_MakeScreenTexture(void)
++{
++	CopyScreenToTexture(g_screenTexture);
++	g_texDownloaded = g_screenTexture;
++}
++
++void D3D_MakeScreenFinalTexture(void)
++{
++	CopyScreenToTexture(g_finalScreenTexture);
++	g_texDownloaded = g_finalScreenTexture;
++}
++
++void D3D_DrawScreenFinalTexture(int width, int height)
++{
++	CpuTimer timer(g_stats.drawTime);
++	float fix[8], yfix;
++	float xoff = 1, yoff = 1; // xoffset and yoffset for the polygon to have black bars around the screen
++	float off[12];
++
++	ScreenFix(fix, &yfix);
++
++	const float origaspect = (float)g_screenWidth / g_screenHeight;
++	const float newaspect = (float)width / height;
++	if (origaspect < newaspect)
++	{
++		xoff = origaspect / newaspect;
++		yoff = 1;
++	}
++	else if (origaspect > newaspect)
++	{
++		xoff = 1;
++		yoff = newaspect / origaspect;
++	}
++
++	off[0] = -xoff;
++	off[1] = -yoff;
++	off[2] = 1.0f;
++	off[3] = -xoff;
++	off[4] = yoff;
++	off[5] = 1.0f;
++	off[6] = xoff;
++	off[7] = yoff;
++	off[8] = 1.0f;
++	off[9] = xoff;
++	off[10] = -yoff;
++	off[11] = 1.0f;
++
++	SetViewport(0, 0, width, height);
++
++	FRGBAFloat clearColour = {0.0f, 0.0f, 0.0f, 1.0f};
++	D3D_ClearBuffer(true, false, &clearColour);
++	BindTexture(0, g_finalScreenTexture);
++
++	SetColor(kWhite);
++	DrawScreenQuad(off, fix, yfix);
++	g_texDownloaded = g_finalScreenTexture;
++}
++
++boolean D3D_CompileShaders(void)
++{
++	// Compiled at build time
++	Log("CompileShaders: the shaders are built in (custom shaders aren't supported)");
++	return true;
++}
++
++void D3D_CleanShaders(void)
++{
++}
++
++// r_opengl.c's SetShader
++void D3D_SetShader(int type)
++{
++	if (type == SHADER_NONE)
++	{
++		g_shaderCurrent = -1;
++		g_shaderType = 0;
++		g_program = -1;
++		g_shadersEnabled = false;
++		return;
++	}
++
++	if (g_allowShaders != HWD_SHADEROPTION_OFF)
++	{
++		// If using model lighting, set the appropriate shader.
++		if (type == SHADER_MODEL && g_modelLighting)
++			type = SHADER_MODEL_LIGHTING;
++
++		if (g_shaderCurrent < 0 || type != g_shaderType)
++		{
++			g_shaderCurrent = type;
++			g_shaderType = type;
++			g_shaderChanged = true;
++		}
++
++		if (!ProgramExists(type))
++			LOG_ONCE("SetShader: no shader %d (custom shaders aren't supported; logged once)", type);
++
++		g_shadersEnabled = ProgramExists(type);
++		return;
++	}
++
++	g_shadersEnabled = false;
++}
++
++void D3D_UnSetShader(void)
++{
++	g_shaderCurrent = -1;
++	g_shaderType = 0;
++	g_program = -1;
++	g_shadersEnabled = false;
++}
++
++void D3D_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
++{
++	switch (info)
++	{
++		case HWD_SHADERINFO_LEVELTIME:
++			g_shaderLeveltime = value;
++			break;
++		case HWD_SHADERINFO_LIGHT_X:
++			g_shaderLightX = FixedToFloat(value);
++			break;
++		case HWD_SHADERINFO_LIGHT_Y:
++			g_shaderLightY = FixedToFloat(value);
++			break;
++		case HWD_SHADERINFO_LIGHT_Z:
++			g_shaderLightZ = FixedToFloat(value);
++			break;
++		case HWD_SHADERINFO_LIGHT_CONTRAST:
++			g_shaderLightContrast = value;
++			break;
++		case HWD_SHADERINFO_LIGHT_BACKLIGHT:
++			g_shaderLightBacklight = value;
++			break;
++		default:
++			break;
++	}
++}
++
++void D3D_LoadCustomShader(int number, char *code, size_t size, boolean isfragment)
++{
++	(void)code;
++	Log("ignoring custom %s shader %d (%u bytes): this driver only has the built-in shaders",
++		isfragment ? "fragment" : "vertex", number, (unsigned)size);
++}
++
++#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&D3D_##name)}
++const struct
++{
++	const char *name;
++	void *function;
++} kDriverFunctions[] =
++{
++	DRIVERFUNCTION(Init),
++	DRIVERFUNCTION(SetPalette),
++	DRIVERFUNCTION(FinishUpdate),
++	DRIVERFUNCTION(Draw2DLine),
++	DRIVERFUNCTION(DrawPolygon),
++	DRIVERFUNCTION(DrawIndexedTriangles),
++	DRIVERFUNCTION(RenderSkyDome),
++	DRIVERFUNCTION(SetBlend),
++	DRIVERFUNCTION(ClearBuffer),
++	DRIVERFUNCTION(SetTexture),
++	DRIVERFUNCTION(UpdateTexture),
++	DRIVERFUNCTION(DeleteTexture),
++	DRIVERFUNCTION(ReadRect),
++	DRIVERFUNCTION(GClipRect),
++	DRIVERFUNCTION(ClearMipMapCache),
++	DRIVERFUNCTION(SetSpecialState),
++	DRIVERFUNCTION(DrawModel),
++	DRIVERFUNCTION(CreateModelVBOs),
++	DRIVERFUNCTION(SetTransform),
++	DRIVERFUNCTION(GetTextureUsed),
++	DRIVERFUNCTION(PostImgRedraw),
++	DRIVERFUNCTION(FlushScreenTextures),
++	DRIVERFUNCTION(StartScreenWipe),
++	DRIVERFUNCTION(EndScreenWipe),
++	DRIVERFUNCTION(DoScreenWipe),
++	DRIVERFUNCTION(DrawIntermissionBG),
++	DRIVERFUNCTION(MakeScreenTexture),
++	DRIVERFUNCTION(MakeScreenFinalTexture),
++	DRIVERFUNCTION(DrawScreenFinalTexture),
++	DRIVERFUNCTION(CompileShaders),
++	DRIVERFUNCTION(CleanShaders),
++	DRIVERFUNCTION(SetShader),
++	DRIVERFUNCTION(UnSetShader),
++	DRIVERFUNCTION(SetShaderInfo),
++	DRIVERFUNCTION(LoadCustomShader),
++};
++#undef DRIVERFUNCTION
++
++} // namespace
++
++void *D3D11_GetDriverFunction(const char *name)
++{
++	for (const auto &function : kDriverFunctions)
++	{
++		if (strcmp(function.name, name) == 0)
++			return function.function;
++	}
++	Log("no driver function %s", name);
++	return nullptr;
++}
++
++boolean D3D11_Surface(INT32 w, INT32 h)
++{
++	static bool first = true;
++
++	if (first)
++	{
++		Log("setting up a %dx%d screen", (int)w, (int)h);
++		first = false;
++	}
++
++	if (!g_device)
++	{
++		Log("no device to draw a %dx%d screen with", (int)w, (int)h);
++		return false;
++	}
++
++	glanisotropicmode_cons_t[1].value = kMaximumAnisotropy;
++	SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
++	g_present.vsync = cv_vidwait.value != 0;
++	g_present.vsyncSet = true;
++
++	SetModelView(w, h);
++	SetStates();
++	ClearScreenColor();
++	ClearScreenDepth();
++
++	HWR_Startup();
++	return true;
++}
++
++void D3D11_FinishUpdate(INT32 waitvbl)
++{
++	const bool vsync = waitvbl != 0;
++
++	if (!g_present.vsyncSet || g_present.vsync != vsync)
++	{
++		SDL_GL_SetSwapInterval(vsync ? 1 : 0);
++		g_present.vsync = vsync;
++		g_present.vsyncSet = true;
++	}
++
++	if (!g_context || !g_rt || g_deviceLost)
++		return;
++
++	Present();
++	g_stats.frames++;
++
++	if (g_tracedFrames < kTraceFrames)
++	{
++		g_tracedFrames++;
++		Log("frame %d done: %d textures (%.1f MB), %d errors", g_tracedFrames, (int)g_textures.size(),
++			g_textureBytes / 1048576.0, g_errors);
++	}
++
++	const HRESULT removed = g_device->GetDeviceRemovedReason();
++	if (FAILED(removed))
++	{
++		g_deviceLost = true;
++		Log("the device was removed: 0x%08X", (unsigned)removed);
++		I_Error("Legacy GL's Direct3D 11 device stopped working (0x%08X).\nSwitch the renderer to Software in the config if it keeps happening.",
++			(unsigned)removed);
++	}
++
++	// Draws after this start from the whole screen, like after OglSdlFinishUpdate
++	D3D_GClipRect(0, 0, g_screenWidth, g_screenHeight, NZCLIP_PLANE);
++}
++
++void D3D11_LogPerf(double seconds)
++{
++	const Stats &s = g_stats;
++	const double n = s.frames ? s.frames : 1;
++
++	if (!g_device)
++		return;
++
++	I_OutputMsg("UWP perf:   D3D11: %.1f frames/s; per frame %.0f polygons, %.0f batches, %.1f models, %.1f skies, %.1f lines, %.1f screen copies or draws\n",
++		s.frames / seconds, s.polygons / n, s.batches / n, s.models / n, s.skies / n, s.lines / n, s.screens / n);
++	I_OutputMsg("UWP perf:   D3D11: per frame %.0f vertices, %.0f indices, %.0f KB uploaded, %.0f constant updates, %.0f shader, %.0f blend, %.0f depth, %.0f raster changes, %.0f texture binds; %d buffer wraps\n",
++		s.vertices / n, s.indices / n, s.uploadBytes / n / 1024.0, s.constantUpdates / n, s.shaderChanges / n,
++		s.blendChanges / n, s.depthChanges / n, s.rasterChanges / n, s.textureBinds / n, s.ringWraps);
++	I_OutputMsg("UWP perf:   D3D11: textures: %d created, %d uploads (%.1f MB), %d deleted, %d flushes; %d alive (%.1f MB); models: %d drawn without buffers, %d interpolated\n",
++		s.texturesCreated, s.textureUploads, s.textureUploadBytes / 1048576.0, s.texturesDeleted, s.flushes,
++		(int)g_textures.size(), g_textureBytes / 1048576.0, s.modelFallbacks, s.modelLerps);
++	I_OutputMsg("UWP perf:   D3D11: CPU per frame: drawing %.2f ms, textures %.2f ms; presenting: copy %.2f, wait %.2f (worst %.2f), GL %.2f, swap %.2f ms; GPU %.2f ms per frame (worst %.2f, %d timed); %s; %d errors\n",
++		PreciseToMs(s.drawTime) / n, PreciseToMs(s.textureTime) / n, PreciseToMs(s.copyTime) / n, PreciseToMs(s.waitTime) / n,
++		PreciseToMs(s.worstWait), PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
++		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames,
++		g_present.shared ? "shared texture" : "read back", g_errors);
++
++	memset(&g_stats, 0, sizeof g_stats);
++}
+diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
+new file mode 100644
+index 000000000..58abc8704
+--- /dev/null
++++ b/src/hardware/r_d3d11/r_d3d11.h
+@@ -0,0 +1,37 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file r_d3d11.h
++/// \brief [UWP]: Legacy GL's driver for Direct3D 11, presented through ANGLE
++
++#ifndef __R_D3D11_H__
++#define __R_D3D11_H__
++
++#include "../../doomtype.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// The driver's implementation of a struct hwdriver_s function, by name, for hwSym
++void *D3D11_GetDriverFunction(const char *name);
++
++// Replaces OglSdlSurface: sets up rendering at the given size, then starts the hardware renderer
++boolean D3D11_Surface(INT32 w, INT32 h);
++
++// Replaces OglSdlFinishUpdate: shows the frame through ANGLE's window surface
++void D3D11_FinishUpdate(INT32 waitvbl);
++
++// Logs the driver's counters and timings since the last call, for the UWP perf summary
++void D3D11_LogPerf(double seconds);
++
++#ifdef __cplusplus
++} // extern "C"
++#endif
++
++#endif
+diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
+new file mode 100644
+index 000000000..1195a0f88
+--- /dev/null
++++ b/src/hardware/r_d3d11/shaders.hlsl
+@@ -0,0 +1,335 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++// Copyright (C) 2020 by Sonic Team Junior.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file shaders.hlsl
++/// \brief [UWP]: Legacy GL's shaders for its Direct3D 11 driver (r_d3d11.cpp)
++///
++/// The GLSL shaders of r_opengl.c, ported to HLSL, plus the parts of OpenGL's
++/// fixed-function pipeline Legacy GL uses when its shaders are off. Each entry
++/// point is compiled by fxc at build time (see ../CMakeLists.txt).
++
++// Must match D3DConstants in r_d3d11.cpp
++cbuffer DrawConstants : register(b0)
++{
++	float4x4 u_projection; // column-major, as OpenGL stores them
++	float4x4 u_modelview;
++	float4 u_poly_color;
++	float4 u_tint_color;
++	float4 u_fade_color;
++	float4 u_color; // glColor: the vertex color of arrays that have none
++	float4 u_light_dir; // xyz: the shaders' light_dir uniform
++	float4 u_ff_light; // xyz: GL_LIGHT0's eye-space direction for fixed-function model lighting; w: 1 if lit
++	float u_lighting;
++	float u_fade_start;
++	float u_fade_end;
++	float u_light_contrast;
++	float u_light_backlight;
++	float u_leveltime;
++	float u_alpha_ref;
++	int u_alpha_func; // 0: GL_ALWAYS, 1: GL_GREATER, 2: GL_NOTEQUAL
++	int u_tex_mode; // fixed-function texturing: 0: none (the vertex color), 1: GL_MODULATE, 2: GL_REPLACE
++	int3 u_pad;
++};
++
++Texture2D t_tex : register(t0);
++Texture2D t_brightmap : register(t1); // also the fade mask of screen wipes
++SamplerState s_tex : register(s0);
++SamplerState s_brightmap : register(s1);
++
++struct VSOut
++{
++	float4 pos : SV_Position;
++	float4 color : COLOR0;
++	float2 uv : TEXCOORD0;
++	float2 uv1 : TEXCOORD1;
++	// gl_FragCoord.z / gl_FragCoord.w: window depth times clip w, which is (z + w) / 2 of the clip position,
++	// interpolated with perspective
++	float fragz : TEXCOORD2;
++};
++
++float4 Transform(float3 pos)
++{
++	return mul(u_projection, mul(u_modelview, float4(pos, 1.0)));
++}
++
++// OpenGL clips z to [-w, w] and Direct3D to [0, w]
++VSOut Finish(float4 clip, float4 color, float2 uv)
++{
++	VSOut o;
++	float z = 0.5 * (clip.z + clip.w);
++	o.pos = float4(clip.x, clip.y, z, clip.w);
++	o.color = color;
++	o.uv = uv;
++	o.uv1 = float2(0.0, 0.0);
++	o.fragz = z;
++	return o;
++}
++
++// ================
++//  Vertex shaders
++// ================
++
++// FOutVector, with the current glColor
++VSOut VSPoly(float3 pos : POSITION, float2 uv : TEXCOORD0)
++{
++	return Finish(Transform(pos), u_color, uv);
++}
++
++// GLSL_SPRITECLIP_HACK_VERTEX_SHADER
++VSOut VSPolyClip(float3 pos : POSITION, float2 uv : TEXCOORD0)
++{
++	float4 clip = Transform(pos);
++	clip.z -= 80.0 / clip.z;
++	return Finish(clip, u_color, uv);
++}
++
++// gl_skyvertex_t, with its own colors
++VSOut VSSky(float3 pos : POSITION, float2 uv : TEXCOORD0, float4 color : COLOR0)
++{
++	return Finish(Transform(pos), color, uv);
++}
++
++// Models without shaders, lit like OpenGL's fixed function does with Legacy GL's settings when model lighting is on:
++// a scene ambient of 1 and a directional GL_LIGHT0, with the surface color as the ambient and diffuse material
++VSOut VSModel(float3 pos : POSITION, float3 normal : NORMAL, float2 uv : TEXCOORD0)
++{
++	float4 color = u_color;
++
++	if (u_ff_light.w > 0.0)
++	{
++		float3 n = normalize(mul((float3x3)u_modelview, normal));
++		float diffuse = max(dot(n, u_ff_light.xyz), 0.0);
++		color = float4(saturate(u_color.rgb * (1.0 + diffuse)), u_color.a);
++	}
++
++	return Finish(Transform(pos), color, uv);
++}
++
++// GLSL_MODEL_LIGHTING_VERTEX_SHADER
++VSOut VSModelLight(float3 pos : POSITION, float3 normal : NORMAL, float2 uv : TEXCOORD0)
++{
++	float light = u_lighting;
++
++	if (length(u_light_dir.xyz) > 0.000001)
++	{
++		float4x4 m4 = mul(u_projection, u_modelview);
++		// gl_Normal * mat3(m4[0].xyz, m4[1].xyz, m4[2].xyz)
++		float extralight = -dot(normalize(mul(normal, (float3x3)m4)), normalize(u_light_dir.xyz));
++		extralight *= u_light_contrast - u_light_backlight;
++		extralight *= u_lighting / 255.0;
++		light += extralight * 2.5;
++	}
++
++	light = clamp(light / 255.0, 0.0, 1.0);
++	return Finish(Transform(pos), float4(light, light, light, 1.0), uv);
++}
++
++// The second pass of DoScreenWipe: the fade mask's texture coordinates come from the corners of the screen
++VSOut VSWipe(float3 pos : POSITION, float2 uv : TEXCOORD0)
++{
++	VSOut o = Finish(Transform(pos), u_color, uv);
++	o.uv1 = float2(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);
++	return o;
++}
++
++// ==================
++//  Fragment shaders
++// ==================
++
++float4 AlphaTest(float4 color)
++{
++	if (u_alpha_func == 1)
++	{
++		if (!(color.a > u_alpha_ref))
++			discard;
++	}
++	else if (u_alpha_func == 2)
++	{
++		if (color.a == u_alpha_ref)
++			discard;
++	}
++	return color;
++}
++
++// GLSL_DOOM_COLORMAP
++float R_DoomColormap(float light, float z)
++{
++	float lightnum = clamp(light / 17.0, 0.0, 15.0);
++	float lightz = clamp(z / 16.0, 0.0, 127.0);
++	float startmap = (15.0 - lightnum) * 4.0;
++	float scale = 160.0 / (lightz + 1.0);
++	return startmap - scale * 0.5;
++}
++
++// GLSL_DOOM_LIGHT_EQUATION
++float R_DoomLightingEquation(float light, float z)
++{
++	float colormap = floor(R_DoomColormap(light, z)) + 0.5;
++	return clamp(colormap, 0.0, 31.0) / 32.0;
++}
++
++// GLSL_SOFTWARE_TINT_EQUATION
++float4 SoftwareTint(float4 base_color, float brightmap_mix)
++{
++	float4 final_color = base_color;
++
++	if (lerp(u_tint_color.a, 0.0, brightmap_mix) > 0.0)
++	{
++		float color_bright = sqrt((base_color.r * base_color.r) + (base_color.g * base_color.g) + (base_color.b * base_color.b));
++		float strength = sqrt(9.0 * lerp(u_tint_color.a, 0.0, brightmap_mix));
++		final_color.r = clamp((color_bright * (u_tint_color.r * strength)) + (base_color.r * (1.0 - strength)), 0.0, 1.0);
++		final_color.g = clamp((color_bright * (u_tint_color.g * strength)) + (base_color.g * (1.0 - strength)), 0.0, 1.0);
++		final_color.b = clamp((color_bright * (u_tint_color.b * strength)) + (base_color.b * (1.0 - strength)), 0.0, 1.0);
++	}
++
++	return final_color;
++}
++
++float FadeChannel(float color, float fade, float colorIntensity)
++{
++	if (abs(color - fade) <= colorIntensity)
++		return fade;
++	else if (color < fade)
++		return color + colorIntensity;
++	else
++		return color - colorIntensity;
++}
++
++// GLSL_SOFTWARE_FADE_EQUATION
++float4 SoftwareFade(float4 final_color, float final_lighting, float z)
++{
++	float4 fade_color = u_fade_color;
++	float darkness = R_DoomLightingEquation(final_lighting, z);
++
++	if (u_fade_start > 0.0 || u_fade_end < 31.0)
++	{
++		float fs = u_fade_start / 31.0;
++		float fe = u_fade_end / 31.0;
++		float fd = fe - fs;
++		darkness = clamp((darkness - fs) * (1.0 / fd), 0.0, 1.0);
++	}
++
++	float colorBrightness = sqrt((final_color.r * final_color.r) + (final_color.g * final_color.g) + (final_color.b * final_color.b));
++	float fogBrightness = sqrt((fade_color.r * fade_color.r) + (fade_color.g * fade_color.g) + (fade_color.b * fade_color.b));
++	float colorIntensity = 0.0;
++
++	if (colorBrightness < fogBrightness)
++	{
++		colorIntensity = 1.0 - min(final_color.r, min(final_color.g, final_color.b));
++		colorIntensity = abs(colorIntensity - (1.0 - max(fade_color.r, max(fade_color.g, fade_color.b))));
++	}
++	else
++	{
++		colorIntensity = max(final_color.r, max(final_color.g, final_color.b));
++		colorIntensity = abs(colorIntensity - min(fade_color.r, min(fade_color.g, fade_color.b)));
++	}
++
++	colorIntensity *= darkness;
++	colorIntensity *= fade_color.a * 10.0;
++
++	final_color.r = FadeChannel(final_color.r, fade_color.r, colorIntensity);
++	final_color.g = FadeChannel(final_color.g, fade_color.g, colorIntensity);
++	final_color.b = FadeChannel(final_color.b, fade_color.b, colorIntensity);
++	return final_color;
++}
++
++// OpenGL's fixed function, with one texture unit
++float4 PSFixed(VSOut i) : SV_Target
++{
++	float4 texel = t_tex.Sample(s_tex, i.uv);
++	float4 color = i.color;
++
++	if (u_tex_mode == 1)
++		color *= texel;
++	else if (u_tex_mode == 2)
++		color = texel;
++
++	return AlphaTest(color);
++}
++
++// GLSL_DEFAULT_FRAGMENT_SHADER
++float4 PSDefault(VSOut i) : SV_Target
++{
++	return AlphaTest(t_tex.Sample(s_tex, i.uv) * u_poly_color);
++}
++
++// GLSL_SOFTWARE_FRAGMENT_SHADER
++float4 PSSoftware(VSOut i) : SV_Target
++{
++	float4 texel = t_tex.Sample(s_tex, i.uv);
++	float4 base_color = texel * u_poly_color;
++	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
++	float light_gain = (255.0 - u_lighting) * brightmap_mix;
++	float final_lighting = u_lighting + light_gain;
++	float4 final_color = SoftwareTint(base_color, brightmap_mix);
++	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
++	final_color.a = texel.a * u_poly_color.a;
++	return AlphaTest(final_color);
++}
++
++// GLSL_SOFTWARE_MODEL_LIGHTING_FRAGMENT_SHADER
++float4 PSSoftwareModelLight(VSOut i) : SV_Target
++{
++	float4 texel = t_tex.Sample(s_tex, i.uv);
++	float4 base_color = texel * u_poly_color;
++	float final_lighting = i.color.r * 255.0;
++	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
++	float light_gain = (255.0 - final_lighting) * brightmap_mix;
++	final_lighting += light_gain;
++	float4 final_color = SoftwareTint(base_color, brightmap_mix);
++	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
++	final_color.a = texel.a * u_poly_color.a;
++	return AlphaTest(final_color);
++}
++
++// GLSL_WATER_FRAGMENT_SHADER
++float4 PSWater(VSOut i) : SV_Target
++{
++	const float freq = 0.025;
++	const float amp = 0.025;
++	const float speed = 2.0;
++	const float pi = 3.14159;
++
++	float z = i.fragz / 2.0;
++	float a = -pi * (z * freq) + (u_leveltime * speed);
++	float sdistort = sin(a) * amp;
++	float cdistort = cos(a) * amp;
++	float4 texel = t_tex.Sample(s_tex, float2(i.uv.x - sdistort, i.uv.y - cdistort));
++	float4 base_color = texel * u_poly_color;
++	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
++	float light_gain = (255.0 - u_lighting) * brightmap_mix;
++	float final_lighting = u_lighting + light_gain;
++	float4 final_color = SoftwareTint(base_color, brightmap_mix);
++	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
++	final_color.a = texel.a * u_poly_color.a;
++	return AlphaTest(final_color);
++}
++
++// GLSL_FOG_FRAGMENT_SHADER
++float4 PSFog(VSOut i) : SV_Target
++{
++	float4 base_color = i.color;
++	float brightmap_mix = 0.0;
++	float final_lighting = u_lighting;
++	float4 final_color = SoftwareTint(base_color, brightmap_mix);
++	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
++	return AlphaTest(final_color);
++}
++
++// GLSL_SKY_FRAGMENT_SHADER
++float4 PSSky(VSOut i) : SV_Target
++{
++	return AlphaTest(t_tex.Sample(s_tex, i.uv) * i.color * u_poly_color);
++}
++
++// The second pass of DoScreenWipe: the end screen (GL_REPLACE) modulated by the fade mask on the second unit
++float4 PSWipe(VSOut i) : SV_Target
++{
++	return AlphaTest(t_tex.Sample(s_tex, i.uv) * t_brightmap.Sample(s_brightmap, i.uv1));
++}
 diff --git a/src/http-mserv.c b/src/http-mserv.c
 index 4f9f9cb39..6854fc5e7 100644
 --- a/src/http-mserv.c
@@ -991,10 +5807,20 @@ index 56d507e90..3d1986b0e 100644
 +
  #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
-index f52f9298e..8bff55204 100644
+index f52f9298e..9df59a4aa 100644
 --- a/src/i_video_common.cpp
 +++ b/src/i_video_common.cpp
-@@ -48,6 +48,10 @@
+@@ -33,6 +33,9 @@
+ #include "s_sound.h"  // kill
+ #include "sdl/ogl_sdl.h"
+ #include "st_stuff.h" // kill
++#ifdef _UWP
++#include "hardware/r_d3d11/r_d3d11.h"
++#endif
+ 
+ // Legacy FinishUpdate Draws
+ #include "d_netcmd.h"
+@@ -48,6 +51,10 @@
  #include "st_stuff.h"
  #include "v_video.h"
  
@@ -1005,7 +5831,7 @@ index f52f9298e..8bff55204 100644
  extern "C" consvar_t cv_scr_scale, cv_scr_x, cv_scr_y;
  
  using namespace srb2;
-@@ -105,7 +109,7 @@ static void preframe_update(Rhi& rhi)
+@@ -105,7 +112,7 @@ static void preframe_update(Rhi& rhi)
  
  static void postframe_update(Rhi& rhi)
  {
@@ -1014,7 +5840,19 @@ index f52f9298e..8bff55204 100644
  }
  
  static void temp_legacy_finishupdate_draws()
-@@ -208,6 +212,22 @@ void I_CaptureVideoFrame()
+@@ -170,7 +177,11 @@ static void temp_legacy_finishupdate_draws()
+ static void finish_legacy_ogl_update()
+ {
+ 	temp_legacy_finishupdate_draws();
++#ifdef _UWP
++	D3D11_FinishUpdate(cv_vidwait.value);
++#else
+ 	OglSdlFinishUpdate(cv_vidwait.value);
++#endif
+ }
+ #endif
+ 
+@@ -208,6 +219,22 @@ void I_CaptureVideoFrame()
  	hw_state->screen_capture->capture(*rhi);
  }
  
@@ -1037,7 +5875,7 @@ index f52f9298e..8bff55204 100644
  void I_StartDisplayUpdate(void)
  {
  	if (rendermode == render_none)
-@@ -230,6 +250,7 @@ void I_StartDisplayUpdate(void)
+@@ -230,6 +257,7 @@ void I_StartDisplayUpdate(void)
  		return;
  	}
  
@@ -1045,7 +5883,7 @@ index f52f9298e..8bff55204 100644
  	if (rhi_changed(rhi))
  	{
  		// Reset all hardware 2 state
-@@ -245,6 +266,10 @@ void I_StartDisplayUpdate(void)
+@@ -245,6 +273,10 @@ void I_StartDisplayUpdate(void)
  
  void I_FinishUpdate(void)
  {
@@ -1056,7 +5894,7 @@ index f52f9298e..8bff55204 100644
  	ZoneScoped;
  	if (rendermode == render_none)
  	{
-@@ -261,6 +286,9 @@ void I_FinishUpdate(void)
+@@ -261,6 +293,9 @@ void I_FinishUpdate(void)
  	}
  #endif
  
@@ -1066,7 +5904,7 @@ index f52f9298e..8bff55204 100644
  	temp_legacy_finishupdate_draws();
  
  	rhi::Rhi* rhi = sys::get_rhi(sys::g_current_rhi);
-@@ -272,10 +300,13 @@ void I_FinishUpdate(void)
+@@ -272,10 +307,13 @@ void I_FinishUpdate(void)
  		return;
  	}
  
@@ -1080,7 +5918,7 @@ index f52f9298e..8bff55204 100644
  	rhi->push_default_render_pass(true);
  
  	// Upscale draw the backbuffer (with postprocessing maybe?)
-@@ -304,6 +335,7 @@ void I_FinishUpdate(void)
+@@ -304,6 +342,7 @@ void I_FinishUpdate(void)
  	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
  
@@ -1088,7 +5926,7 @@ index f52f9298e..8bff55204 100644
  	switch (cv_scr_effect.value)
  	{
  	case 1:
-@@ -323,18 +355,32 @@ void I_FinishUpdate(void)
+@@ -323,18 +362,32 @@ void I_FinishUpdate(void)
  		g_hw_state.blit_rect->draw(*rhi);
  		break;
  	}
@@ -1121,6 +5959,25 @@ index f52f9298e..8bff55204 100644
  	I_StartDisplayUpdate();
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
+diff --git a/src/k_menufunc.c b/src/k_menufunc.c
+index 812c7f80e..8a9a1f346 100644
+--- a/src/k_menufunc.c
++++ b/src/k_menufunc.c
+@@ -203,8 +203,14 @@ static void M_ChangeCvar(INT32 choice)
+ 		choice != -1)
+ 	{
+ 		M_StartMessage(
++#ifdef _UWP
++			"Switching to Legacy GL (Direct3D 11 port)",
++			"Legacy GL (Direct3D 11 port) is\n"
++			"\x85" "INCOMPLETE and BROKEN.\x80\n"
++#else
+ 			"Switching to Legacy GL",
+ 			"Legacy GL is \x85" "INCOMPLETE and BROKEN.\x80\n"
++#endif
+ 			"\n"
+ 			"ARE YOU SURE?",
+ 			M_ChangeCvarResponse,
 diff --git a/src/lua_script.c b/src/lua_script.c
 index 51cef5129..8581c102e 100644
 --- a/src/lua_script.c
@@ -1303,22 +6160,25 @@ index de4b0f252..420d0290d 100644
  	#define __USE_C_FIXEDMUL__
  	#define __USE_C_FIXEDDIV__
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eab..54d7a28c8 100644
+index 705b60eab..fd187bad8 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
-@@ -25,6 +25,11 @@
+@@ -25,6 +25,14 @@
  #include "hardware/hw_main.h"
  #endif
  
 +#ifdef _UWP
 +#include "r_fps.h"
 +#include "screen.h"
++#ifdef HWRENDER
++#include "hardware/r_d3d11/r_d3d11.h"
++#endif
 +#endif
 +
  struct perfstatcol;
  struct perfstatrow;
  
-@@ -707,3 +712,191 @@ void M_DrawPerfStats(void)
+@@ -707,3 +715,233 @@ void M_DrawPerfStats(void)
  		}
  	}
  }
@@ -1340,6 +6200,10 @@ index 705b60eab..54d7a28c8 100644
 +	int draws, texturescreated, textureuploads, framebufferscreated, atlasresets;
 +	precise_t tic, playerthink, thinkers, lua, acs, bots;
 +	int checkpositions, luamobjhooks;
++	// Legacy GL's renderer
++	int hwframes;
++	precise_t hwskybox, hwnodesort, hwnodedraw, hwspritesort, hwspritedraw, hwbatchsort, hwbatchdraw;
++	INT64 hwpolys, hwverts, hwcalls, hwshaders, hwtextures;
 +} uwp_perf;
 +
 +void PS_UWPAddTic(void)
@@ -1429,6 +6293,25 @@ index 705b60eab..54d7a28c8 100644
 +			uwp_perf.portals += ps_sw_portaltime;
 +			uwp_perf.planes += ps_sw_planetime;
 +			uwp_perf.masked += ps_sw_maskedtime;
++
++#ifdef HWRENDER
++			if (rendermode == render_opengl)
++			{
++				uwp_perf.hwframes++;
++				uwp_perf.hwskybox += ps_hw_skyboxtime;
++				uwp_perf.hwnodesort += ps_hw_nodesorttime;
++				uwp_perf.hwnodedraw += ps_hw_nodedrawtime;
++				uwp_perf.hwspritesort += ps_hw_spritesorttime;
++				uwp_perf.hwspritedraw += ps_hw_spritedrawtime;
++				uwp_perf.hwbatchsort += ps_hw_batchsorttime;
++				uwp_perf.hwbatchdraw += ps_hw_batchdrawtime;
++				uwp_perf.hwpolys += ps_hw_numpolys;
++				uwp_perf.hwverts += ps_hw_numverts;
++				uwp_perf.hwcalls += ps_hw_numcalls;
++				uwp_perf.hwshaders += ps_hw_numshaders;
++				uwp_perf.hwtextures += ps_hw_numtextures;
++			}
++#endif
 +		}
 +	}
 +
@@ -1454,6 +6337,25 @@ index 705b60eab..54d7a28c8 100644
 +			uwp_perf.render * ms / n, uwp_perf.bsp * ms / n, uwp_perf.spriteclip * ms / n,
 +			uwp_perf.portals * ms / n, uwp_perf.planes * ms / n, uwp_perf.masked * ms / n);
 +	}
++
++	if (uwp_perf.hwframes)
++	{
++		const int n = uwp_perf.hwframes;
++
++		// The batch timings and counts are of the last batch each frame drew, which is the main view's after the skybox's
++		I_OutputMsg("UWP perf:   Legacy GL: skybox %.1f, node sort %.1f, node draw %.1f, sprite sort %.1f, sprite draw %.1f, batch sort %.1f, batch draw %.1f ms per frame\n",
++			uwp_perf.hwskybox * ms / n, uwp_perf.hwnodesort * ms / n, uwp_perf.hwnodedraw * ms / n,
++			uwp_perf.hwspritesort * ms / n, uwp_perf.hwspritedraw * ms / n, uwp_perf.hwbatchsort * ms / n,
++			uwp_perf.hwbatchdraw * ms / n);
++		I_OutputMsg("UWP perf:   Legacy GL: %.0f polygons, %.0f vertices, %.0f draw calls, %.0f shader and %.0f texture changes per batch\n",
++			(double)uwp_perf.hwpolys / n, (double)uwp_perf.hwverts / n, (double)uwp_perf.hwcalls / n,
++			(double)uwp_perf.hwshaders / n, (double)uwp_perf.hwtextures / n);
++	}
++
++#ifdef HWRENDER
++	if (rendermode == render_opengl)
++		D3D11_LogPerf(seconds);
++#endif
 +
 +	if (uwp_perf.frames)
 +	{
@@ -1532,6 +6434,47 @@ index f92b1d8e0..4e4f82a8f 100644
  #ifdef __cplusplus
  } // extern "C"
  #endif
+diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
+index c2e40ae04..0adaf735d 100644
+--- a/src/menus/options-video-advanced.c
++++ b/src/menus/options-video-advanced.c
+@@ -41,6 +41,16 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+ 	{IT_HEADER, "Rendering Backend...", "Watch people get confused anyway!!",
+ 		NULL, {NULL}, 0, 0},
+ 
++#ifdef _UWP
++	{IT_STRING | IT_SPACE, "Legacy GL (Direct3D 11 port) supports", "",
++		NULL, {NULL}, 0, 0},
++
++	{IT_STRING | IT_SPACE, "3D models and true perspective, but", "",
++		NULL, {NULL}, 0, 0},
++
++	{IT_STRING | IT_SPACE, "many features are missing/broken.", "",
++		NULL, {NULL}, 0, 0},
++#else
+ 	{IT_STRING | IT_SPACE, "Legacy GL supports 3D models and true", "",
+ 		NULL, {NULL}, 0, 0},
+ 
+@@ -49,6 +59,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+ 
+ 	{IT_STRING | IT_SPACE, "are missing/broken.", "",
+ 		NULL, {NULL}, 0, 0},
++#endif
+ 
+ 	{IT_SPACE | IT_NOTHING, NULL, NULL,
+ 		NULL, {NULL}, 0, 0},
+@@ -65,7 +76,11 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+ 	{IT_STRING | IT_CVAR, "Renderer", "If you don't know why you're changing this, leave it on Software!",
+ 		NULL, {.cvar = &cv_renderer}, 0, 0},
+ 
++#ifdef _UWP
++	{IT_HEADER, "Legacy GL (Direct3D 11 port) Options...", "Watch people get confused anyway!!",
++#else
+ 	{IT_HEADER, "Legacy GL Options...", "Watch people get confused anyway!!",
++#endif
+ 		NULL, {NULL}, 0, 0},
+ 
+ 	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
 diff --git a/src/p_mobj.c b/src/p_mobj.c
 index 305a75e0e..9da767720 100644
 --- a/src/p_mobj.c
@@ -3853,15 +8796,17 @@ index f8b62987b..fbc382258 100644
  	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);
  	virtual ~Gl2Rhi();
 diff --git a/src/screen.c b/src/screen.c
-index 67b8f13fb..8e22df0f2 100644
+index 67b8f13fb..a18c5de4b 100644
 --- a/src/screen.c
 +++ b/src/screen.c
-@@ -58,7 +58,7 @@ UINT8 setrenderneeded = 0;
+@@ -58,7 +58,9 @@ UINT8 setrenderneeded = 0;
  
  CV_PossibleValue_t cv_renderer_t[] = {
  	{1, "Software"},
 -#ifdef HWRENDER
-+#if defined(HWRENDER) && !defined(_UWP) // [UWP]: Legacy GL needs desktop OpenGL, which ANGLE doesn't provide
++#if defined(HWRENDER) && defined(_UWP) // [UWP]: Legacy GL draws with Direct3D 11 (hardware/r_d3d11), not OpenGL
++	{2, "Legacy GL (Direct3D 11 port)"},
++#elif defined(HWRENDER)
  	{2, "Legacy GL"},
  #endif
  	{0, NULL}
@@ -3885,6 +8830,31 @@ index d6f32a67c..537495d51 100644
  
  if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)
  	target_link_libraries(SRB2SDL2 PRIVATE m rt)
+diff --git a/src/sdl/hwsym_sdl.c b/src/sdl/hwsym_sdl.c
+index a801c73e9..ac98ad3b4 100644
+--- a/src/sdl/hwsym_sdl.c
++++ b/src/sdl/hwsym_sdl.c
+@@ -41,6 +41,9 @@
+ #ifdef HWRENDER
+ #include "../hardware/hw_drv.h"
+ #include "ogl_sdl.h"
++#ifdef _UWP
++#include "../hardware/r_d3d11/r_d3d11.h"
++#endif
+ #ifdef STATIC_OPENGL
+ #include "../hardware/r_opengl/r_opengl.h"
+ #endif
+@@ -68,6 +71,10 @@
+ void *hwSym(const char *funcName,void *handle)
+ {
+ 	void *funcPointer = NULL;
++#if defined(HWRENDER) && defined(_UWP)
++	// [UWP]: Legacy GL draws with Direct3D 11, since ANGLE has no desktop OpenGL
++	return D3D11_GetDriverFunction(funcName);
++#endif
+ #ifdef HWRENDER
+ 	if (0 == strcmp("SetPalette", funcName))
+ 		funcPointer = FUNCPTRCAST(&OglSdlSetPalette);
 diff --git a/src/sdl/i_main.cpp b/src/sdl/i_main.cpp
 index f2fa2fce9..73f659db8 100644
 --- a/src/sdl/i_main.cpp
@@ -4997,7 +9967,7 @@ index 000000000..24cc8f49c
 +	}
 +}
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c3f..d0c0afb5d 100644
+index 7fa8e0c3f..aa6754011 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
 @@ -29,6 +29,12 @@
@@ -5013,7 +9983,17 @@ index 7fa8e0c3f..d0c0afb5d 100644
  #ifdef HAVE_SDL
  #define _MATH_DEFINES_DEFINED
  #include "SDL.h"
-@@ -198,6 +204,10 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
+@@ -87,6 +93,9 @@
+ // For dynamic referencing of HW rendering functions
+ #include "hwsym_sdl.h"
+ #include "ogl_sdl.h"
++#ifdef _UWP
++#include "../hardware/r_d3d11/r_d3d11.h"
++#endif
+ #endif
+ 
+ #ifdef HAVE_DISCORDRPC
+@@ -198,6 +207,10 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
  	realwidth = vid.width;
  	realheight = vid.height;
  
@@ -5024,7 +10004,19 @@ index 7fa8e0c3f..d0c0afb5d 100644
  	if (window)
  	{
  		if (fullscreen)
-@@ -251,7 +261,13 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
+@@ -243,7 +256,11 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
+ #ifdef HWRENDER
+ 	if (rendermode == render_opengl)
+ 	{
++#ifdef _UWP
++		D3D11_Surface(vid.width, vid.height);
++#else
+ 		OglSdlSurface(vid.width, vid.height);
++#endif
+ 	}
+ 	else
+ #endif
+@@ -251,7 +268,13 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
  		SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
  	}
  
@@ -5038,7 +10030,19 @@ index 7fa8e0c3f..d0c0afb5d 100644
  	vid.realwidth = static_cast<uint32_t>(width);
  	vid.realheight = static_cast<uint32_t>(height);
  
-@@ -1319,6 +1335,48 @@ static void init_imgui()
+@@ -1098,7 +1121,11 @@ void I_UpdateNoBlit(void)
+ #ifdef HWRENDER
+ 		if (rendermode == render_opengl)
+ 		{
++#ifdef _UWP
++			D3D11_FinishUpdate(cv_vidwait.value);
++#else
+ 			OglSdlFinishUpdate(cv_vidwait.value);
++#endif
+ 		}
+ #endif
+ 	}
+@@ -1319,9 +1346,53 @@ static void init_imgui()
  	ImGui::StyleColorsDark();
  }
  
@@ -5086,8 +10090,14 @@ index 7fa8e0c3f..d0c0afb5d 100644
 +
  static SDL_bool Impl_CreateContext(void)
  {
- #ifdef HWRENDER
-@@ -1345,8 +1403,16 @@ static SDL_bool Impl_CreateContext(void)
+-#ifdef HWRENDER
++	// [UWP]: Legacy GL draws with Direct3D 11 and presents through the RHI's OpenGL ES context, so it needs no context
++	// of its own
++#if defined(HWRENDER) && !defined(_UWP)
+ 	if (rendermode == render_opengl)
+ 	{
+ 		if (!g_legacy_gl_context)
+@@ -1345,8 +1416,16 @@ static SDL_bool Impl_CreateContext(void)
  	if (!sdlglcontext)
  	{
  		SDL_GL_ResetAttributes();
@@ -5104,7 +10114,7 @@ index 7fa8e0c3f..d0c0afb5d 100644
  		sdlglcontext = SDL_GL_CreateContext(window);
  	}
  	if (sdlglcontext == NULL)
-@@ -1356,6 +1422,10 @@ static SDL_bool Impl_CreateContext(void)
+@@ -1356,6 +1435,10 @@ static SDL_bool Impl_CreateContext(void)
  	}
  	init_imgui();
  	SDL_GL_MakeCurrent(window, sdlglcontext);
@@ -5115,7 +10125,7 @@ index 7fa8e0c3f..d0c0afb5d 100644
  
  	if (!g_rhi)
  	{
-@@ -1426,6 +1496,7 @@ boolean VID_CheckRenderer(void)
+@@ -1426,6 +1509,7 @@ boolean VID_CheckRenderer(void)
  static UINT32 refresh_rate;
  static UINT32 VID_GetRefreshRate(void)
  {
@@ -5123,7 +10133,7 @@ index 7fa8e0c3f..d0c0afb5d 100644
  	int index = SDL_GetWindowDisplayIndex(window);
  	SDL_DisplayMode m;
  
-@@ -1442,6 +1513,9 @@ static UINT32 VID_GetRefreshRate(void)
+@@ -1442,6 +1526,9 @@ static UINT32 VID_GetRefreshRate(void)
  	}
  
  	return m.refresh_rate;
