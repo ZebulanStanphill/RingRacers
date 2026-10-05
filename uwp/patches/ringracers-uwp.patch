@@ -1,4 +1,4 @@
-From a2cf6724db37c4fd748738068c12ee8679af3832 Mon Sep 17 00:00:00 2001
+From 2bca8509ab9ff540c0f1b86b2f8d25629ff34346 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -33,6 +33,14 @@ RingRacers-dev, rebased onto v2.4.
   64x64x64 lookup table and light them through each colormap's light
   table, and the finished frame is turned into the screen palette, which
   brings palette flashes and color correction without remaking textures
+- Invert the screen for Encore level starts in Legacy GL instead of
+  drawing an opaque white screen, while keeping the screen alpha at 1
+- Match the RHI screen wipes in Legacy GL: use raw fade-mask bytes for
+  Mega Drive-style fades to black and white, inversion and crossfades;
+  swap the captured screens and reverse the mask for reversed fades,
+  and shift rows with Encore's bottom-origin wiggle while clamping
+  screen sampling to the captured image. Keep the two-pass wipe as a
+  fallback if the full wipe's resources are unavailable
 - Make fewer GL calls, which are expensive through ANGLE on the Xbox's
   CPU: skip state changes and binds in the GL2 RHI backend that wouldn't
   change anything, cache uniform locations, keep framebuffers between
@@ -120,6 +128,7 @@ Model: gpt-6.1-sol
  src/cvars.cpp                      |    3 +
  src/d_clisrv.c                     |   19 +
  src/d_main.cpp                     |   84 +-
+ src/f_wipe.cpp                     |   20 +-
  src/g_game.c                       |   36 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
@@ -131,9 +140,9 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.c             |   60 +-
  src/hardware/hw_main.h             |    5 +
  src/hardware/hw_md2.c              |   11 +-
- src/hardware/r_d3d11/r_d3d11.cpp   | 4640 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 4825 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   37 +
- src/hardware/r_d3d11/shaders.hlsl  |  384 +++
+ src/hardware/r_d3d11/shaders.hlsl  |  438 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
  src/hwr2/resource_management.cpp   |  105 +-
@@ -169,7 +178,7 @@ Model: gpt-6.1-sol
  src/sdl/hwsym_sdl.c                |    7 +
  src/sdl/i_main.cpp                 |   11 +-
  src/sdl/i_system.cpp               |  132 +-
- src/sdl/i_uwpprofile.cpp           |  863 ++++++
+ src/sdl/i_uwpprofile.cpp           |  863 +++++
  src/sdl/i_video.cpp                |   98 +-
  src/sdl/mixer_sound.c              |    4 +-
  src/sdl/ogl_sdl.c                  |    8 +
@@ -178,7 +187,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 66 files changed, 8507 insertions(+), 396 deletions(-)
+ 67 files changed, 8753 insertions(+), 409 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -692,11 +701,49 @@ index 19fcfe0a7..38e109869 100644
  #endif
  
  	if (M_CheckParm("-home") && M_IsNextParm())
+diff --git a/src/f_wipe.cpp b/src/f_wipe.cpp
+index 2b7d95d41..67fcb98de 100644
+--- a/src/f_wipe.cpp
++++ b/src/f_wipe.cpp
+@@ -501,6 +501,13 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+ 		}
+ 		lastwipetic = nowtime;
+ 
++		// [UWP]: Legacy GL's D3D11 wipes use the same mode, reverse and wiggle as the RHI.
++		g_wipemode = wipemode;
++		g_wipetype = wipetype;
++		g_wipeframe = wipeframe - 1;
++		g_wipereverse = reverse;
++		g_wipeencorewiggle = encorewiggle ? wipeframe - 1 : 0;
++
+ #ifdef HWRENDER
+ 		if (rendermode == render_opengl)
+ 			HWR_DoWipe(wipetype, wipeframe-1); // send in the wipe type and wipeframe because we need to cache the graphic
+@@ -510,19 +517,6 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+ 		if (rendermode != render_none) //this allows F_RunWipe to be called in dedicated servers
+ 		{
+ 			// F_DoWipe(fmask, fcolor, reverse);
+-			g_wipemode = wipemode;
+-			g_wipetype = wipetype;
+-			g_wipeframe = wipeframe - 1;
+-			g_wipereverse = reverse;
+-
+-			if (encorewiggle)
+-			{
+-				g_wipeencorewiggle = wipeframe - 1;
+-			}
+-			else
+-			{
+-				g_wipeencorewiggle = 0;
+-			}
+ 			rhi::Rhi* rhi = srb2::sys::get_rhi(srb2::sys::g_current_rhi);
+ 			hwr2::HardwareState* hw_state = srb2::sys::main_hardware_state();
+ 
 diff --git a/src/g_game.c b/src/g_game.c
 index ce69d80c0..2e29e11c6 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
-@@ -1296,12 +1296,37 @@
+@@ -1296,12 +1296,37 @@ void G_PreLevelTitleCard(void)
  	tic_t endtime = strtime + (PRELEVELTIME*NEWTICRATERATIO);
  	tic_t nowtime = strtime;
  	tic_t lasttime = strtime;
@@ -734,7 +781,7 @@ index ce69d80c0..2e29e11c6 100644
  		NetKeepAlive();		// Prevent timeouts
  
  #ifdef HWRENDER
-@@ -1319,6 +1344,17 @@
+@@ -1319,6 +1344,17 @@ void G_PreLevelTitleCard(void)
  		}
  		lasttime = nowtime;
  	}
@@ -753,7 +800,7 @@ index ce69d80c0..2e29e11c6 100644
  }
  
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..53db3b8b0 100644
+index a0a0f280c..e40506797 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -775,7 +822,7 @@ index a0a0f280c..53db3b8b0 100644
 +	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
 +
 +	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen
-+		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSPalettePostprocess)
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess)
 +		string(SUBSTRING "${entry}" 0 2 stage)
 +		string(TOLOWER "${stage}" stage)
 +		set(header "${d3d11_shader_dir}/${entry}.h")
@@ -1463,10 +1510,10 @@ index 81a7d9a49..ce26e94e6 100644
  						r = (INT32)(nextcolor.s.red - blendcolor.s.red);
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..a996605c7
+index 000000000..9c4cf7c32
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,4640 @@
+@@ -0,0 +1,4825 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -1511,9 +1558,11 @@ index 000000000..a996605c7
 +#include "SDL.h"
 +
 +#include "../../doomdef.h"
++#include "../../f_finale.h"
 +#include "../../i_system.h"
 +#include "../../m_fixed.h"
 +#include "../../screen.h"
++#include "../../w_wad.h"
 +#include "../../sdl/sdlmain.h"
 +#include "../hw_drv.h"
 +#include "../hw_main.h"
@@ -1540,6 +1589,7 @@ index 000000000..a996605c7
 +#include "PSFog.h"
 +#include "PSSky.h"
 +#include "PSWipe.h"
++#include "PSWipeFull.h"
 +#include "PSPalettePostprocess.h"
 +
 +extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
@@ -1781,7 +1831,7 @@ index 000000000..a996605c7
 +//                                                               OPENGL STATE
 +// ==========================================================================
 +
-+enum BlendFactor : UINT8 { BF_ZERO, BF_ONE, BF_SRC_ALPHA, BF_ONE_MINUS_SRC_ALPHA, BF_SRC_COLOR, BF_DST_COLOR };
++enum BlendFactor : UINT8 { BF_ZERO, BF_ONE, BF_SRC_ALPHA, BF_ONE_MINUS_SRC_ALPHA, BF_SRC_COLOR, BF_DST_COLOR, BF_ONE_MINUS_DST_COLOR };
 +enum BlendEquation : UINT8 { BE_ADD, BE_SUBTRACT, BE_REVERSE_SUBTRACT };
 +enum AlphaFunc { AF_ALWAYS = 0, AF_GREATER = 1, AF_NOTEQUAL = 2 };
 +enum TexEnv { TE_MODULATE, TE_REPLACE };
@@ -1958,7 +2008,7 @@ index 000000000..a996605c7
 +// ==========================================================================
 +
 +enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, NUMVS };
-+enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_PALETTEPOST, NUMPS };
++enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, NUMPS };
 +enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
 +
 +struct ShaderCode
@@ -1989,6 +2039,7 @@ index 000000000..a996605c7
 +	{g_PSFog, sizeof g_PSFog, "PSFog"},
 +	{g_PSSky, sizeof g_PSSky, "PSSky"},
 +	{g_PSWipe, sizeof g_PSWipe, "PSWipe"},
++	{g_PSWipeFull, sizeof g_PSWipeFull, "PSWipeFull"},
 +	{g_PSPalettePostprocess, sizeof g_PSPalettePostprocess, "PSPalettePostprocess"},
 +};
 +
@@ -2229,6 +2280,7 @@ index 000000000..a996605c7
 +		case BF_ONE_MINUS_SRC_ALPHA: return D3D11_BLEND_INV_SRC_ALPHA;
 +		case BF_SRC_COLOR: return D3D11_BLEND_SRC_COLOR;
 +		case BF_DST_COLOR: return D3D11_BLEND_DEST_COLOR;
++		case BF_ONE_MINUS_DST_COLOR: return D3D11_BLEND_INV_DEST_COLOR;
 +		default: return D3D11_BLEND_ONE;
 +	}
 +}
@@ -2781,6 +2833,11 @@ index 000000000..a996605c7
 +				g_gl.blendSrc = BF_DST_COLOR;
 +				g_gl.blendDst = BF_ZERO;
 +				break;
++			case PF_Invert:
++				// [UWP]: Unlike r_opengl.c, invert the destination for Encore's white quad.
++				g_gl.blendSrc = BF_ONE_MINUS_DST_COLOR;
++				g_gl.blendDst = BF_ZERO;
++				break;
 +			default:
 +				blending = false;
 +				break;
@@ -2831,6 +2888,7 @@ index 000000000..a996605c7
 +			case PF_ReverseSubtract:
 +			case PF_Environment:
 +			case PF_Multiplicative:
++			case PF_Invert:
 +				g_gl.alphaFunc = AF_NOTEQUAL;
 +				g_gl.alphaRef = 0.0f;
 +				break;
@@ -3162,6 +3220,18 @@ index 000000000..a996605c7
 +// ==========================================================================
 +
 +UINT32 g_screenTexture = 0, g_startScreenWipe = 0, g_endScreenWipe = 0, g_finalScreenTexture = 0;
++
++// Must match WipeConstants in shaders.hlsl. The regular draw constants at b0 stay untouched.
++struct WipeConstants
++{
++	float screenSize[2], screenFix[2];
++	INT32 mode, wiggle, reverse, pad;
++};
++static_assert(sizeof(WipeConstants) == 32, "WipeConstants must match shaders.hlsl");
++ComPtr<ID3D11Buffer> g_wipeConstants;
++ComPtr<ID3D11Texture2D> g_wipeMask;
++ComPtr<ID3D11ShaderResourceView> g_wipeMaskSrv;
++std::vector<UINT8> g_wipeMaskData;
 +
 +int ScreenTextureSize()
 +{
@@ -4675,7 +4745,11 @@ index 000000000..a996605c7
 +	{
 +		if (Failed(g_device->CreatePixelShader(kPixelShaders[i].code, kPixelShaders[i].size, nullptr, &g_pixelShaders[i]),
 +			kPixelShaders[i].name))
-+			return false;
++		{
++			// [UWP]: A failed full wipe shader can still use r_opengl.c's two-pass wipe.
++			if (i != PS_WIPEFULL)
++				return false;
++		}
 +	}
 +
 +	const D3D11_INPUT_ELEMENT_DESC poly[] =
@@ -5695,6 +5769,16 @@ index 000000000..a996605c7
 +//			a new size
 +void D3D_FlushScreenTextures(void)
 +{
++	if (g_wipeMask)
++	{
++		D3D11_TEXTURE2D_DESC desc;
++		g_wipeMask->GetDesc(&desc);
++		g_textureBytes -= (UINT64)desc.Width * desc.Height;
++		g_stats.texturesDeleted++;
++	}
++	g_wipeMaskSrv.Reset();
++	g_wipeMask.Reset();
++	g_wipeMaskData.clear();
 +	DeleteTextureObject(g_screenTexture);
 +	DeleteTextureObject(g_startScreenWipe);
 +	DeleteTextureObject(g_endScreenWipe);
@@ -5764,10 +5848,158 @@ index 000000000..a996605c7
 +	g_stats.screens++;
 +}
 +
++// [UWP]: Read the RHI's raw mask bytes separately, leaving r_opengl.c's palette-red mask for the fallback.
++bool UploadWipeMask()
++{
++	if (g_wipetype >= 100 || g_wipeframe >= 100)
++		return false;
++	char name[9];
++	snprintf(name, sizeof name, "FADE%02u%02u", (unsigned)g_wipetype, (unsigned)g_wipeframe);
++	const lumpnum_t lump = W_CheckNumForName(name);
++	if (lump == LUMPERROR)
++		return false;
++
++	const size_t size = W_LumpLength(lump);
++	UINT width, height;
++	switch (size)
++	{
++		case 256000: width = 640; height = 400; break;
++		case 64000: width = 320; height = 200; break;
++		case 16000: width = 160; height = 100; break;
++		case 4000: width = 80; height = 50; break;
++		default: return false;
++	}
++
++	D3D11_TEXTURE2D_DESC old = {};
++	if (g_wipeMask)
++		g_wipeMask->GetDesc(&old);
++	if (!g_wipeMask || old.Width != width || old.Height != height)
++	{
++		D3D11_TEXTURE2D_DESC desc = {};
++		desc.Width = width;
++		desc.Height = height;
++		desc.MipLevels = desc.ArraySize = 1;
++		desc.Format = DXGI_FORMAT_R8_UNORM;
++		desc.SampleDesc.Count = 1;
++		desc.Usage = D3D11_USAGE_DEFAULT;
++		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		ComPtr<ID3D11Texture2D> texture;
++		ComPtr<ID3D11ShaderResourceView> srv;
++		if (Failed(g_device->CreateTexture2D(&desc, nullptr, &texture), "CreateTexture2D (wipe mask)")
++			|| Failed(g_device->CreateShaderResourceView(texture.Get(), nullptr, &srv), "CreateShaderResourceView (wipe mask)"))
++			return false;
++		g_textureBytes -= (UINT64)old.Width * old.Height;
++		g_textureBytes += size;
++		if (g_wipeMask)
++			g_stats.texturesDeleted++;
++		g_wipeMask = texture;
++		g_wipeMaskSrv = srv;
++		g_stats.texturesCreated++;
++	}
++
++	g_wipeMaskData.resize(size);
++	W_ReadLump(lump, g_wipeMaskData.data());
++	g_context->UpdateSubresource(g_wipeMask.Get(), 0, nullptr, g_wipeMaskData.data(), width, 0);
++	g_stats.textureUploads++;
++	g_stats.textureUploadBytes += size;
++	return true;
++}
++
++// [UWP]: Match hwr2/postprocess_wipe.cpp and its shader instead of r_opengl.c's simple crossfade.
++bool DrawWipeFull()
++{
++	Texture *start = FindTexture(g_wipereverse ? g_endScreenWipe : g_startScreenWipe);
++	Texture *end = FindTexture(g_wipereverse ? g_startScreenWipe : g_endScreenWipe);
++	if (!CanDraw() || !start || !end || !start->srv || !end->srv
++		|| !g_vertexShaders[VS_FULLSCREEN] || !g_pixelShaders[PS_WIPEFULL]
++		|| !g_opaqueBlend || !g_noDepth || !g_noCull || !g_defaultSampler
++		|| g_screenWidth <= 0 || g_screenHeight <= 0)
++		return false;
++
++	if (!g_wipeConstants)
++	{
++		D3D11_BUFFER_DESC desc = {};
++		desc.ByteWidth = sizeof(WipeConstants);
++		desc.Usage = D3D11_USAGE_DYNAMIC;
++		desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++		desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
++		if (Failed(g_device->CreateBuffer(&desc, nullptr, &g_wipeConstants), "CreateBuffer (wipe constants)"))
++			return false;
++	}
++	if (!UploadWipeMask())
++		return false;
++
++	WipeConstants c = {};
++	c.screenSize[0] = (float)g_screenWidth;
++	c.screenSize[1] = (float)g_screenHeight;
++	c.screenFix[0] = (float)g_screenWidth / ScreenTextureSize();
++	c.screenFix[1] = (float)g_screenHeight / ScreenTextureSize();
++	c.mode = F_WipeIsToBlack(g_wipemode) ? 2 : F_WipeIsToWhite(g_wipemode) ? 3 : F_WipeIsToInvert(g_wipemode) ? 1 : 0;
++	c.wiggle = g_wipeencorewiggle;
++	c.reverse = g_wipereverse;
++	D3D11_MAPPED_SUBRESOURCE mapped;
++	if (Failed(g_context->Map(g_wipeConstants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map wipe constants"))
++		return false;
++	memcpy(mapped.pData, &c, sizeof c);
++	g_context->Unmap(g_wipeConstants.Get(), 0);
++	g_stats.constantUpdates++;
++
++	ClearScreenColor();
++	ClearScreenDepth();
++	ID3D11Buffer *constants = g_wipeConstants.Get();
++	ID3D11ShaderResourceView *screens[2] = {start->srv.Get(), end->srv.Get()};
++	ID3D11ShaderResourceView *mask = g_wipeMaskSrv.Get();
++	ID3D11SamplerState *sampler = g_defaultSampler.Get();
++	D3D11_VIEWPORT viewport = {0.0f, 0.0f, c.screenSize[0], c.screenSize[1], 0.0f, 1.0f};
++	g_context->PSSetConstantBuffers(1, 1, &constants);
++	g_context->PSSetShaderResources(0, 2, screens);
++	// t2-t4 are reserved for palette rendering.
++	g_context->PSSetShaderResources(5, 1, &mask);
++	g_context->PSSetSamplers(0, 1, &sampler);
++	g_context->IASetInputLayout(nullptr);
++	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	g_context->VSSetShader(g_vertexShaders[VS_FULLSCREEN].Get(), nullptr, 0);
++	g_context->PSSetShader(g_pixelShaders[PS_WIPEFULL].Get(), nullptr, 0);
++	g_context->OMSetBlendState(g_opaqueBlend.Get(), nullptr, 0xFFFFFFFF);
++	g_context->OMSetDepthStencilState(g_noDepth.Get(), 0);
++	g_context->RSSetState(g_noCull.Get());
++	g_context->RSSetViewports(1, &viewport);
++	g_context->Draw(3, 0);
++	g_stats.shaderChanges += 2;
++	g_stats.blendChanges++;
++	g_stats.depthChanges++;
++	g_stats.rasterChanges++;
++	g_stats.textureBinds += 3;
++	g_stats.vertices += 3;
++
++	// Release the mask before the next upload and invalidate state changed outside ApplyState.
++	ID3D11ShaderResourceView *none[2] = {};
++	g_context->PSSetShaderResources(0, 2, none);
++	g_context->PSSetShaderResources(5, 1, none);
++	const Bound previous = g_bound;
++	g_bound = Bound();
++	g_bound.vertexBuffer = previous.vertexBuffer;
++	g_bound.stride = previous.stride;
++	g_bound.indexBuffer = previous.indexBuffer;
++	g_bound.indexFormat = previous.indexFormat;
++	g_bound.samplers[0] = sampler;
++	g_bound.samplers[1] = previous.samplers[1];
++	g_bound.paletteSrvs[0] = previous.paletteSrvs[0];
++	g_bound.paletteSrvs[1] = previous.paletteSrvs[1];
++	return true;
++}
++
 +// Do screen fades!
 +void D3D_DoScreenWipe(void)
 +{
 +	CpuTimer timer(g_stats.drawTime);
++	if (DrawWipeFull())
++	{
++		g_texDownloaded = g_endScreenWipe;
++		g_stats.screens++;
++		return;
++	}
++	// Keep the two-pass Legacy GL wipe if the full wipe's resources are unavailable.
 +	float fix[8], yfix;
 +	const UINT32 fademaskdownloaded = g_texDownloaded; // the fade mask that has been set
 +
@@ -6152,10 +6384,10 @@ index 000000000..58abc8704
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..089bacbba
+index 000000000..75ddc7b7e
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,384 @@
+@@ -0,0 +1,438 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -6202,8 +6434,20 @@ index 000000000..089bacbba
 +Texture3D<float> t_palette_lookup : register(t2); // RGB -> palette index / 255, 64 on each side
 +Texture2D t_lighttable : register(t3); // a colormap's 32 light levels of 256 colors
 +Texture2D t_screen_palette : register(t4); // 256 colors: the palette the finished frame is shown in
++Texture2D<float> t_wipe_mask : register(t5); // raw lump bytes / 255, leaving the palette slots intact
 +SamplerState s_tex : register(s0);
 +SamplerState s_brightmap : register(s1);
++
++// Must match WipeConstants in r_d3d11.cpp.
++cbuffer WipeConstants : register(b1)
++{
++	float2 u_wipe_screen_size;
++	float2 u_wipe_screen_fix;
++	int u_wipe_mode;
++	int u_wipe_wiggle;
++	int u_wipe_reverse;
++	int u_wipe_pad;
++};
 +
 +struct VSOut
 +{
@@ -6293,7 +6537,7 @@ index 000000000..089bacbba
 +	return Finish(Transform(pos), float4(light, light, light, 1.0), uv);
 +}
 +
-+// A triangle covering the screen, for palette rendering's last step
++// A triangle covering the screen, for wipes and palette rendering's last step
 +VSOut VSFullscreen(uint id : SV_VertexID)
 +{
 +	VSOut o;
@@ -6531,6 +6775,48 @@ index 000000000..089bacbba
 +float4 PSWipe(VSOut i) : SV_Target
 +{
 +	return AlphaTest(t_tex.Sample(s_tex, i.uv) * t_brightmap.Sample(s_brightmap, i.uv1));
++}
++
++// [UWP]: The RHI's rhi_glsl_fragment_postprocesswipe, with D3D's top-first screen textures.
++float4 PSWipeFull(VSOut i) : SV_Target
++{
++	float2 screen = i.pos.xy / u_wipe_screen_size;
++	float2 coord = float2(screen.x, 1.0 - screen.y); // GL coordinates: y=0 at the bottom
++	float maskByte = t_wipe_mask.Sample(s_tex, coord) * 255.0;
++	if (u_wipe_reverse)
++		maskByte = 32.0 - maskByte;
++	// Preserve the RHI's negative fade at reversed byte 32; only MD fades clamp it.
++	float fade = 1.0 - maskByte / 31.0;
++	float wiggle = (float)u_wipe_wiggle;
++	float row = floor(coord.y * 200.0);
++	float phase = wiggle * 128.0 + row * wiggle * 8.0;
++	// GLSL mod(-row, 2) is nonnegative, unlike HLSL fmod on a negative row.
++	float direction = (row - 2.0 * floor(row / 2.0)) * 2.0 - 1.0;
++	screen.x += direction * sin(phase) * wiggle * 8.0 / 320.0;
++	// Clamp to the captured screen, rather than the unused part of the square texture.
++	float2 halfPixel = 0.5 / u_wipe_screen_size;
++	float2 uv = clamp(screen, halfPixel, 1.0 - halfPixel) * u_wipe_screen_fix;
++	float3 start = t_tex.Sample(s_tex, uv).rgb;
++	float3 color;
++	if (u_wipe_mode == 1)
++		color = lerp(start, 1.0 - start, fade);
++	else if (u_wipe_mode == 2)
++	{
++		float r = start.r - saturate(fade) * 3.0;
++		float g = start.g - clamp(-r, 0.0, 3.0);
++		float b = start.b - clamp(-g, 0.0, 3.0);
++		color = saturate(float3(r, g, b));
++	}
++	else if (u_wipe_mode == 3)
++	{
++		float radd = saturate(fade) * 3.0;
++		float gadd = max(radd - 1.0, 0.0);
++		float badd = max(gadd - 1.0, 0.0);
++		color = saturate(start + float3(radd, gadd, badd));
++	}
++	else
++		color = lerp(start, t_brightmap.Sample(s_tex, uv).rgb, fade);
++	return float4(color, 1.0); // Keep the screen alpha at 1, including the invert wipe.
 +}
 +
 +// Palette rendering's last step, from SRB2: each pixel of the finished frame becomes the screen palette's color for
@@ -7066,7 +7352,7 @@ index d52750abb..e9e82dbe0 100644
  	vaopt_texturequal,
  	vaopt_anisotropic,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
-index 812c7f80e..8a9a1f346 100644
+index 812c7f80e..e1edd6058 100644
 --- a/src/k_menufunc.c
 +++ b/src/k_menufunc.c
 @@ -203,8 +203,14 @@ static void M_ChangeCvar(INT32 choice)
@@ -7541,7 +7827,7 @@ index f92b1d8e0..4e4f82a8f 100644
  } // extern "C"
  #endif
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..0994e80e6 100644
+index c2e40ae04..63f6431e1 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,16 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -9912,7 +10198,7 @@ index f8b62987b..fbc382258 100644
  	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);
  	virtual ~Gl2Rhi();
 diff --git a/src/screen.c b/src/screen.c
-index 67b8f13fb..a18c5de4b 100644
+index 67b8f13fb..ab3094f1c 100644
 --- a/src/screen.c
 +++ b/src/screen.c
 @@ -58,7 +58,9 @@ UINT8 setrenderneeded = 0;

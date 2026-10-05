@@ -58,10 +58,12 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - Custom shaders from add-ons aren't supported.
   - In the menus, the renderer is named **VIBErant Direct3D 11**, as are its options header, the description above the Renderer option, and the warning shown when switching to it.
 - **Legacy GL: skybox views** *(untested)*. Precipitation and things with `RF_HIDEINSKYBOX` are left out of the skybox view, as in the Software renderer.
-- **Legacy GL: palette rendering** *(untested)*, ported from SRB2's hardware renderer.
+- **Legacy GL: palette rendering**, ported from SRB2's hardware renderer.
   - Toggled by `gr_paletterendering` (Options → Video → Advanced → Palette Rendering). It's on by default and needs Shaders on.
   - As in the Software renderer, colors are limited to the palette, and surfaces are lit through the colormaps.
   - Palette flashes and the color profile apply to the whole frame. Without palette rendering, Legacy GL shows flashes as a white or pink overlay and has no other flash palettes.
+- **Legacy GL: Encore screen inversion** *(untested)*. Encore level starts invert the screen instead of turning it white.
+- **Legacy GL: screen wipes** *(untested)*. Level and menu transitions use the Software renderer's Mega Drive-style fades to black and white, inversion, Encore wiggle, and reversed fades.
 - **Audio.** The audio driver is WASAPI instead of DirectSound.
 
 ## Files and startup
