@@ -1,4 +1,4 @@
-From 7a6b12d6375b37e8105536aff9bafbeb62dbf777 Mon Sep 17 00:00:00 2001
+From f622c9dfeb060e4404b8e26f3b179ac282b81ab3 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -105,6 +105,9 @@ RingRacers-dev, rebased onto v2.4.
 - Create the save folder before checking that the config is writable
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
+- Add UWP-only, bounded frame-position/presentation and fade/palette traces
+  to diagnose race animation stutter and title-screen brightness, including
+  main-view snapshots, slot source draw IDs, wipes and title-map lighting
 - Log the track title animation's frame count and elapsed time, with
   drawing/presentation timings, to diagnose slow or uneven animation
 - Log how long each loading step and asset file takes and how much of
@@ -141,21 +144,22 @@ Model: gpt-6.1-sol
  src/core/thread_pool.cpp           |   19 +
  src/cvars.cpp                      |    3 +
  src/d_clisrv.c                     |   19 +
- src/d_main.cpp                     |   94 +-
- src/f_wipe.cpp                     |   20 +-
- src/g_game.c                       |   39 +
+ src/d_main.cpp                     |  354 +-
+ src/f_finale.c                     |    6 +
+ src/f_wipe.cpp                     |   35 +-
+ src/g_game.c                       |   46 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_cache.c            |  196 +-
  src/hardware/hw_defs.h             |    5 +
- src/hardware/hw_draw.c             |   14 +-
+ src/hardware/hw_draw.c             |   23 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |   60 +-
+ src/hardware/hw_main.c             |   66 +-
  src/hardware/hw_main.h             |    5 +
  src/hardware/hw_md2.c              |   11 +-
- src/hardware/r_d3d11/r_d3d11.cpp   | 4989 ++++++++++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h     |   40 +
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5029 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h     |   45 +
  src/hardware/r_d3d11/shaders.hlsl  |  438 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
@@ -170,14 +174,15 @@ Model: gpt-6.1-sol
  src/m_perfstats.c                  |  238 ++
  src/m_perfstats.h                  |   11 +
  src/menus/options-video-advanced.c |   18 +
+ src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
- src/p_setup.cpp                    |    7 +
+ src/p_setup.cpp                    |   17 +
  src/p_tick.h                       |   15 +
  src/r_draw.h                       |   38 +-
  src/r_draw_column.cpp              |   18 +-
  src/r_fps.cpp                      |   25 +-
- src/r_main.cpp                     |  174 +-
+ src/r_main.cpp                     |  181 +-
  src/r_main.h                       |    8 +
  src/r_plane.cpp                    |   19 +-
  src/r_segs.cpp                     |   15 +-
@@ -193,19 +198,22 @@ Model: gpt-6.1-sol
  src/sdl/i_main.cpp                 |   11 +-
  src/sdl/i_system.cpp               |  132 +-
  src/sdl/i_uwpprofile.cpp           |  863 +++++
+ src/sdl/i_uwptrace.h               |   25 +
  src/sdl/i_video.cpp                |   98 +-
  src/sdl/mixer_sound.c              |    4 +-
  src/sdl/ogl_sdl.c                  |    8 +
  src/sdl/rhi_gl2_platform.cpp       |    9 +
  src/st_stuff.c                     |   10 +-
+ src/v_video.cpp                    |   18 +
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 67 files changed, 8933 insertions(+), 409 deletions(-)
+ 71 files changed, 9350 insertions(+), 409 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
  create mode 100644 src/sdl/i_uwpprofile.cpp
+ create mode 100644 src/sdl/i_uwptrace.h
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385dd..8b691cc0d 100644
@@ -527,10 +535,25 @@ index 1166b3c99..3cc0c59a9 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..5c7554bd8 100644
+index 19fcfe0a7..685e7ea90 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
-@@ -96,6 +96,10 @@
+@@ -33,8 +33,14 @@
+ #endif
+ 
+ #include <time.h>
++#ifdef _UWP
++#include <cstdarg>
++#endif
+ 
+ #include "doomdef.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "am_map.h"
+ #include "console.h"
+ #include "d_net.h"
+@@ -96,6 +102,10 @@
  
  #ifdef HWRENDER
  #include "hardware/hw_main.h" // 3D View Rendering
@@ -541,18 +564,254 @@ index 19fcfe0a7..5c7554bd8 100644
  #endif
  
  #include "lua_script.h"
-@@ -369,6 +373,10 @@ static bool D_Display(bool world)
+@@ -359,6 +369,231 @@ gamestate_t wipegamestate = GS_LEVEL;
+ INT16 wipetypepre = -1;
+ INT16 wipetypepost = -1;
+ 
++#ifdef _UWP
++// Main-thread diagnostics only. The clocks, counters and snapshots below are trace-owned.
++static precise_t uwp_traceOrigin, uwp_fadeStart, uwp_levelStart;
++static bool uwp_traceStarted = false, uwp_levelStarted = false;
++static INT32 uwp_traceState = GS_NULL;
++static UINT32 uwp_traceFrame, uwp_traceLoad, uwp_fadeLines, uwp_titleSamples;
++static UINT32 uwp_frameLines[2], uwp_lightFadeSamples;
++static INT32 uwp_lightFadeSector = -1;
++static bool uwp_windowNoted[2];
++static tic_t uwp_lastDrawTic;
++static INT32 uwp_lastPalette = INT32_MIN;
++static bool uwp_frameWanted, uwp_frameCaptured, uwp_worldDrawn;
++static INT32 uwp_frameWindow;
++static struct
++{
++	UINT32 frame;
++	tic_t tic, lt;
++	precise_t time;
++	fixed_t frac, x, y, z, rawx, rawy, rawz, vx, vy, vz;
++	angle_t va;
++	bool hasMobj;
++} uwp_frame;
++
++static precise_t UWPTraceNow(void)
++{
++	const precise_t now = I_GetPreciseTime();
++	if (!uwp_traceStarted)
++	{
++		uwp_traceStarted = true;
++		uwp_traceOrigin = uwp_fadeStart = now;
++	}
++	return now;
++}
++
++static double UWPTraceMs(precise_t elapsed)
++{
++	return elapsed * 1000.0 / I_GetPrecisePrecision();
++}
++
++static const char *UWPTraceRenderer(void)
++{
++	return rendermode == render_soft ? "Software/RHI" :
++		rendermode == render_opengl ? "LegacyGL/D3D11" : "none";
++}
++
++static void UWPTraceResetFade(precise_t now)
++{
++	uwp_fadeStart = now;
++	uwp_fadeLines = uwp_titleSamples = uwp_lightFadeSamples = 0;
++	uwp_lightFadeSector = -1;
++}
++
++void UWPTraceGamestate(INT32 oldstate, INT32 newstate)
++{
++	if (oldstate == newstate)
++		return;
++	const precise_t now = UWPTraceNow();
++	uwp_traceState = newstate;
++	UWPTraceResetFade(now);
++	// Transitions always open a new window; they cannot be hidden by the previous cap.
++	char line[384];
++	snprintf(line, sizeof line, "UWP fade: f=%u t=%.1f dt=0.0 load=%u gs=%d path=%s state=%d->%d wipegs=%d titlemap=%d\n",
++		uwp_traceFrame, UWPTraceMs(now - uwp_traceOrigin), uwp_traceLoad, newstate,
++		UWPTraceRenderer(), oldstate, newstate, (INT32)wipegamestate, titlemapinaction);
++	I_OutputMsg("%s", line);
++	uwp_fadeLines++;
++}
++
++void UWPTraceFade(const char *format, ...)
++{
++	if (uwp_traceState != (INT32)gamestate)
++		UWPTraceGamestate(uwp_traceState, (INT32)gamestate);
++	const precise_t now = UWPTraceNow();
++	if (now - uwp_fadeStart >= 10 * I_GetPrecisePrecision() || uwp_fadeLines >= 200)
++		return;
++	char event[384], line[640];
++	va_list args;
++	va_start(args, format);
++	vsnprintf(event, sizeof event, format, args);
++	va_end(args);
++	snprintf(line, sizeof line, "UWP fade: f=%u t=%.1f dt=%.1f load=%u gs=%d path=%s %s\n",
++		uwp_traceFrame, UWPTraceMs(now - uwp_traceOrigin), UWPTraceMs(now - uwp_fadeStart),
++		uwp_traceLoad, (INT32)gamestate, UWPTraceRenderer(), event);
++	I_OutputMsg("%s", line);
++	uwp_fadeLines++;
++}
++
++void UWPTraceLevelLoad(boolean loaded)
++{
++	const precise_t now = UWPTraceNow();
++	if (uwp_traceState != (INT32)gamestate)
++		UWPTraceGamestate(uwp_traceState, (INT32)gamestate);
++	if (!loaded)
++	{
++		uwp_traceLoad++;
++		uwp_levelStarted = false;
++		uwp_frameWanted = uwp_frameCaptured = uwp_worldDrawn = false;
++	}
++	UWPTraceResetFade(now);
++	if (loaded)
++	{
++		uwp_levelStart = now;
++		uwp_levelStarted = true;
++		uwp_frameLines[0] = uwp_frameLines[1] = 0;
++		uwp_windowNoted[0] = uwp_windowNoted[1] = false;
++		uwp_lastDrawTic = gametic;
++	}
++	UWPTraceFade("level-load=%s map=%d lt=%u", loaded ? "ready" : "begin", gamemap, (UINT32)leveltime);
++}
++
++void UWPTraceBeginFrame(void)
++{
++	++uwp_traceFrame; // D_Display and each actual wipe draw, including outside trace windows.
++}
++
++UINT32 UWPTraceFrameId(void)
++{
++	return uwp_traceFrame;
++}
++
++void UWPTraceTitleBackground(boolean started)
++{
++	static INT32 lastStarted = -1, lastColor, lastHide, lastMap;
++	static UINT32 lastLoad;
++	static precise_t lastWindow;
++	if (gamestate != GS_TITLESCREEN)
++		return;
++	if (lastStarted != (INT32)started || lastColor != curbgcolor || lastHide != curbghide
++		|| lastMap != titlemapinaction || lastLoad != uwp_traceLoad || lastWindow != uwp_fadeStart)
++	{
++		UWPTraceFade("title-bg=%s started=%d bgcolor=%d bghide=%d titlemap=%d",
++			!started ? "black" : curbgcolor >= 0 ? "fill" :
++			(!curbghide || !titlemapinaction) ? "sky-scroll" : "title-map",
++			started, curbgcolor, curbghide, titlemapinaction);
++		lastStarted = started; lastColor = curbgcolor; lastHide = curbghide;
++		lastMap = titlemapinaction; lastLoad = uwp_traceLoad; lastWindow = uwp_fadeStart;
++	}
++}
++
++void UWPTraceTitleLightFade(INT32 sector, INT32 light, INT32 source, INT32 dest, INT32 timer, INT32 step)
++{
++	if (gamestate != GS_TITLESCREEN || uwp_lightFadeSamples >= 20)
++		return;
++	if (uwp_lightFadeSector == -1)
++		uwp_lightFadeSector = sector;
++	if (sector == uwp_lightFadeSector)
++		UWPTraceFade("title-lightfade[%u] lt=%u sector=%d light=%d source=%d dest=%d timer=%d step=%.3f",
++			uwp_lightFadeSamples++, (UINT32)leveltime, sector, light, source, dest, timer, FIXED_TO_FLOAT(step));
++}
++
++void UWPTraceView(void)
++{
++	// Called at the end of R_SetupFrame for player 1, after view interpolation and
++	// before either renderer can replace the main camera with a skybox/portal camera.
++	if (viewssnum != 0)
++		return;
++	if (gamestate == GS_TITLESCREEN && uwp_titleSamples < 20)
++	{
++		const extracolormap_t *cm = viewsector ? viewsector->extra_colormap : NULL;
++		UWPTraceFade("title-light[%u] lt=%u curfade=%d lt_fade=%u sector=%d light=%d tint=%08x fog=%08x range=%u/%u",
++			uwp_titleSamples++, (UINT32)leveltime, curfadevalue, (UINT32)lt_fade,
++			viewsector ? (INT32)(viewsector - sectors) : -1, viewsector ? viewsector->lightlevel : -1,
++			cm ? (UINT32)cm->rgba : 0, cm ? (UINT32)cm->fadergba : 0,
++			cm ? cm->fadestart : 0, cm ? cm->fadeend : 31);
++	}
++	if (!uwp_frameWanted || !uwp_worldDrawn || gamestate != GS_LEVEL)
++		return;
++	uwp_frame.frame = uwp_traceFrame;
++	uwp_frame.time = I_GetPreciseTime();
++	uwp_frame.tic = gametic; uwp_frame.lt = leveltime; uwp_frame.frac = rendertimefrac;
++	uwp_frame.vx = viewx; uwp_frame.vy = viewy; uwp_frame.vz = viewz; uwp_frame.va = viewangle;
++	mobj_t *mo = players[displayplayers[0]].mo;
++	uwp_frame.hasMobj = mo != NULL;
++	if (mo)
++	{
++		interpmobjstate_t interp;
++		R_InterpolateMobjState(mo, R_UsingFrameInterpolation() && !paused ? rendertimefrac : FRACUNIT, &interp);
++		uwp_frame.x = interp.x; uwp_frame.y = interp.y; uwp_frame.z = interp.z;
++		uwp_frame.rawx = mo->x; uwp_frame.rawy = mo->y; uwp_frame.rawz = mo->z;
++	}
++	else
++	{
++		uwp_frame.x = uwp_frame.y = uwp_frame.z = 0;
++		uwp_frame.rawx = uwp_frame.rawy = uwp_frame.rawz = 0;
++	}
++	uwp_frameCaptured = true;
++}
++
++static void UWPTraceFinishFrame(bool wipe, bool presented)
++{
++	if (st_palette != uwp_lastPalette)
++	{
++		if (uwp_lastPalette == INT32_MIN)
++			UWPTraceFade("st_palette=%d initial", st_palette);
++		else
++			UWPTraceFade("st_palette=%d->%d", uwp_lastPalette, st_palette);
++		uwp_lastPalette = st_palette;
++	}
++	if (uwp_frameCaptured)
++	{
++		INT32 copied = -1, shown = -1;
++		UINT32 copyframe = 0, showframe = 0;
++#ifdef HWRENDER
++		if (presented && rendermode == render_opengl)
++			D3D11_GetPresentTrace(&copied, &shown, &copyframe, &showframe);
++#endif
++		char line[640];
++		snprintf(line, sizeof line, "UWP frame: f=%u load=%u t=%.1f lt=%u tics=%u frac=%.3f mo=%d p=(%.1f,%.1f,%.1f) raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.1f,%.1f) title=%u/%u slot=%d/shown=%d copyf=%u/showf=%u present=%s\n",
++			uwp_frame.frame, uwp_traceLoad, UWPTraceMs(uwp_frame.time - uwp_levelStart),
++			(UINT32)uwp_frame.lt, (UINT32)(uwp_frame.tic - uwp_lastDrawTic), FIXED_TO_FLOAT(uwp_frame.frac),
++			uwp_frame.hasMobj, FIXED_TO_FLOAT(uwp_frame.x), FIXED_TO_FLOAT(uwp_frame.y), FIXED_TO_FLOAT(uwp_frame.z),
++			FIXED_TO_FLOAT(uwp_frame.rawx), FIXED_TO_FLOAT(uwp_frame.rawy), FIXED_TO_FLOAT(uwp_frame.rawz),
++			FIXED_TO_FLOAT(uwp_frame.vx), FIXED_TO_FLOAT(uwp_frame.vy), FIXED_TO_FLOAT(uwp_frame.vz),
++			uwp_frame.va / (double)ANG1, (UINT32)lt_ticker, (UINT32)lt_lasttic, copied, shown,
++			copyframe, showframe, presented ? (wipe ? "wipe" : "normal") : "none");
++		I_OutputMsg("%s", line);
++		uwp_frameLines[uwp_frameWindow]++;
++	}
++	// Count all actual world draws, including the gap between the two trace windows.
++	if (uwp_worldDrawn)
++		uwp_lastDrawTic = gametic;
++	uwp_frameWanted = uwp_frameCaptured = uwp_worldDrawn = false;
++}
++#endif
++
+ static bool D_Display(bool world)
+ {
+ 	bool ranwipe = false;
+@@ -369,6 +604,14 @@ static bool D_Display(bool world)
  
  	ZoneScoped;
  
 +#ifdef _UWP
 +	UWPProfPhase uwpprofphase(UWPPROF_2D);
++	if (uwp_traceState != (INT32)gamestate)
++		UWPTraceGamestate(uwp_traceState, (INT32)gamestate);
++	uwp_frameCaptured = uwp_frameWanted = uwp_worldDrawn = false;
++
 +#endif
 +
  	if (g_takemapthumbnail != TMT_NO)
  	{
  		forcerefresh = true;
-@@ -424,6 +432,12 @@ static bool D_Display(bool world)
+@@ -424,6 +667,12 @@ static bool D_Display(bool world)
  		I_UpdateNoBlit();
  	}
  
@@ -565,7 +824,43 @@ index 19fcfe0a7..5c7554bd8 100644
  	// save the current screen if about to wipe
  	wipe = (gamestate != wipegamestate);
  	if (wipe)
-@@ -554,6 +568,9 @@ static bool D_Display(bool world)
+@@ -478,6 +727,25 @@ static bool D_Display(bool world)
+ 	if (dedicated) //bail out after wipe logic
+ 		return false;
+ 
++#ifdef _UWP
++	UWPTraceBeginFrame();
++	const bool titleWindow = lt_ticker < lt_endtime + TICRATE;
++	const bool raceWindow = leveltime >= 10 * TICRATE && leveltime < 20 * TICRATE;
++	uwp_frameWindow = titleWindow ? 0 : 1;
++	if (gamestate == GS_LEVEL && uwp_levelStarted && (titleWindow || raceWindow)
++		&& uwp_frameLines[uwp_frameWindow] < 300)
++	{
++		uwp_frameWanted = true;
++		if (!uwp_windowNoted[uwp_frameWindow])
++		{
++			I_OutputMsg("UWP frame window: f=%u load=%u window=%s interp=%d frac=%.3f limit=300 angle=degrees slots=last-present copyf/showf=source-draw\n",
++				uwp_traceFrame, uwp_traceLoad, titleWindow ? "title" : "10-20s",
++				R_UsingFrameInterpolation(), FIXED_TO_FLOAT(rendertimefrac));
++			uwp_windowNoted[uwp_frameWindow] = true;
++		}
++	}
++#endif
++
+ 	// Catch runaway clipping rectangles.
+ 	V_ClearClipRect();
+ 
+@@ -545,6 +813,9 @@ static bool D_Display(bool world)
+ 		{
+ 			if (!automapactive && !dedicated && cv_renderview.value && (world || forcerefresh))
+ 			{
++#ifdef _UWP
++				uwp_worldDrawn = true;
++#endif
+ 				R_ApplyLevelInterpolators(R_UsingFrameInterpolation() ? rendertimefrac : FRACUNIT);
+ 
+ 				viewwindowy = 0;
+@@ -554,6 +825,9 @@ static bool D_Display(bool world)
  				objectsdrawn = 0;
  
  				ps_rendercalltime = I_GetPreciseTime();
@@ -575,7 +870,7 @@ index 19fcfe0a7..5c7554bd8 100644
  
  				if (rendermode == render_soft)
  				{
-@@ -685,7 +702,13 @@ static bool D_Display(bool world)
+@@ -685,7 +959,13 @@ static bool D_Display(bool world)
  
  			if (rendermode == render_soft)
  			{
@@ -589,7 +884,17 @@ index 19fcfe0a7..5c7554bd8 100644
  			}
  
  			if (lastdraw)
-@@ -903,6 +926,10 @@ void D_SRB2Loop(void)
+@@ -834,6 +1114,9 @@ static bool D_Display(bool world)
+ 		ps_swaptime = I_GetPreciseTime() - ps_swaptime;
+ 	}
+ 
++#ifdef _UWP
++	UWPTraceFinishFrame(wipe, !wipe || ranwipe);
++#endif
+ 	return ranwipe;
+ }
+ 
+@@ -903,6 +1186,10 @@ void D_SRB2Loop(void)
  	S_SetMusicVolume();
  	S_SetSfxVolume();
  
@@ -600,7 +905,7 @@ index 19fcfe0a7..5c7554bd8 100644
  	for (;;)
  	{
  		// capbudget is the minimum precise_t duration of a single loop iteration
-@@ -922,6 +949,10 @@ void D_SRB2Loop(void)
+@@ -922,6 +1209,10 @@ void D_SRB2Loop(void)
  
  		bool ranwipe = false;
  		bool world = false;
@@ -611,7 +916,7 @@ index 19fcfe0a7..5c7554bd8 100644
  
  		I_UpdateTime();
  
-@@ -954,6 +985,9 @@ void D_SRB2Loop(void)
+@@ -954,6 +1245,9 @@ void D_SRB2Loop(void)
  		renderisnewtic = (realtics > 0 || singletics);
  
  		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
@@ -621,24 +926,24 @@ index 19fcfe0a7..5c7554bd8 100644
  
  		if (renderisnewtic)
  		{
-@@ -1067,7 +1101,16 @@ void D_SRB2Loop(void)
+@@ -1067,7 +1361,16 @@ void D_SRB2Loop(void)
  			}
  
  			ranwipe = D_Display(world);
 +#ifdef _UWP
 +			displayed = true;
 +#endif
- 		}
++		}
 +#ifdef _UWP
 +		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
 +		{
 +			skippedframe = true;
-+		}
+ 		}
 +#endif
  
  #ifdef HWRENDER
  		// Only take screenshots after drawing.
-@@ -1183,14 +1226,30 @@ void D_SRB2Loop(void)
+@@ -1183,14 +1486,30 @@ void D_SRB2Loop(void)
  			skiplaggyworld = false;
  		}
  
@@ -670,7 +975,7 @@ index 19fcfe0a7..5c7554bd8 100644
  			{
  				I_SleepDuration(capbudget - (finishprecise - enterprecise));
  			}
-@@ -1199,6 +1258,10 @@ void D_SRB2Loop(void)
+@@ -1199,6 +1518,10 @@ void D_SRB2Loop(void)
  		finishprecise = I_GetPreciseTime();
  		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
  		deltatics = deltasecs * NEWTICRATE;
@@ -681,7 +986,7 @@ index 19fcfe0a7..5c7554bd8 100644
  	}
  }
  
-@@ -1661,6 +1724,11 @@ void D_SRB2Main(void)
+@@ -1661,6 +1984,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -693,7 +998,7 @@ index 19fcfe0a7..5c7554bd8 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1757,6 +1825,16 @@ void D_SRB2Main(void)
+@@ -1757,6 +2085,16 @@ void D_SRB2Main(void)
  	// Make backups of some SOCcable tables.
  	P_BackupTables();
  
@@ -710,7 +1015,7 @@ index 19fcfe0a7..5c7554bd8 100644
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
-@@ -1774,7 +1852,19 @@ void D_SRB2Main(void)
+@@ -1774,7 +2112,19 @@ void D_SRB2Main(void)
  	//
  	// search for mainwad maps
  	//
@@ -730,7 +1035,7 @@ index 19fcfe0a7..5c7554bd8 100644
  	basenummapheaders = nummapheaders;
  	basenumkartcupheaders = numkartcupheaders;
  
-@@ -2323,6 +2413,8 @@ const char *D_Home(void)
+@@ -2323,6 +2673,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -739,11 +1044,68 @@ index 19fcfe0a7..5c7554bd8 100644
  #endif
  
  	if (M_CheckParm("-home") && M_IsNextParm())
+diff --git a/src/f_finale.c b/src/f_finale.c
+index bacb041ce..1b1c6b12c 100644
+--- a/src/f_finale.c
++++ b/src/f_finale.c
+@@ -13,6 +13,9 @@
+ /// \brief Title screen, intro, game evaluation, and credits.
+ 
+ #include "doomdef.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "doomstat.h"
+ #include "d_main.h"
+ #include "d_netcmd.h"
+@@ -1910,6 +1913,9 @@ void F_VersionDrawer(void)
+ // (no longer) De-Demo'd Title Screen
+ void F_TitleScreenDrawer(void)
+ {
++#ifdef _UWP
++	UWPTraceTitleBackground(cache_gametrulystarted);
++#endif
+ 	boolean hidepics = false;
+ 
+ 	// Draw that sky!
 diff --git a/src/f_wipe.cpp b/src/f_wipe.cpp
-index 2b7d95d41..67fcb98de 100644
+index 2b7d95d41..8dff0c313 100644
 --- a/src/f_wipe.cpp
 +++ b/src/f_wipe.cpp
-@@ -501,6 +501,13 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+@@ -14,6 +14,9 @@
+ /// \brief SRB2 2.1 custom fade mask "wipe" behavior.
+ 
+ #include "f_finale.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "i_video.h"
+ #include "v_video.h"
+ 
+@@ -463,6 +466,11 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+ 	if (staffsync)
+ 		return;
+ 
++#ifdef _UWP
++	const precise_t traceStart = I_GetPreciseTime();
++	UINT32 traceFrames = 0;
++	UWPTraceFade("F_RunWipe start mode=%u type=%u reverse=%d wiggle=%d colormap=%s menu=%d", wipemode, wipetype, reverse, encorewiggle, colormap ? colormap : "NULL", drawMenu);
++#endif
+ 	if (colormap != NULL)
+ 		clump = W_GetNumForName(colormap);
+ 
+@@ -493,6 +501,10 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+ 		if (!fmask)
+ 			break;
+ 
++#ifdef _UWP
++		UWPTraceBeginFrame();
++		++traceFrames;
++#endif
+ 		// wait loop
+ 		while (!((nowtime = I_GetTime()) - lastwipetic))
+ 		{
+@@ -501,6 +513,13 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
  		}
  		lastwipetic = nowtime;
  
@@ -757,7 +1119,7 @@ index 2b7d95d41..67fcb98de 100644
  #ifdef HWRENDER
  		if (rendermode == render_opengl)
  			HWR_DoWipe(wipetype, wipeframe-1); // send in the wipe type and wipeframe because we need to cache the graphic
-@@ -510,19 +517,6 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+@@ -510,19 +529,6 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
  		if (rendermode != render_none) //this allows F_RunWipe to be called in dedicated servers
  		{
  			// F_DoWipe(fmask, fcolor, reverse);
@@ -777,11 +1139,31 @@ index 2b7d95d41..67fcb98de 100644
  			rhi::Rhi* rhi = srb2::sys::get_rhi(srb2::sys::g_current_rhi);
  			hwr2::HardwareState* hw_state = srb2::sys::main_hardware_state();
  
+@@ -574,6 +580,9 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
+ 		NetKeepAlive(); // Update the network so we don't cause timeouts
+ 	}
+ 
++#ifdef _UWP
++	UWPTraceFade("F_RunWipe end mode=%u type=%u frames=%u ms=%.1f reverse=%d", wipemode, wipetype, traceFrames, (I_GetPreciseTime() - traceStart) * 1000.0 / I_GetPrecisePrecision(), reverse);
++#endif
+ 	WipeInAction = false;
+ 
+ 	if (fcolor)
 diff --git a/src/g_game.c b/src/g_game.c
-index ce69d80c0..ad52379c5 100644
+index ce69d80c0..8d8ca144e 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
-@@ -1292,16 +1292,44 @@ void G_StartTitleCard(void)
+@@ -13,6 +13,9 @@
+ /// \brief game loop functions, events handling
+ 
+ #include "doomdef.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "console.h"
+ #include "d_main.h"
+ #include "d_clisrv.h"
+@@ -1292,16 +1295,44 @@ void G_StartTitleCard(void)
  void G_PreLevelTitleCard(void)
  {
  #ifndef NOWIPE
@@ -826,7 +1208,7 @@ index ce69d80c0..ad52379c5 100644
  		NetKeepAlive();		// Prevent timeouts
  
  #ifdef HWRENDER
-@@ -1319,6 +1347,17 @@ void G_PreLevelTitleCard(void)
+@@ -1319,6 +1350,17 @@ void G_PreLevelTitleCard(void)
  		}
  		lasttime = nowtime;
  	}
@@ -844,6 +1226,17 @@ index ce69d80c0..ad52379c5 100644
  #endif
  }
  
+@@ -5990,6 +6032,10 @@ INT32 G_FindMapByNameOrCode(const char *mapname, char **realmapnamep)
+ //
+ void G_SetGamestate(gamestate_t newstate)
+ {
++
++#ifdef _UWP
++	UWPTraceGamestate((INT32)gamestate, (INT32)newstate);
++#endif
+ 	gamestate = newstate;
+ #ifdef HAVE_DISCORDRPC
+ 	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
 index a0a0f280c..e40506797 100644
 --- a/src/hardware/CMakeLists.txt
@@ -1239,10 +1632,20 @@ index 1ce225f19..34702a64c 100644
  	HWD_NUMSTATE
  };
 diff --git a/src/hardware/hw_draw.c b/src/hardware/hw_draw.c
-index d4ba78614..5f6d1a565 100644
+index d4ba78614..0ccff361f 100644
 --- a/src/hardware/hw_draw.c
 +++ b/src/hardware/hw_draw.c
-@@ -617,7 +617,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
+@@ -16,6 +16,9 @@
+ #endif
+ 
+ #include "../doomdef.h"
++#ifdef _UWP
++#include "../sdl/i_uwptrace.h"
++#endif
+ 
+ #ifdef HWRENDER
+ #include "hw_main.h"
+@@ -617,7 +620,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
  	}
  	else // Do TRANSMAP** fade.
  	{
@@ -1251,7 +1654,7 @@ index d4ba78614..5f6d1a565 100644
  		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
  	}
  	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
-@@ -703,7 +703,7 @@ void HWR_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color, UINT16 ac
+@@ -703,7 +706,7 @@ void HWR_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color, UINT16 ac
  	}
  	else // Do TRANSMAP** fade.
  	{
@@ -1260,7 +1663,17 @@ index d4ba78614..5f6d1a565 100644
  		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
  	}
  	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
-@@ -773,7 +773,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
+@@ -738,6 +741,9 @@ void HWR_DrawConsoleBack(UINT32 color, INT32 height)
+ 
+ void HWR_EncoreInvertScreen(void)
+ {
++#ifdef _UWP
++	UWPTraceFade("HWR_EncoreInvertScreen");
++#endif
+ 	FOutVector v[4];
+ 	FSurfaceInfo Surf;
+ 
+@@ -773,7 +779,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
  	v[0].t = v[1].t = 1.0f;
  	v[2].t = v[3].t = 0.0f;
  
@@ -1269,7 +1682,17 @@ index d4ba78614..5f6d1a565 100644
  
  	UINT16 workingstrength = (strength*12);
  	if (workingstrength > 0xFF)
-@@ -958,7 +958,7 @@ void HWR_drawAMline(const fline_t *fl, INT32 color)
+@@ -781,6 +787,9 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
+ 	else
+ 		Surf.PolyColor.s.alpha = workingstrength;
+ 
++#ifdef _UWP
++	UWPTraceFade("HWR_DrawCustomFadeScreen color=%u strength=%u rgba=%08x alpha=%u", color, strength, Surf.PolyColor.rgba, Surf.PolyColor.s.alpha);
++#endif
+ 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
+ }
+ 
+@@ -958,7 +967,7 @@ void HWR_drawAMline(const fline_t *fl, INT32 color)
  	F2DCoord v1, v2;
  	RGBA_t color_rgba;
  
@@ -1278,7 +1701,7 @@ index d4ba78614..5f6d1a565 100644
  
  	v1.x = ((float)fl->a.x-(vid.width/2.0f))*(2.0f/vid.width);
  	v1.y = ((float)fl->a.y-(vid.height/2.0f))*(2.0f/vid.height);
-@@ -1048,7 +1048,7 @@ void HWR_DrawDiag(INT32 x, INT32 y, INT32 wh, INT32 color)
+@@ -1048,7 +1057,7 @@ void HWR_DrawDiag(INT32 x, INT32 y, INT32 wh, INT32 color)
  	v[0].t = v[1].t = 0.0f;
  	v[2].t = v[3].t = 1.0f;
  
@@ -1287,7 +1710,7 @@ index d4ba78614..5f6d1a565 100644
  
  	HWD.pfnDrawPolygon(&Surf, v, 4,
  		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
-@@ -1159,7 +1159,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+@@ -1159,7 +1168,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  
  		if (x == 0 && y == 0 && w == BASEVIDWIDTH && h == BASEVIDHEIGHT)
  		{
@@ -1296,7 +1719,7 @@ index d4ba78614..5f6d1a565 100644
  			FRGBAFloat clearColour;
  			clearColour.red = (float)rgbaColour.s.red / 255;
  			clearColour.green = (float)rgbaColour.s.green / 255;
-@@ -1218,7 +1218,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+@@ -1218,7 +1227,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  	v[0].t = v[1].t = 0.0f;
  	v[2].t = v[3].t = 1.0f;
  
@@ -1357,10 +1780,20 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..4c7b154b1 100644
+index b5e8fca5a..053b1d275 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
-@@ -194,6 +194,38 @@ static boolean HWR_UseShader(void)
+@@ -14,6 +14,9 @@
+ #include <math.h>
+ 
+ #include "../doomstat.h"
++#ifdef _UWP
++#include "../sdl/i_uwptrace.h"
++#endif
+ 
+ #ifdef HWRENDER
+ #include "hw_glob.h"
+@@ -194,6 +197,38 @@ static boolean HWR_UseShader(void)
  	return (cv_glshaders.value && gl_shadersavailable);
  }
  
@@ -1399,7 +1832,7 @@ index b5e8fca5a..4c7b154b1 100644
  boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
  {
  	if (R_ThingIsFullBright(thing))
-@@ -318,6 +350,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -318,6 +353,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
  
  	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
@@ -1409,7 +1842,7 @@ index b5e8fca5a..4c7b154b1 100644
  }
  
  UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -3656,7 +3691,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +3694,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -1418,7 +1851,7 @@ index b5e8fca5a..4c7b154b1 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4597,6 +4632,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +4635,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -1429,7 +1862,7 @@ index b5e8fca5a..4c7b154b1 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4660,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +4663,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -1442,7 +1875,7 @@ index b5e8fca5a..4c7b154b1 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +4698,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +4701,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -1455,7 +1888,7 @@ index b5e8fca5a..4c7b154b1 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -5973,7 +6024,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6027,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -1465,7 +1898,7 @@ index b5e8fca5a..4c7b154b1 100644
  }
  
  // ==========================================================================
-@@ -6138,6 +6191,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6194,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -1474,7 +1907,7 @@ index b5e8fca5a..4c7b154b1 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6312,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6315,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -1484,6 +1917,16 @@ index b5e8fca5a..4c7b154b1 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
+@@ -6266,6 +6325,9 @@ void HWR_DoPostProcessor(player_t *player)
+ 		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
+ 		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
+ 
++#ifdef _UWP
++		UWPTraceFade("HWR_DoPostProcessor flashcount=%d flashpal=%d view=%d", player->flashcount, player->flashpal, R_GetViewNumber());
++#endif
+ 		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
+ 		if (player->flashpal == PAL_NUKE)
+ 		{
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
 index 652b40947..dc289e55e 100644
 --- a/src/hardware/hw_main.h
@@ -1555,10 +1998,10 @@ index 81a7d9a49..ce26e94e6 100644
  						r = (INT32)(nextcolor.s.red - blendcolor.s.red);
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..5e61771ea
+index 000000000..35c0616a4
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,4989 @@
+@@ -0,0 +1,5029 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -1603,6 +2046,9 @@ index 000000000..5e61771ea
 +#include "SDL.h"
 +
 +#include "../../doomdef.h"
++#ifdef _UWP
++#include "../../sdl/i_uwptrace.h"
++#endif
 +#include "../../f_finale.h"
 +#include "../../i_system.h"
 +#include "../../m_fixed.h"
@@ -3629,6 +4075,9 @@ index 000000000..5e61771ea
 +		}
 +	}
 +
++#ifdef _UWP
++	UWPTraceFade("D3D_SetScreenPalette upload first=%08x white=%08x", palette[0].rgba, palette[31].rgba);
++#endif
 +	g_context->UpdateSubresource(g_screenPalette.Get(), 0, nullptr, palette, 256 * sizeof(RGBA_t), 0);
 +}
 +
@@ -4023,6 +4472,10 @@ index 000000000..5e61771ea
 +};
 +Presenter g_present;
 +bool g_presentImmediately = false; // wipes must reach the window before presenting stops
++#ifdef _UWP
++INT32 g_traceCopied = -1, g_traceShown = -1;
++UINT32 g_traceCopyFrame, g_traceShowFrame, g_traceSlotFrame[kPresentSlots];
++#endif
 +
 +const char *DescribeFormat(DXGI_FORMAT format)
 +{
@@ -4560,6 +5013,10 @@ index 000000000..5e61771ea
 +// Shows the screen, normally a frame late when shared, so the GPU has finished copying it by then
 +void Present()
 +{
++#ifdef _UWP
++	g_traceCopied = g_traceShown = -1;
++	g_traceCopyFrame = g_traceShowFrame = 0;
++#endif
 +	const bool trace = g_tracedFrames < kTraceFrames;
 +	precise_t t = I_GetPreciseTime();
 +	CheckVideoMemory(); // included in the presenting copy timer
@@ -4628,6 +5085,10 @@ index 000000000..5e61771ea
 +		g_context->End(slot.end.Get());
 +		g_context->End(slot.disjoint.Get());
 +	}
++#ifdef _UWP
++	g_traceCopied = (INT32)(&slot - g_present.slots);
++	g_traceCopyFrame = g_traceSlotFrame[g_traceCopied] = UWPTraceFrameId();
++#endif
 +	g_context->End(slot.copied.Get());
 +	g_context->Flush();
 +
@@ -4676,6 +5137,10 @@ index 000000000..5e61771ea
 +	}
 +
 +	DrawToWindow(shown, trace);
++#ifdef _UWP
++	g_traceShown = (INT32)(&shown - g_present.slots);
++	g_traceShowFrame = g_traceSlotFrame[g_traceShown];
++#endif
 +
 +	now = I_GetPreciseTime();
 +	g_stats.glTime += now - t;
@@ -6150,10 +6615,16 @@ index 000000000..5e61771ea
 +	g_presentImmediately = true; // applies to both the full wipe and the fallback below
 +	if (DrawWipeFull())
 +	{
++#ifdef _UWP
++		UWPTraceFade("D3D_DoScreenWipe path=full mode=%u type=%u maskframe=%u reverse=%d wiggle=%u", g_wipemode, g_wipetype, g_wipeframe, g_wipereverse, g_wipeencorewiggle);
++#endif
 +		g_texDownloaded = g_endScreenWipe;
 +		g_stats.screens++;
 +		return;
 +	}
++#ifdef _UWP
++	UWPTraceFade("D3D_DoScreenWipe path=fallback mode=%u type=%u maskframe=%u reverse=%d wiggle=%u", g_wipemode, g_wipetype, g_wipeframe, g_wipereverse, g_wipeencorewiggle);
++#endif
 +	// Keep the two-pass Legacy GL wipe if the full wipe's resources are unavailable.
 +	float fix[8], yfix;
 +	const UINT32 fademaskdownloaded = g_texDownloaded; // the fade mask that has been set
@@ -6437,6 +6908,10 @@ index 000000000..5e61771ea
 +		g_present.vsyncSet = true;
 +	}
 +
++#ifdef _UWP
++	g_traceCopied = g_traceShown = -1;
++	g_traceCopyFrame = g_traceShowFrame = 0;
++#endif
 +	if (!g_context || !g_rt || g_deviceLost)
 +		return;
 +
@@ -6477,6 +6952,14 @@ index 000000000..5e61771ea
 +	g_budgetTextureFlush = true; // Flush logs once the driver has actually released the textures
 +	return true;
 +}
++
++#ifdef _UWP
++void D3D11_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
++{
++	*copied = g_traceCopied; *shown = g_traceShown;
++	*copyframe = g_traceCopyFrame; *showframe = g_traceShowFrame;
++}
++#endif
 +
 +void D3D11_LogPerf(double seconds)
 +{
@@ -6550,10 +7033,10 @@ index 000000000..5e61771ea
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 000000000..1af7fc6d4
+index 000000000..3782b1bf8
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,45 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -6585,6 +7068,11 @@ index 000000000..1af7fc6d4
 +
 +// Returns and clears an over-budget request; permits at most one texture flush per five seconds.
 +boolean D3D11_TakeTextureFlushRequest(void);
++
++#ifdef _UWP
++// Last Present's copied/shown slots and source draw IDs; -1/0 if no copy/draw occurred.
++void D3D11_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
++#endif
 +
 +// Logs the driver's counters and timings since the last call, for the UWP perf summary
 +void D3D11_LogPerf(double seconds);
@@ -8089,6 +8577,37 @@ index c2e40ae04..63f6431e1 100644
  	{IT_SPACE | IT_NOTHING, NULL,  NULL,
  		NULL, {NULL}, 0, 0},
  
+diff --git a/src/p_lights.c b/src/p_lights.c
+index fe167838a..7d2074376 100644
+--- a/src/p_lights.c
++++ b/src/p_lights.c
+@@ -14,6 +14,9 @@
+ ///        Fire flicker, light flash, strobe flash, lightning flash, glow, and fade.
+ 
+ #include "doomdef.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "p_local.h"
+ #include "r_state.h"
+ #include "z_zone.h"
+@@ -401,10 +404,16 @@ void T_LightFade(lightlevel_t *ll)
+ 	if (--ll->timer <= 0)
+ 	{
+ 		ll->sector->lightlevel = ll->destlevel; // set to dest lightlevel
++#ifdef _UWP
++		UWPTraceTitleLightFade((INT32)(ll->sector - sectors), ll->sector->lightlevel, ll->sourcelevel, ll->destlevel, ll->timer, ll->fixedpertic);
++#endif
+ 		P_RemoveLighting(ll->sector); // clear lightingdata, remove thinker
+ 		return;
+ 	}
+ 
+ 	ll->fixedcurlevel = ll->fixedcurlevel + ll->fixedpertic;
+ 	ll->sector->lightlevel = (ll->fixedcurlevel)>>FRACBITS;
++#ifdef _UWP
++	UWPTraceTitleLightFade((INT32)(ll->sector - sectors), ll->sector->lightlevel, ll->sourcelevel, ll->destlevel, ll->timer, ll->fixedpertic);
++#endif
+ }
 diff --git a/src/p_mobj.c b/src/p_mobj.c
 index 305a75e0e..9da767720 100644
 --- a/src/p_mobj.c
@@ -8332,10 +8851,20 @@ index 02f46b56f..f6f4e46a4 100644
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce77..9ca086d67 100644
+index e5208ce77..66913807b 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
-@@ -7567,6 +7567,9 @@ static boolean P_LoadMapFromFile(void)
+@@ -17,6 +17,9 @@
+ #include <fmt/format.h>
+ 
+ #include "cxxutil.hpp"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ 
+ #include "doomdef.h"
+ #include "d_main.h"
+@@ -7567,6 +7570,9 @@ static boolean P_LoadMapFromFile(void)
  	}
  
  	P_LoadMapBSP(curmapvirt);
@@ -8345,7 +8874,7 @@ index e5208ce77..9ca086d67 100644
  	P_LoadMapLUT(curmapvirt);
  
  	P_LinkMapData();
-@@ -8447,6 +8450,10 @@ void P_LoadLevelMusic(void)
+@@ -8447,6 +8453,10 @@ void P_LoadLevelMusic(void)
  
  void P_FreeLevelState(void)
  {
@@ -8356,6 +8885,27 @@ index e5208ce77..9ca086d67 100644
  	if (numsectors)
  	{
  		F_EndTextPrompt(false, true);
+@@ -8513,6 +8523,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+ 
+ 	boolean fade_shortcircuit = false;
+ 
++
++#ifdef _UWP
++	UWPTraceLevelLoad(false);
++#endif
+ 	levelloading = true;
+ 	g_reloadinggamestate = reloadinggamestate;
+ 
+@@ -9006,6 +9020,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+ 		levelloading = false;
+ 	}
+ 
++#ifdef _UWP
++	UWPTraceLevelLoad(true);
++#endif
+ 	if (rendermode != render_none && reloadinggamestate == false)
+ 	{
+ 		R_ResetViewInterpolation(0);
 diff --git a/src/p_tick.h b/src/p_tick.h
 index b735d9b1d..5d78a91b7 100644
 --- a/src/p_tick.h
@@ -8586,10 +9136,20 @@ index 08750043b..d38fe5405 100644
  
  void R_InitMobjInterpolators(void)
 diff --git a/src/r_main.cpp b/src/r_main.cpp
-index 639f74437..ba57ff5be 100644
+index 639f74437..a7863d9fa 100644
 --- a/src/r_main.cpp
 +++ b/src/r_main.cpp
-@@ -597,19 +597,13 @@ static inline void R_InitLightTables(void)
+@@ -17,6 +17,9 @@
+ #include <algorithm>
+ 
+ #include "doomdef.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "g_game.h"
+ #include "g_input.h"
+ #include "r_local.h"
+@@ -597,19 +600,13 @@ static inline void R_InitLightTables(void)
  //#define WOUGHMP_WOUGHMP // I got a fish-eye lens - I'll make a rap video with a couple of friends
  // it's kinda laggy sometimes
  
@@ -8610,7 +9170,7 @@ index 639f74437..ba57ff5be 100644
  	INT32 *scrmap;
  	INT32 scrmapsize;
  
-@@ -617,14 +611,15 @@ static struct viewmorph {
+@@ -617,14 +614,15 @@ static struct viewmorph {
  	INT16 ceilingclip[MAXVIDWIDTH], floorclip[MAXVIDWIDTH];
  
  	boolean use;
@@ -8633,7 +9193,7 @@ index 639f74437..ba57ff5be 100644
  
  void R_CheckViewMorph(int s)
  {
-@@ -633,9 +628,12 @@ void R_CheckViewMorph(int s)
+@@ -633,9 +631,12 @@ void R_CheckViewMorph(int s)
  	float zoomfactor, rollcos, rollsin;
  	float x1, y1, x2, y2;
  	fixed_t temp;
@@ -8647,7 +9207,7 @@ index 639f74437..ba57ff5be 100644
  
  	INT32 width = vid.width;
  	INT32 height = vid.height;
-@@ -676,10 +674,13 @@ void R_CheckViewMorph(int s)
+@@ -676,10 +677,13 @@ void R_CheckViewMorph(int s)
  #ifdef WOUGHMP_WOUGHMP
  		fisheye == v->fisheye &&
  #endif
@@ -8662,7 +9222,7 @@ index 639f74437..ba57ff5be 100644
  #ifdef WOUGHMP_WOUGHMP
  	v->fisheye = fisheye;
  #endif
-@@ -699,13 +700,15 @@ void R_CheckViewMorph(int s)
+@@ -699,13 +703,15 @@ void R_CheckViewMorph(int s)
  		return;
  	}
  
@@ -8679,7 +9239,7 @@ index 639f74437..ba57ff5be 100644
  
  	temp = FINECOSINE(rollangle);
  	rollcos = FIXED_TO_FLOAT(temp);
-@@ -755,7 +758,10 @@ void R_CheckViewMorph(int s)
+@@ -755,7 +761,10 @@ void R_CheckViewMorph(int s)
  		realend = ( realend << 1 ) - width;
  	}
  
@@ -8690,7 +9250,7 @@ index 639f74437..ba57ff5be 100644
  
  	// Pre-multiply rollcos and rollsin to use for positional stuff
  	rollcos /= zoomfactor;
-@@ -818,6 +824,7 @@ void R_CheckViewMorph(int s)
+@@ -818,6 +827,7 @@ void R_CheckViewMorph(int s)
  #ifdef WOUGHMP_WOUGHMP
  	if (fisheye)
  	{
@@ -8698,7 +9258,7 @@ index 639f74437..ba57ff5be 100644
  		for (vy = 0; vy < halfheight; vy++)
  		{
  			x2 = x1;
-@@ -846,29 +853,17 @@ void R_CheckViewMorph(int s)
+@@ -846,29 +856,17 @@ void R_CheckViewMorph(int s)
  #endif
  	x1 += halfwidth;
  	y1 += halfheight;
@@ -8735,7 +9295,7 @@ index 639f74437..ba57ff5be 100644
  #ifdef WOUGHMP_WOUGHMP
  	}
  #endif
-@@ -883,7 +878,9 @@ void R_ApplyViewMorph(int s)
+@@ -883,7 +881,9 @@ void R_ApplyViewMorph(int s)
  	INT32 width = vid.width;
  	INT32 height = vid.height;
  	INT32 p;
@@ -8745,7 +9305,7 @@ index 639f74437..ba57ff5be 100644
  
  	if (!viewmorph[s].use)
  		return;
-@@ -913,12 +910,73 @@ void R_ApplyViewMorph(int s)
+@@ -913,12 +913,73 @@ void R_ApplyViewMorph(int s)
  		}
  	}
  
@@ -8821,7 +9381,7 @@ index 639f74437..ba57ff5be 100644
  
  	VID_BlitLinearScreen(tmpscr, srcscr,
  			width*vid.bpp, height, width*vid.bpp, vid.width);
-@@ -1148,17 +1206,57 @@ void R_Init(void)
+@@ -1148,17 +1209,57 @@ void R_Init(void)
  	framecount = 0;
  }
  
@@ -8879,6 +9439,17 @@ index 639f74437..ba57ff5be 100644
  }
  
  //
+@@ -1318,6 +1419,10 @@ void R_SetupFrame(int s)
+ 
+ 		R_SetupCommonFrame(player, r_viewmobj->subsector);
+ 	}
++#ifdef _UWP
++	if (s == 0)
++		UWPTraceView();
++#endif
+ }
+ 
+ void R_SkyboxFrame(int s)
 diff --git a/src/r_main.h b/src/r_main.h
 index f17ef9551..42643d3d3 100644
 --- a/src/r_main.h
@@ -11580,6 +12151,37 @@ index 000000000..24cc8f49c
 +		I_OutputMsg("UWP: can't log crashes: AddVectoredExceptionHandler is missing or failed\n");
 +	}
 +}
+diff --git a/src/sdl/i_uwptrace.h b/src/sdl/i_uwptrace.h
+new file mode 100644
+index 000000000..b41da89ab
+--- /dev/null
++++ b/src/sdl/i_uwptrace.h
+@@ -0,0 +1,25 @@
++// DR. ROBOTNIK'S RING RACERS
++// Copyright (C) 2026 by Zebulan Stanphill.
++// Licensed under the GNU General Public License, version 2.
++
++// UWP-only, bounded render diagnostics. No engine state is changed.
++#ifndef __I_UWPTRACE_H__
++#define __I_UWPTRACE_H__
++#ifdef _UWP
++#include "../doomtype.h"
++#ifdef __cplusplus
++extern "C" {
++#endif
++void UWPTraceFade(const char *format, ...) FUNCPRINTF;
++void UWPTraceGamestate(INT32 oldstate, INT32 newstate);
++void UWPTraceLevelLoad(boolean loaded);
++void UWPTraceBeginFrame(void);
++UINT32 UWPTraceFrameId(void);
++void UWPTraceView(void);
++void UWPTraceTitleLightFade(INT32 sector, INT32 light, INT32 source, INT32 dest, INT32 timer, INT32 step);
++void UWPTraceTitleBackground(boolean started);
++#ifdef __cplusplus
++}
++#endif
++#endif
++#endif
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
 index 7fa8e0c3f..6feb76f06 100644
 --- a/src/sdl/i_video.cpp
@@ -11877,6 +12479,70 @@ index 6f67d6a8f..0a95580e2 100644
  #endif
  		V_SetPalette(0);
  
+diff --git a/src/v_video.cpp b/src/v_video.cpp
+index 481a70d5f..8c436a4dd 100644
+--- a/src/v_video.cpp
++++ b/src/v_video.cpp
+@@ -20,6 +20,9 @@
+ #include <tracy/tracy/Tracy.hpp>
+ 
+ #include "doomdef.h"
++#ifdef _UWP
++#include "sdl/i_uwptrace.h"
++#endif
+ #include "r_local.h"
+ #include "p_local.h" // stplyr
+ #include "g_game.h" // players
+@@ -424,6 +427,9 @@ void V_ReloadPalette(void)
+ // -------------+
+ void V_SetPalette(INT32 palettenum)
+ {
++#ifdef _UWP
++	UWPTraceFade("V_SetPalette palnum=%d configured=%d", palettenum, cv_palettenum.value);
++#endif
+ 	if (!pLocalPalette)
+ 		V_ReloadPalette();
+ 
+@@ -453,6 +459,9 @@ void V_SetPalette(INT32 palettenum)
+ 
+ void V_SetPaletteLump(const char *pal)
+ {
++#ifdef _UWP
++	UWPTraceFade("V_SetPaletteLump name=%s", pal ? pal : "NULL");
++#endif
+ 	LoadPalette(pal);
+ 	V_SetPalette(0);
+ }
+@@ -1521,6 +1530,9 @@ void V_DrawVhsEffect(boolean rewind)
+ //
+ void V_DrawFadeScreen(UINT16 color, UINT8 strength)
+ {
++#ifdef _UWP
++	UWPTraceFade("V_DrawFadeScreen color=%u strength=%u", color, strength);
++#endif
+ #ifdef HWRENDER
+ 	if (rendermode == render_opengl)
+ 	{
+@@ -1599,6 +1611,9 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
+ //
+ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
+ {
++#ifdef _UWP
++	UWPTraceFade("V_DrawCustomFadeScreen lump=%s strength=%u", lump ? lump : "NULL", strength);
++#endif
+ #ifdef HWRENDER
+ 	if (rendermode == render_opengl)
+ 	{
+@@ -1663,6 +1678,9 @@ void V_DrawFadeConsBack(INT32 plines)
+ //
+ void V_EncoreInvertScreen(void)
+ {
++#ifdef _UWP
++	UWPTraceFade("V_EncoreInvertScreen");
++#endif
+ #ifdef HWRENDER
+ 	if (rendermode == render_opengl)
+ 	{
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
 index 3c68b1378..2444f431c 100644
 --- a/src/w_wad.cpp
