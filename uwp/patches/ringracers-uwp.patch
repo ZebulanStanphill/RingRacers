@@ -16,7 +16,7 @@ RingRacers-dev, rebased onto v2.4.
   contexts in the GL2 RHI backend, request one, and render at the size of
   ANGLE's surface
 - Draw Legacy GL with Direct3D 11, since it needs desktop OpenGL, which
-  ANGLE doesn't have, and name it "Legacy GL (Direct3D 11 port)": a
+  ANGLE doesn't have, and name it "VIBErant Direct3D 11": a
   driver for its hardware renderer interface (hardware/r_d3d11) that
   follows r_opengl.c's OpenGL state call for call, with its GLSL shaders
   ported to HLSL and compiled by fxc at build time. Each frame is copied
@@ -83,6 +83,8 @@ RingRacers-dev, rebased onto v2.4.
 - Create the save folder before checking that the config is writable
 - Log the OpenGL strings, surface size, shader compiles, and each step
   of the first frames, to diagnose startup on Xbox
+- Log the track title animation's frame count and drawing/presentation
+  timings, to diagnose slow or uneven animation
 - Log how long each loading step and asset file takes and how much of
   that was spent logging, the thread pool size, the process memory
   budget, and every 5 seconds a summary of the perfstats frame and tic timings, the parts of
@@ -118,6 +120,7 @@ Model: gpt-6.1-sol
  src/cvars.cpp                      |    3 +
  src/d_clisrv.c                     |   19 +
  src/d_main.cpp                     |   84 +-
+ src/g_game.c                       |   36 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_cache.c            |  196 +-
@@ -175,7 +178,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 65 files changed, 8471 insertions(+), 396 deletions(-)
+ 66 files changed, 8507 insertions(+), 396 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -689,6 +692,66 @@ index 19fcfe0a7..38e109869 100644
  #endif
  
  	if (M_CheckParm("-home") && M_IsNextParm())
+diff --git a/src/g_game.c b/src/g_game.c
+index ce69d80c0..2e29e11c6 100644
+--- a/src/g_game.c
++++ b/src/g_game.c
+@@ -1296,12 +1296,37 @@
+ 	tic_t endtime = strtime + (PRELEVELTIME*NEWTICRATERATIO);
+ 	tic_t nowtime = strtime;
+ 	tic_t lasttime = strtime;
++#ifdef _UWP
++	// The animation advances once per rendered frame, but this loop ends on wall time.
++	// Log whether drawing or presenting leaves it short of its expected tic count.
++	const precise_t uwp_title_start = I_GetPreciseTime();
++	precise_t uwp_title_draw = 0, uwp_title_present = 0;
++	precise_t uwp_title_worst_draw = 0, uwp_title_worst_present = 0;
++	INT32 uwp_title_frames = 0;
++#endif
+ 	while (nowtime < endtime)
+ 	{
+ 		// draw loop
++#ifdef _UWP
++		const precise_t uwp_draw_start = I_GetPreciseTime();
++#endif
+ 		ST_runTitleCard();
+ 		ST_preLevelTitleCardDrawer();
++#ifdef _UWP
++		const precise_t uwp_present_start = I_GetPreciseTime();
++#endif
+ 		I_FinishUpdate(); 	// page flip or blit buffer
++#ifdef _UWP
++		const precise_t uwp_draw_time = uwp_present_start - uwp_draw_start;
++		const precise_t uwp_present_time = I_GetPreciseTime() - uwp_present_start;
++		uwp_title_draw += uwp_draw_time;
++		uwp_title_present += uwp_present_time;
++		if (uwp_draw_time > uwp_title_worst_draw)
++			uwp_title_worst_draw = uwp_draw_time;
++		if (uwp_present_time > uwp_title_worst_present)
++			uwp_title_worst_present = uwp_present_time;
++		uwp_title_frames++;
++#endif
+ 		NetKeepAlive();		// Prevent timeouts
+ 
+ #ifdef HWRENDER
+@@ -1319,6 +1344,17 @@
+ 		}
+ 		lasttime = nowtime;
+ 	}
++#ifdef _UWP
++	{
++		const double uwp_ms = 1000.0 / I_GetPrecisePrecision();
++		const double uwp_frames = uwp_title_frames ? uwp_title_frames : 1;
++		I_OutputMsg("UWP: track title: %s; %d frames in %.1f ms (target %d); draw %.2f ms/frame (worst %.2f), present %.2f ms/frame (worst %.2f)\n",
++			rendermode == render_opengl ? "Direct3D 11" : "Software", uwp_title_frames,
++			(I_GetPreciseTime() - uwp_title_start) * uwp_ms, PRELEVELTIME,
++			uwp_title_draw * uwp_ms / uwp_frames, uwp_title_worst_draw * uwp_ms,
++			uwp_title_present * uwp_ms / uwp_frames, uwp_title_worst_present * uwp_ms);
++	}
++#endif
+ #endif
+ }
+ 
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
 index a0a0f280c..53db3b8b0 100644
 --- a/src/hardware/CMakeLists.txt
@@ -7011,8 +7074,8 @@ index 812c7f80e..8a9a1f346 100644
  	{
  		M_StartMessage(
 +#ifdef _UWP
-+			"Switching to Legacy GL (Direct3D 11 port)",
-+			"Legacy GL (Direct3D 11 port) is\n"
++			"Switching to VIBErant Direct3D 11",
++			"VIBErant Direct3D 11 is\n"
 +			"\x85" "INCOMPLETE and BROKEN.\x80\n"
 +#else
  			"Switching to Legacy GL",
@@ -7486,7 +7549,7 @@ index c2e40ae04..0994e80e6 100644
  		NULL, {NULL}, 0, 0},
  
 +#ifdef _UWP
-+	{IT_STRING | IT_SPACE, "Legacy GL (Direct3D 11 port) supports", "",
++	{IT_STRING | IT_SPACE, "VIBErant Direct3D 11 supports", "",
 +		NULL, {NULL}, 0, 0},
 +
 +	{IT_STRING | IT_SPACE, "3D models and true perspective, but", "",
@@ -7511,7 +7574,7 @@ index c2e40ae04..0994e80e6 100644
  		NULL, {.cvar = &cv_renderer}, 0, 0},
  
 +#ifdef _UWP
-+	{IT_HEADER, "Legacy GL (Direct3D 11 port) Options...", "Watch people get confused anyway!!",
++	{IT_HEADER, "VIBErant Direct3D 11 Options...", "Watch people get confused anyway!!",
 +#else
  	{IT_HEADER, "Legacy GL Options...", "Watch people get confused anyway!!",
 +#endif
@@ -9858,7 +9921,7 @@ index 67b8f13fb..a18c5de4b 100644
  	{1, "Software"},
 -#ifdef HWRENDER
 +#if defined(HWRENDER) && defined(_UWP) // [UWP]: Legacy GL draws with Direct3D 11 (hardware/r_d3d11), not OpenGL
-+	{2, "Legacy GL (Direct3D 11 port)"},
++	{2, "VIBErant Direct3D 11"},
 +#elif defined(HWRENDER)
  	{2, "Legacy GL"},
  #endif

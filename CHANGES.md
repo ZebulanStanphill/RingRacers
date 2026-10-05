@@ -51,12 +51,12 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - The display size and refresh rate come from libuwp instead of SDL.
   - The game renders at the size of ANGLE's window surface, which can be smaller than the HDMI display mode.
   - The window is always fullscreen, which fixes a tiny loading screen.
-- **Legacy GL (Direct3D 11 port).**
+- **VIBErant Direct3D 11.**
   - Legacy GL needs desktop OpenGL, which ANGLE doesn't provide. So its hardware renderer draws through a new Direct3D 11 driver (`src/hardware/r_d3d11/`) instead of `r_opengl.c`.
   - The driver follows `r_opengl.c` call for call, and its GLSL shaders are ported to HLSL.
   - It renders with its own Direct3D 11 device. Each frame is copied to a texture shared with ANGLE, which draws it to the window a frame later. If ANGLE can't open the shared texture, the frame is read back instead.
   - Custom shaders from add-ons aren't supported.
-  - In the menus, the renderer is named **Legacy GL (Direct3D 11 port)**, as are its options header, the description above the Renderer option, and the warning shown when switching to it.
+  - In the menus, the renderer is named **VIBErant Direct3D 11**, as are its options header, the description above the Renderer option, and the warning shown when switching to it.
 - **Legacy GL: skybox views** *(untested)*. Precipitation and things with `RF_HIDEINSKYBOX` are left out of the skybox view, as in the Software renderer.
 - **Legacy GL: palette rendering** *(untested)*, ported from SRB2's hardware renderer.
   - Toggled by `gr_paletterendering` (Options → Video → Advanced → Palette Rendering). It's on by default and needs Shaders on.
@@ -128,6 +128,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
   - how long each loading step and asset file took, and how much of that was logging
   - the thread pool size, the process memory budget, and the CPU sets Windows lists for the game
   - Legacy GL's driver startup, presentation path, and errors (the `UWP D3D11:` lines)
+  - the track title animation's frame count, elapsed time, and average and worst drawing/presentation times (`UWP: track title:`), for diagnosing uneven animation
 - **Perf summary.** Every 5 seconds, the log gets a summary with:
   - the frame rate
   - the perfstats frame and tic timings
