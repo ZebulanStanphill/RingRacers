@@ -1,4 +1,4 @@
-From 241ef556a14bc2853e2264ab85e5d55a136a98bd Mon Sep 17 00:00:00 2001
+From 2d47a6ec85f74a52b5f9bcef9092f4c6caa0a6b9 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -109,7 +109,7 @@ Model: gpt-6.1-sol
  src/core/thread_pool.cpp           |   19 +
  src/d_clisrv.c                     |   19 +
  src/d_main.cpp                     |   84 +-
- src/hardware/CMakeLists.txt        |   32 +
+ src/hardware/CMakeLists.txt        |   35 +
  src/hardware/r_d3d11/r_d3d11.cpp   | 4366 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   37 +
  src/hardware/r_d3d11/shaders.hlsl  |  335 +++
@@ -155,7 +155,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 53 files changed, 7817 insertions(+), 369 deletions(-)
+ 53 files changed, 7820 insertions(+), 369 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -656,10 +656,10 @@ index 19fcfe0a7..38e109869 100644
  
  	if (M_CheckParm("-home") && M_IsNextParm())
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..0d91921d9 100644
+index a0a0f280c..3c57c2199 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
-@@ -13,3 +13,35 @@ target_sources(SRB2SDL2 PRIVATE
+@@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
  	hw_batching.c
  	r_opengl/r_opengl.c
  )
@@ -692,7 +692,10 @@ index a0a0f280c..0d91921d9 100644
 +		list(APPEND d3d11_shader_headers "${header}")
 +	endforeach()
 +
-+	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp ${d3d11_shader_headers})
++	# A target of its own, since generated files are only visible to targets in the same directory
++	add_custom_target(SRB2D3D11Shaders DEPENDS ${d3d11_shader_headers})
++	add_dependencies(SRB2SDL2 SRB2D3D11Shaders)
++	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp)
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
 +endif()
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
