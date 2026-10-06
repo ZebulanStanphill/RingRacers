@@ -38,7 +38,7 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 These are in the latest build but haven't been tried on an Xbox yet:
 
-- **Legacy GL: the title-screen background fades in once, like Software, instead of fading twice and getting too bright.** The fix also applies when the camera is inside other inward-facing fog blocks with a black tint and fade.
+- **Legacy GL with Palette Rendering: the level fade-in at the start of each race, and other palette fades like demo exits, now look like Software instead of a black/white overlay.** With Palette Rendering off, the overlay is retained.
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
 - **The track title animation before a race plays in full after loading.**
 - **If Legacy GL runs out of video memory, it clears its texture cache.** This may cause a brief hitch instead of slowing to a crawl.

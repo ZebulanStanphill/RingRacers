@@ -1,4 +1,4 @@
-From bc63e95d1d2ef186a22970f8a4864bfd88ac7805 Mon Sep 17 00:00:00 2001
+From fe1a0fb690f05d0b6ab2e3c63ebd39fff7449013 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -65,6 +65,14 @@ RingRacers-dev, rebased onto v2.4.
   64x64x64 lookup table and light them through each colormap's light
   table, and the finished frame is turned into the screen palette, which
   brings palette flashes and color correction without remaking textures
+- Apply custom palette fades in Legacy GL on UWP through the real lump's
+  256-column rows before the HUD when palette rendering is on. Cache R8
+  tables by lump ID, clamp strength to the available rows, copy the full
+  current render target and return master-palette colors before the final
+  screen-palette pass. Refresh the master palette with the lookup, preserve
+  alpha/depth/draw constants and invalidate pass state without immediate
+  wipe presentation. Flush pending batches and trace exact/overlay paths;
+  retain the overlay with palette rendering off or unavailable resources
 - Invert the screen for Encore level starts in Legacy GL instead of
   drawing an opaque white screen, while keeping the screen alpha at 1
 - Match the RHI screen wipes in Legacy GL: use raw fade-mask bytes for
@@ -184,16 +192,16 @@ Model: gpt-6.1-sol
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_cache.c            |  196 +-
  src/hardware/hw_defs.h             |    5 +
- src/hardware/hw_draw.c             |   23 +-
+ src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
  src/hardware/hw_main.c             |  239 +-
- src/hardware/hw_main.h             |    8 +
+ src/hardware/hw_main.h             |   11 +
  src/hardware/hw_md2.c              |  276 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5271 ++++++++++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h     |   45 +
- src/hardware/r_d3d11/shaders.hlsl  |  438 +++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5483 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h     |   49 +
+ src/hardware/r_d3d11/shaders.hlsl  |  456 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
  src/hwr2/resource_management.cpp   |  105 +-
@@ -237,11 +245,11 @@ Model: gpt-6.1-sol
  src/sdl/ogl_sdl.c                  |    8 +
  src/sdl/rhi_gl2_platform.cpp       |    9 +
  src/st_stuff.c                     |   10 +-
- src/v_video.cpp                    |   18 +
+ src/v_video.cpp                    |   22 +
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 72 files changed, 10005 insertions(+), 468 deletions(-)
+ 72 files changed, 10280 insertions(+), 468 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1271,7 +1279,7 @@ index ce69d80c0..8d8ca144e 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..e40506797 100644
+index a0a0f280c..ea34f06c0 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1293,7 +1301,7 @@ index a0a0f280c..e40506797 100644
 +	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
 +
 +	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen
-+		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess)
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap)
 +		string(SUBSTRING "${entry}" 0 2 stage)
 +		string(TOLOWER "${stage}" stage)
 +		set(header "${d3d11_shader_dir}/${entry}.h")
@@ -1665,10 +1673,10 @@ index 1ce225f19..34702a64c 100644
  	HWD_NUMSTATE
  };
 diff --git a/src/hardware/hw_draw.c b/src/hardware/hw_draw.c
-index d4ba78614..0ccff361f 100644
+index d4ba78614..09e9939c1 100644
 --- a/src/hardware/hw_draw.c
 +++ b/src/hardware/hw_draw.c
-@@ -16,6 +16,9 @@
+@@ -16,11 +16,18 @@
  #endif
  
  #include "../doomdef.h"
@@ -1678,7 +1686,16 @@ index d4ba78614..0ccff361f 100644
  
  #ifdef HWRENDER
  #include "hw_main.h"
-@@ -617,7 +620,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
+ #include "hw_glob.h"
+ #include "hw_drv.h"
++#ifdef _UWP
++#include "hw_batching.h"
++#include "r_d3d11/r_d3d11.h"
++#endif
+ 
+ #include "../m_misc.h" //FIL_WriteFile()
+ #include "../r_draw.h" //viewborderlump
+@@ -617,7 +624,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
  	}
  	else // Do TRANSMAP** fade.
  	{
@@ -1687,7 +1704,7 @@ index d4ba78614..0ccff361f 100644
  		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
  	}
  	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
-@@ -703,7 +706,7 @@ void HWR_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color, UINT16 ac
+@@ -703,7 +710,7 @@ void HWR_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color, UINT16 ac
  	}
  	else // Do TRANSMAP** fade.
  	{
@@ -1696,7 +1713,7 @@ index d4ba78614..0ccff361f 100644
  		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
  	}
  	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
-@@ -738,6 +741,9 @@ void HWR_DrawConsoleBack(UINT32 color, INT32 height)
+@@ -738,6 +745,9 @@ void HWR_DrawConsoleBack(UINT32 color, INT32 height)
  
  void HWR_EncoreInvertScreen(void)
  {
@@ -1706,7 +1723,44 @@ index d4ba78614..0ccff361f 100644
  	FOutVector v[4];
  	FSurfaceInfo Surf;
  
-@@ -773,7 +779,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
+@@ -757,6 +767,36 @@ void HWR_EncoreInvertScreen(void)
+ 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Invert|PF_NoDepthTest);
+ }
+ 
++#ifdef _UWP
++// Apply the software fade table now, before subsequent HUD/2D drawing.
++void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength)
++{
++	const lumpnum_t lumpnum = lump ? W_CheckNumForName(lump) : LUMPERROR;
++	extern boolean currently_batching;
++
++	// The old quad went directly to the driver; it did not participate in batching.
++	// Player views normally finish their batches before this call. Flush defensively
++	// so no queued world geometry can be drawn over the remapped screen.
++	if (currently_batching)
++		HWR_RenderBatches();
++
++	if (HWR_ShouldUsePaletteRendering() && lumpnum != LUMPERROR)
++	{
++		const size_t size = W_LumpLength(lumpnum);
++		if (size >= 256 && size % 256 == 0 && size / 256 <= 256
++			&& D3D11_ApplyFadeMap(W_CacheLumpNum(lumpnum, PU_CACHE), size, lumpnum, strength))
++		{
++			UWPTraceFade("HWR_DrawCustomFadeMap path=exact lump=%s strength=%u row=%u rows=%u",
++				lump, strength, (unsigned)min((size_t)strength, size / 256 - 1), (unsigned)(size / 256));
++			return;
++		}
++	}
++
++	UWPTraceFade("HWR_DrawCustomFadeMap path=overlay lump=%s strength=%u", lump ? lump : "NULL", strength);
++	HWR_DrawCustomFadeScreen(lump && strcmp(lump, "FADEMAP1") == 0 ? 0 : 31, strength);
++}
++#endif
++
+ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
+ {
+ 	FOutVector v[4];
+@@ -773,7 +813,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
  	v[0].t = v[1].t = 1.0f;
  	v[2].t = v[3].t = 0.0f;
  
@@ -1715,7 +1769,7 @@ index d4ba78614..0ccff361f 100644
  
  	UINT16 workingstrength = (strength*12);
  	if (workingstrength > 0xFF)
-@@ -781,6 +787,9 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
+@@ -781,6 +821,9 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
  	else
  		Surf.PolyColor.s.alpha = workingstrength;
  
@@ -1725,7 +1779,7 @@ index d4ba78614..0ccff361f 100644
  	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
  }
  
-@@ -958,7 +967,7 @@ void HWR_drawAMline(const fline_t *fl, INT32 color)
+@@ -958,7 +1001,7 @@ void HWR_drawAMline(const fline_t *fl, INT32 color)
  	F2DCoord v1, v2;
  	RGBA_t color_rgba;
  
@@ -1734,7 +1788,7 @@ index d4ba78614..0ccff361f 100644
  
  	v1.x = ((float)fl->a.x-(vid.width/2.0f))*(2.0f/vid.width);
  	v1.y = ((float)fl->a.y-(vid.height/2.0f))*(2.0f/vid.height);
-@@ -1048,7 +1057,7 @@ void HWR_DrawDiag(INT32 x, INT32 y, INT32 wh, INT32 color)
+@@ -1048,7 +1091,7 @@ void HWR_DrawDiag(INT32 x, INT32 y, INT32 wh, INT32 color)
  	v[0].t = v[1].t = 0.0f;
  	v[2].t = v[3].t = 1.0f;
  
@@ -1743,7 +1797,7 @@ index d4ba78614..0ccff361f 100644
  
  	HWD.pfnDrawPolygon(&Surf, v, 4,
  		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
-@@ -1159,7 +1168,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+@@ -1159,7 +1202,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  
  		if (x == 0 && y == 0 && w == BASEVIDWIDTH && h == BASEVIDHEIGHT)
  		{
@@ -1752,7 +1806,7 @@ index d4ba78614..0ccff361f 100644
  			FRGBAFloat clearColour;
  			clearColour.red = (float)rgbaColour.s.red / 255;
  			clearColour.green = (float)rgbaColour.s.green / 255;
-@@ -1218,7 +1227,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+@@ -1218,7 +1261,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  	v[0].t = v[1].t = 0.0f;
  	v[2].t = v[3].t = 1.0f;
  
@@ -2210,7 +2264,7 @@ index b5e8fca5a..a18606676 100644
  		if (player->flashpal == PAL_NUKE)
  		{
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b40947..72e54e061 100644
+index 652b40947..9079dd0c8 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,9 @@ extern "C" {
@@ -2223,7 +2277,17 @@ index 652b40947..72e54e061 100644
  void HWR_Switch(void);
  void HWR_Shutdown(void);
  
-@@ -100,6 +103,11 @@ extern consvar_t cv_glcoronasize;
+@@ -35,6 +38,9 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength);
+ void HWR_DrawConsoleBack(UINT32 color, INT32 height);
+ void HWR_EncoreInvertScreen(void);
+ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength);
++#ifdef _UWP
++void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength);
++#endif
+ void HWR_DrawTutorialBack(UINT32 color, INT32 boxheight);
+ void HWR_RenderSkyboxView(player_t *player);
+ void HWR_RenderPlayerView(void);
+@@ -100,6 +106,11 @@ extern consvar_t cv_glcoronasize;
  #endif
  
  extern consvar_t cv_glshaders, cv_glallowshaders;
@@ -2637,10 +2701,10 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..e456296a3
+index 000000000..6f165eba1
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5271 @@
+@@ -0,0 +1,5483 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -2690,6 +2754,7 @@ index 000000000..e456296a3
 +#include "../../doomdef.h"
 +#ifdef _UWP
 +#include "../../sdl/i_uwptrace.h"
++#include "../../v_video.h"
 +#endif
 +#include "../../f_finale.h"
 +#include "../../i_system.h"
@@ -2727,6 +2792,7 @@ index 000000000..e456296a3
 +#include "PSWipe.h"
 +#include "PSWipeFull.h"
 +#include "PSPalettePostprocess.h"
++#include "PSFadeMap.h"
 +
 +extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
 +
@@ -3231,7 +3297,7 @@ index 000000000..e456296a3
 +// ==========================================================================
 +
 +enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, NUMVS };
-+enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, NUMPS };
++enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, PS_FADEMAP, NUMPS };
 +enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
 +
 +struct ShaderCode
@@ -3264,6 +3330,7 @@ index 000000000..e456296a3
 +	{g_PSWipe, sizeof g_PSWipe, "PSWipe"},
 +	{g_PSWipeFull, sizeof g_PSWipeFull, "PSWipeFull"},
 +	{g_PSPalettePostprocess, sizeof g_PSPalettePostprocess, "PSPalettePostprocess"},
++	{g_PSFadeMap, sizeof g_PSFadeMap, "PSFadeMap"},
 +};
 +
 +ComPtr<ID3D11VertexShader> g_vertexShaders[NUMVS];
@@ -3432,6 +3499,28 @@ index 000000000..e456296a3
 +ComPtr<ID3D11Texture2D> g_screenPalette;
 +ComPtr<ID3D11ShaderResourceView> g_screenPaletteSrv;
 +RGBA_t g_screenPaletteColors[256];
++
++#ifdef _UWP
++// Fade maps return master-palette colors. The screen palette (including flashes
++// and color correction) is applied once, to the whole finished frame, at Present.
++ComPtr<ID3D11Texture2D> g_masterPalette;
++ComPtr<ID3D11ShaderResourceView> g_masterPaletteSrv;
++struct FadeMap
++{
++	ComPtr<ID3D11Texture2D> texture;
++	ComPtr<ID3D11ShaderResourceView> srv;
++	UINT rows = 0;
++};
++std::unordered_map<UINT32, FadeMap> g_fadeMaps;
++ComPtr<ID3D11Texture2D> g_fadeScreen;
++ComPtr<ID3D11ShaderResourceView> g_fadeScreenSrv;
++struct FadeMapConstants
++{
++	INT32 row, pad[3];
++};
++static_assert(sizeof(FadeMapConstants) == 16, "FadeMapConstants must match shaders.hlsl");
++ComPtr<ID3D11Buffer> g_fadeMapConstants;
++#endif
 +
 +struct LightTable
 +{
@@ -4840,7 +4929,178 @@ index 000000000..e456296a3
 +	// Indexed [b][g][r], so r is x
 +	g_context->UpdateSubresource(g_paletteLookup.Get(), 0, nullptr, lut, size, size * size);
 +	Log("palette lookup table updated");
++#ifdef _UWP
++	// HWR_SetMapPalette calls this with a lookup built from pMasterPalette whenever
++	// the palette lump changes, including V_SetPaletteLump. R_ReInitColormaps only
++	// changes light tables. Never use D3D_SetScreenPalette's flash/corrected colors.
++	if (!pMasterPalette)
++	{
++		g_masterPaletteSrv.Reset();
++		return;
++	}
++	if (!g_masterPaletteSrv)
++	{
++		D3D11_TEXTURE2D_DESC desc = {};
++		desc.Width = 256;
++		desc.Height = 1;
++		desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
++		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++		desc.Usage = D3D11_USAGE_DEFAULT;
++		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		ComPtr<ID3D11Texture2D> texture;
++		ComPtr<ID3D11ShaderResourceView> srv;
++		if (Failed(g_device->CreateTexture2D(&desc, nullptr, &texture), "CreateTexture2D (master palette)")
++			|| Failed(g_device->CreateShaderResourceView(texture.Get(), nullptr, &srv), "CreateShaderResourceView (master palette)"))
++			return;
++		if (!g_masterPalette)
++			g_textureBytes += 256 * sizeof(RGBA_t);
++		g_masterPalette = texture;
++		g_masterPaletteSrv = srv;
++		g_stats.texturesCreated++;
++	}
++	g_context->UpdateSubresource(g_masterPalette.Get(), 0, nullptr, pMasterPalette, 256 * sizeof(RGBA_t), 0);
++	g_stats.textureUploads++;
++	g_stats.textureUploadBytes += 256 * sizeof(RGBA_t);
++	UWPTraceFade("D3D_SetPaletteLookup master upload first=%08x black=%08x", pMasterPalette[0].rgba, pMasterPalette[31].rgba);
++#endif
 +}
++
++#ifdef _UWP
++bool ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength)
++{
++	// Smooth-mode textures use the local palette, not the master lookup's colors.
++	// Keep the legacy overlay in that mode, even if a previous lookup is still alive.
++	if (!CanDraw() || !g_paletteRendering || !g_paletteLookupSrv || !g_masterPaletteSrv
++		|| !g_rt || !table || size < 256 || size % 256 || size / 256 > 256
++		|| !g_vertexShaders[VS_FULLSCREEN] || !g_pixelShaders[PS_FADEMAP]
++		|| !g_opaqueBlend || !g_noDepth || !g_noCull)
++		return false;
++	CpuTimer timer(g_stats.drawTime);
++
++	const UINT rows = (UINT)(size / 256);
++	auto found = g_fadeMaps.find(tableId);
++	if (found == g_fadeMaps.end() || found->second.rows != rows)
++	{
++		D3D11_TEXTURE2D_DESC desc = {};
++		desc.Width = 256;
++		desc.Height = rows;
++		desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
++		desc.Format = DXGI_FORMAT_R8_UNORM;
++		desc.Usage = D3D11_USAGE_IMMUTABLE;
++		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		D3D11_SUBRESOURCE_DATA data = {table, 256, 0};
++		FadeMap fade;
++		if (Failed(g_device->CreateTexture2D(&desc, &data, &fade.texture), "CreateTexture2D (fade map)")
++			|| Failed(g_device->CreateShaderResourceView(fade.texture.Get(), nullptr, &fade.srv), "CreateShaderResourceView (fade map)"))
++			return false;
++		fade.rows = rows;
++		if (found != g_fadeMaps.end())
++		{
++			g_textureBytes -= (UINT64)256 * found->second.rows;
++			g_stats.texturesDeleted++;
++		}
++		g_fadeMaps[tableId] = fade;
++		found = g_fadeMaps.find(tableId);
++		g_textureBytes += size;
++		g_stats.texturesCreated++;
++		g_stats.textureUploads++;
++		g_stats.textureUploadBytes += size;
++	}
++
++	// Use the full render-target dimensions, without the screen-copy machinery's
++	// power-of-two square limit or its changes to emulated GL texture bindings.
++	D3D11_TEXTURE2D_DESC desc = {};
++	if (g_fadeScreen)
++		g_fadeScreen->GetDesc(&desc);
++	if (!g_fadeScreen || desc.Width != g_rtWidth || desc.Height != g_rtHeight || desc.Format != g_rtFormat)
++	{
++		D3D11_TEXTURE2D_DESC target = {};
++		target.Width = g_rtWidth;
++		target.Height = g_rtHeight;
++		target.MipLevels = target.ArraySize = target.SampleDesc.Count = 1;
++		target.Format = g_rtFormat;
++		target.Usage = D3D11_USAGE_DEFAULT;
++		target.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		ComPtr<ID3D11Texture2D> texture;
++		ComPtr<ID3D11ShaderResourceView> srv;
++		if (Failed(g_device->CreateTexture2D(&target, nullptr, &texture), "CreateTexture2D (fade screen)")
++			|| Failed(g_device->CreateShaderResourceView(texture.Get(), nullptr, &srv), "CreateShaderResourceView (fade screen)"))
++			return false;
++		if (g_fadeScreen)
++		{
++			g_textureBytes -= (UINT64)desc.Width * desc.Height * 4;
++			g_stats.texturesDeleted++;
++		}
++		g_fadeScreen = texture;
++		g_fadeScreenSrv = srv;
++		g_textureBytes += (UINT64)target.Width * target.Height * 4;
++		g_stats.texturesCreated++;
++	}
++	if (!g_fadeMapConstants)
++	{
++		D3D11_BUFFER_DESC buffer = {};
++		buffer.ByteWidth = sizeof(FadeMapConstants);
++		buffer.Usage = D3D11_USAGE_DYNAMIC;
++		buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++		buffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
++		if (Failed(g_device->CreateBuffer(&buffer, nullptr, &g_fadeMapConstants), "CreateBuffer (fade map constants)"))
++			return false;
++	}
++	FadeMapConstants c = {};
++	c.row = (INT32)std::min<UINT>(strength, rows - 1);
++	D3D11_MAPPED_SUBRESOURCE mapped;
++	if (Failed(g_context->Map(g_fadeMapConstants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map fade map constants"))
++		return false;
++	memcpy(mapped.pData, &c, sizeof c);
++	g_context->Unmap(g_fadeMapConstants.Get(), 0);
++	g_stats.constantUpdates++;
++
++	// All failure exits precede the copy/draw; an overlay fallback sees the original.
++	g_context->OMSetRenderTargets(0, nullptr, nullptr);
++	g_context->CopyResource(g_fadeScreen.Get(), g_rt.Get());
++	BindRenderTarget();
++	ID3D11Buffer *constants = g_fadeMapConstants.Get();
++	ID3D11ShaderResourceView *srvs[8] = {g_fadeScreenSrv.Get(), nullptr, g_paletteLookupSrv.Get(),
++		nullptr, nullptr, nullptr, found->second.srv.Get(), g_masterPaletteSrv.Get()};
++	D3D11_VIEWPORT viewport = {0.0f, 0.0f, (float)g_rtWidth, (float)g_rtHeight, 0.0f, 1.0f};
++	g_context->PSSetConstantBuffers(2, 1, &constants);
++	g_context->PSSetShaderResources(0, 8, srvs);
++	g_context->IASetInputLayout(nullptr);
++	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	g_context->VSSetShader(g_vertexShaders[VS_FULLSCREEN].Get(), nullptr, 0);
++	g_context->PSSetShader(g_pixelShaders[PS_FADEMAP].Get(), nullptr, 0);
++	g_context->OMSetBlendState(g_opaqueBlend.Get(), nullptr, 0xFFFFFFFF);
++	g_context->OMSetDepthStencilState(g_noDepth.Get(), 0);
++	g_context->RSSetState(g_noCull.Get());
++	g_context->RSSetViewports(1, &viewport);
++	g_context->Draw(3, 0);
++	g_stats.screens += 2;
++	g_stats.vertices += 3;
++	g_stats.textureBinds += 4;
++	g_stats.shaderChanges += 2;
++	g_stats.blendChanges++;
++	g_stats.depthChanges++;
++	g_stats.rasterChanges++;
++
++	// Release copy/table/palette SRVs before any future copy or palette upload.
++	ID3D11ShaderResourceView *none[8] = {};
++	g_context->PSSetShaderResources(0, 8, none);
++	constants = nullptr;
++	g_context->PSSetConstantBuffers(2, 1, &constants);
++	const Bound previous = g_bound;
++	g_bound = Bound(); // shaders, blend/depth/raster, all SRVs and viewport need rebinding
++	g_bound.vertexBuffer = previous.vertexBuffer;
++	g_bound.stride = previous.stride;
++	g_bound.indexBuffer = previous.indexBuffer;
++	g_bound.indexFormat = previous.indexFormat;
++	g_bound.samplers[0] = previous.samplers[0];
++	g_bound.samplers[1] = previous.samplers[1];
++	// b0 was never replaced: retain g_constantsBound and its current ring range.
++	// The emulated GL/2D state and depth contents are unchanged; this is not a wipe
++	// and must not set g_presentImmediately.
++	return true;
++}
++#endif
 +
 +UINT32 D3D_CreateLightTable(RGBA_t *hw_lighttable)
 +{
@@ -7255,6 +7515,17 @@ index 000000000..e456296a3
 +//			a new size
 +void D3D_FlushScreenTextures(void)
 +{
++#ifdef _UWP
++	if (g_fadeScreen)
++	{
++		D3D11_TEXTURE2D_DESC desc;
++		g_fadeScreen->GetDesc(&desc);
++		g_textureBytes -= (UINT64)desc.Width * desc.Height * 4;
++		g_stats.texturesDeleted++;
++	}
++	g_fadeScreenSrv.Reset();
++	g_fadeScreen.Reset();
++#endif
 +	if (g_wipeMask)
 +	{
 +		D3D11_TEXTURE2D_DESC desc;
@@ -7823,6 +8094,11 @@ index 000000000..e456296a3
 +}
 +
 +#ifdef _UWP
++boolean D3D11_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength)
++{
++	return ApplyFadeMap(table, size, tableId, strength);
++}
++
 +void D3D11_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
 +{
 +	*copied = g_traceCopied; *shown = g_traceShown;
@@ -7914,10 +8190,10 @@ index 000000000..e456296a3
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 000000000..3782b1bf8
+index 000000000..d15da8b66
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,49 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -7951,6 +8227,10 @@ index 000000000..3782b1bf8
 +boolean D3D11_TakeTextureFlushRequest(void);
 +
 +#ifdef _UWP
++// Remaps the current render target through a row of a 256-column palette fade table.
++// Returns false without changing the screen if palette rendering/resources are unavailable.
++boolean D3D11_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength);
++
 +// Last Present's copied/shown slots and source draw IDs; -1/0 if no copy/draw occurred.
 +void D3D11_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
 +#endif
@@ -7965,10 +8245,10 @@ index 000000000..3782b1bf8
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..75ddc7b7e
+index 000000000..46211b327
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,456 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -8016,6 +8296,8 @@ index 000000000..75ddc7b7e
 +Texture2D t_lighttable : register(t3); // a colormap's 32 light levels of 256 colors
 +Texture2D t_screen_palette : register(t4); // 256 colors: the palette the finished frame is shown in
 +Texture2D<float> t_wipe_mask : register(t5); // raw lump bytes / 255, leaving the palette slots intact
++Texture2D<float> t_fade_map : register(t6); // 256 columns of palette indices / 255 per strength row
++Texture2D t_master_palette : register(t7); // uncorrected palette used to make palette-rendering textures
 +SamplerState s_tex : register(s0);
 +SamplerState s_brightmap : register(s1);
 +
@@ -8028,6 +8310,13 @@ index 000000000..75ddc7b7e
 +	int u_wipe_wiggle;
 +	int u_wipe_reverse;
 +	int u_wipe_pad;
++};
++
++// Must match FadeMapConstants in r_d3d11.cpp. Keep the current draw's b0/ring range intact.
++cbuffer FadeMapConstants : register(b2)
++{
++	int u_fade_map_row;
++	int3 u_fade_map_pad;
 +};
 +
 +struct VSOut
@@ -8406,6 +8695,15 @@ index 000000000..75ddc7b7e
 +{
 +	float3 rgb = t_tex.Load(int3(i.pos.xy, 0)).rgb;
 +	return float4(t_screen_palette.Load(int3(PaletteIndex(rgb), 0, 0)).rgb, 1.0);
++}
++
++// Software's in-place V_OffsetIntoFadeMap remap, before the HUD and screen-palette postprocess.
++float4 PSFadeMap(VSOut i) : SV_Target
++{
++	float3 rgb = t_tex.Load(int3(i.pos.xy, 0)).rgb;
++	int index = PaletteIndex(rgb);
++	int faded = (int)(t_fade_map.Load(int3(index, u_fade_map_row, 0)) * 255.0 + 0.5);
++	return float4(t_master_palette.Load(int3(faded, 0, 0)).rgb, 1.0);
 +}
 diff --git a/src/http-mserv.c b/src/http-mserv.c
 index 4f9f9cb39..6854fc5e7 100644
@@ -13404,7 +13702,7 @@ index 6f67d6a8f..0a95580e2 100644
  		V_SetPalette(0);
  
 diff --git a/src/v_video.cpp b/src/v_video.cpp
-index 481a70d5f..8c436a4dd 100644
+index 481a70d5f..e0242069b 100644
 --- a/src/v_video.cpp
 +++ b/src/v_video.cpp
 @@ -20,6 +20,9 @@
@@ -13447,7 +13745,7 @@ index 481a70d5f..8c436a4dd 100644
  #ifdef HWRENDER
  	if (rendermode == render_opengl)
  	{
-@@ -1599,6 +1611,9 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
+@@ -1599,9 +1611,15 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
  //
  void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
  {
@@ -13457,7 +13755,21 @@ index 481a70d5f..8c436a4dd 100644
  #ifdef HWRENDER
  	if (rendermode == render_opengl)
  	{
-@@ -1663,6 +1678,9 @@ void V_DrawFadeConsBack(INT32 plines)
++#ifdef _UWP
++		HWR_DrawCustomFadeMap(lump, strength);
++#else
+ 		HWR_DrawCustomFadeScreen(
+ 			(strcmp(lump, "FADEMAP1") != 0
+ 				? 31
+@@ -1609,6 +1627,7 @@ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
+ 			),
+ 			strength
+ 		);
++#endif
+ 		return;
+ 	}
+ #endif
+@@ -1663,6 +1682,9 @@ void V_DrawFadeConsBack(INT32 plines)
  //
  void V_EncoreInvertScreen(void)
  {
