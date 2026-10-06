@@ -1,4 +1,4 @@
-From 7251a8d31a78c03d9cd541c977c79db906cd20c2 Mon Sep 17 00:00:00 2001
+From 6bebffab53da48f4f72162f83ee89845f39f9460 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -180,7 +180,7 @@ RingRacers-dev, rebased onto v2.4.
 - Prepare a sprite's hardware patch before fitting a sprite-textured
   model's texture coordinates to it, and compare the sprite's dimensions
   rather than the model texture's, fixing a null pointer read when such a
-  model (the item box) was drawn after video settings changed
+  model was drawn after video settings changed
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
@@ -224,13 +224,13 @@ Model: gpt-6.1-sol
  src/hwr2/resource_management.hpp   |   31 +-
  src/i_system.h                     |   66 +
  src/i_video_common.cpp             |   60 +-
- src/k_menu.h                       |    8 +
+ src/k_menu.h                       |    7 +
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
- src/menus/options-video-advanced.c |   38 +
+ src/menus/options-video-advanced.c |   35 +
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
@@ -265,7 +265,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 75 files changed, 10960 insertions(+), 490 deletions(-)
+ 75 files changed, 10956 insertions(+), 490 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -10082,19 +10082,18 @@ index f52f9298e..ff724f09e 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb..7a88c86a8 100644
+index d52750abb..e06e9286d 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
-@@ -420,11 +420,19 @@ typedef enum
+@@ -420,11 +420,18 @@ typedef enum
  	vaopt_spacer7,
  	vaopt_spacer8,
  	vaopt_spacer9,
 +#ifdef _UWP
-+	// The UWP renderer's description has four more lines
++	// The UWP renderer's description has three more lines
 +	vaopt_spacer9a,
 +	vaopt_spacer9b,
 +	vaopt_spacer9c,
-+	vaopt_spacer9d,
 +#endif
  	vaopt_renderer,
  	vaopt_legacygl_begin,
@@ -10106,7 +10105,7 @@ index d52750abb..7a88c86a8 100644
  	vaopt_texturequal,
  	vaopt_anisotropic,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
-index 812c7f80e..35e35da4c 100644
+index 812c7f80e..56eba74cb 100644
 --- a/src/k_menufunc.c
 +++ b/src/k_menufunc.c
 @@ -203,8 +203,14 @@ static void M_ChangeCvar(INT32 choice)
@@ -10115,7 +10114,7 @@ index 812c7f80e..35e35da4c 100644
  		M_StartMessage(
 +#ifdef _UWP
 +			"Switching to VibeRant D3D11",
-+			"VibeRant D3D11 is missing\n"
++			"\x85" "VibeRant D3D11 is missing\n"
 +			"\x85" "some features.\x80\n"
 +#else
  			"Switching to Legacy GL",
@@ -10587,10 +10586,10 @@ index f92b1d8e0..4e4f82a8f 100644
  } // extern "C"
  #endif
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..dfbcdf695 100644
+index c2e40ae04..dd422648e 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
-@@ -41,6 +41,28 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -41,6 +41,25 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_HEADER, "Rendering Backend...", "Watch people get confused anyway!!",
  		NULL, {NULL}, 0, 0},
  
@@ -10598,28 +10597,25 @@ index c2e40ae04..dfbcdf695 100644
 +	{IT_STRING | IT_SPACE, "VibeRant D3D11 is an enhanced port of", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "the vanilla Legacy GL renderer to", "",
++	{IT_STRING | IT_SPACE, "the Legacy GL renderer to Direct3D 11,", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "Direct3D 11, featuring 3D models, true", "",
++	{IT_STRING | IT_SPACE, "featuring 3D models, true perspective,", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "perspective, and even palette", "",
++	{IT_STRING | IT_SPACE, "& more parity with Software than in", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "rendering & portals. However, some", "",
++	{IT_STRING | IT_SPACE, "vanilla. Some features remain", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "features remain missing or degraded", "",
-+		NULL, {NULL}, 0, 0},
-+
-+	{IT_STRING | IT_SPACE, "relative to Software.", "",
++	{IT_STRING | IT_SPACE, "missing/degraded, however.", "",
 +		NULL, {NULL}, 0, 0},
 +#else
  	{IT_STRING | IT_SPACE, "Legacy GL supports 3D models and true", "",
  		NULL, {NULL}, 0, 0},
  
-@@ -49,15 +71,24 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -49,15 +68,24 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  
  	{IT_STRING | IT_SPACE, "are missing/broken.", "",
  		NULL, {NULL}, 0, 0},
@@ -10644,7 +10640,7 @@ index c2e40ae04..dfbcdf695 100644
  
  	{IT_SPACE | IT_NOTHING, NULL, NULL,
  		NULL, {NULL}, 0, 0},
-@@ -65,7 +96,11 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -65,7 +93,11 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Renderer", "If you don't know why you're changing this, leave it on Software!",
  		NULL, {.cvar = &cv_renderer}, 0, 0},
  
@@ -10656,7 +10652,7 @@ index c2e40ae04..dfbcdf695 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
-@@ -74,6 +109,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -74,6 +106,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
  		NULL, {.cvar = &cv_glshaders}, 0, 0},
  
