@@ -1,4 +1,4 @@
-From 19c10a025f142b3cbb6efaa733b6d64cff760a4b Mon Sep 17 00:00:00 2001
+From 9b01930b9a42123224af493df95c09f93ab2e2f1 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -135,7 +135,7 @@ RingRacers-dev, rebased onto v2.4.
 - Read game data and save files from E:\ringracers
 - Ask at launch whether to check the main asset files, since that reads
   all of them from the USB drive, or to quit (also B, which used to act
-  like A). Skipping uses the expected MD5s instead
+  like A). Skipping uses the expected MD5s instead and is the default
   of hashing the files, hashes only the names of the music and sound
   files (which have no expected MD5), and doesn't read every zip entry's
   local header to check the layout and find where its data starts; that's
@@ -13443,7 +13443,7 @@ index f2fa2fce9..73f659db8 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..d942b38cd 100644
+index 827f493b1..03eded313 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -13508,8 +13508,8 @@ index 827f493b1..d942b38cd 100644
 +{
 +	// B picks the escape-key default, so make that Quit rather than the same as A
 +	const SDL_MessageBoxButtonData buttons[] = {
-+		{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Check files"},
-+		{0, 1, "Skip check"},
++		{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Skip check"},
++		{0, 0, "Check files"},
 +		{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"},
 +	};
 +	SDL_MessageBoxData data = {};

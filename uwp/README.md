@@ -32,7 +32,7 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 1. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) to `E:\ringracers` so that `E:\ringracers\bios.pk3` and `E:\ringracers\data\` exist. The game verifies these files, so assets from other versions won't load. Config and saves go in `E:\ringracers\ringracers\`, the log is written to `E:\ringracers\latest-log.txt`, and if the game crashes, the error is saved to `E:\ringracers\error.txt`.
 2. Install the app on your Xbox. The first load takes a while.
 3. In Dev Home, set the app type to Game: under Games and Apps, highlight Ring Racers, press the View button, choose View details, and change App type to Game. As an app, it shares 2 to 4 CPU cores with the system and gets 1 GB of memory and part of the GPU; as a game, it gets 4 dedicated CPU cores plus 2 shared, 5 GB of memory, and the whole GPU. Reinstalling resets this, and the game can't tell which type it's running as, so check it after each install.
-4. At launch, the game asks whether to check its files. Checking reads all of them in full, which is slow from a USB drive, so once the files have passed a check, you can skip it on later launches. Quit (or B) closes the game instead.
+4. At launch, the game asks whether to check its files, with Skip check selected. Checking reads all of them in full, which is slow from a USB drive, so check once after installing or changing files, then skip on later launches. Quit (or B) closes the game instead.
 
 ## Untested changes
 

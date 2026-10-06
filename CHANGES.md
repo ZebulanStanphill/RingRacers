@@ -80,7 +80,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
 
 - **Data folder.** Game data, config, and saves are read from and written to `E:\ringracers`. The `-home` parameter and the `RINGRACERSWADDIR` variable are ignored. The save folder is created before the game checks that the config is writable.
 - **Log location.** The log is written to `E:\ringracers\latest-log.txt`, since the working directory is the read-only package folder.
-- **File-check prompt.** At launch, the game asks whether to check its files, skip the check, or quit (also B). When the check is skipped:
+- **File-check prompt.** At launch, the game asks whether to check its files, skip the check (the default, so A skips), or quit (also B). When the check is skipped:
   - files with an expected MD5 use it instead of being hashed
   - the music and sound files (which have no expected MD5) hash their names instead of their contents
   - zip entries' local headers aren't read until each entry is first loaded
