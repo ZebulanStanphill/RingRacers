@@ -1,4 +1,4 @@
-From fe1a0fb690f05d0b6ab2e3c63ebd39fff7449013 Mon Sep 17 00:00:00 2001
+From 9dc41c32c5e09a3f7dca188a548ed6875a49564f Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -168,6 +168,13 @@ RingRacers-dev, rebased onto v2.4.
   signal handler never sees an access violation there
 - Skip the DbgHelp minidump handler and cpptrace, which can't work from
   the app container
+- Draw linedef special 40 portals in Legacy GL (UWP): find the visible
+  portal lines first, then draw each portal's destination view before the
+  view it's seen from, masked by the stencil buffer to the entrance line's
+  front-sector span, with depth reset inside it and the opening's depth
+  written back afterwards. Pair lines and transform the view as Software
+  does, cut off geometry behind the exit with an SV_ClipDistance plane and
+  CPU culling, and limit depth with maxportals
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
@@ -191,17 +198,19 @@ Model: gpt-6.1-sol
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_cache.c            |  196 +-
+ src/hardware/hw_clip.c             |   15 +
+ src/hardware/hw_clip.h             |    5 +
  src/hardware/hw_defs.h             |    5 +
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  239 +-
- src/hardware/hw_main.h             |   11 +
+ src/hardware/hw_main.c             |  617 ++-
+ src/hardware/hw_main.h             |   15 +
  src/hardware/hw_md2.c              |  276 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5483 ++++++++++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h     |   49 +
- src/hardware/r_d3d11/shaders.hlsl  |  456 +++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5656 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h     |   59 +
+ src/hardware/r_d3d11/shaders.hlsl  |  482 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
  src/hwr2/resource_management.cpp   |  105 +-
@@ -212,7 +221,7 @@ Model: gpt-6.1-sol
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
- src/m_perfstats.c                  |  238 ++
+ src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
  src/menus/options-video-advanced.c |   18 +
  src/p_lights.c                     |    9 +
@@ -231,7 +240,7 @@ Model: gpt-6.1-sol
  src/r_textures.h                   |   10 +
  src/r_things.cpp                   |  158 +-
  src/r_things.h                     |    5 +
- src/rhi/gl2/gl2_rhi.cpp            |  618 +++-
+ src/rhi/gl2/gl2_rhi.cpp            |  618 ++-
  src/rhi/gl2/gl2_rhi.hpp            |   36 +
  src/screen.c                       |    4 +-
  src/sdl/CMakeLists.txt             |    5 +
@@ -249,7 +258,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 72 files changed, 10280 insertions(+), 468 deletions(-)
+ 74 files changed, 10881 insertions(+), 484 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1279,7 +1288,7 @@ index ce69d80c0..8d8ca144e 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..ea34f06c0 100644
+index a0a0f280c..61e4aca09 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1307,7 +1316,7 @@ index a0a0f280c..ea34f06c0 100644
 +		set(header "${d3d11_shader_dir}/${entry}.h")
 +		add_custom_command(
 +			OUTPUT "${header}"
-+			COMMAND "${SRB2_FXC}" /nologo /O3 /T ${stage}_4_0 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d11_shader_source}"
++			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /T ${stage}_4_0 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d11_shader_source}"
 +			DEPENDS "${d3d11_shader_source}"
 +			COMMENT "Compiling the ${entry} shader"
 +			VERBATIM
@@ -1642,6 +1651,48 @@ index aee197ab5..98b7717b8 100644
  			*dest = col.s.red; // take the red level of the colour and use it for alpha, as fademasks do
  
  			dest++;
+diff --git a/src/hardware/hw_clip.c b/src/hardware/hw_clip.c
+index 3ea21c16a..fe21623ea 100644
+--- a/src/hardware/hw_clip.c
++++ b/src/hardware/hw_clip.c
+@@ -320,6 +320,21 @@ void gld_clipper_Clear(void)
+ 	cliphead = NULL;
+ }
+ 
++#ifdef _UWP
++void *gld_clipper_SaveState(void)
++{
++	void *state = cliphead;
++	cliphead = NULL;
++	return state;
++}
++
++void gld_clipper_RestoreState(void *state)
++{
++	gld_clipper_Clear();
++	cliphead = state;
++}
++#endif
++
+ #define RMUL (1.6f/1.333333f)
+ 
+ angle_t gld_FrustumAngle(angle_t tiltangle)
+diff --git a/src/hardware/hw_clip.h b/src/hardware/hw_clip.h
+index 1942f426b..71bda4724 100644
+--- a/src/hardware/hw_clip.h
++++ b/src/hardware/hw_clip.h
+@@ -34,6 +34,11 @@ extern "C" {
+ boolean gld_clipper_SafeCheckRange(angle_t startAngle, angle_t endAngle);
+ void gld_clipper_SafeAddClipRange(angle_t startangle, angle_t endangle);
+ void gld_clipper_Clear(void);
++#ifdef _UWP
++// Detach the parent's angular occlusion list while a child builds its own.
++void *gld_clipper_SaveState(void);
++void gld_clipper_RestoreState(void *state);
++#endif
+ angle_t gld_FrustumAngle(angle_t tiltangle);
+ #ifdef HAVE_SPHEREFRUSTRUM
+ void gld_FrustrumSetup(void);
 diff --git a/src/hardware/hw_defs.h b/src/hardware/hw_defs.h
 index 1ce225f19..34702a64c 100644
 --- a/src/hardware/hw_defs.h
@@ -1867,7 +1918,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..a18606676 100644
+index b5e8fca5a..4d79168d9 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -1880,7 +1931,17 @@ index b5e8fca5a..a18606676 100644
  
  #ifdef HWRENDER
  #include "hw_glob.h"
-@@ -65,6 +68,78 @@
+@@ -55,6 +58,9 @@
+ /// \note	SRB2CB port.
+ ///      	SRB2CB itself ported this from PrBoom+
+ #include "hw_clip.h"
++#ifdef _UWP
++#include "r_d3d11/r_d3d11.h"
++#endif
+ 
+ #define R_FAKEFLOORS
+ #define HWPRECIP
+@@ -65,6 +71,78 @@
  // ==========================================================================
  struct hwdriver_s hwdriver;
  
@@ -1959,7 +2020,108 @@ index b5e8fca5a..a18606676 100644
  // ==========================================================================
  //                                                                     PROTOS
  // ==========================================================================
-@@ -194,6 +269,38 @@ static boolean HWR_UseShader(void)
+@@ -180,6 +258,100 @@ int ps_hw_numcolors = 0;
+ precise_t ps_hw_batchsorttime = 0;
+ precise_t ps_hw_batchdrawtime = 0;
+ 
++#ifdef _UWP
++precise_t ps_hw_portaltime = 0;
++INT32 ps_hw_portals = 0;
++
++typedef struct hwr_portal_s
++{
++	struct hwr_portal_s *next;
++	line_t *entrance, *exit;
++	FOutVector aperture[4];
++	fixed_t x, y, z;
++	angle_t yaw, angle1, angle2;
++	boolean rendered;
++} hwr_portal_t;
++
++static INT32 *hwr_portalpartners; // PU_LEVEL; nulled by the zone allocator
++static boolean hwr_maphasportals, hwr_portalsearch;
++static INT32 hwr_portallevel;
++static line_t *hwr_portalexit;
++static float hwr_portalplane[4]; // world (x, height, map y)
++static angle_t hwr_portalangle1, hwr_portalangle2;
++static hwr_portal_t *hwr_portallist;
++
++static double HWR_PortalSide(fixed_t x, fixed_t y)
++{
++	// side 0 (front) is the RIGHT of the directed exit: dy*x - dx*y.
++	return (double)hwr_portalexit->dy * ((double)x - hwr_portalexit->v1->x)
++		- (double)hwr_portalexit->dx * ((double)y - hwr_portalexit->v1->y);
++}
++
++static boolean HWR_PortalBBox(const fixed_t *box)
++{
++	return !hwr_portalexit || HWR_PortalSide(box[BOXLEFT], box[BOXTOP]) >= 0
++		|| HWR_PortalSide(box[BOXLEFT], box[BOXBOTTOM]) >= 0
++		|| HWR_PortalSide(box[BOXRIGHT], box[BOXTOP]) >= 0
++		|| HWR_PortalSide(box[BOXRIGHT], box[BOXBOTTOM]) >= 0;
++}
++
++// One portal per entrance line, however many segs the nodebuilder split it into: each portal renders the whole
++// destination view, so per-seg portals would render it once per seg. The aperture is the whole line.
++static void HWR_CollectPortal(seg_t *seg)
++{
++	line_t *start = seg->linedef;
++	line_t *dest = &lines[hwr_portalpartners[start-lines]];
++	sector_t *front = start->frontsector;
++	hwr_portal_t *portal;
++	for (portal = hwr_portallist; portal; portal = portal->next)
++		if (portal->entrance == start)
++			return;
++	portal = Z_Calloc(sizeof(*portal), PU_STATIC, NULL);
++	// Keep Software's centers and fixed-point polar transform exactly.
++	fixed_t sx = (start->v1->x + start->v2->x)/2;
++	fixed_t sy = (start->v1->y + start->v2->y)/2;
++	fixed_t dx = (dest->v1->x + dest->v2->x)/2;
++	fixed_t dy = (dest->v1->y + dest->v2->y)/2;
++	angle_t rotation = R_PointToAngle2(0,0,dest->dx,dest->dy)
++		- R_PointToAngle2(start->dx,start->dy,0,0);
++	fixed_t distance = R_PointToDist2(sx,sy,viewx,viewy);
++	angle_t angle = R_PointToAngle2(sx,sy,viewx,viewy) + rotation;
++	const fixed_t x1 = start->v1->x, y1 = start->v1->y;
++	const fixed_t x2 = start->v2->x, y2 = start->v2->y;
++	// The line's ends as seen from this view, in the destination's frame; as in HWR_AddLine, v1 is the left end
++	// of a front side
++	const angle_t a1 = R_PointToAngle64(x1, y1), a2 = R_PointToAngle64(x2, y2);
++	portal->entrance = start;
++	portal->exit = dest;
++	portal->x = dx + FixedMul(FINECOSINE(angle>>ANGLETOFINESHIFT),distance);
++	portal->y = dy + FixedMul(FINESINE(angle>>ANGLETOFINESHIFT),distance);
++	portal->z = viewz + dest->frontsector->floorheight - front->floorheight;
++	portal->yaw = viewangle + rotation;
++	portal->angle1 = a1 + rotation;
++	portal->angle2 = a2 + rotation;
++	portal->aperture[0].x = portal->aperture[3].x = FIXED_TO_FLOAT(x1);
++	portal->aperture[1].x = portal->aperture[2].x = FIXED_TO_FLOAT(x2);
++	portal->aperture[0].z = portal->aperture[3].z = FIXED_TO_FLOAT(y1);
++	portal->aperture[1].z = portal->aperture[2].z = FIXED_TO_FLOAT(y2);
++	portal->aperture[0].y = FIXED_TO_FLOAT(P_GetZAt(front->f_slope,x1,y1,front->floorheight));
++	portal->aperture[1].y = FIXED_TO_FLOAT(P_GetZAt(front->f_slope,x2,y2,front->floorheight));
++	// r_segs captures topfrac from the front ceiling, even when it is SKY.
++	// SKY changes plane/wall-tier marking, not worldtop: no infinite extension.
++	portal->aperture[3].y = FIXED_TO_FLOAT(P_GetZAt(front->c_slope,x1,y1,front->ceilingheight));
++	portal->aperture[2].y = FIXED_TO_FLOAT(P_GetZAt(front->c_slope,x2,y2,front->ceilingheight));
++	// Append in BSP front-to-back order. Nearer aperture depth then rejects
++	// masks for farther siblings where their screen projections overlap.
++	if (!hwr_portallist)
++		hwr_portallist = portal;
++	else
++	{
++		hwr_portal_t *tail = hwr_portallist;
++		while (tail->next) tail = tail->next;
++		tail->next = portal;
++	}
++}
++#endif
++
+ boolean gl_init = false;
+ boolean gl_maploaded = false;
+ boolean gl_sessioncommandsadded = false;
+@@ -194,6 +366,38 @@ static boolean HWR_UseShader(void)
  	return (cv_glshaders.value && gl_shadersavailable);
  }
  
@@ -1998,7 +2160,7 @@ index b5e8fca5a..a18606676 100644
  boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
  {
  	if (R_ThingIsFullBright(thing))
-@@ -261,13 +368,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
+@@ -261,13 +465,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
  	}
  }
  
@@ -2073,7 +2235,7 @@ index b5e8fca5a..a18606676 100644
  
  	// Crappy backup coloring if you can't do shaders
  	if (!HWR_UseShader())
-@@ -309,6 +476,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -309,6 +573,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	// Clamp the light level, since it can sometimes go out of the 0-255 range from animations
  	light_level = min(max(light_level, 0), 255);
  
@@ -2088,7 +2250,7 @@ index b5e8fca5a..a18606676 100644
  	Surface->PolyColor.rgba = poly_color.rgba;
  	Surface->TintColor.rgba = tint_color.rgba;
  	Surface->FadeColor.rgba = fade_color.rgba;
-@@ -318,6 +493,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -318,6 +590,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
  
  	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
@@ -2098,7 +2260,7 @@ index b5e8fca5a..a18606676 100644
  }
  
  UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -1666,6 +1844,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1666,6 +1941,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2107,7 +2269,7 @@ index b5e8fca5a..a18606676 100644
  				if (!(rover->fofflags & FOF_ALLSIDES) && rover->fofflags & FOF_INVERTSIDES)
  					continue;
  
-@@ -1828,6 +2008,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1828,6 +2105,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2116,7 +2278,89 @@ index b5e8fca5a..a18606676 100644
  				if (!(rover->fofflags & FOF_ALLSIDES || rover->fofflags & FOF_INVERTSIDES))
  					continue;
  
-@@ -2632,6 +2814,8 @@ static void HWR_Subsector(size_t num)
+@@ -2053,6 +2332,13 @@ static void HWR_AddLine(seg_t * line)
+ 	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
+ 	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
+ 
++#ifdef _UWP
++	// Behind the exit, or the exit line itself, which lies on the clip plane: Software's traversal starts in the exit's
++	// front sector, so it doesn't draw it either
++	if (hwr_portalexit && (line->linedef == hwr_portalexit
++		|| (HWR_PortalSide(v1x,v1y) < 0 && HWR_PortalSide(v2x,v2y) < 0)))
++		return;
++#endif
+ 	// OPTIMIZE: quickly reject orthogonal back sides.
+ 	angle1 = R_PointToAngle64(v1x, v1y);
+ 	angle2 = R_PointToAngle64(v2x, v2y);
+@@ -2068,6 +2354,24 @@ static void HWR_AddLine(seg_t * line)
+ 		return;
+ 	}
+ 
++#ifdef _UWP
++	if (line->side == 0 && line->linedef->special == 40 && hwr_portalpartners
++		&& hwr_portalpartners[line->linedef-lines] >= 0)
++	{
++		boolean active = hwr_portalsearch;
++		hwr_portal_t *portal;
++		if (hwr_portalsearch)
++			HWR_CollectPortal(line);
++		else
++			for (portal = hwr_portallist; portal; portal = portal->next)
++				if (portal->entrance == line->linedef && portal->rendered) { active = true; break; }
++		if (active)
++		{
++			gld_clipper_SafeAddClipRange(angle2,angle1);
++			return; // suppress every wall tier covering the active front-sector aperture
++		}
++	}
++#endif
+ 	checkforemptylines = true;
+ 
+ 	gl_backsector = line->backsector;
+@@ -2095,7 +2399,10 @@ static void HWR_AddLine(seg_t * line)
+ 					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
+ 				return; // line is empty, don't even bother
+ 			// treat like wide open window instead
+-			HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
++#ifdef _UWP
++			if (!hwr_portalsearch)
++#endif
++				HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+ 			return;
+ 		}
+ 
+@@ -2112,7 +2419,10 @@ static void HWR_AddLine(seg_t * line)
+ 			return;
+ 	}
+ 
+-	HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
++#ifdef _UWP
++	if (!hwr_portalsearch)
++#endif
++		HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+ 	return;
+ }
+ 
+@@ -2500,6 +2810,18 @@ static void HWR_Subsector(size_t num)
+ 		line = NULL;
+ 	}
+ 
++#ifdef _UWP
++	if (hwr_portalsearch)
++	{
++		while (count--)
++		{
++			if (!line->glseg && !line->polyseg)
++				HWR_AddLine(line);
++			line++;
++		}
++		return;
++	}
++#endif
+ 	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
+ 	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
+ 								&ceilinglightlevel, false);
+@@ -2632,6 +2954,8 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -2125,7 +2369,27 @@ index b5e8fca5a..a18606676 100644
  			if (sub->validcount == validcount)
  				continue;
  
-@@ -3656,7 +3840,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -2879,10 +3203,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+ 	hwbbox = bsp->bbox[side];
+ 
+ 	// Recursively divide front space.
+-	HWR_RenderBSPNode(bsp->children[side]);
++#ifdef _UWP
++	if (HWR_PortalBBox(bsp->bbox[side]))
++#endif
++		HWR_RenderBSPNode(bsp->children[side]);
+ 
+ 	// Possibly divide back space.
+-	if (HWR_CheckBBox(bsp->bbox[side^1]))
++	if (HWR_CheckBBox(bsp->bbox[side^1])
++#ifdef _UWP
++		&& HWR_PortalBBox(bsp->bbox[side^1])
++#endif
++	)
+ 	{
+ 		// BP: big hack for a test in lighning ref : 1249753487AB
+ 		hwbbox = bsp->bbox[side^1];
+@@ -3656,7 +3987,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -2134,7 +2398,7 @@ index b5e8fca5a..a18606676 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4597,6 +4781,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +4928,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -2145,7 +2409,7 @@ index b5e8fca5a..a18606676 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4809,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +4956,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -2158,7 +2422,7 @@ index b5e8fca5a..a18606676 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +4847,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +4994,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -2171,10 +2435,35 @@ index b5e8fca5a..a18606676 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -5791,6 +5991,26 @@ static void HWR_SetShaderState(void)
+@@ -4732,6 +5079,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+ 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
+ 	}
+ 
++#ifdef _UWP
++	// Software tests the interpolated origin before hitlag/sprite offsets.
++	if (hwr_portalexit && P_PointOnLineSide(interp.x,interp.y,hwr_portalexit) != 0)
++		return;
++#endif
+ 	dispoffset = thing->dispoffset;
+ 
+ 	// hitlag vibrating
+@@ -5233,7 +5585,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+ 	interpmobjstate_t interp = {0};
+ 
+ 	// okay... this is a hack, but weather isn't networked, so it should be ok
++#ifdef _UWP
++	if (hwr_portallevel == 0 && !P_PrecipThinker(thing))
++#else
+ 	if (!P_PrecipThinker(thing))
++#endif
+ 	{
+ 		return;
+ 	}
+@@ -5791,21 +6147,37 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
+-static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolean timing)
 +// Sky textures/skyboxes bypass HWR_Lighting. Attenuate their background before
 +// drawing the world, keeping the viewport and depth buffer intact. This is a
 +// neutral approximation, not Software's distance-dependent boundary colormap.
@@ -2195,19 +2484,46 @@ index b5e8fca5a..a18606676 100644
 +	HWD.pfnDrawPolygon(&surf, v, 4, PF_Modulated|PF_Multiplicative|PF_NoTexture|PF_NoDepthTest);
 +}
 +
- static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolean timing)
++#ifdef _UWP
++static void HWR_RenderPortalViews(player_t *player);
++static void HWR_FreePortalViews(void);
++#endif
++
++static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean timing)
  {
  	const float fpov = FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd);
-@@ -5807,6 +6027,8 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
- #endif
- 	}
+ 	postimg_t *type = &postimgtype[viewssnum];
  
+-	{
+-		// do we really need to save player (is it not the same)?
+-		player_t *saved_player = stplyr;
+-		stplyr = player;
+-		ST_doPaletteStuff();
+-		stplyr = saved_player;
+-#ifdef ALAM_LIGHTING
+-		HWR_SetLights(viewssnum);
+-#endif
+-	}
 +	hwr_viewfog = HWR_FindViewFog();
-+
+ 
  	// copy view cam position for local use
  	dup_viewx = viewx;
- 	dup_viewy = viewy;
-@@ -5861,6 +6083,8 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6229,33 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+ 	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
+ 
+ 	//------------------------------------------------------------------------
+-	HWR_ClearView(); // Clears the depth buffer and resets the view I believe
++#ifdef _UWP
++	if (hwr_portallevel == 0)
++#endif
++		HWR_ClearView(); // Whole-screen depth/stencil clear only outside recursion
++#ifdef _UWP
++	else
++		HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
++			(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
++	D3D11_SetPortalStencil(hwr_portallevel);
++	D3D11_SetPortalPlane(NULL); // sky/fog live at infinity, not behind an exit plane
++#endif
  
  	if (drawSkyTexture)
  		HWR_DrawSkyBackground(player);
@@ -2216,15 +2532,187 @@ index b5e8fca5a..a18606676 100644
  
  	//Hurdler: it doesn't work in splitscreen mode
  	drawsky = r_splitscreen;
-@@ -5963,6 +6187,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
++#ifdef _UWP
++	HWD.pfnSetTransform(&atransform);
++	D3D11_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
++	HWR_SetShaderState();
++	if (!gl_skyboxview && hwr_maphasportals && cv_maxportals.value > hwr_portallevel
++		&& D3D11_PortalsSupported())
++		HWR_RenderPortalViews(player);
++#endif
+ 
+ 	HWR_ClearSprites();
+ 
+@@ -5873,6 +6265,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+ 		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
+ 		gld_clipper_Clear();
+ 		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
++#ifdef _UWP
++		if (hwr_portalexit)
++			gld_clipper_SafeAddClipRange(hwr_portalangle1,hwr_portalangle2);
++#endif
+ #ifdef HAVE_SPHEREFRUSTRUM
+ 		gld_FrustrumSetup();
+ #endif
+@@ -5957,12 +6353,157 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+ 		HWR_CreateDrawNodes();
+ 	}
+ 
++#ifdef _UWP
++	HWR_FreePortalViews();
++	D3D11_SetPortalPlane(NULL);
++	D3D11_SetPortalStencil(0);
++#endif
+ 	HWD.pfnSetTransform(NULL);
+ 	HWD.pfnUnSetShader();
+ 
  	// added by Hurdler for correct splitscreen
  	// moved here by hurdler so it works with the new near clipping plane
  	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 +	hwr_viewfog = NULL; // do not leak into skybox, split-screen or subsequent 2D draws
++}
++
++#ifdef _UWP
++// Only renderer globals are saved. validcount remains monotonic: restoring
++// an old value would alias sectors/subsectors stamped by a recursive traversal.
++// Lists of sprites/batches/drawnodes are empty before children and fully consumed
++// in each child, before the parent collects any of its own deferred drawing.
++typedef struct
++{
++	fixed_t x,y,z,sine,cosine,dupx,dupy,dupz;
++	angle_t yaw,pitch,roll,dupyaw,glpitch;
++	float glx,gly,glz,glsine,glcosine,ludsine,ludcosine,fov;
++	FTransform transform;
++	sector_t *sector,*fog;
++	line_t *exit;
++	float plane[4];
++	angle_t angle1,angle2;
++	INT32 level;
++	boolean sky;
++	hwr_portal_t *list;
++	void *clipper;
++} hwr_viewcontext_t;
++
++static void HWR_SavePortalView(hwr_viewcontext_t *c)
++{
++	c->x=viewx; c->y=viewy; c->z=viewz; c->yaw=viewangle;
++	c->pitch=aimingangle; c->roll=viewroll; c->sine=viewsin; c->cosine=viewcos;
++	c->dupx=dup_viewx; c->dupy=dup_viewy; c->dupz=dup_viewz; c->dupyaw=dup_viewangle;
++	c->glx=gl_viewx; c->gly=gl_viewy; c->glz=gl_viewz;
++	c->glsine=gl_viewsin; c->glcosine=gl_viewcos;
++	c->ludsine=gl_viewludsin; c->ludcosine=gl_viewludcos; c->glpitch=gl_aimingangle; c->fov=gl_fovlud;
++	c->transform=atransform; c->sector=viewsector; c->fog=hwr_viewfog;
++	c->exit=hwr_portalexit; memcpy(c->plane,hwr_portalplane,sizeof c->plane);
++	c->angle1=hwr_portalangle1; c->angle2=hwr_portalangle2; c->level=hwr_portallevel;
++	c->sky=drawsky; c->list=hwr_portallist; c->clipper=gld_clipper_SaveState();
++}
++
++static void HWR_RestorePortalView(const hwr_viewcontext_t *c)
++{
++	viewx=c->x; viewy=c->y; viewz=c->z; viewangle=c->yaw;
++	aimingangle=c->pitch; viewroll=c->roll; viewsin=c->sine; viewcos=c->cosine;
++	dup_viewx=c->dupx; dup_viewy=c->dupy; dup_viewz=c->dupz; dup_viewangle=c->dupyaw;
++	gl_viewx=c->glx; gl_viewy=c->gly; gl_viewz=c->glz;
++	gl_viewsin=c->glsine; gl_viewcos=c->glcosine;
++	gl_viewludsin=c->ludsine; gl_viewludcos=c->ludcosine; gl_aimingangle=c->glpitch; gl_fovlud=c->fov;
++	atransform=c->transform; viewsector=c->sector; hwr_viewfog=c->fog;
++	hwr_portalexit=c->exit; memcpy(hwr_portalplane,c->plane,sizeof c->plane);
++	hwr_portalangle1=c->angle1; hwr_portalangle2=c->angle2; hwr_portallevel=c->level;
++	drawsky=c->sky; hwr_portallist=c->list; gld_clipper_RestoreState(c->clipper);
++	HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
++		(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
++	HWD.pfnSetTransform(&atransform);
++	D3D11_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
++	D3D11_SetPortalStencil(hwr_portallevel);
++	HWR_SetShaderState();
++}
++
++static void HWR_RenderPortalViews(player_t *player)
++{
++	hwr_portal_t *portal;
++	const precise_t start = I_GetPreciseTime();
++	const boolean root = hwr_portallevel == 0;
++	angle_t frustum = gld_FrustumAngle(gl_aimingangle);
++	gld_clipper_Clear();
++	gld_clipper_SafeAddClipRange(viewangle+frustum,viewangle-frustum);
++	if (hwr_portalexit)
++		gld_clipper_SafeAddClipRange(hwr_portalangle1,hwr_portalangle2);
++	hwr_portalsearch = true;
++	HWR_RenderBSPNode((INT32)numnodes-1); // search: lines only; no draws or deferred lists
++	hwr_portalsearch = false;
++	for (portal=hwr_portallist; portal; portal=portal->next)
++	{
++		hwr_viewcontext_t parent;
++		const line_t *exit = portal->exit;
++		const float dx=FIXED_TO_FLOAT(exit->dx), dy=FIXED_TO_FLOAT(exit->dy);
++		const float length=sqrtf(dx*dx+dy*dy);
++		if (length == 0 || !D3D11_DrawPortalAperture(portal->aperture,hwr_portallevel,false))
++			continue;
++		// The first mask tests against the frame's cleared depth. Ancestors reset
++		// only their mask to far; finished siblings contribute entrance depth.
++		// Parent foreground has not drawn yet: it occludes portal color later.
++		D3D11_ResetPortalDepth(hwr_portallevel+1);
++		HWR_SavePortalView(&parent);
++		viewx=portal->x; viewy=portal->y; viewz=portal->z; viewangle=portal->yaw;
++		viewsin=FINESINE(viewangle>>ANGLETOFINESHIFT); viewcos=FINECOSINE(viewangle>>ANGLETOFINESHIFT);
++		viewsector=exit->frontsector;
++		hwr_portalexit=portal->exit; hwr_portallevel++;
++		hwr_portalangle1=portal->angle1; hwr_portalangle2=portal->angle2;
++		hwr_portalplane[0]=dy/length; hwr_portalplane[1]=0; hwr_portalplane[2]=-dx/length;
++		hwr_portalplane[3]=-hwr_portalplane[0]*FIXED_TO_FLOAT(exit->v1->x)
++			-hwr_portalplane[2]*FIXED_TO_FLOAT(exit->v1->y);
++		hwr_portallist=NULL;
++		ps_hw_portals++;
++		// Software adds skybox portals once, after the MAIN traversal. Line
++		// portal children therefore use the regular sky, not another skybox.
++		HWR_RenderViewPass(player,true,false);
++		HWR_RestorePortalView(&parent);
++		// ALWAYS depth overwrites child scene depth with the entrance depth;
++		// simultaneously decrement only stencil == n+1 back to n. No color.
++		D3D11_DrawPortalAperture(portal->aperture,hwr_portallevel,true);
++		portal->rendered=true;
++	}
++	// Only root accounts elapsed recursion, avoiding double-counting children.
++	if (root) ps_hw_portaltime += I_GetPreciseTime()-start;
++}
++
++static void HWR_FreePortalViews(void)
++{
++	while (hwr_portallist)
++	{
++		hwr_portal_t *next=hwr_portallist->next;
++		Z_Free(hwr_portallist);
++		hwr_portallist=next;
++	}
++}
++#endif
++
++static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolean timing)
++{
++	{
++		// do we really need to save player (is it not the same)?
++		player_t *saved_player = stplyr;
++		stplyr = player;
++		ST_doPaletteStuff();
++		stplyr = saved_player;
++#ifdef ALAM_LIGHTING
++		HWR_SetLights(viewssnum);
++#endif
++	}
++
++#ifdef _UWP
++	hwr_portallevel=0;
++	hwr_portalexit=NULL;
++	hwr_portallist=NULL;
++	hwr_portalsearch=false;
++	D3D11_SetPortalPlane(NULL);
++	D3D11_SetPortalStencil(0);
++#endif
++	HWR_RenderViewPass(player,drawSkyTexture,timing);
  }
  
  // ==========================================================================
-@@ -5973,7 +6198,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6514,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -2234,7 +2722,51 @@ index b5e8fca5a..a18606676 100644
  }
  
  // ==========================================================================
-@@ -6138,6 +6365,8 @@ void HWR_Switch(void)
+@@ -5995,6 +6538,9 @@ void HWR_RenderPlayerView(void)
+ {
+ 	player_t * player = &players[displayplayers[viewssnum]];
+ 
++#ifdef _UWP
++	if (viewssnum == 0) ps_hw_portals=0, ps_hw_portaltime=0;
++#endif
+ 	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
+ 
+ 	FRGBAFloat ClearColor;
+@@ -6038,6 +6584,33 @@ void HWR_RenderPlayerView(void)
+ 
+ void HWR_LoadLevel(void)
+ {
++#ifdef _UWP
++	size_t i;
++	hwr_maphasportals=false;
++	Z_Free(hwr_portalpartners);
++	hwr_portalpartners=NULL;
++	for (i=0; i<numlines; i++)
++		if (lines[i].special == 40) { hwr_maphasportals=true; break; }
++	if (hwr_maphasportals)
++	{
++		Z_Malloc(numlines*sizeof(*hwr_portalpartners),PU_LEVEL,&hwr_portalpartners);
++		for (i=0; i<numlines; i++)
++		{
++			size_t p;
++			INT32 partner;
++			const mtag_t tag=Tag_FGet(&lines[i].tags);
++			hwr_portalpartners[i]=-1;
++			if (lines[i].special != 40 || !lines[i].frontsector) continue;
++			for (p=0; (partner=Tag_Iterate_Lines(tag,p)) >= 0; p++)
++			{
++				if (partner == (INT32)i || lines[partner].special != 40
++					|| Tag_FGet(&lines[partner].tags) != tag || !lines[partner].frontsector) continue;
++				hwr_portalpartners[i]=partner;
++				break;
++			}
++		}
++	}
++#endif
+ #ifdef ALAM_LIGHTING
+ 	// BP: reset light between levels (we draw preview frame lights on current frame)
+ 	HWR_ResetLights();
+@@ -6138,6 +6711,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -2243,7 +2775,7 @@ index b5e8fca5a..a18606676 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6486,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6832,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -2253,7 +2785,7 @@ index b5e8fca5a..a18606676 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6496,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6842,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -2264,7 +2796,7 @@ index b5e8fca5a..a18606676 100644
  		if (player->flashpal == PAL_NUKE)
  		{
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b40947..9079dd0c8 100644
+index 652b40947..d739dfde7 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,9 @@ extern "C" {
@@ -2299,6 +2831,17 @@ index 652b40947..9079dd0c8 100644
  extern consvar_t cv_glmodels;
  
  // SRB2Kart: We don't like these options.
+@@ -133,6 +144,10 @@ extern float gl_viewsin, gl_viewcos;
+ 
+ 
+ // Render stats
++#ifdef _UWP
++extern precise_t ps_hw_portaltime;
++extern INT32 ps_hw_portals;
++#endif
+ extern precise_t ps_hw_skyboxtime;
+ extern precise_t ps_hw_nodesorttime;
+ extern precise_t ps_hw_nodedrawtime;
 diff --git a/src/hardware/hw_md2.c b/src/hardware/hw_md2.c
 index 81a7d9a49..6195ddee8 100644
 --- a/src/hardware/hw_md2.c
@@ -2701,10 +3244,10 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..6f165eba1
+index 000000000..4fcf48602
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5483 @@
+@@ -0,0 +1,5656 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -3137,6 +3680,15 @@ index 000000000..6f165eba1
 +	bool depthTest = false;
 +	bool depthAlways = false; // GL_ALWAYS rather than GL_LEQUAL
 +	bool depthMask = true;
++#ifdef _UWP
++	bool stencil = false;
++	UINT8 stencilFunc = D3D11_COMPARISON_EQUAL, stencilRef = 0;
++	UINT8 stencilFail = D3D11_STENCIL_OP_KEEP, stencilDepthFail = D3D11_STENCIL_OP_KEEP;
++	UINT8 stencilPass = D3D11_STENCIL_OP_KEEP, stencilReadMask = 255, stencilWriteMask = 255;
++	UINT8 colorWriteMask = 7; // RGB; preserve the target's opaque alpha
++	float clipPlane[4] = {0, 0, 0, 1}; // camera space, or an always-positive disabled plane
++	float fullscreenDepth = 0;
++#endif
 +	int texEnv = TE_MODULATE; // of texture unit 0
 +	bool texture2D = false; // texturing enabled on unit 0
 +	bool cullFace = false;
@@ -3355,8 +3907,16 @@ index 000000000..6f165eba1
 +	INT32 texMode;
 +	INT32 palette; // palette rendering, with a light table
 +	INT32 pad[2];
++#ifdef _UWP
++	float clipPlane[4];
++	float fullscreenDepth, portalPad[3];
++#endif
 +};
++#ifdef _UWP
++static_assert(sizeof(Constants) == 304, "Constants must match DrawConstants in shaders.hlsl");
++#else
 +static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
++#endif
 +
 +ComPtr<ID3D11Buffer> g_constantBuffer;
 +Constants g_lastConstants;
@@ -3458,7 +4018,11 @@ index 000000000..6f165eba1
 +
 +std::unordered_map<UINT32, ComPtr<ID3D11SamplerState>> g_samplers;
 +std::unordered_map<UINT32, ComPtr<ID3D11BlendState>> g_blendStates;
++#ifdef _UWP
++std::unordered_map<UINT64, ComPtr<ID3D11DepthStencilState>> g_depthStates;
++#else
 +std::unordered_map<UINT32, ComPtr<ID3D11DepthStencilState>> g_depthStates;
++#endif
 +std::unordered_map<UINT32, ComPtr<ID3D11RasterizerState>> g_rasterStates;
 +
 +// The screen
@@ -3483,6 +4047,9 @@ index 000000000..6f165eba1
 +	DXGI_FORMAT indexFormat = DXGI_FORMAT_UNKNOWN;
 +	ID3D11BlendState *blend = nullptr;
 +	ID3D11DepthStencilState *depth = nullptr;
++#ifdef _UWP
++	UINT stencilRef = UINT_MAX;
++#endif
 +	ID3D11RasterizerState *raster = nullptr;
 +	ID3D11ShaderResourceView *srvs[2] = {nullptr, nullptr};
 +	ID3D11SamplerState *samplers[2] = {nullptr, nullptr};
@@ -3670,6 +4237,9 @@ index 000000000..6f165eba1
 +	if (g_gl.blend && !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
 +		key = 1 | (g_gl.blendSrc << 1) | (g_gl.blendDst << 4) | (g_gl.blendEquation << 7);
 +
++#ifdef _UWP
++	key |= (UINT32)g_gl.colorWriteMask << 10;
++#endif
 +	static UINT32 lastKey = UINT32_MAX;
 +	static ID3D11BlendState *last = nullptr;
 +	if (key == lastKey)
@@ -3685,7 +4255,7 @@ index 000000000..6f165eba1
 +	D3D11_BLEND_DESC desc = {};
 +	D3D11_RENDER_TARGET_BLEND_DESC &target = desc.RenderTarget[0];
 +
-+	target.BlendEnable = key != 0;
++	target.BlendEnable = (key & 1023) != 0;
 +	target.SrcBlend = ToD3DBlend(g_gl.blendSrc);
 +	target.DestBlend = ToD3DBlend(g_gl.blendDst);
 +	target.BlendOp = g_gl.blendEquation == BE_SUBTRACT ? D3D11_BLEND_OP_SUBTRACT
@@ -3694,7 +4264,11 @@ index 000000000..6f165eba1
 +	target.DestBlendAlpha = D3D11_BLEND_ZERO;
 +	target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
 +	// The screen's alpha stays 1, like the GL_RGB textures r_opengl.c copies the screen to
++#ifdef _UWP
++	target.RenderTargetWriteMask = g_gl.colorWriteMask;
++#else
 +	target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
++#endif
 +
 +	ComPtr<ID3D11BlendState> state;
 +	if (Failed(g_device->CreateBlendState(&desc, &state), "CreateBlendState"))
@@ -3705,9 +4279,17 @@ index 000000000..6f165eba1
 +
 +ID3D11DepthStencilState *GetDepthState()
 +{
++#ifdef _UWP
++	const UINT64 key = (g_gl.depthTest ? 1 : 0) | (g_gl.depthAlways ? 2 : 0) | (g_gl.depthMask ? 4 : 0)
++		| ((UINT64)g_gl.stencil << 3) | ((UINT64)g_gl.stencilFunc << 4)
++		| ((UINT64)g_gl.stencilFail << 8) | ((UINT64)g_gl.stencilDepthFail << 12)
++		| ((UINT64)g_gl.stencilPass << 16) | ((UINT64)g_gl.stencilReadMask << 20)
++		| ((UINT64)g_gl.stencilWriteMask << 28);
++	static UINT64 lastKey = UINT64_MAX;
++#else
 +	const UINT32 key = (g_gl.depthTest ? 1 : 0) | (g_gl.depthAlways ? 2 : 0) | (g_gl.depthMask ? 4 : 0);
-+
 +	static UINT32 lastKey = UINT32_MAX;
++#endif
 +	static ID3D11DepthStencilState *last = nullptr;
 +	if (key == lastKey)
 +		return last;
@@ -3723,7 +4305,18 @@ index 000000000..6f165eba1
 +	desc.DepthEnable = g_gl.depthTest; // which, like OpenGL, also stops depth writes
 +	desc.DepthWriteMask = g_gl.depthMask ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
 +	desc.DepthFunc = g_gl.depthAlways ? D3D11_COMPARISON_ALWAYS : D3D11_COMPARISON_LESS_EQUAL;
++#ifdef _UWP
++	desc.StencilEnable = g_gl.stencil;
++	desc.StencilReadMask = g_gl.stencilReadMask;
++	desc.StencilWriteMask = g_gl.stencilWriteMask;
++	desc.FrontFace.StencilFunc = (D3D11_COMPARISON_FUNC)g_gl.stencilFunc;
++	desc.FrontFace.StencilFailOp = (D3D11_STENCIL_OP)g_gl.stencilFail;
++	desc.FrontFace.StencilDepthFailOp = (D3D11_STENCIL_OP)g_gl.stencilDepthFail;
++	desc.FrontFace.StencilPassOp = (D3D11_STENCIL_OP)g_gl.stencilPass;
++	desc.BackFace = desc.FrontFace;
++#else
 +	desc.StencilEnable = FALSE;
++#endif
 +
 +	ComPtr<ID3D11DepthStencilState> state;
 +	if (Failed(g_device->CreateDepthStencilState(&desc, &state), "CreateDepthStencilState"))
@@ -3918,6 +4511,10 @@ index 000000000..6f165eba1
 +	memset(&c, 0, sizeof c);
 +	memcpy(c.projection, g_projection.m, sizeof c.projection);
 +	memcpy(c.modelview, g_modelview.back().m, sizeof c.modelview);
++#ifdef _UWP
++	memcpy(c.clipPlane, g_gl.clipPlane, sizeof c.clipPlane);
++	c.fullscreenDepth = g_gl.fullscreenDepth;
++#endif
 +
 +	if (g_program >= 0)
 +	{
@@ -4068,9 +4665,16 @@ index 000000000..6f165eba1
 +	}
 +
 +	ID3D11DepthStencilState *depth = GetDepthState();
++#ifdef _UWP
++	if (g_bound.depth != depth || g_bound.stencilRef != g_gl.stencilRef)
++	{
++		g_context->OMSetDepthStencilState(depth, g_gl.stencilRef);
++		g_bound.stencilRef = g_gl.stencilRef;
++#else
 +	if (g_bound.depth != depth)
 +	{
 +		g_context->OMSetDepthStencilState(depth, 0);
++#endif
 +		g_bound.depth = depth;
 +		g_stats.depthChanges++;
 +	}
@@ -4726,7 +5330,11 @@ index 000000000..6f165eba1
 +void ClearScreenDepth()
 +{
 +	if (g_dsv)
++#ifdef _UWP
++		g_context->ClearDepthStencilView(g_dsv.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
++#else
 +		g_context->ClearDepthStencilView(g_dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
++#endif
 +}
 +
 +// ==========================================================================
@@ -8094,6 +8702,114 @@ index 000000000..6f165eba1
 +}
 +
 +#ifdef _UWP
++// Portal state is explicit and confined to world view passes. The renderer
++// disables it before HUD/postprocessing; fullscreen post passes use g_noDepth.
++void D3D11_SetPortalStencil(INT32 level)
++{
++	g_gl.stencil = level > 0;
++	g_gl.stencilRef = (UINT8)level;
++	g_gl.stencilPass = D3D11_STENCIL_OP_KEEP;
++	g_gl.colorWriteMask = 7;
++}
++
++void D3D11_SetPortalPlane(const float *worldPlane)
++{
++	if (!worldPlane)
++	{
++		g_gl.clipPlane[0] = g_gl.clipPlane[1] = g_gl.clipPlane[2] = 0;
++		g_gl.clipPlane[3] = 1;
++		return;
++	}
++	// Inverse transpose of the current CAMERA's affine modelview. Set this
++	// after SetTransform(view), before model transforms are pushed. Shaders
++	// evaluate it against eye positions after the full modelview, including
++	// each model's local rotation/scale/translation. Supports roll and flips.
++	const float *m = g_modelview.back().m;
++	const float det = m[0]*(m[5]*m[10]-m[9]*m[6])
++		- m[4]*(m[1]*m[10]-m[9]*m[2]) + m[8]*(m[1]*m[6]-m[5]*m[2]);
++	float *p = g_gl.clipPlane;
++	p[0] = ((m[5]*m[10]-m[9]*m[6])*worldPlane[0]
++		+ (m[9]*m[2]-m[1]*m[10])*worldPlane[1]
++		+ (m[1]*m[6]-m[5]*m[2])*worldPlane[2]) / det;
++	p[1] = ((m[8]*m[6]-m[4]*m[10])*worldPlane[0]
++		+ (m[0]*m[10]-m[8]*m[2])*worldPlane[1]
++		+ (m[4]*m[2]-m[0]*m[6])*worldPlane[2]) / det;
++	p[2] = ((m[4]*m[9]-m[8]*m[5])*worldPlane[0]
++		+ (m[8]*m[1]-m[0]*m[9])*worldPlane[1]
++		+ (m[0]*m[5]-m[4]*m[1])*worldPlane[2]) / det;
++	p[3] = worldPlane[3] - p[0]*m[12] - p[1]*m[13] - p[2]*m[14];
++}
++
++boolean D3D11_PortalsSupported(void)
++{
++	if (!CanDraw() || !g_dsv || !g_vertexShaders[VS_FULLSCREEN])
++		return false;
++	const GLState saved = g_gl;
++	g_gl.stencil = g_gl.depthTest = true;
++	g_gl.colorWriteMask = 0;
++	bool ok = GetBlendState() != nullptr;
++	// Preflight every mask/depth combination, so missing stencil resources
++	// fall back before any aperture is suppressed or screen pixels change.
++	for (int pass = 0; pass < 4; pass++)
++	{
++		g_gl.depthAlways = pass >= 2;
++		g_gl.depthMask = pass >= 2;
++		g_gl.stencilPass = pass == 0 ? D3D11_STENCIL_OP_INCR_SAT
++			: pass == 3 ? D3D11_STENCIL_OP_DECR_SAT : D3D11_STENCIL_OP_KEEP;
++		ok = GetDepthState() != nullptr && ok;
++	}
++	g_gl = saved;
++	return ok;
++}
++
++boolean D3D11_DrawPortalAperture(const FOutVector *v, INT32 level, boolean restore)
++{
++	if (!CanDraw())
++		return false;
++	const FOutVector triangles[6] = {v[0],v[1],v[2],v[0],v[2],v[3]};
++	const UINT offset = RingWrite(g_vertexRing, triangles, sizeof triangles, sizeof(FOutVector));
++	if (offset == UINT_MAX)
++		return false;
++	const GLState saved = g_gl;
++	const int program = g_program;
++	g_gl.stencil = g_gl.depthTest = true;
++	g_gl.stencilRef = (UINT8)(restore ? level+1 : level);
++	g_gl.stencilPass = restore ? D3D11_STENCIL_OP_DECR_SAT : D3D11_STENCIL_OP_INCR_SAT;
++	g_gl.depthAlways = g_gl.depthMask = restore != 0;
++	g_gl.colorWriteMask = 0;
++	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = g_gl.blend = false;
++	g_program = -1;
++	BindVertexBuffer(g_vertexRing.buffer.Get(), sizeof(FOutVector));
++	ApplyState(LAYOUT_POLY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	g_context->Draw(6, offset / sizeof(FOutVector));
++	g_gl = saved;
++	g_program = program;
++	return true;
++}
++
++void D3D11_ResetPortalDepth(INT32 level)
++{
++	// ClearDepthStencilView ignores the stencil test. Use a far-depth
++	// fullscreen triangle instead, touching only stencil == child level.
++	const GLState saved = g_gl;
++	const int program = g_program;
++	g_gl.stencil = g_gl.depthTest = g_gl.depthAlways = g_gl.depthMask = true;
++	g_gl.stencilRef = (UINT8)level;
++	g_gl.stencilPass = D3D11_STENCIL_OP_KEEP;
++	g_gl.colorWriteMask = 0;
++	g_gl.fullscreenDepth = 1;
++	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = g_gl.blend = false;
++	g_program = -1;
++	ApplyState(LAYOUT_POLY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	g_context->IASetInputLayout(nullptr);
++	g_context->VSSetShader(g_vertexShaders[VS_FULLSCREEN].Get(), nullptr, 0);
++	g_context->Draw(3, 0);
++	g_bound.layout = nullptr;
++	g_bound.vs = g_vertexShaders[VS_FULLSCREEN].Get();
++	g_gl = saved;
++	g_program = program;
++}
++
 +boolean D3D11_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength)
 +{
 +	return ApplyFadeMap(table, size, tableId, strength);
@@ -8190,10 +8906,10 @@ index 000000000..6f165eba1
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 000000000..d15da8b66
+index 000000000..e01eb8ec3
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,59 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -8209,6 +8925,9 @@ index 000000000..d15da8b66
 +#define __R_D3D11_H__
 +
 +#include "../../doomtype.h"
++#ifdef _UWP
++#include "../hw_defs.h"
++#endif
 +
 +#ifdef __cplusplus
 +extern "C" {
@@ -8227,6 +8946,13 @@ index 000000000..d15da8b66
 +boolean D3D11_TakeTextureFlushRequest(void);
 +
 +#ifdef _UWP
++// Set after the camera transform; NULL disables the exit clip plane.
++void D3D11_SetPortalPlane(const float *worldPlane);
++void D3D11_SetPortalStencil(INT32 level);
++boolean D3D11_PortalsSupported(void);
++boolean D3D11_DrawPortalAperture(const FOutVector *vertices, INT32 level, boolean restore);
++void D3D11_ResetPortalDepth(INT32 level);
++
 +// Remaps the current render target through a row of a 256-column palette fade table.
 +// Returns false without changing the screen if palette rendering/resources are unavailable.
 +boolean D3D11_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength);
@@ -8245,10 +8971,10 @@ index 000000000..d15da8b66
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..46211b327
+index 000000000..5acf55488
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,482 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -8287,6 +9013,11 @@ index 000000000..46211b327
 +	int u_tex_mode; // fixed-function texturing: 0: none (the vertex color), 1: GL_MODULATE, 2: GL_REPLACE
 +	int u_palette; // palette rendering, with a light table
 +	int2 u_pad;
++#ifdef _UWP
++	float4 u_clip_plane; // camera space, evaluated after the full modelview
++	float u_fullscreen_depth;
++	float3 u_portal_pad;
++#endif
 +};
 +
 +Texture2D t_tex : register(t0);
@@ -8328,6 +9059,9 @@ index 000000000..46211b327
 +	// gl_FragCoord.z / gl_FragCoord.w: window depth times clip w, which is (z + w) / 2 of the clip position,
 +	// interpolated with perspective
 +	float fragz : TEXCOORD2;
++#ifdef _UWP
++	float clipDistance : SV_ClipDistance0;
++#endif
 +};
 +
 +float4 Transform(float3 pos)
@@ -8345,8 +9079,22 @@ index 000000000..46211b327
 +	o.uv = uv;
 +	o.uv1 = float2(0.0, 0.0);
 +	o.fragz = z;
++#ifdef _UWP
++	o.clipDistance = 1.0;
++#endif
 +	return o;
 +}
++
++#ifdef _UWP
++VSOut FinishWorld(float3 pos, float4 clip, float4 color, float2 uv)
++{
++	VSOut o = Finish(clip, color, uv);
++	o.clipDistance = dot(mul(u_modelview, float4(pos, 1.0)), u_clip_plane);
++	return o;
++}
++#else
++#define FinishWorld(pos, clip, color, uv) Finish(clip, color, uv)
++#endif
 +
 +// ================
 +//  Vertex shaders
@@ -8355,7 +9103,7 @@ index 000000000..46211b327
 +// FOutVector, with the current glColor
 +VSOut VSPoly(float3 pos : POSITION, float2 uv : TEXCOORD0)
 +{
-+	return Finish(Transform(pos), u_color, uv);
++	return FinishWorld(pos, Transform(pos), u_color, uv);
 +}
 +
 +// GLSL_SPRITECLIP_HACK_VERTEX_SHADER
@@ -8363,7 +9111,7 @@ index 000000000..46211b327
 +{
 +	float4 clip = Transform(pos);
 +	clip.z -= 80.0 / clip.z;
-+	return Finish(clip, u_color, uv);
++	return FinishWorld(pos, clip, u_color, uv);
 +}
 +
 +// gl_skyvertex_t, with its own colors
@@ -8385,7 +9133,7 @@ index 000000000..46211b327
 +		color = float4(saturate(u_color.rgb * (1.0 + diffuse)), u_color.a);
 +	}
 +
-+	return Finish(Transform(pos), color, uv);
++	return FinishWorld(pos, Transform(pos), color, uv);
 +}
 +
 +// GLSL_MODEL_LIGHTING_VERTEX_SHADER
@@ -8404,7 +9152,7 @@ index 000000000..46211b327
 +	}
 +
 +	light = clamp(light / 255.0, 0.0, 1.0);
-+	return Finish(Transform(pos), float4(light, light, light, 1.0), uv);
++	return FinishWorld(pos, Transform(pos), float4(light, light, light, 1.0), uv);
 +}
 +
 +// A triangle covering the screen, for wipes and palette rendering's last step
@@ -8412,6 +9160,10 @@ index 000000000..46211b327
 +{
 +	VSOut o;
 +	o.pos = float4(id == 2 ? 3.0 : -1.0, id == 1 ? 3.0 : -1.0, 0.0, 1.0);
++#ifdef _UWP
++	o.pos.z = u_fullscreen_depth;
++	o.clipDistance = 1.0;
++#endif
 +	o.color = float4(1.0, 1.0, 1.0, 1.0);
 +	o.uv = float2(0.0, 0.0);
 +	o.uv1 = float2(0.0, 0.0);
@@ -9431,7 +10183,7 @@ index de4b0f252..420d0290d 100644
  	#define __USE_C_FIXEDMUL__
  	#define __USE_C_FIXEDDIV__
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eab..fd187bad8 100644
+index 705b60eab..bcf741eab 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
 @@ -25,6 +25,14 @@
@@ -9449,7 +10201,7 @@ index 705b60eab..fd187bad8 100644
  struct perfstatcol;
  struct perfstatrow;
  
-@@ -707,3 +715,233 @@ void M_DrawPerfStats(void)
+@@ -707,3 +715,239 @@ void M_DrawPerfStats(void)
  		}
  	}
  }
@@ -9475,6 +10227,8 @@ index 705b60eab..fd187bad8 100644
 +	int hwframes;
 +	precise_t hwskybox, hwnodesort, hwnodedraw, hwspritesort, hwspritedraw, hwbatchsort, hwbatchdraw;
 +	INT64 hwpolys, hwverts, hwcalls, hwshaders, hwtextures;
++	precise_t hwportaltime;
++	INT64 hwportals;
 +} uwp_perf;
 +
 +void PS_UWPAddTic(void)
@@ -9570,6 +10324,8 @@ index 705b60eab..fd187bad8 100644
 +			{
 +				uwp_perf.hwframes++;
 +				uwp_perf.hwskybox += ps_hw_skyboxtime;
++				uwp_perf.hwportaltime += ps_hw_portaltime;
++				uwp_perf.hwportals += ps_hw_portals;
 +				uwp_perf.hwnodesort += ps_hw_nodesorttime;
 +				uwp_perf.hwnodedraw += ps_hw_nodedrawtime;
 +				uwp_perf.hwspritesort += ps_hw_spritesorttime;
@@ -9613,6 +10369,8 @@ index 705b60eab..fd187bad8 100644
 +	{
 +		const int n = uwp_perf.hwframes;
 +
++		I_OutputMsg("UWP perf:   Legacy GL: portals %.2f rendered, portal views %.2f CPU ms per frame\n",
++			(double)uwp_perf.hwportals/n, uwp_perf.hwportaltime*ms/n);
 +		// The batch timings and counts are of the last batch each frame drew, which is the main view's after the skybox's
 +		I_OutputMsg("UWP perf:   Legacy GL: skybox %.1f, node sort %.1f, node draw %.1f, sprite sort %.1f, sprite draw %.1f, batch sort %.1f, batch draw %.1f ms per frame\n",
 +			uwp_perf.hwskybox * ms / n, uwp_perf.hwnodesort * ms / n, uwp_perf.hwnodedraw * ms / n,
