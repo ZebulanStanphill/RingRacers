@@ -83,6 +83,9 @@ These came from profiling on an Xbox One X.
 
 ### Rendering (GPU calls)
 
+- **Legacy GL: drawing settings uploads** *(untested, UWP only)*. On drivers that support constant-buffer offsets and writes without overwriting pending draws, drawing settings use a 2 MB buffer with 512-byte slots. The buffer is discarded only when full; repeated settings skip uploading. Other UWP drivers use a default buffer updated with `UpdateSubresource`.
+- **Legacy GL: level resource precaching** *(untested, UWP only)*. During level loading, warm wall textures and flats (including brightmaps and FOF control sectors), existing object models, and current player models and colored textures. A second pass after bot setup, player spawning and level-start hooks warms final player skins/colors before gameplay. This trades longer loading for fewer USB reads and resource-creation hitches during racing. It runs only with Legacy GL, and skips dedicated servers, state reloads, net snapshots and demo rewind. Models need Models enabled and a valid model entry. Sprite-textured models remain lazy because their UVs need the view-selected sprite patch; future animation frames, view-dependent FOF remaps and later-spawned objects remain lazy. Wall/flat warming uses the renderer's existing cache functions and the first sidedef/sector's remap as the common case where a cache has only one variant.
+
 The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend makes fewer of them:
 
 - **Skipped redundant calls.**
@@ -131,6 +134,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
   - each step of the first frames
   - how long each loading step and asset file took, and how much of that was logging
   - the thread pool size, the process memory budget, and the CPU sets Windows lists for the game
+  - Legacy GL's constant-upload capabilities and selected path, plus per-pass precache counts for wall textures, flats, newly loaded models and model textures, and elapsed milliseconds
   - Legacy GL's driver startup, presentation path, and errors (the `UWP D3D11:` lines)
   - the track title animation's frame count, elapsed time, and average and worst drawing/presentation times (`UWP: track title:`), for diagnosing uneven animation
 - **Perf summary.** Every 5 seconds, the log gets a summary with:
@@ -142,6 +146,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
   - `R_PointInSubsector` cache hits
   - which processors the main thread ran on, and how long the profiler paused it
   - with Legacy GL, its renderer timings, and the driver's draws, state changes, texture uploads, CPU time, presentation timings, and GPU time
+  - with Legacy GL, the constant-upload path, CPU milliseconds uploading constants and constant-ring wraps per frame, plus models loaded lazily during drawing; the count drawn without buffers remains
 - **Drawn-frame trace** (UWP only). `UWP frame:` records the display player's interpolated and raw position, player 1's main camera before portal/skybox changes, elapsed time, tics since the previous world draw, interpolation fraction, and title-card timers. It runs while the in-race title card is up and from 10 to 20 seconds of level time, capped at 300 frames per window per load. Legacy GL adds the copied/shown presentation slots and source draw IDs after presenting, identifying previous-frame presentation and immediate wipe frames.
 - **Fade/palette trace** (UWP only). `UWP fade:` records game-state changes, level loads, wipe starts/ends and driver paths, screen fades/inversion, palette changes/uploads, flash overlays, and title background choices. Each change/load opens a 10-second window capped at 200 events. The first 20 title-map camera light/tint/fog samples and first 20 steps of the first animated light-fade sector are included. These diagnostics read engine state without changing game logic or rendering behavior.
 - **Legacy GL video memory diagnostics.** Startup logs local and non-local budgets, usage, and reservation figures when DXGI supports them. Each perf summary adds these figures and tracked texture bytes, model/static buffer bytes and counts, ring buffer bytes, and approximate render target/present slot bytes. GPU frames over 250 ms and copy waits that give up after 500 ms log immediate warnings with local usage/budget, limited to one line per second with suppressed warnings counted.

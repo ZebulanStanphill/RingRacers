@@ -1,4 +1,4 @@
-From f622c9dfeb060e4404b8e26f3b179ac282b81ab3 Mon Sep 17 00:00:00 2001
+From 7bca10300e1d1ecc400d75000a89d88d658f9329 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -25,6 +25,21 @@ RingRacers-dev, rebased onto v2.4.
   Its startup, presentation path, and errors are logged, and the perf
   summary adds Legacy GL's renderer timings and the driver's draws, state
   changes, texture uploads, CPU time, presentation timings, and GPU time
+- Upload Legacy GL draw constants through a 2 MB NO_OVERWRITE ring with
+  512-byte slots when Context1, constant-buffer offsetting and dynamic
+  constant-buffer NO_OVERWRITE are supported; DISCARD only on wrap,
+  retain the unchanged-constant skip and cache b0 bindings independently.
+  Otherwise use DEFAULT/UpdateSubresource on UWP. Log capabilities and
+  the path, CPU upload time and wraps per frame
+- Precache Legacy GL level walls/flats, brightmaps, existing object models
+  and current player models/colors before the title card on UWP, then
+  catch finalized skins/colors and bots after player initialization and
+  level-start hooks. Share the original model loader with drawing and
+  initialize the palette mode before warming caches. Leave view-selected
+  sprite textures and later resources lazy, and skip snapshots, reloads,
+  rewind and dedicated/non-Legacy-GL paths. Log both passes and count
+  model loads remaining in draw-time code, without executing thinkers or
+  changing game logic
 - Leave precipitation and things with RF_HIDEINSKYBOX out of Legacy GL's
   skybox view, as the software renderer does
 - Port SRB2's palette rendering to Legacy GL (gr_paletterendering, on by
@@ -155,10 +170,11 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   23 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |   66 +-
- src/hardware/hw_main.h             |    5 +
- src/hardware/hw_md2.c              |   11 +-
- src/hardware/r_d3d11/r_d3d11.cpp   | 5029 ++++++++++++++++++++++++++++
+ src/hardware/hw_main.c             |  138 +-
+ src/hardware/hw_main.h             |    8 +
+ src/hardware/hw_md2.c              |  276 +-
+ src/hardware/hw_md2.h              |    4 +
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5141 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   45 +
  src/hardware/r_d3d11/shaders.hlsl  |  438 +++
  src/http-mserv.c                   |    2 +
@@ -177,7 +193,7 @@ Model: gpt-6.1-sol
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
- src/p_setup.cpp                    |   17 +
+ src/p_setup.cpp                    |   44 +
  src/p_tick.h                       |   15 +
  src/r_draw.h                       |   38 +-
  src/r_draw_column.cpp              |   18 +-
@@ -208,7 +224,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 71 files changed, 9350 insertions(+), 409 deletions(-)
+ 72 files changed, 9775 insertions(+), 467 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1780,7 +1796,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..053b1d275 100644
+index b5e8fca5a..4b6b14a94 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -1793,7 +1809,86 @@ index b5e8fca5a..053b1d275 100644
  
  #ifdef HWRENDER
  #include "hw_glob.h"
-@@ -194,6 +197,38 @@ static boolean HWR_UseShader(void)
+@@ -65,6 +68,78 @@
+ // ==========================================================================
+ struct hwdriver_s hwdriver;
+ 
++#ifdef _UWP
++// Use renderer cache entry points: they include brightmaps, texture translation,
++// terrain/sector no-Encore flags, and the active level's Encore colormap. For
++// textures whose existing cache has only one remap variant, first sidedef/sector
++// use is the common case; view-dependent FOF variants and animation remain lazy.
++void HWR_UWPPrecacheLevel(boolean players_only)
++{
++	precise_t start;
++	INT32 walls = 0, flats = 0, models = 0, modeltextures = 0;
++	size_t i;
++	if (dedicated || rendermode != render_opengl)
++		return;
++	start = I_GetPreciseTime();
++	// Match the first view's palette mode before generating textures, otherwise
++	// its mode transition would immediately flush this warm-up.
++	HWR_UpdatePaletteRendering();
++	if (!players_only)
++	{
++		UINT8 *wallseen = Z_Calloc(numtextures, PU_STATIC, NULL);
++		UINT8 *flatseen = Z_Calloc(numlevelflats, PU_STATIC, NULL);
++		for (i = 0; i < numsides; i++)
++		{
++			const INT32 base[3] = {sides[i].toptexture, sides[i].midtexture, sides[i].bottomtexture};
++			INT32 j;
++			for (j = 0; j < 3; j++)
++			{
++				INT32 tex;
++				if (base[j] <= 0 || base[j] >= numtextures)
++					continue;
++				tex = texturetranslation[base[j]];
++				if (tex <= 0 || tex >= numtextures || wallseen[tex])
++					continue;
++				wallseen[tex] = 1;
++				HWR_GetTexture(tex, base[j]);
++				walls++;
++			}
++		}
++		// Control sectors are part of sectors[], so FOF floor/ceiling assets are
++		// included. The owning view sector can choose another remap at draw time.
++		for (i = 0; i < numsectors; i++)
++		{
++			const INT32 pic[2] = {sectors[i].floorpic, sectors[i].ceilingpic};
++			INT32 ceiling;
++			for (ceiling = 0; ceiling < 2; ceiling++)
++			{
++				boolean noencore;
++				UINT8 key;
++				if (pic[ceiling] == skyflatnum || pic[ceiling] < 0 || pic[ceiling] >= numlevelflats)
++					continue;
++				noencore = R_NoEncore(&sectors[i], &levelflats[pic[ceiling]], ceiling);
++				key = noencore ? 2 : 1;
++				if (flatseen[pic[ceiling]] & key)
++					continue;
++				flatseen[pic[ceiling]] |= key;
++				HWR_GetLevelFlat(&levelflats[pic[ceiling]], noencore);
++				flats++;
++			}
++		}
++		Z_Free(flatseen);
++		Z_Free(wallseen);
++	}
++	HWR_UWPPrecacheModels(players_only, &models, &modeltextures);
++	// No batch is in progress during loading. Don't leave a warm-up texture
++	// selected for title-card drawing; subsequent draws select their own textures.
++	HWR_SetCurrentTexture(NULL);
++	HWD.pfnSetTexture(NULL);
++	I_OutputMsg("UWP D3D11: precache (%s): %d wall textures, %d flats, %d models (%d model textures) in %.2f ms\n",
++		players_only ? "players" : "level", walls, flats, models, modeltextures,
++		(I_GetPreciseTime() - start) * 1000.0 / I_GetPrecisePrecision());
++}
++#endif
++
+ // ==========================================================================
+ //                                                                     PROTOS
+ // ==========================================================================
+@@ -194,6 +269,38 @@ static boolean HWR_UseShader(void)
  	return (cv_glshaders.value && gl_shadersavailable);
  }
  
@@ -1832,7 +1927,7 @@ index b5e8fca5a..053b1d275 100644
  boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
  {
  	if (R_ThingIsFullBright(thing))
-@@ -318,6 +353,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -318,6 +425,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
  
  	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
@@ -1842,7 +1937,7 @@ index b5e8fca5a..053b1d275 100644
  }
  
  UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -3656,7 +3694,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +3766,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -1851,7 +1946,7 @@ index b5e8fca5a..053b1d275 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4597,6 +4635,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +4707,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -1862,7 +1957,7 @@ index b5e8fca5a..053b1d275 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4663,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +4735,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -1875,7 +1970,7 @@ index b5e8fca5a..053b1d275 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +4701,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +4773,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -1888,7 +1983,7 @@ index b5e8fca5a..053b1d275 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -5973,7 +6027,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6099,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -1898,7 +1993,7 @@ index b5e8fca5a..053b1d275 100644
  }
  
  // ==========================================================================
-@@ -6138,6 +6194,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6266,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -1907,7 +2002,7 @@ index b5e8fca5a..053b1d275 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6315,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6387,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -1917,7 +2012,7 @@ index b5e8fca5a..053b1d275 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6325,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6397,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -1928,10 +2023,20 @@ index b5e8fca5a..053b1d275 100644
  		if (player->flashpal == PAL_NUKE)
  		{
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b40947..dc289e55e 100644
+index 652b40947..72e54e061 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
-@@ -100,6 +100,11 @@ extern consvar_t cv_glcoronasize;
+@@ -27,6 +27,9 @@ extern "C" {
+ 
+ // Startup & Shutdown the hardware mode renderer
+ void HWR_Startup(void);
++#ifdef _UWP
++void HWR_UWPPrecacheLevel(boolean players_only);
++#endif
+ void HWR_Switch(void);
+ void HWR_Shutdown(void);
+ 
+@@ -100,6 +103,11 @@ extern consvar_t cv_glcoronasize;
  #endif
  
  extern consvar_t cv_glshaders, cv_glallowshaders;
@@ -1944,7 +2049,7 @@ index 652b40947..dc289e55e 100644
  
  // SRB2Kart: We don't like these options.
 diff --git a/src/hardware/hw_md2.c b/src/hardware/hw_md2.c
-index 81a7d9a49..ce26e94e6 100644
+index 81a7d9a49..6195ddee8 100644
 --- a/src/hardware/hw_md2.c
 +++ b/src/hardware/hw_md2.c
 @@ -29,6 +29,7 @@
@@ -1955,7 +2060,66 @@ index 81a7d9a49..ce26e94e6 100644
  #include "../d_main.h"
  #include "../r_bsp.h"
  #include "../r_fps.h"
-@@ -725,7 +726,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+@@ -39,6 +40,9 @@
+ #include "../r_things.h"
+ #include "../r_draw.h"
+ #include "../p_tick.h"
++#ifdef _UWP
++#include "../p_mobj.h"
++#endif
+ 
+ #include "hw_model.h"
+ 
+@@ -81,6 +85,18 @@
+ 
+ md2_t md2_models[NUMSPRITES];
+ md2_t md2_playermodels[MAXSKINS];
++#ifdef _UWP
++static UINT32 uwp_models_loaded;
++static UINT32 uwp_model_textures_loaded;
++static UINT32 uwp_models_loaded_lazily;
++
++UINT32 HWR_UWPTakeLazyModelLoads(void)
++{
++	UINT32 count = uwp_models_loaded_lazily;
++	uwp_models_loaded_lazily = 0;
++	return count;
++}
++#endif
+ 
+ 
+ /*
+@@ -427,7 +443,14 @@ static void md2_loadTexture(md2_t *model)
+ 		}
+ 	}
+ 
++#ifdef _UWP
++	const boolean uploading = !grPatch->mipmap->downloaded;
++#endif
+ 	HWD.pfnSetTexture(grPatch->mipmap);
++#ifdef _UWP
++	if (uploading && grPatch->mipmap->downloaded)
++		uwp_model_textures_loaded++;
++#endif
+ }
+ 
+ // -----------------+
+@@ -482,7 +505,14 @@ static void md2_loadBlendTexture(md2_t *model)
+ 		grPatch->mipmap->height = (UINT16)h;
+ 	}
+ 
++#ifdef _UWP
++	const boolean uploading = !grPatch->mipmap->downloaded;
++#endif
+ 	HWD.pfnSetTexture(grPatch->mipmap); // We do need to do this so that it can be cleared and knows to recreate it when necessary
++#ifdef _UWP
++	if (uploading && grPatch->mipmap->downloaded)
++		uwp_model_textures_loaded++;
++#endif
+ 
+ 	Z_Free(filename);
+ }
+@@ -725,7 +755,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
  	UINT8 colorbrightnesses[17];
  	UINT8 color_match_lookup[256]; // optimization attempt
  
@@ -1964,7 +2128,7 @@ index 81a7d9a49..ce26e94e6 100644
  	memset(translation, 0, sizeof(translation));
  	memset(cutoff, 0, sizeof(cutoff));
  
-@@ -805,7 +806,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+@@ -805,7 +835,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
  
  		for (i = 0; i < translen; i++) // moved from inside the loop to here
  		{
@@ -1973,7 +2137,7 @@ index 81a7d9a49..ce26e94e6 100644
  			colorbrightnesses[i] = BlendLuminance(tempc.s.red, tempc.s.green, tempc.s.blue); // store brightnesses for comparison
  		}
  
-@@ -834,7 +835,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+@@ -834,7 +864,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
  	}
  
  	if (skinnum == TC_BLINK)
@@ -1982,7 +2146,7 @@ index 81a7d9a49..ce26e94e6 100644
  
  	while (size--)
  	{
-@@ -1032,11 +1033,11 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
+@@ -1032,11 +1062,11 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
  						mul = cutoff[firsti] - brightness;
  					}
  
@@ -1996,12 +2160,300 @@ index 81a7d9a49..ce26e94e6 100644
  
  						// Find difference between points
  						r = (INT32)(nextcolor.s.red - blendcolor.s.red);
+@@ -1191,6 +1221,10 @@ static void HWR_GetBlendedTexture(patch_t *patch, patch_t *blendpatch, INT32 ski
+ 	HWR_CreateBlendedTexture(patch, blendpatch, newMipmap, skinnum, color);
+ 
+ 	HWD.pfnSetTexture(newMipmap);
++#ifdef _UWP
++	if (newMipmap->downloaded)
++		uwp_model_textures_loaded++;
++#endif
+ 	Z_ChangeTag(newMipmap->data, PU_HWRMODELTEXTURE_UNLOCKED);
+ }
+ 
+@@ -1315,6 +1349,168 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
+ }
+ 
+ //
++// Both drawing and UWP precaching use exactly the same resource initialization.
++// A NULL sprite patch permits external-textured models only: sprite textures need
++// the view-selected (possibly rotated) patch to adjust UVs before creating VBOs.
++static boolean HWR_LoadModelResources(md2_t *md2, patch_t *spritepatch)
++{
++	char filename[64];
++	patch_t *gpatch, *blendgpatch;
++	GLPatch_t *hwrPatch = NULL, *hwrBlendPatch = NULL;
++	// texture loading before model init, so it knows if sprite graphics are used, which
++	// means that texture coordinates have to be adjusted
++	gpatch = md2->grpatch;
++	if (gpatch)
++		hwrPatch = ((GLPatch_t *)gpatch->hardware);
++
++	if (!gpatch || !hwrPatch
++	|| ((!hwrPatch->mipmap->format || !hwrPatch->mipmap->downloaded) && !md2->notexturefile))
++		md2_loadTexture(md2);
++
++	// Load it again, because it isn't being loaded into gpatch after md2_loadtexture...
++	gpatch = md2->grpatch;
++	if (gpatch)
++		hwrPatch = ((GLPatch_t *)gpatch->hardware);
++
++	// Load blend texture
++	blendgpatch = md2->blendgrpatch;
++	if (blendgpatch)
++		hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
++
++	if ((gpatch && hwrPatch && hwrPatch->mipmap->format) // don't load the blend texture if the base texture isn't available
++		&& (!blendgpatch || !hwrBlendPatch
++		|| ((!hwrBlendPatch->mipmap->format || !hwrBlendPatch->mipmap->downloaded) && !md2->noblendfile)))
++		md2_loadBlendTexture(md2);
++
++	// Load it again, because it isn't being loaded into blendgpatch after md2_loadblendtexture...
++	blendgpatch = md2->blendgrpatch;
++	if (blendgpatch)
++		hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
++
++	if (md2->error)
++		return false; // we already failed loading this before :(
++	if (!md2->model)
++	{
++		if ((!gpatch || !hwrPatch->mipmap->format) && !spritepatch)
++			return false; // Cannot choose sprite UVs without a projected sprite.
++		sprintf(filename, "models/%s", md2->filename);
++		md2->model = md2_readModel(filename);
++
++		if (md2->model)
++		{
++#ifdef _UWP
++			uwp_models_loaded++;
++#endif
++			md2_printModelInfo(md2->model);
++			// If model uses sprite patch as texture, then
++			// adjust texture coordinates to take power of two textures into account
++			if (!gpatch || !hwrPatch->mipmap->format)
++				adjustTextureCoords(md2->model, spritepatch);
++			// note down the max_s and max_t that end up in the VBO
++			md2->model->vbo_max_s = md2->model->max_s;
++			md2->model->vbo_max_t = md2->model->max_t;
++			HWD.pfnCreateModelVBOs(md2->model);
++		}
++		else
++		{
++			//CONS_Debug(DBG_RENDER, " FAILED\n");
++			md2->error = true; // prevent endless fail
++			return false;
++		}
++	}
++
++	return true;
++}
++
++#ifdef _UWP
++static void HWR_UWPPrecacheModel(md2_t *md2)
++{
++	if (md2->notfound || md2->error || md2->scale < 0.0f)
++		return;
++	HWR_LoadModelResources(md2, NULL);
++}
++
++void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures_loaded)
++{
++	const UINT32 oldmodels = uwp_models_loaded;
++	const UINT32 oldtextures = uwp_model_textures_loaded;
++	INT32 i;
++	if (!cv_glmodels.value)
++		return;
++
++	if (!players_only)
++	{
++		thinker_t *th;
++		// Inspect the list; never execute thinkers, project sprites or change mobjs.
++		for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
++		{
++			mobj_t *mo = (mobj_t *)th;
++			if (P_MobjWasRemoved(mo) || !HWR_AllowModel(mo))
++				continue;
++			if (mo->skin && mo->sprite == SPR_PLAY)
++				HWR_UWPPrecacheModel(&md2_playermodels[((skin_t *)mo->skin)->skinnum]);
++			else if ((unsigned)mo->sprite < NUMSPRITES)
++				HWR_UWPPrecacheModel(&md2_models[mo->sprite]);
++		}
++	}
++
++	for (i = 0; i < MAXPLAYERS; i++)
++	{
++		INT32 skin, translation;
++		skincolornum_t color;
++		const UINT8 *colormap;
++		md2_t *md2;
++		patch_t *patch;
++		mobj_t *mo;
++		if (!playeringame[i])
++			continue;
++		// Before P_InitPlayers, use the current player fields, not an old mobj.
++		// Afterwards use the spawned mobj, matching HWR_ProjectSprite/DrawModel.
++		mo = players_only ? players[i].mo : NULL;
++		if (mo && (P_MobjWasRemoved(mo) || mo->sprite != SPR_PLAY || !mo->skin || !HWR_AllowModel(mo)))
++			continue;
++		skin = mo ? ((skin_t *)mo->skin)->skinnum : players[i].skin;
++		color = (skincolornum_t)(mo ? mo->color : players[i].skincolor);
++		if (skin < 0 || skin >= numskins)
++			continue;
++		md2 = &md2_playermodels[skin];
++		HWR_UWPPrecacheModel(md2);
++		patch = md2->grpatch;
++		if (md2->notfound || md2->error || md2->scale < 0.0f || !md2->model
++			|| !patch || !patch->hardware || !((GLPatch_t *)patch->hardware)->mipmap->format)
++			continue;
++
++		// Same translation number and cached pointer as sprite projection and drawing.
++		translation = skin;
++		if (!R_CanShowSkinInDemo(skin))
++		{
++			translation = TC_BLINK;
++			colormap = R_GetTranslationColormap(TC_BLINK, color, GTC_CACHE);
++		}
++		else if (mo && R_ThingIsFlashing(mo))
++		{
++			translation = TC_HITLAG;
++			colormap = R_GetTranslationColormap(TC_HITLAG, 0, GTC_CACHE);
++		}
++		else if (color)
++		{
++			if (mo && mo->colorized)
++				translation = TC_RAINBOW;
++			colormap = R_GetTranslationColormap(translation, color, GTC_CACHE);
++		}
++		else
++		{
++			colormap = colormaps;
++			if (encoremap && (!mo || !(mo->flags & MF_DONTENCOREMAP)))
++				colormap += COLORMAP_REMAPOFFSET;
++		}
++		HWR_GetBlendedTexture(patch, md2->blendgrpatch, translation, colormap, color);
++	}
++	*models = (INT32)(uwp_models_loaded - oldmodels);
++	*textures_loaded = (INT32)(uwp_model_textures_loaded - oldtextures);
++}
++#endif
++
+ // HWR_DrawModel
+ //
+ 
+@@ -1322,7 +1518,6 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+ {
+ 	md2_t *md2;
+ 
+-	char filename[64];
+ 	INT32 frame = 0;
+ 	INT32 nextFrame = -1;
+ 	UINT8 spr2 = 0;
+@@ -1381,7 +1576,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+ 	// Look at HWR_ProjectSprite for more
+ 	{
+ 		patch_t *gpatch, *blendgpatch;
+-		GLPatch_t *hwrPatch = NULL, *hwrBlendPatch = NULL;
++		GLPatch_t *hwrPatch = NULL;
+ 		float durs = (float)spr->mobj->state->tics;
+ 		float tics = (float)spr->mobj->tics;
+ 		const boolean papersprite = (R_ThingIsPaperSprite(spr->mobj) && !R_ThingIsFloorSprite(spr->mobj));
+@@ -1463,64 +1658,19 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+ 			md2 = &md2_models[spr->mobj->sprite];
+ 		}
+ 
+-		// texture loading before model init, so it knows if sprite graphics are used, which
+-		// means that texture coordinates have to be adjusted
+-		gpatch = md2->grpatch;
+-		if (gpatch)
+-			hwrPatch = ((GLPatch_t *)gpatch->hardware);
+-
+-		if (!gpatch || !hwrPatch
+-		|| ((!hwrPatch->mipmap->format || !hwrPatch->mipmap->downloaded) && !md2->notexturefile))
+-			md2_loadTexture(md2);
+-
+-		// Load it again, because it isn't being loaded into gpatch after md2_loadtexture...
++#ifdef _UWP
++		const boolean lazy = !md2->model;
++#endif
++		if (!HWR_LoadModelResources(md2, spr->gpatch))
++			return false;
++#ifdef _UWP
++		if (lazy)
++			uwp_models_loaded_lazily++;
++#endif
+ 		gpatch = md2->grpatch;
+-		if (gpatch)
+-			hwrPatch = ((GLPatch_t *)gpatch->hardware);
+-
+-		// Load blend texture
+ 		blendgpatch = md2->blendgrpatch;
+-		if (blendgpatch)
+-			hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
+-
+-		if ((gpatch && hwrPatch && hwrPatch->mipmap->format) // don't load the blend texture if the base texture isn't available
+-			&& (!blendgpatch || !hwrBlendPatch
+-			|| ((!hwrBlendPatch->mipmap->format || !hwrBlendPatch->mipmap->downloaded) && !md2->noblendfile)))
+-			md2_loadBlendTexture(md2);
+-
+-		// Load it again, because it isn't being loaded into blendgpatch after md2_loadblendtexture...
+-		blendgpatch = md2->blendgrpatch;
+-		if (blendgpatch)
+-			hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
+-
+-		if (md2->error)
+-			return false; // we already failed loading this before :(
+-		if (!md2->model)
+-		{
+-			//CONS_Debug(DBG_RENDER, "Loading model... (%s)", sprnames[spr->mobj->sprite]);
+-			sprintf(filename, "models/%s", md2->filename);
+-			md2->model = md2_readModel(filename);
+-
+-			if (md2->model)
+-			{
+-				md2_printModelInfo(md2->model);
+-				// If model uses sprite patch as texture, then
+-				// adjust texture coordinates to take power of two textures into account
+-				if (!gpatch || !hwrPatch->mipmap->format)
+-					adjustTextureCoords(md2->model, spr->gpatch);
+-				// note down the max_s and max_t that end up in the VBO
+-				md2->model->vbo_max_s = md2->model->max_s;
+-				md2->model->vbo_max_t = md2->model->max_t;
+-				HWD.pfnCreateModelVBOs(md2->model);
+-			}
+-			else
+-			{
+-				//CONS_Debug(DBG_RENDER, " FAILED\n");
+-				md2->error = true; // prevent endless fail
+-				return false;
+-			}
+-		}
+-
++		if (gpatch)
++			hwrPatch = gpatch->hardware;
+ 		//HWD.pfnSetBlend(blend); // This seems to actually break translucency?
+ 		//Hurdler: arf, I don't like that implementation at all... too much crappy
+ 
+diff --git a/src/hardware/hw_md2.h b/src/hardware/hw_md2.h
+index dbfa84aa1..c44c84893 100644
+--- a/src/hardware/hw_md2.h
++++ b/src/hardware/hw_md2.h
+@@ -48,6 +48,10 @@ void HWR_InitModels(void);
+ void HWR_AddPlayerModel(INT32 skin);
+ void HWR_AddSpriteModel(size_t spritenum);
+ boolean HWR_DrawModel(gl_vissprite_t *spr);
++#ifdef _UWP
++void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures);
++UINT32 HWR_UWPTakeLazyModelLoads(void);
++#endif
+ 
+ #define PLAYERMODELPREFIX "PLAYER"
+ 
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..35c0616a4
+index 000000000..7793f91fd
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5029 @@
+@@ -0,0 +1,5141 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -2027,6 +2479,9 @@ index 000000000..35c0616a4
 +#define WIN32_LEAN_AND_MEAN
 +#include <windows.h>
 +#include <d3d11.h>
++#ifdef _UWP
++#include <d3d11_1.h>
++#endif
 +#include <dxgi1_4.h>
 +#include <wrl/client.h>
 +
@@ -2057,6 +2512,9 @@ index 000000000..35c0616a4
 +#include "../../sdl/sdlmain.h"
 +#include "../hw_drv.h"
 +#include "../hw_main.h"
++#ifdef _UWP
++#include "../hw_md2.h"
++#endif
 +#include "r_d3d11.h"
 +
 +// doomdef.h's
@@ -2134,6 +2592,8 @@ index 000000000..35c0616a4
 +	int polygons, batches, skies, models, lines, screens;
 +	INT64 vertices, indices;
 +	int constantUpdates;
++	int constantWraps;
++	precise_t constantTime;
 +	INT64 uploadBytes;
 +	int ringWraps;
 +	int shaderChanges, blendChanges, depthChanges, rasterChanges, textureBinds;
@@ -2645,6 +3105,63 @@ index 000000000..35c0616a4
 +ComPtr<ID3D11Buffer> g_constantBuffer;
 +Constants g_lastConstants;
 +bool g_constantsValid = false;
++// Independent of Bound: palette postprocessing and full wipes reset that cache,
++// but neither changes b0. ClearState does, and must invalidate this binding.
++bool g_constantsBound = false;
++#ifdef _UWP
++ComPtr<ID3D11DeviceContext1> g_context1;
++bool g_constantRing = false;
++constexpr UINT kConstantRingBytes = 2 << 20;
++constexpr UINT kConstantSlotBytes = (sizeof(Constants) + 255) & ~255u;
++static_assert(kConstantSlotBytes == 512, "Constants use two 256-byte blocks");
++UINT g_constantPosition = 0;
++UINT g_constantOffset = 0;
++
++void InitConstantUploads()
++{
++	D3D11_FEATURE_DATA_D3D11_OPTIONS options = {};
++	const bool context1 = SUCCEEDED(g_context.As(&g_context1));
++	const bool queried = SUCCEEDED(g_device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof options));
++	g_constantRing = context1 && queried && options.ConstantBufferOffsetting
++		&& options.MapNoOverwriteOnDynamicConstantBuffer;
++	Log("constants: Context1 %s, options %s, ConstantBufferOffsetting %u, MapNoOverwriteOnDynamicConstantBuffer %u; %s",
++		context1 ? "yes" : "no", queried ? "yes" : "no", (unsigned)options.ConstantBufferOffsetting,
++		(unsigned)options.MapNoOverwriteOnDynamicConstantBuffer,
++		g_constantRing ? "NO_OVERWRITE ring (2 MB, 512-byte slots)" : "DEFAULT UpdateSubresource");
++}
++#endif
++
++const char *ConstantUploadPath()
++{
++#ifdef _UWP
++	return g_constantRing ? "NO_OVERWRITE ring" : "DEFAULT UpdateSubresource";
++#else
++	return "dynamic DISCARD";
++#endif
++}
++
++void BindDrawConstants()
++{
++	if (g_constantsBound)
++		return;
++	ID3D11Buffer *buffer = g_constantBuffer.Get();
++#ifdef _UWP
++	if (g_constantRing)
++	{
++		// API offsets/counts are 16-byte constants, in multiples of 16 (256 bytes).
++		const UINT first = g_constantOffset / 16;
++		const UINT count = kConstantSlotBytes / 16;
++		g_context1->VSSetConstantBuffers1(0, 1, &buffer, &first, &count);
++		g_context1->PSSetConstantBuffers1(0, 1, &buffer, &first, &count);
++	}
++	else
++#endif
++	{
++		g_context->VSSetConstantBuffers(0, 1, &buffer);
++		g_context->PSSetConstantBuffers(0, 1, &buffer);
++	}
++	g_constantsBound = true;
++}
 +
 +// The vertex of models' buffers
 +struct ModelVertex
@@ -3164,13 +3681,42 @@ index 000000000..35c0616a4
 +	c.palette = (g_paletteRendering && g_paletteLookupSrv && g_currentLightTable) ? 1 : 0;
 +
 +	if (g_constantsValid && memcmp(&c, &g_lastConstants, sizeof c) == 0)
++	{
++		BindDrawConstants();
 +		return;
++	}
 +
++	CpuTimer timer(g_stats.constantTime);
++#ifdef _UWP
++	if (g_constantRing)
++	{
++		// Never reuse a submitted slot until DISCARD supplies a fresh allocation.
++		const bool wrap = g_constantPosition + kConstantSlotBytes > kConstantRingBytes;
++		const UINT offset = wrap ? 0 : g_constantPosition;
++		D3D11_MAPPED_SUBRESOURCE mapped;
++		if (Failed(g_context->Map(g_constantBuffer.Get(), 0,
++			wrap ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE, 0, &mapped), "Map constant ring"))
++			return;
++		UINT8 *slot = static_cast<UINT8 *>(mapped.pData) + offset;
++		memcpy(slot, &c, sizeof c);
++		memset(slot + sizeof c, 0, kConstantSlotBytes - sizeof c);
++		g_context->Unmap(g_constantBuffer.Get(), 0);
++		g_constantOffset = offset;
++		g_constantPosition = offset + kConstantSlotBytes;
++		g_constantsBound = false;
++		if (wrap)
++			g_stats.constantWraps++;
++	}
++	else
++		g_context->UpdateSubresource(g_constantBuffer.Get(), 0, nullptr, &c, 0, 0);
++#else
 +	D3D11_MAPPED_SUBRESOURCE mapped;
 +	if (Failed(g_context->Map(g_constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Map constants"))
 +		return;
 +	memcpy(mapped.pData, &c, sizeof c);
 +	g_context->Unmap(g_constantBuffer.Get(), 0);
++#endif
++	BindDrawConstants();
 +
 +	g_lastConstants = c;
 +	g_constantsValid = true;
@@ -3913,17 +4459,15 @@ index 000000000..35c0616a4
 +{
 +	g_context->ClearState();
 +	g_bound = Bound();
-+	g_constantsValid = false;
++	g_constantsBound = false;
++	// ClearState does not discard the uploaded bytes or reset the ring cursor.
 +}
 +
 +void BindRenderTarget()
 +{
 +	ID3D11RenderTargetView *rtv = g_rtv.Get();
-+	ID3D11Buffer *constants = g_constantBuffer.Get();
-+
 +	g_context->OMSetRenderTargets(1, &rtv, g_dsv.Get());
-+	g_context->VSSetConstantBuffers(0, 1, &constants);
-+	g_context->PSSetConstantBuffers(0, 1, &constants);
++	BindDrawConstants();
 +}
 +
 +bool CreateRenderTarget(UINT width, UINT height)
@@ -5339,6 +5883,9 @@ index 000000000..35c0616a4
 +	}
 +
 +	InitVideoMemory();
++#ifdef _UWP
++	InitConstantUploads();
++#endif
 +
 +	if (!CreateDeviceObjects())
 +	{
@@ -5395,10 +5942,16 @@ index 000000000..35c0616a4
 +		return false;
 +
 +	D3D11_BUFFER_DESC constants = {};
++	constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++#ifdef _UWP
++	constants.ByteWidth = g_constantRing ? kConstantRingBytes : sizeof(Constants);
++	constants.Usage = g_constantRing ? D3D11_USAGE_DYNAMIC : D3D11_USAGE_DEFAULT;
++	constants.CPUAccessFlags = g_constantRing ? D3D11_CPU_ACCESS_WRITE : 0;
++#else
 +	constants.ByteWidth = sizeof(Constants);
 +	constants.Usage = D3D11_USAGE_DYNAMIC;
-+	constants.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 +	constants.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
++#endif
 +	if (Failed(g_device->CreateBuffer(&constants, nullptr, &g_constantBuffer), "CreateBuffer (constants)"))
 +		return false;
 +
@@ -6570,6 +7123,8 @@ index 000000000..35c0616a4
 +	ID3D11ShaderResourceView *mask = g_wipeMaskSrv.Get();
 +	ID3D11SamplerState *sampler = g_defaultSampler.Get();
 +	D3D11_VIEWPORT viewport = {0.0f, 0.0f, c.screenSize[0], c.screenSize[1], 0.0f, 1.0f};
++	// b1 is separate from the current b0 ring range.
++	BindDrawConstants();
 +	g_context->PSSetConstantBuffers(1, 1, &constants);
 +	g_context->PSSetShaderResources(0, 2, screens);
 +	// t2-t4 are reserved for palette rendering.
@@ -6977,6 +7532,11 @@ index 000000000..35c0616a4
 +	I_OutputMsg("UWP perf:   D3D11: textures: %d created, %d uploads (%.1f MB), %d deleted, %d flushes; %d alive (%.1f MB); models: %d drawn without buffers, %d interpolated\n",
 +		s.texturesCreated, s.textureUploads, s.textureUploadBytes / 1048576.0, s.texturesDeleted, s.flushes,
 +		(int)g_textures.size(), g_textureBytes / 1048576.0, s.modelFallbacks, s.modelLerps);
++	I_OutputMsg("UWP perf:   D3D11: constants: %s; uploading %.3f ms, %.3f ring wraps per frame\n",
++		ConstantUploadPath(), PreciseToMs(s.constantTime) / n, s.constantWraps / n);
++#ifdef _UWP
++	I_OutputMsg("UWP perf:   D3D11: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
++#endif
 +	I_OutputMsg("UWP perf:   D3D11: CPU per frame: drawing %.2f ms, textures %.2f ms; presenting: copy %.2f, wait %.2f (worst %.2f), GL %.2f, swap %.2f ms; GPU %.2f ms per frame (worst %.2f, %d timed); %s; %d errors\n",
 +		PreciseToMs(s.drawTime) / n, PreciseToMs(s.textureTime) / n, PreciseToMs(s.copyTime) / n, PreciseToMs(s.waitTime) / n,
 +		PreciseToMs(s.worstWait), PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
@@ -7026,7 +7586,11 @@ index 000000000..35c0616a4
 +			targets += (UINT64)g_present.width * g_present.height * 4;
 +	I_OutputMsg("UWP perf:   D3D11: memory: local %s; non-local %s; tracked textures %.1f MB; model/static buffers %.1f MB (%llu alive); rings %.1f MB; render targets/present slots ~%.1f MB\n",
 +		localText, nonlocalText, g_textureBytes / 1048576.0, staticBytes / 1048576.0,
-+		(unsigned long long)staticCount, ((UINT64)g_vertexRing.size + g_indexRing.size) / 1048576.0,
++		(unsigned long long)staticCount, ((UINT64)g_vertexRing.size + g_indexRing.size
++#ifdef _UWP
++			+ (g_constantRing ? kConstantRingBytes : 0)
++#endif
++		) / 1048576.0,
 +		targets / 1048576.0);
 +
 +	memset(&g_stats, 0, sizeof g_stats);
@@ -8851,7 +9415,7 @@ index 02f46b56f..f6f4e46a4 100644
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce77..66913807b 100644
+index e5208ce77..8441380d9 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
 @@ -17,6 +17,9 @@
@@ -8864,7 +9428,17 @@ index e5208ce77..66913807b 100644
  
  #include "doomdef.h"
  #include "d_main.h"
-@@ -7567,6 +7570,9 @@ static boolean P_LoadMapFromFile(void)
+@@ -131,6 +134,9 @@
+ 
+ extern "C" consvar_t cv_continuousmusic;
+ boolean g_reloadinggamestate = false;
++#if defined(_UWP) && defined(HWRENDER)
++static boolean uwp_precache_players = false;
++#endif
+ 
+ //
+ // Map MD5, calculated on level load.
+@@ -7567,6 +7573,9 @@ static boolean P_LoadMapFromFile(void)
  	}
  
  	P_LoadMapBSP(curmapvirt);
@@ -8874,7 +9448,7 @@ index e5208ce77..66913807b 100644
  	P_LoadMapLUT(curmapvirt);
  
  	P_LinkMapData();
-@@ -8447,6 +8453,10 @@ void P_LoadLevelMusic(void)
+@@ -8447,6 +8456,10 @@ void P_LoadLevelMusic(void)
  
  void P_FreeLevelState(void)
  {
@@ -8885,7 +9459,7 @@ index e5208ce77..66913807b 100644
  	if (numsectors)
  	{
  		F_EndTextPrompt(false, true);
-@@ -8513,6 +8523,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+@@ -8513,8 +8526,15 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
  
  	boolean fade_shortcircuit = false;
  
@@ -8895,17 +9469,50 @@ index e5208ce77..66913807b 100644
 +#endif
  	levelloading = true;
  	g_reloadinggamestate = reloadinggamestate;
++#if defined(_UWP) && defined(HWRENDER)
++	uwp_precache_players = false;
++#endif
  
-@@ -9006,6 +9020,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+ 	// This is needed. Don't touch.
+ 	maptol = mapheaderinfo[gamemap-1]->typeoflevel;
+@@ -9006,6 +9026,20 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
  		levelloading = false;
  	}
  
++#if defined(_UWP) && defined(HWRENDER)
++	// Snapshot/reload/rewind state is restored later, with unusual cache lifetime
++	// and player fields. Leave those paths lazy. Ordinary netgames and Encore
++	// starts have completed geometry, HWR setup and active remap state here.
++	if (!dedicated && rendermode == render_opengl && !fromnetsave
++		&& !reloadinggamestate && !demo.simplerewind)
++	{
++		HWR_UWPPrecacheLevel(false);
++		uwp_precache_players = true;
++	}
++#endif
 +#ifdef _UWP
 +	UWPTraceLevelLoad(true);
 +#endif
  	if (rendermode != render_none && reloadinggamestate == false)
  	{
  		R_ResetViewInterpolation(0);
+@@ -9119,6 +9153,16 @@ void P_PostLoadLevel(void)
+ 
+ 	P_MapEnd();
+ 
++#if defined(_UWP) && defined(HWRENDER)
++	// Bots and P_InitPlayers have finalized skins/colors and spawned mobjs;
++	// level-start hooks have also run. This is before the first gameplay draw.
++	if (uwp_precache_players)
++	{
++		uwp_precache_players = false;
++		HWR_UWPPrecacheLevel(true);
++	}
++#endif
++
+ 	// We're now done loading the level.
+ 	levelloading = false;
+ 
 diff --git a/src/p_tick.h b/src/p_tick.h
 index b735d9b1d..5d78a91b7 100644
 --- a/src/p_tick.h
