@@ -1,4 +1,4 @@
-From 6bebffab53da48f4f72162f83ee89845f39f9460 Mon Sep 17 00:00:00 2001
+From 6b6a758c01b89119b268bb5592b223dfcbdbe4ec Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -181,6 +181,9 @@ RingRacers-dev, rebased onto v2.4.
   model's texture coordinates to it, and compare the sprite's dimensions
   rather than the model texture's, fixing a null pointer read when such a
   model was drawn after video settings changed
+- Slide the Options submenus' title button into place once, ending the
+  slide on any menu tick at or after its last tic, instead of restarting it
+  (bouncing the button back) when a slow frame skipped exactly that tic
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
@@ -230,6 +233,7 @@ Model: gpt-6.1-sol
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
+ src/menus/options-1.c              |   34 +
  src/menus/options-video-advanced.c |   35 +
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
@@ -265,7 +269,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 75 files changed, 10956 insertions(+), 490 deletions(-)
+ 76 files changed, 10990 insertions(+), 490 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -10585,6 +10589,80 @@ index f92b1d8e0..4e4f82a8f 100644
  #ifdef __cplusplus
  } // extern "C"
  #endif
+diff --git a/src/menus/options-1.c b/src/menus/options-1.c
+index 41bc817aa..ccb395820 100644
+--- a/src/menus/options-1.c
++++ b/src/menus/options-1.c
+@@ -73,6 +73,11 @@ menu_t OPTIONS_MainDef = {
+ 
+ struct optionsmenu_s optionsmenu;
+ 
++#ifdef _UWP
++// [UWP]: Whether the button's slide to toptx/topty has started.
++static boolean optionsmenu_sliding = false;
++#endif
++
+ void M_ResetOptions(void)
+ {
+ 	optionsmenu.ticker = 0;
+@@ -82,6 +87,9 @@ void M_ResetOptions(void)
+ 	optionsmenu.opty = 0;
+ 	optionsmenu.toptx = 0;
+ 	optionsmenu.topty = 0;
++#ifdef _UWP
++	optionsmenu_sliding = false;
++#endif
+ 
+ 	// BG setup:
+ 	optionsmenu.currcolour = OPTIONS_MainDef.extra1;
+@@ -195,6 +203,9 @@ void M_OptionsTick(void)
+ 
+ 		optionsmenu.optx = optionsmenu.toptx;
+ 		optionsmenu.opty = optionsmenu.topty;
++#ifdef _UWP
++		optionsmenu_sliding = false;
++#endif
+ 	}
+ 	else
+ 	{
+@@ -207,6 +218,22 @@ void M_OptionsTick(void)
+ 		{
+ 			tic_t t = I_GetTime();
+ 			tic_t n = t - optionsmenu.topt_start;
++#ifdef _UWP
++			// [UWP]: The menu ticks at most once a frame, so a frame longer than a tic skips
++			// tics. Start the slide once and end it on or after its last tic, instead of
++			// starting it over (bouncing the button back) when exactly its last tic was skipped.
++			if (!optionsmenu_sliding)
++			{
++				optionsmenu.topt_start = t;
++				optionsmenu_sliding = true;
++			}
++			else if (n >= M_OPTIONS_OFSTIME)
++			{
++				optionsmenu.optx = optionsmenu.toptx;
++				optionsmenu.opty = optionsmenu.topty;
++				optionsmenu_sliding = false;
++			}
++#else
+ 			if (n == M_OPTIONS_OFSTIME)
+ 			{
+ 				optionsmenu.optx = optionsmenu.toptx;
+@@ -216,7 +243,14 @@ void M_OptionsTick(void)
+ 			{
+ 				optionsmenu.topt_start = I_GetTime();
+ 			}
++#endif
+ 		}
++#ifdef _UWP
++		else
++		{
++			optionsmenu_sliding = false;
++		}
++#endif
+ 
+ 		M_GonerCheckLooking();
+ 	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
 index c2e40ae04..dd422648e 100644
 --- a/src/menus/options-video-advanced.c
