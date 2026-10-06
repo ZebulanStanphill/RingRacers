@@ -1,4 +1,4 @@
-From 6b6a758c01b89119b268bb5592b223dfcbdbe4ec Mon Sep 17 00:00:00 2001
+From 13b3910fddfc8ca30e810307af27b07403deca8b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -184,6 +184,11 @@ RingRacers-dev, rebased onto v2.4.
 - Slide the Options submenus' title button into place once, ending the
   slide on any menu tick at or after its last tic, instead of restarting it
   (bouncing the button back) when a slow frame skipped exactly that tic
+- Give every subsector a Legacy GL floor/ceiling polygon: when a BSP
+  partition doesn't really split a polygon, send it to the side it lies on
+  instead of always the front, which left whole subtrees without planes
+  (holes showing the sky on Green Hills Zone, Storm Rig and others), and
+  build any polygon still missing from its subsector's closed GL-seg loop
 - Show only the error in the crash dialog, which the Xbox cuts off,
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
@@ -206,7 +211,7 @@ Model: gpt-6.1-sol
  src/g_game.c                       |   46 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
- src/hardware/hw_bsp.c              |    5 +
+ src/hardware/hw_bsp.c              |  107 +-
  src/hardware/hw_cache.c            |  196 +-
  src/hardware/hw_clip.c             |   15 +
  src/hardware/hw_clip.h             |    5 +
@@ -269,7 +274,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 10990 insertions(+), 490 deletions(-)
+ 76 files changed, 11075 insertions(+), 507 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1379,10 +1384,68 @@ index 9c0e2f6e9..58bd38e24 100644
  					changeState = true;
  					changeSurfaceInfo = true;
 diff --git a/src/hardware/hw_bsp.c b/src/hardware/hw_bsp.c
-index 0b036ead0..a4db3c0cc 100644
+index 0b036ead0..5ce805e9b 100644
 --- a/src/hardware/hw_bsp.c
 +++ b/src/hardware/hw_bsp.c
-@@ -603,8 +603,13 @@ static void loading_status(void)
+@@ -249,6 +249,36 @@ static boolean SameVertice (polyvertex_t *p1, polyvertex_t *p2)
+ }
+ 
+ 
++// a polygon the partition line doesn't split goes to the side
++// of the vertex farthest from the line, since float error can leave
++// a polygon that only touches the line a fraction of a unit across it
++static void UnsplitPoly(fdivline_t *bsp, poly_t *poly,
++                        poly_t **frontpoly, poly_t **backpoly)
++{
++	INT32 i;
++	double d, farthest = 0.0;
++
++	for (i = 0; i < poly->numpts; i++)
++	{
++		// > 0 on the right (front) side, as in R_PointOnSide
++		d = ((double)poly->pts[i].x - bsp->x) * bsp->dy
++		  - ((double)poly->pts[i].y - bsp->y) * bsp->dx;
++		if (fabs(d) > fabs(farthest))
++			farthest = d;
++	}
++
++	if (farthest < 0.0)
++	{
++		*frontpoly = NULL;
++		*backpoly = poly;
++	}
++	else
++	{
++		*frontpoly = poly;
++		*backpoly = NULL;
++	}
++}
++
+ // split a _CONVEX_ polygon in two convex polygons
+ // outputs:
+ //   frontpoly : polygon on right side of bsp line
+@@ -346,18 +376,14 @@ static void SplitPoly (fdivline_t *bsp,         //splitting parametric line
+ 		// linedefs where each side point the same sector, that is:
+ 		// the deep water effect with the original Doom
+ 
+-		/// \todo make sure front poly is to front of partition line?
+-
+-		*frontpoly = poly;
+-		*backpoly = NULL;
++		UnsplitPoly(bsp, poly, frontpoly, backpoly);
+ 		return;
+ 	}
+ 
+ 	if (pe < 0)
+ 	{
+ 		//I_Error("SplitPoly: only one point for split line (%d %d)", ps, pe);
+-		*frontpoly = poly;
+-		*backpoly = NULL;
++		UnsplitPoly(bsp, poly, frontpoly, backpoly);
+ 		return;
+ 	}
+ 	if (pe <= ps)
+@@ -603,8 +629,13 @@ static void loading_status(void)
  	V_DrawRightAlignedString(x+50, y, V_YELLOWMAP, s);
  
  	// Is this really necessary at this point..?
@@ -1396,6 +1459,93 @@ index 0b036ead0..a4db3c0cc 100644
  	V_DrawCenteredString(BASEVIDWIDTH/2, 70, V_YELLOWMAP, "USE AT ROBOTNIK'S RISK.");
  
  	I_UpdateNoVsync();
+@@ -679,26 +710,67 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
+ 
+ 	// Recursively divide front space.
+ 	if (frontpoly)
+-	{
+ 		WalkBSPNode(bsp->children[0], frontpoly, &bsp->children[0],bsp->bbox[0]);
+ 
+-		// copy child bbox
+-		M_Memcpy(bbox, bsp->bbox[0], 4*sizeof (fixed_t));
+-	}
+-	else
+-		I_Error("WalkBSPNode: no front poly?");
++	// copy child bbox
++	// (a child without a polygon keeps its bbox from the nodes lump)
++	M_Memcpy(bbox, bsp->bbox[0], 4*sizeof (fixed_t));
+ 
+ 	// Recursively divide back space.
+ 	if (backpoly)
+ 	{
+ 		// Correct back bbox to include floor/ceiling convex polygon
+ 		WalkBSPNode(bsp->children[1], backpoly, &bsp->children[1], bsp->bbox[1]);
++	}
++
++	// enlarge bbox with second child
++	M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
++	                 bsp->bbox[1][BOXTOP   ]);
++	M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
++	                 bsp->bbox[1][BOXBOTTOM]);
++}
++
++// a subsector thinner than SameVertice's tolerance can be left without a
++// polygon by the BSP walk; with GL nodes its segs still form a closed loop
++// around the exact subsector shape, so use that
++static void HWR_SegLoopPolys(void)
++{
++	size_t i, k, first = 0;
++	INT32 j, count;
++	seg_t *lseg;
++	poly_t *poly;
+ 
+-		// enlarge bbox with second child
+-		M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
+-		                 bsp->bbox[1][BOXTOP   ]);
+-		M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
+-		                 bsp->bbox[1][BOXBOTTOM]);
++	for (i = 0; i < numsubsectors; first += subsectors[i].numlines, i++)
++	{
++		count = subsectors[i].numlines;
++		if (extrasubsectors[i].planepoly || count < 3 || first + count > numsegs)
++			continue;
++
++		// the extended node loaders store each subsector's segs in turn,
++		// moving firstline past leading GL segs without changing numlines
++		if (subsectors[i].firstline < first || subsectors[i].firstline >= first + count)
++			continue;
++		for (k = first; k < subsectors[i].firstline; k++)
++			if (!segs[k].glseg)
++				break;
++		if (k < subsectors[i].firstline)
++			continue;
++
++		lseg = &segs[first];
++		for (j = 0; j < count; j++)
++			if (lseg[j].v2 != lseg[(j + 1) % count].v1)
++				break;
++		if (j < count)
++			continue;
++
++		poly = HWR_AllocPoly(count);
++		for (j = 0; j < count; j++)
++		{
++			poly->pts[j].x = FIXED_TO_FLOAT(lseg[j].v1->x);
++			poly->pts[j].y = FIXED_TO_FLOAT(lseg[j].v1->y);
++			poly->pts[j].z = 0.0f;
++		}
++		extrasubsectors[i].planepoly = poly;
+ 	}
+ }
+ 
+@@ -1015,6 +1087,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
+ 	rootpv++;
+ 
+ 	WalkBSPNode(bspnum, rootp, NULL,rootbbox);
++	HWR_SegLoopPolys();
+ 
+ 	i = SolveTProblem();
+ 	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
 index aee197ab5..98b7717b8 100644
 --- a/src/hardware/hw_cache.c
