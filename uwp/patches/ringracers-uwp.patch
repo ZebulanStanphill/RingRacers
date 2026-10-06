@@ -1,4 +1,4 @@
-From 13b3910fddfc8ca30e810307af27b07403deca8b Mon Sep 17 00:00:00 2001
+From 19c10a025f142b3cbb6efaa733b6d64cff760a4b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -232,14 +232,14 @@ Model: gpt-6.1-sol
  src/hwr2/resource_management.hpp   |   31 +-
  src/i_system.h                     |   66 +
  src/i_video_common.cpp             |   60 +-
- src/k_menu.h                       |    7 +
+ src/k_menu.h                       |    6 +
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
  src/menus/options-1.c              |   34 +
- src/menus/options-video-advanced.c |   35 +
+ src/menus/options-video-advanced.c |   32 +
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
@@ -274,7 +274,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11075 insertions(+), 507 deletions(-)
+ 76 files changed, 11071 insertions(+), 507 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -10236,18 +10236,17 @@ index f52f9298e..ff724f09e 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb..e06e9286d 100644
+index d52750abb..a560fd668 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
-@@ -420,11 +420,18 @@ typedef enum
+@@ -420,11 +420,17 @@ typedef enum
  	vaopt_spacer7,
  	vaopt_spacer8,
  	vaopt_spacer9,
 +#ifdef _UWP
-+	// The UWP renderer's description has three more lines
++	// The UWP renderer's description has two more lines
 +	vaopt_spacer9a,
 +	vaopt_spacer9b,
-+	vaopt_spacer9c,
 +#endif
  	vaopt_renderer,
  	vaopt_legacygl_begin,
@@ -10814,10 +10813,10 @@ index 41bc817aa..ccb395820 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..dd422648e 100644
+index c2e40ae04..1e9304903 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
-@@ -41,6 +41,25 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_HEADER, "Rendering Backend...", "Watch people get confused anyway!!",
  		NULL, {NULL}, 0, 0},
  
@@ -10831,19 +10830,16 @@ index c2e40ae04..dd422648e 100644
 +	{IT_STRING | IT_SPACE, "featuring 3D models, true perspective,", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "& more parity with Software than in", "",
++	{IT_STRING | IT_SPACE, "& more parity with Software. Some", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "vanilla. Some features remain", "",
-+		NULL, {NULL}, 0, 0},
-+
-+	{IT_STRING | IT_SPACE, "missing/degraded, however.", "",
++	{IT_STRING | IT_SPACE, "features remain missing/degraded.", "",
 +		NULL, {NULL}, 0, 0},
 +#else
  	{IT_STRING | IT_SPACE, "Legacy GL supports 3D models and true", "",
  		NULL, {NULL}, 0, 0},
  
-@@ -49,15 +68,24 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -49,15 +65,24 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  
  	{IT_STRING | IT_SPACE, "are missing/broken.", "",
  		NULL, {NULL}, 0, 0},
@@ -10868,7 +10864,7 @@ index c2e40ae04..dd422648e 100644
  
  	{IT_SPACE | IT_NOTHING, NULL, NULL,
  		NULL, {NULL}, 0, 0},
-@@ -65,7 +93,11 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -65,7 +90,11 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Renderer", "If you don't know why you're changing this, leave it on Software!",
  		NULL, {.cvar = &cv_renderer}, 0, 0},
  
@@ -10880,7 +10876,7 @@ index c2e40ae04..dd422648e 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
-@@ -74,6 +106,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -74,6 +103,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
  		NULL, {.cvar = &cv_glshaders}, 0, 0},
  
