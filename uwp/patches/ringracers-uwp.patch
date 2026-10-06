@@ -1,4 +1,4 @@
-From 9b01930b9a42123224af493df95c09f93ab2e2f1 Mon Sep 17 00:00:00 2001
+From 4dd2026c4f33c54166418a74e87c34ec389237f0 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -176,7 +176,8 @@ RingRacers-dev, rebased onto v2.4.
   front-sector span, with depth reset inside it and the opening's depth
   written back afterwards. Pair lines and transform the view as Software
   does, cut off geometry behind the exit with an SV_ClipDistance plane and
-  CPU culling, and limit depth with maxportals
+  CPU culling, and limit depth with maxportals. The approach is inspired
+  by SRB2Kart Saturn's portals
 - Prepare a sprite's hardware patch before fitting a sprite-textured
   model's texture coordinates to it, and compare the sprite's dimensions
   rather than the model texture's, fixing a null pointer read when such a
@@ -219,7 +220,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  643 +++-
+ src/hardware/hw_main.c             |  645 +++-
  src/hardware/hw_main.h             |   15 +
  src/hardware/hw_md2.c              |  303 +-
  src/hardware/hw_md2.h              |    4 +
@@ -274,7 +275,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11071 insertions(+), 507 deletions(-)
+ 76 files changed, 11073 insertions(+), 507 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -2097,7 +2098,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..6ed5bc363 100644
+index b5e8fca5a..41164b880 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -2776,7 +2777,7 @@ index b5e8fca5a..6ed5bc363 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5957,12 +6374,158 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5957,12 +6374,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		HWR_CreateDrawNodes();
  	}
  
@@ -2850,6 +2851,8 @@ index b5e8fca5a..6ed5bc363 100644
 +	HWR_SetShaderState();
 +}
 +
++// Portals are drawn children-first through the stencil buffer, an approach
++// inspired by SRB2Kart Saturn's Legacy GL portals (Indev450/SRB2Kart-Saturn)
 +static void HWR_RenderPortalViews(player_t *player)
 +{
 +	hwr_portal_t *portal;
@@ -2935,7 +2938,7 @@ index b5e8fca5a..6ed5bc363 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +6536,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6538,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -2945,7 +2948,7 @@ index b5e8fca5a..6ed5bc363 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +6560,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +6562,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -2955,7 +2958,7 @@ index b5e8fca5a..6ed5bc363 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6038,6 +6606,33 @@ void HWR_RenderPlayerView(void)
+@@ -6038,6 +6608,33 @@ void HWR_RenderPlayerView(void)
  
  void HWR_LoadLevel(void)
  {
@@ -2989,7 +2992,7 @@ index b5e8fca5a..6ed5bc363 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6138,6 +6733,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6735,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -2998,7 +3001,7 @@ index b5e8fca5a..6ed5bc363 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6854,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6856,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -3008,7 +3011,7 @@ index b5e8fca5a..6ed5bc363 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6864,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6866,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
