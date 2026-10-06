@@ -1,4 +1,4 @@
-From 7bca10300e1d1ecc400d75000a89d88d658f9329 Mon Sep 17 00:00:00 2001
+From 43ba3b87b76c70c4106a425e1c5e30c56a5f2d05 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -25,6 +25,14 @@ RingRacers-dev, rebased onto v2.4.
   Its startup, presentation path, and errors are logged, and the perf
   summary adds Legacy GL's renderer timings and the driver's draws, state
   changes, texture uploads, CPU time, presentation timings, and GPU time
+- Protect Legacy GL presentation slots from reuse while ANGLE is still
+  reading them: query and retain ANGLE's D3D11 device through supported
+  EGL extensions, record per-slot read-completion events after its draws,
+  and wait before overwriting, including immediate wipes and readback.
+  Bound waits at 100 ms, allowing one flush before DONOTFLUSH polling.
+  Fall back to glFinish only on frames presented less than 8 ms apart.
+  Log the sync method, blocked waits/time, timeouts and fallback finishes;
+  retain one-frame-late shared presentation and the existing frame trace
 - Upload Legacy GL draw constants through a 2 MB NO_OVERWRITE ring with
   512-byte slots when Context1, constant-buffer offsetting and dynamic
   constant-buffer NO_OVERWRITE are supported; DISCARD only on wrap,
@@ -174,7 +182,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.h             |    8 +
  src/hardware/hw_md2.c              |  276 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5141 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5271 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   45 +
  src/hardware/r_d3d11/shaders.hlsl  |  438 +++
  src/http-mserv.c                   |    2 +
@@ -224,7 +232,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 72 files changed, 9775 insertions(+), 467 deletions(-)
+ 72 files changed, 9905 insertions(+), 467 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -2450,10 +2458,10 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..7793f91fd
+index 000000000..e456296a3
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5141 @@
+@@ -0,0 +1,5271 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -2605,6 +2613,8 @@ index 000000000..7793f91fd
 +	precise_t paletteTime;
 +	precise_t drawTime, textureTime;
 +	precise_t copyTime, waitTime, worstWait, glTime, swapTime;
++	int angleReadWaits, angleReadTimeouts, fallbackFinishes;
++	precise_t angleReadWaitTime;
 +	double gpuMs, worstGpuMs;
 +	int gpuFrames;
 +};
@@ -4758,6 +4768,7 @@ index 000000000..7793f91fd
 +using PFNEGLGETPROCADDRESS = void *(EGLAPIENTRY *)(const char *);
 +using PFNEGLQUERYDISPLAYATTRIBEXT = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLint, EGLAttrib *);
 +using PFNEGLQUERYDEVICEATTRIBEXT = EGLBoolean (EGLAPIENTRY *)(EGLDeviceEXT, EGLint, EGLAttrib *);
++using PFNEGLQUERYDEVICESTRINGEXT = const char *(EGLAPIENTRY *)(EGLDeviceEXT, EGLint);
 +
 +struct Egl
 +{
@@ -4774,6 +4785,7 @@ index 000000000..7793f91fd
 +	PFNEGLGETPROCADDRESS GetProcAddress = nullptr;
 +	PFNEGLQUERYDISPLAYATTRIBEXT QueryDisplayAttribEXT = nullptr;
 +	PFNEGLQUERYDEVICEATTRIBEXT QueryDeviceAttribEXT = nullptr;
++	PFNEGLQUERYDEVICESTRINGEXT QueryDeviceStringEXT = nullptr;
 +};
 +Egl egl;
 +
@@ -4811,12 +4823,12 @@ index 000000000..7793f91fd
 +	LOADEGL(GetError, "eglGetError");
 +	LOADEGL(QueryDisplayAttribEXT, "eglQueryDisplayAttribEXT");
 +	LOADEGL(QueryDeviceAttribEXT, "eglQueryDeviceAttribEXT");
++	// Device-query entry points are loaded after checking extension strings.
 +#undef LOADEGL
 +
-+	Log("EGL functions: GetCurrentDisplay %d, ChooseConfig %d, CreatePbufferFromClientBuffer %d, BindTexImage %d, "
-+		"QueryDisplayAttribEXT %d, QueryDeviceAttribEXT %d",
++	Log("EGL functions: GetCurrentDisplay %d, ChooseConfig %d, CreatePbufferFromClientBuffer %d, BindTexImage %d",
 +		egl.GetCurrentDisplay != nullptr, egl.ChooseConfig != nullptr, egl.CreatePbufferFromClientBuffer != nullptr,
-+		egl.BindTexImage != nullptr, egl.QueryDisplayAttribEXT != nullptr, egl.QueryDeviceAttribEXT != nullptr);
++		egl.BindTexImage != nullptr);
 +	return egl.GetCurrentDisplay != nullptr;
 +}
 +
@@ -4898,6 +4910,7 @@ index 000000000..7793f91fd
 +	void (GLAPIENTRY *DrawArrays)(GLenum, GLint, GLsizei);
 +	void (GLAPIENTRY *Enable)(GLenum);
 +	void (GLAPIENTRY *EnableVertexAttribArray)(GLuint);
++	void (GLAPIENTRY *Finish)(void);
 +	void (GLAPIENTRY *GenBuffers)(GLsizei, GLuint *);
 +	void (GLAPIENTRY *GenTextures)(GLsizei, GLuint *);
 +	void (GLAPIENTRY *GetBooleanv)(GLenum, GLboolean *);
@@ -4956,6 +4969,7 @@ index 000000000..7793f91fd
 +	LOADGL(DrawArrays)
 +	LOADGL(Enable)
 +	LOADGL(EnableVertexAttribArray)
++	LOADGL(Finish)
 +	LOADGL(GenBuffers)
 +	LOADGL(GenTextures)
 +	LOADGL(GetBooleanv)
@@ -4993,6 +5007,8 @@ index 000000000..7793f91fd
 +	EGLSurface surface = nullptr;
 +	GLuint glTexture = 0;
 +	ComPtr<ID3D11Query> copied;
++	ComPtr<ID3D11Query> read; // completion of ANGLE's draw that samples this slot
++	bool readPending = false;
 +	ComPtr<ID3D11Query> disjoint, begin, end; // the GPU time of the frame
 +	bool timing = false;
 +};
@@ -5004,6 +5020,11 @@ index 000000000..7793f91fd
 +	EGLDisplay display = nullptr;
 +	EGLConfig config = nullptr;
 +	PresentSlot slots[kPresentSlots];
++	ComPtr<ID3D11Device> angleDevice;
++	ComPtr<ID3D11DeviceContext> angleContext;
++	bool deviceProbed = false, angleQueries = false;
++	precise_t lastPresent = 0;
++	bool hasLastPresent = false;
 +	UINT width = 0, height = 0;
 +	UINT64 frame = 0;
 +	GLuint program = 0;
@@ -5056,6 +5077,118 @@ index 000000000..7793f91fd
 +		return false;
 +	}
 +	return true;
++}
++
++// Keep a reference: EGL owns the pointer returned by the device query.
++void InitAngleDevice()
++{
++	if (g_present.deviceProbed)
++		return;
++	if (!LoadEgl())
++	{
++		g_present.deviceProbed = true;
++		return;
++	}
++	const EGLDisplay display = egl.GetCurrentDisplay();
++	if (!display)
++		return; // retry once ANGLE's context is current
++	g_present.deviceProbed = true;
++	// Loaded like the other EGL functions and tried whenever they exist, without checking extension strings, as the
++	// adapter lookup has always done on Xbox
++	if (!egl.QueryDisplayAttribEXT || !egl.QueryDeviceAttribEXT)
++		return;
++
++	EGLAttrib device = 0, d3dDevice = 0;
++	if (!egl.QueryDisplayAttribEXT(display, EGL_DEVICE_EXT, &device) || !device)
++		return;
++	const EGLDeviceEXT eglDevice = reinterpret_cast<EGLDeviceEXT>(device);
++	if (!egl.QueryDeviceAttribEXT(eglDevice, EGL_D3D11_DEVICE_ANGLE, &d3dDevice) || !d3dDevice)
++	{
++		Log("couldn't get ANGLE's device (EGL error 0x%X)", egl.GetError ? egl.GetError() : 0);
++		return;
++	}
++	g_present.angleDevice = reinterpret_cast<ID3D11Device *>(d3dDevice); // ComPtr assignment AddRefs
++	g_present.angleDevice->GetImmediateContext(&g_present.angleContext);
++	Log("ANGLE's device has feature level 0x%X", (unsigned)g_present.angleDevice->GetFeatureLevel());
++}
++
++// A copy on our device must not overtake a pending read on ANGLE's device.
++void WaitForAngleRead(PresentSlot &slot)
++{
++	if (!slot.readPending)
++		return;
++	const precise_t start = I_GetPreciseTime();
++	bool blocked = false;
++	UINT flags = 0; // allow one submission, then poll without repeatedly flushing
++	for (;;)
++	{
++		BOOL done = FALSE;
++		const HRESULT hr = g_present.angleContext->GetData(slot.read.Get(), &done, sizeof done, flags);
++		if (hr == S_OK && done)
++			break;
++		if (Failed(hr, "GetData (ANGLE read finished)"))
++			break;
++		blocked = true;
++		if (PreciseToMs(I_GetPreciseTime() - start) >= 100.0)
++		{
++			g_stats.angleReadTimeouts++;
++			WarnGpuStall("gave up waiting for ANGLE's slot read after 100 ms", PreciseToMs(I_GetPreciseTime() - start));
++			break; // bounded wait, as with the existing copy query
++		}
++		flags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
++		std::this_thread::yield();
++	}
++	if (blocked)
++	{
++		g_stats.angleReadWaits++;
++		g_stats.angleReadWaitTime += I_GetPreciseTime() - start;
++	}
++	slot.readPending = false;
++}
++
++// Called after allocating all slots, including on resize or readback fallback.
++void InitPresentSync()
++{
++	InitAngleDevice();
++	g_present.angleQueries = g_present.angleContext.Get() != nullptr;
++	if (g_present.angleQueries)
++	{
++		const D3D11_QUERY_DESC desc = {D3D11_QUERY_EVENT, 0};
++		for (PresentSlot &slot : g_present.slots)
++		{
++			if (Failed(g_present.angleDevice->CreateQuery(&desc, &slot.read), "CreateQuery (ANGLE slot read)"))
++			{
++				g_present.angleQueries = false;
++				break;
++			}
++		}
++	}
++	if (g_present.angleQueries)
++		LOG_ONCE("present sync: ANGLE device queries");
++	else
++	{
++		for (PresentSlot &slot : g_present.slots)
++			slot.read.Reset();
++		LOG_ONCE("present sync: glFinish on fast frames (under 8 ms)");
++	}
++}
++
++void FinishAngleRead(PresentSlot &slot, bool fastFrame)
++{
++	if (g_present.angleQueries)
++	{
++		// ANGLE.WindowsStore 2.1.14 (4eb75be9d5a7) issues GL draws directly
++		// on its immediate context. End is therefore ordered after DrawToWindow;
++		// no glFlush is needed. Swap submits this event along with the draw,
++		// and the first GetData may also flush if the slot is reused quickly.
++		g_present.angleContext->End(slot.read.Get());
++		slot.readPending = true;
++	}
++	else if (fastFrame)
++	{
++		gl.Finish();
++		g_stats.fallbackFinishes++;
++	}
 +}
 +
 +EGLSurface CreatePbuffer(HANDLE handle, EGLConfig config, UINT width, UINT height)
@@ -5169,6 +5302,7 @@ index 000000000..7793f91fd
 +{
 +	for (PresentSlot &slot : g_present.slots)
 +	{
++		WaitForAngleRead(slot);
 +		if (slot.surface)
 +		{
 +			if (slot.glTexture)
@@ -5256,6 +5390,8 @@ index 000000000..7793f91fd
 +	g_present.width = width;
 +	g_present.height = height;
 +	g_present.frame = 0;
++	g_present.hasLastPresent = false;
++	InitPresentSync();
 +
 +	const GLenum error = gl.GetError();
 +	Log("made %d %ux%u presentation textures (%s; GL error 0x%X)", kPresentSlots, width, height,
@@ -5563,6 +5699,7 @@ index 000000000..7793f91fd
 +#endif
 +	const bool trace = g_tracedFrames < kTraceFrames;
 +	precise_t t = I_GetPreciseTime();
++	const precise_t presentStart = t;
 +	CheckVideoMemory(); // included in the presenting copy timer
 +
 +	if (trace)
@@ -5619,6 +5756,7 @@ index 000000000..7793f91fd
 +	}
 +
 +	PresentSlot &slot = g_present.slots[g_present.frame % kPresentSlots];
++	WaitForAngleRead(slot); // before either copy, including immediate wipe frames
 +
 +	if (PalettePostprocess())
 +		g_context->CopyResource(slot.texture.Get(), g_postTexture.Get());
@@ -5681,6 +5819,11 @@ index 000000000..7793f91fd
 +	}
 +
 +	DrawToWindow(shown, trace);
++	const bool fastFrame = g_present.hasLastPresent
++		&& PreciseToMs(presentStart - g_present.lastPresent) < 8.0;
++	FinishAngleRead(shown, fastFrame);
++	g_present.lastPresent = presentStart;
++	g_present.hasLastPresent = true;
 +#ifdef _UWP
 +	g_traceShown = (INT32)(&shown - g_present.slots);
 +	g_traceShowFrame = g_traceSlotFrame[g_traceShown];
@@ -5826,20 +5969,12 @@ index 000000000..7793f91fd
 +
 +	// On the same adapter as ANGLE, which the window's frames go through
 +	ComPtr<IDXGIAdapter> adapter;
-+	if (LoadEgl() && egl.QueryDisplayAttribEXT && egl.QueryDeviceAttribEXT && egl.GetCurrentDisplay())
++	InitAngleDevice();
++	if (g_present.angleDevice)
 +	{
-+		EGLAttrib device = 0, d3dDevice = 0;
-+		if (egl.QueryDisplayAttribEXT(egl.GetCurrentDisplay(), EGL_DEVICE_EXT, &device) && device
-+			&& egl.QueryDeviceAttribEXT(reinterpret_cast<EGLDeviceEXT>(device), EGL_D3D11_DEVICE_ANGLE, &d3dDevice) && d3dDevice)
-+		{
-+			ID3D11Device *angleDevice = reinterpret_cast<ID3D11Device *>(d3dDevice);
-+			ComPtr<IDXGIDevice> dxgiDevice;
-+			Log("ANGLE's device has feature level 0x%X", (unsigned)angleDevice->GetFeatureLevel());
-+			if (SUCCEEDED(angleDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
-+				dxgiDevice->GetAdapter(&adapter);
-+		}
-+		else
-+			Log("couldn't get ANGLE's device (EGL error 0x%X)", egl.GetError ? egl.GetError() : 0);
++		ComPtr<IDXGIDevice> dxgiDevice;
++		if (SUCCEEDED(g_present.angleDevice->QueryInterface(IID_PPV_ARGS(&dxgiDevice))))
++			dxgiDevice->GetAdapter(&adapter);
 +	}
 +
 +	const D3D_FEATURE_LEVEL levels[] =
@@ -7542,6 +7677,9 @@ index 000000000..7793f91fd
 +		PreciseToMs(s.worstWait), PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
 +		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames,
 +		g_present.shared ? "shared texture" : "read back", g_errors);
++
++	I_OutputMsg("UWP perf:   D3D11: ANGLE read waits %d, %.2f ms total; %d timeouts; fallback finishes %d\n",
++		s.angleReadWaits, PreciseToMs(s.angleReadWaitTime), s.angleReadTimeouts, s.fallbackFinishes);
 +
 +	if (g_paletteRendering || s.lightTablesCreated)
 +	{
