@@ -11,7 +11,7 @@ Where each change applies:
   - the software renderer optimizations, except inlining `R_GetTextureNum`
   - the Lua userdata set
   - the state-change and interpolation-list changes
-  - Legacy GL's skybox fix
+  - Legacy GL's skybox and neutral camera-fog fixes
 
 None of the changes alter game logic results. The optimizations of game logic do the same work in less time, so replays, netplay, and ghosts should behave as in vanilla.
 
@@ -58,6 +58,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - Custom shaders from add-ons aren't supported.
   - In the menus, the renderer is named **VIBErant Direct3D 11**, as are its options header, the description above the Renderer option, and the warning shown when switching to it.
 - **Legacy GL: skybox views** *(untested)*. Precipitation and things with `RF_HIDEINSKYBOX` are left out of the skybox view, as in the Software renderer.
+- **Legacy GL: fog around the camera** *(untested)*. The title-screen background starts black and fades in once, like Software, instead of fading twice and getting too bright. For a camera inside one inward-facing, shaded fog block with a black tint and fade, cache its control sector once per view, cap neutral surfaces' light at its light level, and use its colormap for walls, floors/ceilings, sprites and models. In smooth lighting, apply the neutral tint through surface modulation so brightmaps cannot bypass the initial black. Apply one multiplicative pass to the sky or skybox background, and leave out that block's boundary polygons to prevent double application and brightening. This is a renderer-only approximation: it applies across the view rather than clipping at each fog exit, uses a simple sky attenuation, and retains Legacy GL's brightmap lighting behavior during the fade. Colored surface colormaps, colored/outward fog, water, unshaded/colormap-only fog and ambiguous overlapping camera fog retain their existing paths; exact Software boundary-distance remapping and full fog-volume parity are not implemented. The volume search runs once per viewpoint, with no per-polygon FOF searches or framebuffer copies.
 - **Legacy GL: palette rendering**, ported from SRB2's hardware renderer.
   - Toggled by `gr_paletterendering` (Options → Video → Advanced → Palette Rendering). It's on by default and needs Shaders on.
   - As in the Software renderer, colors are limited to the palette, and surfaces are lit through the colormaps.
@@ -163,7 +164,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
 
 ## Fixes
 
-- **Legacy GL: rapid-frame presentation** *(untested)*. Before reusing a presentation slot, wait for ANGLE's GPU to finish reading it, preventing out-of-order frames such as the loading percentage flipping between 0% and 100%. Use per-slot event queries on ANGLE's D3D11 device when EGL device queries are available; otherwise call `glFinish` after drawing frames presented less than 8 ms apart. Read waits give up after 100 ms and count timeouts. Normal shared presentation remains one frame late, and wipe frames still present immediately. The readback path is covered too; its texture upload and draw already share ANGLE's ordering.
+- **Legacy GL: rapid-frame presentation**. Before reusing a presentation slot, wait for ANGLE's GPU to finish reading it, preventing out-of-order frames such as the loading percentage flipping between 0% and 100%. Use per-slot event queries on ANGLE's D3D11 device when EGL device queries are available; otherwise call `glFinish` after drawing frames presented less than 8 ms apart. Read waits give up after 100 ms and count timeouts. Normal shared presentation remains one frame late, and wipe frames still present immediately. The readback path is covered too; its texture upload and draw already share ANGLE's ordering. Confirmed on Xbox One X with ANGLE device queries: frames stay in order, the loading percentage counts up normally, and the player model no longer jumps back and forth. The percentage and model symptoms were the same presentation-slot reuse issue.
 - **Track title timing** *(untested)*. On UWP, the animation before a race starts with a fresh clock after loading, so it plays in full. It retains upstream's one animation step per frame and HUD timer clamp. This clock fix has no effect on game logic.
 - **Duplicate controllers** (`patches/sdl-controller-duplicates.patch`). Each controller no longer shows up twice when running as a game instead of an app, which made each press count twice.
 - **State-change bookkeeping.** The `P_SetMobjState`/`P_SetPlayerMobjState` change under [Game logic](#game-logic) also fixes upstream's unbalanced call count.
