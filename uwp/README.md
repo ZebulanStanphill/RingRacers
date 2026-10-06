@@ -38,7 +38,6 @@ Every push builds the app on a Windows runner and uploads a `ringracers-uwp` art
 
 These are in the latest build but haven't been tried on an Xbox yet:
 
-- **VIBErant Direct3D 11: portals show the area they connect to, as in Software, instead of a wall.** Marble Garden Zone and Media Studio have one each. The `maxportals` console variable (default 2, 0 turns portals off) limits how many portals deep the view goes, as in Software.
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
 - **If Legacy GL runs out of video memory, it clears its texture cache.** This may cause a brief hitch instead of slowing to a crawl.
 
