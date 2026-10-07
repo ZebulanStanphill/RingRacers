@@ -61,3 +61,17 @@ regression(wipe_math wipe)
 add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)
+
+include("${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shaders.cmake")
+add_executable(custom_shader_translation custom-shaders.cpp
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shader.cpp")
+target_compile_features(custom_shader_translation PRIVATE cxx_std_17)
+target_include_directories(custom_shader_translation PRIVATE "${RR_SOURCE_DIR}/src")
+target_link_libraries(custom_shader_translation PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
+target_compile_options(custom_shader_translation PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(custom_shader_translation PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
+    target_link_options(custom_shader_translation PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME custom_shader_translation COMMAND custom_shader_translation "${CMAKE_CURRENT_BINARY_DIR}/translated-shaders")
+set_tests_properties(custom_shader_translation PROPERTIES TIMEOUT 60)

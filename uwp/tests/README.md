@@ -3,7 +3,7 @@
 These tests run on Linux, macOS, or WSL without game assets, an Xbox, SDL,
 Direct3D, or vcpkg. Requirements: Python 3.9+, Git, CMake 3.24+, and `clang++`
 with its AddressSanitizer/UndefinedBehaviorSanitizer runtimes. Ubuntu's Clang and
-Apple's Command Line Tools work. Native MSVC/clang-cl is not supported by this
+Apple's Command Line Tools work. Configuration fetches pinned glslang and SPIRV-Cross compiler sources, so it also needs network access on the first run. Native MSVC/clang-cl is not supported by this
 harness; the existing Windows CI job still builds and packages the UWP app.
 
 ## Running
@@ -61,10 +61,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fades, reverse masks, Encore wiggle, all 32 mask values and 200 base rows, screen
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
+- **Add-on shaders:** compile the actual production GLSL adapter, glslang parser/linker, and SPIRV-Cross HLSL emitter. Translate all 10 built-in stage pairs and a custom pair for polygon, sky and model layouts (33 pairs). Exercise differently ordered varyings, comma-separated engine/custom uniforms, comments, GLSL initializers, matrices, fragment coordinates, stage-interface mismatch, malformed/oversized input, invalid layouts, and recovery after failure. Export the translated stages; Windows CI compiles all 66 with Shader Model 4 `fxc`. This does not run a D3D device or verify Xbox add-on visuals.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
-Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
+Except for the shader compiler, which links the production implementation directly, implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
 not copied into the tests. `#line` directives point compiler/sanitizer diagnostics
 back to those engine files. Only dependency stubs, inputs and expected behavior
 live in `templates/`. If a function or section moves incompatibly, generation
@@ -81,7 +82,7 @@ continues to compile the actual UWP and shader code.
 The `regressions` job runs this suite with ASan and UBSan on every push, pull
 request, and manual workflow dispatch. The Windows build depends on it passing.
 CTest's JUnit report and detailed run log are uploaded as `regression-results`,
-including when a test fails.
+including when a test fails. The report artifact also contains translated add-on shader fixtures, consumed by the Windows job before building the app. The packaging step checks that the signed MSIX contains both compiler license-notice files.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its
 observable result. Test the relevant platform variants and important boundaries.
