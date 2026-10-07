@@ -1,4 +1,4 @@
-From 6c30b54316d6dad425f8e53fb79bbbd5eaaccaa1 Mon Sep 17 00:00:00 2001
+From f4bfeaa4fbdf8902a93871165726ff2c2f89d3c3 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -52,8 +52,13 @@ RingRacers-dev, rebased onto v2.4.
   changing game logic
 - Keep netgame connections alive during Legacy GL's level loading on UWP:
   answer the server at most once per tic while precaching and building
-  floor/ceiling polygons, since a slow load can leave a player who just
-  joined waiting for tics the server won't send, until it times out
+  floor/ceiling polygons. For connected clients already in the game,
+  also acknowledge actual buffered tics with vanilla's NODEKEEPALIVE
+  header during pauses, without input or consistency checks. Retain
+  BASICKEEPALIVE for the savegame handshake, gate out savegame redownloads
+  and demos, and rate-limit the additional acknowledgement to once per
+  clock tic. Leave the receive window and server delay rules unchanged;
+  log the last server-reported delay/limit and local tics on a delay kick
 - Leave precipitation and things with RF_HIDEINSKYBOX out of Legacy GL's
   skybox view, as the software renderer does
 - Approximate inward neutral fog around Legacy GL's camera using a cached
@@ -92,7 +97,10 @@ RingRacers-dev, rebased onto v2.4.
   before presenting stops; keep normal shared presentation a frame late
 - Refresh the pre-level title card's clock after loading on UWP, so its
   animation plays in full; retain upstream's one step per frame and HUD
-  timer clamp. This does not affect game logic
+  timer clamp. Online Legacy GL clients let the initialized title animate
+  in the HUD while simulation catches up instead of pausing another second
+  after precaching. Hosts, Software, offline play and demos retain the
+  blocking title; game logic results are unchanged
 - Log local and non-local video memory budgets, usage and reservations at
   Legacy GL startup and in perf summaries, alongside tracked texture,
   model/static buffer, ring buffer and approximate screen allocations.
@@ -209,11 +217,11 @@ Model: gpt-6.1-sol
  src/console.c                      |   18 +
  src/core/thread_pool.cpp           |   19 +
  src/cvars.cpp                      |    3 +
- src/d_clisrv.c                     |   19 +
+ src/d_clisrv.c                     |   49 +
  src/d_main.cpp                     |  354 +-
  src/f_finale.c                     |    6 +
  src/f_wipe.cpp                     |   35 +-
- src/g_game.c                       |   46 +
+ src/g_game.c                       |   56 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
  src/hardware/hw_bsp.c              |  113 +-
@@ -279,7 +287,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11102 insertions(+), 507 deletions(-)
+ 76 files changed, 11142 insertions(+), 507 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -559,10 +567,54 @@ index d589b33d5..9f09579ab 100644
  		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
  		consvar_t cv_glcoronasize = OpenGL("gr_coronasize", "1").floating_point();
 diff --git a/src/d_clisrv.c b/src/d_clisrv.c
-index 1166b3c99..3cc0c59a9 100644
+index 1166b3c99..8c31e9299 100644
 --- a/src/d_clisrv.c
 +++ b/src/d_clisrv.c
-@@ -6789,8 +6789,16 @@ static void SV_Maketic(void)
+@@ -3126,6 +3126,12 @@ static void Got_KickCmd(const UINT8 **p, INT32 playernum)
+ 			kickreason = KR_KICK;
+ 			break;
+ 		case KICK_MSG_PING_HIGH:
++#ifdef _UWP
++			if (client && pnum == consoleplayer)
++				I_OutputMsg("UWP: server delay-limit kick: delay %u tics, limit %u, game tic %u, received through %u, level tic %u\n",
++					(UINT32)playerpingtable[pnum], (UINT32)servermaxping,
++					(UINT32)gametic, (UINT32)neededtic, (UINT32)leveltime);
++#endif
+ 			HU_AddChatText(va("\x82*%s left the game (Broke delay limit)", player_names[pnum]), false);
+ 			kickreason = KR_PINGLIMIT;
+ 			break;
+@@ -6462,6 +6468,30 @@ static void CL_SendClientKeepAlive(void)
+ 	netbuffer->packettype = PT_BASICKEEPALIVE;
+ 
+ 	HSendPacket(servernode, false, 0, 0);
++
++#if defined(_UWP) && defined(HWRENDER)
++	// BASICKEEPALIVE resets the connection timeout, but GetLag on the server
++	// still measures from the last acknowledged tic. During a slow Legacy GL
++	// load, acknowledge the tics GetPackets actually buffered without sending
++	// input or consistency for a simulation that is paused inside a net command.
++	if (netgame && rendermode == render_opengl && addedtogame
++		&& cl_mode == CL_CONNECTED && !cl_redownloadinggamestate
++		&& gamestate != GS_NULL && !demo.playback)
++	{
++		static tic_t lastacktime = (tic_t)-1;
++		const tic_t now = I_GetTime();
++		if (now != lastacktime)
++		{
++			const size_t packetsize = sizeof (clientcmd_pak) - sizeof (ticcmd_t) - sizeof (INT16);
++			lastacktime = now;
++			memset(&netbuffer->u.clientpak, 0, packetsize);
++			netbuffer->packettype = cl_packetmissed ? PT_NODEKEEPALIVEMIS : PT_NODEKEEPALIVE;
++			netbuffer->u.clientpak.client_tic = (UINT8)(gametic & UINT8_MAX);
++			netbuffer->u.clientpak.resendfrom = (UINT8)(neededtic & UINT8_MAX);
++			HSendPacket(servernode, false, 0, packetsize);
++		}
++	}
++#endif
+ }
+ 
+ static void SV_SendServerKeepAlive(void)
+@@ -6789,8 +6819,16 @@ static void SV_Maketic(void)
  		if (K_PlayerUsesBotMovement(&players[i]))
  		{
  			const precise_t t = I_GetPreciseTime();
@@ -579,7 +631,7 @@ index 1166b3c99..3cc0c59a9 100644
  
  			ps_bots[i].isBot = true;
  			ps_bots[i].total = I_GetPreciseTime() - t;
-@@ -6954,7 +6962,15 @@ boolean TryRunTics(tic_t realtics)
+@@ -6954,7 +6992,15 @@ boolean TryRunTics(tic_t realtics)
  					tickInterp = false; // do not update again in sped-up tics
  				}
  
@@ -595,7 +647,7 @@ index 1166b3c99..3cc0c59a9 100644
  			}
  
  			if (Playing() && netgame && (gametic % TICRATE == 0))
-@@ -6971,6 +6987,9 @@ boolean TryRunTics(tic_t realtics)
+@@ -6971,6 +7017,9 @@ boolean TryRunTics(tic_t realtics)
  			consistancy[gametic % BACKUPTICS] = Consistancy();
  
  			ps_tictime = I_GetPreciseTime() - ps_tictime;
@@ -1221,7 +1273,7 @@ index 2b7d95d41..8dff0c313 100644
  
  	if (fcolor)
 diff --git a/src/g_game.c b/src/g_game.c
-index ce69d80c0..8d8ca144e 100644
+index ce69d80c0..9db72cf64 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
 @@ -13,6 +13,9 @@
@@ -1234,10 +1286,20 @@ index ce69d80c0..8d8ca144e 100644
  #include "console.h"
  #include "d_main.h"
  #include "d_clisrv.h"
-@@ -1292,16 +1295,44 @@ void G_StartTitleCard(void)
+@@ -1292,16 +1295,54 @@ void G_StartTitleCard(void)
  void G_PreLevelTitleCard(void)
  {
  #ifndef NOWIPE
++#if defined(_UWP) && defined(HWRENDER)
++	// The server keeps simulating while we load. Do not add a second of
++	// paused simulation after Legacy GL's precache: ST_Ticker/ST_Drawer will
++	// run the initialized title animation in the HUD while we catch up.
++	if (netgame && client && !demo.playback && rendermode == render_opengl)
++	{
++		I_OutputMsg("UWP: track title: Direct3D 11; running in the HUD during online catch-up\n");
++		return;
++	}
++#endif
 +#ifdef _UWP
 +	// Level loading leaves I_GetTime's cached clock stale.
 +	I_UpdateTime();
@@ -1279,7 +1341,7 @@ index ce69d80c0..8d8ca144e 100644
  		NetKeepAlive();		// Prevent timeouts
  
  #ifdef HWRENDER
-@@ -1319,6 +1350,17 @@ void G_PreLevelTitleCard(void)
+@@ -1319,6 +1360,17 @@ void G_PreLevelTitleCard(void)
  		}
  		lasttime = nowtime;
  	}
@@ -1297,7 +1359,7 @@ index ce69d80c0..8d8ca144e 100644
  #endif
  }
  
-@@ -5990,6 +6032,10 @@ INT32 G_FindMapByNameOrCode(const char *mapname, char **realmapnamep)
+@@ -5990,6 +6042,10 @@ INT32 G_FindMapByNameOrCode(const char *mapname, char **realmapnamep)
  //
  void G_SetGamestate(gamestate_t newstate)
  {
