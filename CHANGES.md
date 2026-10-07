@@ -29,7 +29,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - The manifest is version 2.4.0.0. It requests file system, removable storage, network, expanded resources, and microphone access (for 2.4's voice chat).
 - **Build script and CI.**
   - `build.ps1` clones v2.4, applies the patch, builds SDL2 and the game, downloads ANGLE (checking its SHA-256), and generates the launcher solution.
-  - GitHub Actions builds every push.
+  - GitHub Actions runs isolated native regression tests with AddressSanitizer and UndefinedBehaviorSanitizer before building every push. The suite checks online keepalive/title behavior, Options slide timing, bounded diagnostics, and wipe math in applicable UWP/desktop and hardware/software variants; it does not run the whole game or validate Xbox hardware. [Test instructions and coverage](tests/README.md).
   - Each run uploads a sideloadable `.msix` signed with a throwaway certificate, plus the linker map (`ringracers-uwp-symbols`).
 - **Engine build changes.**
   - Legacy GL's Direct3D 11 shaders are compiled with `fxc` at build time.

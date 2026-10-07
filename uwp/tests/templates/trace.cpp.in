@@ -1,0 +1,182 @@
+#include <cassert>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "f_finale.h"
+#include "g_game.h"
+#include "i_system.h"
+#include "i_video.h"
+#include "r_main.h"
+#include "r_fps.h"
+#include "st_stuff.h"
+#include "sdl/i_uwptrace.h"
+#include "hardware/r_d3d11/r_d3d11.h"
+precise_t fakeTime = 1;
+precise_t I_GetPreciseTime(void) { return fakeTime; }
+precise_t I_GetPrecisePrecision(void) { return 1000; }
+std::vector<std::string> logs;
+void I_OutputMsg(const char *fmt, ...) {
+    char b[2048];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    logs.emplace_back(b);
+}
+gamestate_t gamestate = GS_NULL, wipegamestate = GS_LEVEL;
+rendermode_t rendermode = render_soft;
+tic_t gametic = 0, leveltime = 0, lt_ticker = 0, lt_lasttic = 0, lt_endtime = 100, lt_fade = 0;
+INT16 gamemap = 1;
+INT32 displayplayers[MAXSPLITSCREENPLAYERS] = {};
+player_t players[MAXPLAYERS] = {};
+UINT8 paused = 0, viewssnum = 0;
+boolean titlemapinaction = false, curbghide = true;
+SINT8 curfadevalue = 16;
+INT32 curbgcolor = -1, st_palette = 0;
+fixed_t viewx = FRACUNIT, viewy = 2 * FRACUNIT, viewz = 3 * FRACUNIT, rendertimefrac = FRACUNIT / 2;
+angle_t viewangle = ANGLE_90;
+sector_t testSector = {};
+sector_t *sectors = &testSector, *viewsector = &testSector;
+boolean R_UsingFrameInterpolation(void) { return true; }
+void R_InterpolateMobjState(mobj_t *mo, fixed_t frac, interpmobjstate_t *out) {
+    out->x = mo->x - frac;
+    out->y = mo->y;
+    out->z = mo->z;
+}
+boolean G_GamestateUsesLevel(void) { return gamestate == GS_LEVEL; }
+int presentQueries = 0;
+void D3D11_GetPresentTrace(INT32 *copy, INT32 *shown, UINT32 *cf, UINT32 *sf) {
+    ++presentQueries;
+    *copy = 2;
+    *shown = 1;
+    *cf = 101;
+    *sf = 100;
+}
+
+@@TRACE_IMPLEMENTATION@@
+void begin() {
+    uwp_frameWanted = uwp_frameCaptured = uwp_worldDrawn = false;
+    @@FRAME_GATING@@
+}
+
+size_t count(const char *prefix) {
+    size_t n = 0;
+    for (auto &s : logs)
+        if (s.find(prefix) == 0)
+            ++n;
+    return n;
+}
+int main() {
+#ifdef HWRENDER
+    rendermode = render_opengl;
+#endif
+    UWPTraceGamestate(GS_NULL, GS_TITLESCREEN);
+    gamestate = GS_TITLESCREEN;
+    logs.clear();
+    for (int i = 0; i < 250; i++)
+        UWPTraceFade("event=%d", i);
+    assert(logs.size() == 199); // transition consumed line 1 of the 200-line budget
+    fakeTime += 10000;
+    UWPTraceFade("expired");
+    assert(logs.size() == 199);
+    UWPTraceLevelLoad(false);
+    assert(!uwp_levelStarted);
+    // Test expiry in a fresh window below the line cap, so the cap cannot hide
+    // a broken clock limit. Just before 10 seconds still logs; exactly 10 does not.
+    logs.clear();
+    fakeTime += 9999;
+    UWPTraceFade("before-expiry");
+    assert(logs.size() == 1);
+    fakeTime += 1;
+    UWPTraceFade("at-expiry");
+    assert(logs.size() == 1);
+    UWPTraceLevelLoad(true);
+    assert(uwp_levelStarted);
+    assert(uwp_fadeLines == 1);
+    for (int i = 0; i < 30; i++)
+        UWPTraceView();
+    assert(uwp_titleSamples == 20);
+    for (int i = 0; i < 30; i++)
+        UWPTraceTitleLightFade(5, i, 0, 128, 30 - i, FRACUNIT);
+    assert(uwp_lightFadeSamples == 20);
+    UWPTraceGamestate(GS_TITLESCREEN, GS_LEVEL);
+    gamestate = GS_LEVEL;
+    UWPTraceLevelLoad(false);
+    UWPTraceLevelLoad(true);
+    logs.clear();
+    mobj_t mo = {};
+    mo.x = 10 * FRACUNIT;
+    mo.y = 20 * FRACUNIT;
+    mo.z = 30 * FRACUNIT;
+    players[0].mo = &mo;
+    auto original = mo;
+    for (int i = 0; i < 400; i++) {
+        gametic += 2;
+        begin();
+        uwp_worldDrawn = true;
+        UWPTraceView();
+        UWPTraceFinishFrame(false, true);
+    }
+    assert(count("UWP frame: ") == 300);
+    assert(!memcmp(&original, &mo, sizeof mo));
+    // Outside either window: no frame trace, but previous world-draw tic still advances.
+    lt_ticker = lt_endtime + TICRATE;
+    leveltime = 5 * TICRATE;
+    gametic += 2;
+    begin();
+    assert(!uwp_frameWanted);
+    uwp_worldDrawn = true;
+    UWPTraceView();
+    UWPTraceFinishFrame(false, true);
+    leveltime = 10 * TICRATE;
+    gametic += 2;
+    begin();
+    uwp_worldDrawn = true;
+    UWPTraceView();
+    auto captured = uwp_frame;
+    viewx = 99 * FRACUNIT;
+    viewangle = 0;
+    mo.x = 77 * FRACUNIT;
+    UWPTraceFinishFrame(false, true);
+    assert(uwp_frame.x == captured.x && uwp_frame.vx == captured.vx && uwp_frame.va == captured.va);
+    assert(logs.back().find("tics=2") != std::string::npos);
+    for (int i = 1; i < 400; i++) {
+        gametic += 2;
+        begin();
+        uwp_worldDrawn = true;
+        UWPTraceView();
+        UWPTraceFinishFrame(false, true);
+    }
+    assert(count("UWP frame: ") == 600);
+#ifdef HWRENDER
+    assert(presentQueries == 600);
+    assert(logs.back().find("slot=2/shown=1 copyf=101/showf=100") != std::string::npos);
+#else
+    assert(presentQueries == 0);
+    assert(logs.back().find("slot=-1/shown=-1 copyf=0/showf=0") != std::string::npos);
+#endif
+    leveltime = 20 * TICRATE;
+    begin();
+    assert(!uwp_frameWanted);
+    UWPTraceLevelLoad(false);
+    UWPTraceLevelLoad(true);
+    assert(uwp_frameLines[0] == 0 && uwp_frameLines[1] == 0);
+    // An unpresented frame has no slot query, and a missing player object must
+    // produce an empty snapshot rather than dereferencing it.
+    int previousQueries = presentQueries;
+    players[0].mo = nullptr;
+    leveltime = 10 * TICRATE;
+    begin();
+    uwp_worldDrawn = true;
+    UWPTraceView();
+    UWPTraceFinishFrame(false, false);
+    assert(presentQueries == previousQueries);
+    assert(logs.back().find("mo=0 p=(0.0,0.0,0.0)") != std::string::npos);
+    assert(logs.back().find("slot=-1/shown=-1 copyf=0/showf=0 present=none") != std::string::npos);
+    puts("PASS: 200 events/10s; restart on transitions/loads; 20 title samples; 600 frame cap; no "
+         "gap logging; tics across gap; camera/mobj snapshot; no mobj mutation");
+}

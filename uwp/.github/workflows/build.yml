@@ -6,7 +6,44 @@ on:
   workflow_dispatch:
 
 jobs:
+  regressions:
+    name: Native regression tests (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare patched v2.4 source
+        run: python3 tests/prepare-source.py build/regression-source
+
+      - name: Configure
+        run: >-
+          cmake -S tests -B build/regression
+          -DRR_SOURCE_DIR="$PWD/build/regression-source"
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DRR_SANITIZERS=ON
+
+      - name: Build tests
+        run: cmake --build build/regression --parallel 2
+
+      - name: Run tests
+        run: ctest --test-dir build/regression --output-on-failure --output-junit results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-results
+          path: |
+            build/regression/results.xml
+            build/regression/Testing/Temporary/LastTest.log
+            build/regression/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+
   build:
+    needs: regressions
     runs-on: windows-2022
     timeout-minutes: 180
 

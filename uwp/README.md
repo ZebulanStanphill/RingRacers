@@ -9,6 +9,9 @@ Only tested on Xbox One X. Should also work (even better) on Xbox Series X|S, an
 
 Coding agents were used heavily in the development of this port.
 
+[Native regression tests](tests/README.md) run isolated engine checks with memory
+and undefined-behavior sanitizers locally and in CI, without game assets or an Xbox.
+
 ## Building
 
 ### Local
@@ -31,7 +34,7 @@ This clones Ring Racers v2.4 into `RingRacers/`, applies the patch, and builds i
 
 ### GitHub Actions
 
-Every push builds the app on a Windows runner and uploads a `ringracers-uwp` artifact containing a sideloadable `.msix` and its `.cer`. The certificate is generated fresh for each run, so uninstall the previous build before installing one from a different run. In Xbox Device Portal, install the `.cer` along with the package.
+Every push first runs the native regression tests on Linux, then builds the app on a Windows runner and uploads a `ringracers-uwp` artifact containing a sideloadable `.msix` and its `.cer`. Test reports are uploaded as `regression-results`. The certificate is generated fresh for each run, so uninstall the previous build before installing one from a different run. In Xbox Device Portal, install the `.cer` along with the package.
 
 ## Installing
 

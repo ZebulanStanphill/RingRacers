@@ -1,0 +1,241 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "d_clisrv.h"
+#include "g_game.h"
+#include "i_time.h"
+#include "i_system.h"
+#include "i_video.h"
+#include "st_stuff.h"
+#include "screen.h"
+#include "m_misc.h"
+#include "g_demo.h"
+#include "f_finale.h"
+boolean netgame, server, addedtogame, cl_redownloadinggamestate, cl_packetmissed;
+moviemode_t moviemode;
+SINT8 servernode = 1;
+gamestate_t gamestate;
+rendermode_t rendermode;
+demovars_s demo;
+tic_t gametic, neededtic, fakeTime = 100, staleClockAdvance = 0;
+@@CLIENT_MODE@@
+cl_mode_t cl_mode;
+consvar_t cv_sleep;
+doomdata_t packet;
+doomdata_t *netbuffer = &packet;
+struct Sent {
+    int type;
+    size_t size;
+    unsigned char bytes[16];
+};
+std::vector<Sent> sent;
+boolean HSendPacket(INT32 node, boolean reliable, UINT8 ack, size_t size) {
+    assert(node == servernode && !reliable && ack == 0 && size <= 16);
+    Sent s = {netbuffer->packettype, size, {}};
+    memcpy(s.bytes, &netbuffer->u.clientpak, size);
+    sent.push_back(s);
+    return true;
+}
+tic_t I_GetTime(void) { return fakeTime; }
+void I_UpdateTime(void) {
+    fakeTime += staleClockAdvance ? staleClockAdvance : 1;
+    staleClockAdvance = 0;
+}
+precise_t I_GetPreciseTime(void) { return fakeTime * 100; }
+UINT64 I_GetPrecisePrecision(void) { return TICRATE * 100; }
+int drawCalls, presentCalls, tickCalls, sleepCalls, logCalls;
+boolean playeringame[MAXPLAYERS], nodeingame[MAXNETNODES];
+player_t players[MAXPLAYERS];
+UINT16 pingmeasurecount;
+UINT32 realpingtable[MAXPLAYERS], playerpingtable[MAXPLAYERS], playerdelaytable[MAXPLAYERS];
+boolean packetloss[MAXPLAYERS][PACKETMEASUREWINDOW];
+INT32 pingtimeout[MAXPLAYERS];
+consvar_t cv_maxping, cv_pingtimeout;
+int kickCalls;
+boolean P_IsMachineLocalPlayer(const player_t *p) { return p == players; }
+void SendKick(UINT8 p, UINT8 reason) {
+    assert(p == 1 && reason == KICK_MSG_PING_HIGH);
+    ++kickCalls;
+}
+void I_OutputMsg(const char *, ...) { ++logCalls; }
+void ST_runTitleCard(void) { ++tickCalls; }
+void ST_preLevelTitleCardDrawer(void) { ++drawCalls; }
+void I_FinishUpdate(void) { ++presentCalls; }
+void M_LegacySaveFrame(void) {}
+void I_CaptureVideoFrame(void) {}
+void I_Sleep(INT32) { ++sleepCalls; }
+static void CL_SendClientKeepAlive(void);
+void NetKeepAlive(void) { CL_SendClientKeepAlive(); }
+
+@@KEEPALIVE@@
+@@EXPAND_TICS@@
+@@TITLE_CARD@@
+@@PING_UPDATE@@
+
+// Simulate a delayed load using the actual sender, byte expansion and server
+// PingUpdate. Receipt is bounded by vanilla's 32-tic client buffer; simulation
+// resumes at two tics per server tic to represent the observed catch-up.
+int delayedLoad(bool fixed, unsigned loadTics, unsigned threshold) {
+    memset(pingtimeout, 0, sizeof(pingtimeout));
+    memset(realpingtable, 0, sizeof(realpingtable));
+    memset(packetloss, 0, sizeof(packetloss));
+    memset(playeringame, 0, sizeof(playeringame));
+    memset(nodeingame, 0, sizeof(nodeingame));
+    playeringame[0] = playeringame[1] = playeringame[2] = true;
+    players[1].jointime = 20 * TICRATE;
+    cv_maxping.value = 20;
+    cv_pingtimeout.value = threshold;
+    kickCalls = 0;
+    pingmeasurecount = 0;
+    server = false;
+    netgame = addedtogame = true;
+    cl_mode = CL_CONNECTED;
+    cl_redownloadinggamestate = false;
+    gamestate = GS_LEVEL;
+    demo.playback = false;
+    cl_packetmissed = false;
+    rendermode = render_opengl;
+    const unsigned initial = 10000, paused = loadTics + (fixed ? 0 : PRELEVELTIME);
+    unsigned cGame = initial, acknowledged = initial;
+    for (unsigned t = 1; t <= 200; t++) {
+        const unsigned sGame = initial + t;
+        gametic = cGame;
+        neededtic =
+            std::min(sGame, std::min(cGame + CLIENTBACKUPTICS, acknowledged + CLIENTBACKUPTICS));
+        fakeTime++;
+        sent.clear();
+        CL_SendClientKeepAlive();
+        if (t <= paused) {
+            if (fixed)
+                for (auto a : sent)
+                    if (a.type == PT_NODEKEEPALIVE)
+                        acknowledged = ExpandTics(a.bytes[1], acknowledged);
+        } else {
+            cGame = std::min(neededtic, cGame + 2);
+            acknowledged = neededtic;
+        }
+        realpingtable[1] += sGame - acknowledged;
+        pingmeasurecount++;
+        if (t % 8 == 0) {
+            PingUpdate();
+            if (kickCalls)
+                break;
+        }
+    }
+    return kickCalls;
+}
+int main() {
+    unsigned cases = 0;
+    for (unsigned mask = 0; mask < 256; mask++) {
+        netgame = !!(mask & 1);
+        rendermode = (mask & 2) ? render_opengl : render_soft;
+        addedtogame = !!(mask & 4);
+        cl_mode = (mask & 8) ? CL_CONNECTED : CL_WAITJOINRESPONSE;
+        cl_redownloadinggamestate = !!(mask & 16);
+        gamestate = (mask & 32) ? GS_LEVEL : GS_NULL;
+        demo.playback = !!(mask & 64);
+        cl_packetmissed = !!(mask & 128);
+        fakeTime++;
+        gametic = 250;
+        neededtic = 282;
+        sent.clear();
+        memset(&packet, 0xa5, sizeof(packet));
+        CL_SendClientKeepAlive();
+        bool eligible = netgame && rendermode == render_opengl && addedtogame &&
+                        cl_mode == CL_CONNECTED && !cl_redownloadinggamestate &&
+                        gamestate != GS_NULL && !demo.playback;
+#if !defined(_UWP) || !defined(HWRENDER)
+        eligible = false;
+#endif
+        assert(sent.size() == (eligible ? 2 : 1));
+        assert(sent[0].type == PT_BASICKEEPALIVE && sent[0].size == 0);
+        if (eligible) {
+            auto a = sent[1];
+            assert(a.type == (cl_packetmissed ? PT_NODEKEEPALIVEMIS : PT_NODEKEEPALIVE));
+            assert(a.size == sizeof(clientcmd_pak) - sizeof(ticcmd_t) - sizeof(INT16));
+            assert(a.bytes[0] == 250 && a.bytes[1] == 26 && a.bytes[2] == 0);
+            assert(ExpandTics(a.bytes[1], gametic) == neededtic);
+        }
+        assert(gametic == 250 && neededtic == 282);
+        sent.clear();
+        CL_SendClientKeepAlive();
+        assert(sent.size() == 1); // at most one tic ACK per clock tick
+        cases++;
+    }
+    // Exercise low-byte wrapping at every point and buffer fill level.
+    netgame = addedtogame = true;
+    rendermode = render_opengl;
+    cl_mode = CL_CONNECTED;
+    cl_redownloadinggamestate = false;
+    gamestate = GS_LEVEL;
+    demo.playback = false;
+    cl_packetmissed = false;
+    for (unsigned base = 1024; base < 4096; base++)
+        for (unsigned n = 0; n <= CLIENTBACKUPTICS; n++) {
+            gametic = base;
+            neededtic = base + n;
+            ++fakeTime;
+            sent.clear();
+            CL_SendClientKeepAlive();
+#if defined(_UWP) && defined(HWRENDER)
+            assert(sent.size() == 2 && ExpandTics(sent[1].bytes[1], base) == neededtic);
+#else
+            assert(sent.size() == 1);
+#endif
+            cases++;
+        }
+    // Full title-card function: the online Legacy GL client must return before drawing/sleeping.
+    for (unsigned mask = 0; mask < 32; mask++) {
+        netgame = !!(mask & 1);
+        server = !(mask & 2);
+        demo.playback = !!(mask & 4);
+        rendermode = (mask & 8) ? render_opengl : render_soft;
+        moviemode = (moviemode_t) !!(mask & 16);
+        drawCalls = presentCalls = tickCalls = sleepCalls = logCalls = 0;
+        fakeTime += 100;
+        sent.clear();
+        G_PreLevelTitleCard();
+        bool defer = netgame && client && !demo.playback && rendermode == render_opengl;
+#if !defined(_UWP) || !defined(HWRENDER)
+        defer = false;
+#endif
+        if (defer)
+            assert(drawCalls == 0 && presentCalls == 0 && tickCalls == 0 && sleepCalls == 0 &&
+                   logCalls == 1);
+        else
+            assert(drawCalls == PRELEVELTIME * NEWTICRATERATIO && tickCalls == drawCalls &&
+                   presentCalls == drawCalls);
+        cases++;
+    }
+#ifdef _UWP
+    // A cached clock left behind by loading must be refreshed before setting the
+    // offline title deadline. Without the refresh, the first wait consumes the
+    // entire animation budget after drawing only one frame.
+    netgame = false;
+    server = false;
+    demo.playback = false;
+    rendermode = render_soft;
+    moviemode = (moviemode_t)0;
+    drawCalls = presentCalls = tickCalls = 0;
+    staleClockAdvance = 10 * TICRATE;
+    G_PreLevelTitleCard();
+    assert(staleClockAdvance == 0 && drawCalls == PRELEVELTIME * NEWTICRATERATIO);
+    assert(presentCalls == drawCalls && tickCalls == drawCalls);
+    ++cases;
+#endif
+#if defined(_UWP) && defined(HWRENDER)
+    for (unsigned load : {63u, 70u, 77u})
+        for (unsigned threshold : {8u, 10u}) {
+            int old = delayedLoad(false, load, threshold),
+                fresh = delayedLoad(true, load, threshold);
+            printf("load %u threshold %u: old %d, new %d\n", load, threshold, old, fresh);
+            assert(old == 1 && fresh == 0);
+            cases += 2;
+        }
+#endif
+    printf("%u packet, wrap, rate-limit, title and server delay cases passed\n", cases);
+}

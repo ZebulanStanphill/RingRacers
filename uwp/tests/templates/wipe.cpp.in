@@ -1,0 +1,119 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+using std::floor;
+using std::max;
+using std::min;
+using std::sin;
+using float2 = float __attribute__((ext_vector_type(2)));
+using float3 = float __attribute__((ext_vector_type(3)));
+using float4 = float __attribute__((ext_vector_type(4)));
+float2 make2(float a, float b) { return {a, b}; }
+float3 make3(float a, float b, float c) { return {a, b, c}; }
+float3 make3(float a) { return {a, a, a}; }
+float4 make4(float3 rgb, float a) { return {rgb.x, rgb.y, rgb.z, a}; }
+float4 make4(float a, float b, float c, float d) { return {a, b, c, d}; }
+float clamp(float x, float lo, float hi) { return std::clamp(x, lo, hi); }
+float2 clamp(float2 x, float2 lo, float2 hi) {
+    return {clamp(x.x, lo.x, hi.x), clamp(x.y, lo.y, hi.y)};
+}
+float saturate(float x) { return clamp(x, 0, 1); }
+float3 saturate(float3 x) { return {saturate(x.x), saturate(x.y), saturate(x.z)}; }
+template <class T> T lerp(T a, T b, float f) { return a + (b - a) * f; }
+float2 u_wipe_screen_size, u_wipe_screen_fix;
+int u_wipe_mode, u_wipe_wiggle, u_wipe_reverse;
+struct VSOut {
+    float4 pos;
+};
+int s_tex;
+float2 sampledMask, sampledScreen;
+float raw;
+float4 screenColor(float2 uv, bool end) {
+    int x = std::clamp((int)floor(uv.x * u_wipe_screen_size.x), 0, (int)u_wipe_screen_size.x - 1);
+    int y = std::clamp((int)floor(uv.y * u_wipe_screen_size.y), 0, (int)u_wipe_screen_size.y - 1);
+    float r = (x % 251) / 250.f, g = (y % 241) / 240.f, b = ((x + y) % 239) / 238.f;
+    return end ? make4(1 - r, 1 - g, 1 - b, 1) : make4(r, g, b, 1);
+}
+struct ScreenTexture {
+    bool end;
+    float4 Sample(int, float2 uv) const {
+        sampledScreen = uv;
+        assert(uv.x >= 0 && uv.x < u_wipe_screen_fix.x && uv.y >= 0 && uv.y < u_wipe_screen_fix.y);
+        return screenColor(uv / u_wipe_screen_fix, end != bool(u_wipe_reverse));
+    }
+} t_tex{false}, t_brightmap{true};
+struct MaskTexture {
+    float Sample(int, float2 uv) const {
+        sampledMask = uv;
+        return raw / 255.f;
+    }
+} t_wipe_mask;
+
+// Independent scalar oracle: MD black removes a budget from R, then G, then B;
+// MD white adds channel ramps starting one unit apart. Crossfade/inversion keep
+// the RHI's unclamped reverse fade. This is deliberately not translated HLSL.
+float4 expectedColor(float4 start, float4 end, float fade, int mode) {
+    float4 out = make4(0, 0, 0, 1);
+    float budget = 3 * clamp(fade, 0, 1);
+    for (int channel = 0; channel < 3; ++channel) {
+        if (mode == 0)
+            out[channel] = start[channel] + (end[channel] - start[channel]) * fade;
+        else if (mode == 1)
+            out[channel] = start[channel] + (1 - 2 * start[channel]) * fade;
+        else if (mode == 2) {
+            out[channel] = max(0.f, start[channel] - budget);
+            budget = max(0.f, budget - start[channel]);
+        } else
+            out[channel] = min(1.f, start[channel] + max(0.f, budget - channel));
+    }
+    return out;
+}
+
+@@WIPE_SHADER@@
+
+int main() {
+    size_t cases = 0;
+    for (auto size :
+         {make2(320, 200), make2(640, 400), make2(1920, 1080), make2(1280, 720), make2(853, 479)}) {
+        u_wipe_screen_size = size;
+        float square = size.x <= 512 ? 512 : size.x <= 1024 ? 1024 : 2048;
+        u_wipe_screen_fix = size / square;
+        for (int rev = 0; rev < 2; rev++)
+            for (int mode = 0; mode < 4; mode++)
+                for (int wiggle : {0, 1, 7, 31, 98})
+                    for (int byte = 0; byte < 32; byte++)
+                        for (int row = 0; row < 200; row++)
+                            for (float x : {0.5f, size.x / 2.f, size.x - .5f}) {
+                                u_wipe_reverse = rev;
+                                u_wipe_mode = mode;
+                                u_wipe_wiggle = wiggle;
+                                raw = (float)byte;
+                                // Exercise edges and all 200 base rows in real pixel-center
+                                // coordinates.
+                                float py = min(floor(row * size.y / 200.f) + .5f, size.y - .5f);
+                                VSOut input{make4(x, py, 0, 1)};
+                                float4 actual = PSWipeFull(input);
+                                float2 gl = make2(x / size.x, 1 - py / size.y);
+                                assert(sampledMask.x == gl.x && sampledMask.y == gl.y);
+                                float base = floor(gl.y * 200.f);
+                                float phase = wiggle * 128.f + base * wiggle * 8.f;
+                                float sign =
+                                    (-base - floor(-base / 2.f) * 2.f) * 2.f - 1.f; // GLSL mod
+                                gl.x += sign * sin(phase) * wiggle * 8.f / 320.f;
+                                float2 physical = make2(gl.x, 1 - gl.y);
+                                float4 start = screenColor(physical, bool(rev)),
+                                       end = screenColor(physical, !bool(rev));
+                                float fade =
+                                    1 - ((rev ? 32.f - byte : byte) / 255.f) * 255.f / 31.f;
+                                float4 expected = expectedColor(start, end, fade, mode);
+                                for (int c = 0; c < 3; c++)
+                                    assert(std::abs(actual[c] - expected[c]) < 2e-6f);
+                                assert(actual.a == 1);
+                                cases++;
+                            }
+    }
+    printf("Shader/scalar oracle matches for %zu samples across modes, raw bytes, reverse, wiggle, "
+           "rows and resolutions.\n",
+           cases);
+}
