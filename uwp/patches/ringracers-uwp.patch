@@ -1,4 +1,4 @@
-From 4dd2026c4f33c54166418a74e87c34ec389237f0 Mon Sep 17 00:00:00 2001
+From 6c30b54316d6dad425f8e53fb79bbbd5eaaccaa1 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -50,6 +50,10 @@ RingRacers-dev, rebased onto v2.4.
   rewind and dedicated/non-Legacy-GL paths. Log both passes and count
   model loads remaining in draw-time code, without executing thinkers or
   changing game logic
+- Keep netgame connections alive during Legacy GL's level loading on UWP:
+  answer the server at most once per tic while precaching and building
+  floor/ceiling polygons, since a slow load can leave a player who just
+  joined waiting for tics the server won't send, until it times out
 - Leave precipitation and things with RF_HIDEINSKYBOX out of Legacy GL's
   skybox view, as the software renderer does
 - Approximate inward neutral fog around Legacy GL's camera using a cached
@@ -212,7 +216,7 @@ Model: gpt-6.1-sol
  src/g_game.c                       |   46 +
  src/hardware/CMakeLists.txt        |   35 +
  src/hardware/hw_batching.c         |   11 +-
- src/hardware/hw_bsp.c              |  107 +-
+ src/hardware/hw_bsp.c              |  113 +-
  src/hardware/hw_cache.c            |  196 +-
  src/hardware/hw_clip.c             |   15 +
  src/hardware/hw_clip.h             |    5 +
@@ -220,9 +224,9 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  645 +++-
- src/hardware/hw_main.h             |   15 +
- src/hardware/hw_md2.c              |  303 +-
+ src/hardware/hw_main.c             |  666 +++-
+ src/hardware/hw_main.h             |   16 +
+ src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
  src/hardware/r_d3d11/r_d3d11.cpp   | 5656 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   59 +
@@ -275,7 +279,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11073 insertions(+), 507 deletions(-)
+ 76 files changed, 11102 insertions(+), 507 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1385,10 +1389,20 @@ index 9c0e2f6e9..58bd38e24 100644
  					changeState = true;
  					changeSurfaceInfo = true;
 diff --git a/src/hardware/hw_bsp.c b/src/hardware/hw_bsp.c
-index 0b036ead0..5ce805e9b 100644
+index 0b036ead0..80fbf275b 100644
 --- a/src/hardware/hw_bsp.c
 +++ b/src/hardware/hw_bsp.c
-@@ -249,6 +249,36 @@ static boolean SameVertice (polyvertex_t *p1, polyvertex_t *p2)
+@@ -15,6 +15,9 @@
+ #include "../doomstat.h"
+ #ifdef HWRENDER
+ #include "hw_glob.h"
++#ifdef _UWP
++#include "hw_main.h" // HWR_UWPLoadKeepAlive
++#endif
+ #include "../r_local.h"
+ #include "../z_zone.h"
+ #include "../console.h"
+@@ -249,6 +252,36 @@ static boolean SameVertice (polyvertex_t *p1, polyvertex_t *p2)
  }
  
  
@@ -1425,7 +1439,7 @@ index 0b036ead0..5ce805e9b 100644
  // split a _CONVEX_ polygon in two convex polygons
  // outputs:
  //   frontpoly : polygon on right side of bsp line
-@@ -346,18 +376,14 @@ static void SplitPoly (fdivline_t *bsp,         //splitting parametric line
+@@ -346,18 +379,14 @@ static void SplitPoly (fdivline_t *bsp,         //splitting parametric line
  		// linedefs where each side point the same sector, that is:
  		// the deep water effect with the original Doom
  
@@ -1446,7 +1460,7 @@ index 0b036ead0..5ce805e9b 100644
  		return;
  	}
  	if (pe <= ps)
-@@ -603,8 +629,13 @@ static void loading_status(void)
+@@ -603,11 +632,19 @@ static void loading_status(void)
  	V_DrawRightAlignedString(x+50, y, V_YELLOWMAP, s);
  
  	// Is this really necessary at this point..?
@@ -1460,7 +1474,13 @@ index 0b036ead0..5ce805e9b 100644
  	V_DrawCenteredString(BASEVIDWIDTH/2, 70, V_YELLOWMAP, "USE AT ROBOTNIK'S RISK.");
  
  	I_UpdateNoVsync();
-@@ -679,26 +710,67 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
++#ifdef _UWP
++	HWR_UWPLoadKeepAlive();
++#endif
+ }
+ #endif
+ 
+@@ -679,26 +716,67 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
  
  	// Recursively divide front space.
  	if (frontpoly)
@@ -1499,12 +1519,7 @@ index 0b036ead0..5ce805e9b 100644
 +	INT32 j, count;
 +	seg_t *lseg;
 +	poly_t *poly;
- 
--		// enlarge bbox with second child
--		M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
--		                 bsp->bbox[1][BOXTOP   ]);
--		M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
--		                 bsp->bbox[1][BOXBOTTOM]);
++
 +	for (i = 0; i < numsubsectors; first += subsectors[i].numlines, i++)
 +	{
 +		count = subsectors[i].numlines;
@@ -1527,7 +1542,12 @@ index 0b036ead0..5ce805e9b 100644
 +				break;
 +		if (j < count)
 +			continue;
-+
+ 
+-		// enlarge bbox with second child
+-		M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
+-		                 bsp->bbox[1][BOXTOP   ]);
+-		M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
+-		                 bsp->bbox[1][BOXBOTTOM]);
 +		poly = HWR_AllocPoly(count);
 +		for (j = 0; j < count; j++)
 +		{
@@ -1539,7 +1559,7 @@ index 0b036ead0..5ce805e9b 100644
  	}
  }
  
-@@ -1015,6 +1087,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
+@@ -1015,6 +1093,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
  	rootpv++;
  
  	WalkBSPNode(bspnum, rootp, NULL,rootbbox);
@@ -2098,7 +2118,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..41164b880 100644
+index b5e8fca5a..6d033c817 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -2111,21 +2131,40 @@ index b5e8fca5a..41164b880 100644
  
  #ifdef HWRENDER
  #include "hw_glob.h"
-@@ -55,6 +58,9 @@
+@@ -55,6 +58,10 @@
  /// \note	SRB2CB port.
  ///      	SRB2CB itself ported this from PrBoom+
  #include "hw_clip.h"
 +#ifdef _UWP
 +#include "r_d3d11/r_d3d11.h"
++#include "../i_time.h" // HWR_UWPLoadKeepAlive
 +#endif
  
  #define R_FAKEFLOORS
  #define HWPRECIP
-@@ -65,6 +71,78 @@
+@@ -65,6 +72,98 @@
  // ==========================================================================
  struct hwdriver_s hwdriver;
  
 +#ifdef _UWP
++// Level loading takes seconds on Xbox. A netgame server sends a client at most 32
++// tics past the last one it acknowledged, and times out a client it doesn't hear
++// from. Keep answering during Legacy GL's part of the load, at most once per
++// tic, as the wipe and title-card loops already do.
++void HWR_UWPLoadKeepAlive(void)
++{
++	static tic_t last = 0;
++	tic_t now;
++	if (!netgame)
++		return;
++	I_UpdateTime();
++	now = I_GetTime();
++	if (now == last)
++		return;
++	last = now;
++	NetKeepAlive();
++}
++
 +// Use renderer cache entry points: they include brightmaps, texture translation,
 +// terrain/sector no-Encore flags, and the active level's Encore colormap. For
 +// textures whose existing cache has only one remap variant, first sidedef/sector
@@ -2159,6 +2198,7 @@ index b5e8fca5a..41164b880 100644
 +					continue;
 +				wallseen[tex] = 1;
 +				HWR_GetTexture(tex, base[j]);
++				HWR_UWPLoadKeepAlive();
 +				walls++;
 +			}
 +		}
@@ -2180,6 +2220,7 @@ index b5e8fca5a..41164b880 100644
 +					continue;
 +				flatseen[pic[ceiling]] |= key;
 +				HWR_GetLevelFlat(&levelflats[pic[ceiling]], noencore);
++				HWR_UWPLoadKeepAlive();
 +				flats++;
 +			}
 +		}
@@ -2200,7 +2241,7 @@ index b5e8fca5a..41164b880 100644
  // ==========================================================================
  //                                                                     PROTOS
  // ==========================================================================
-@@ -180,6 +258,100 @@ int ps_hw_numcolors = 0;
+@@ -180,6 +279,100 @@ int ps_hw_numcolors = 0;
  precise_t ps_hw_batchsorttime = 0;
  precise_t ps_hw_batchdrawtime = 0;
  
@@ -2301,7 +2342,7 @@ index b5e8fca5a..41164b880 100644
  boolean gl_init = false;
  boolean gl_maploaded = false;
  boolean gl_sessioncommandsadded = false;
-@@ -194,6 +366,38 @@ static boolean HWR_UseShader(void)
+@@ -194,6 +387,38 @@ static boolean HWR_UseShader(void)
  	return (cv_glshaders.value && gl_shadersavailable);
  }
  
@@ -2340,7 +2381,7 @@ index b5e8fca5a..41164b880 100644
  boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
  {
  	if (R_ThingIsFullBright(thing))
-@@ -261,13 +465,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
+@@ -261,13 +486,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
  	}
  }
  
@@ -2415,7 +2456,7 @@ index b5e8fca5a..41164b880 100644
  
  	// Crappy backup coloring if you can't do shaders
  	if (!HWR_UseShader())
-@@ -309,6 +573,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -309,6 +594,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	// Clamp the light level, since it can sometimes go out of the 0-255 range from animations
  	light_level = min(max(light_level, 0), 255);
  
@@ -2430,7 +2471,7 @@ index b5e8fca5a..41164b880 100644
  	Surface->PolyColor.rgba = poly_color.rgba;
  	Surface->TintColor.rgba = tint_color.rgba;
  	Surface->FadeColor.rgba = fade_color.rgba;
-@@ -318,6 +590,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -318,6 +611,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
  
  	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
@@ -2440,7 +2481,7 @@ index b5e8fca5a..41164b880 100644
  }
  
  UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -1666,6 +1941,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1666,6 +1962,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2449,7 +2490,7 @@ index b5e8fca5a..41164b880 100644
  				if (!(rover->fofflags & FOF_ALLSIDES) && rover->fofflags & FOF_INVERTSIDES)
  					continue;
  
-@@ -1828,6 +2105,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1828,6 +2126,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2458,7 +2499,7 @@ index b5e8fca5a..41164b880 100644
  				if (!(rover->fofflags & FOF_ALLSIDES || rover->fofflags & FOF_INVERTSIDES))
  					continue;
  
-@@ -2038,6 +2317,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
+@@ -2038,6 +2338,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
  static void HWR_AddLine(seg_t * line)
  {
  	angle_t angle1, angle2;
@@ -2468,7 +2509,7 @@ index b5e8fca5a..41164b880 100644
  
  	// SoM: Backsector needs to be run through R_FakeFlat
  	static sector_t tempsec;
-@@ -2053,6 +2335,15 @@ static void HWR_AddLine(seg_t * line)
+@@ -2053,6 +2356,15 @@ static void HWR_AddLine(seg_t * line)
  	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
  	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
  
@@ -2484,7 +2525,7 @@ index b5e8fca5a..41164b880 100644
  	// OPTIMIZE: quickly reject orthogonal back sides.
  	angle1 = R_PointToAngle64(v1x, v1y);
  	angle2 = R_PointToAngle64(v2x, v2y);
-@@ -2068,13 +2359,35 @@ static void HWR_AddLine(seg_t * line)
+@@ -2068,13 +2380,35 @@ static void HWR_AddLine(seg_t * line)
  		return;
  	}
  
@@ -2521,7 +2562,7 @@ index b5e8fca5a..41164b880 100644
  	}
  	else
  	{
-@@ -2095,13 +2408,19 @@ static void HWR_AddLine(seg_t * line)
+@@ -2095,13 +2429,19 @@ static void HWR_AddLine(seg_t * line)
  					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
  				return; // line is empty, don't even bother
  			// treat like wide open window instead
@@ -2543,7 +2584,7 @@ index b5e8fca5a..41164b880 100644
  			checkforemptylines = false;
  		}
  		// Reject empty lines used for triggers and special events.
-@@ -2112,7 +2431,10 @@ static void HWR_AddLine(seg_t * line)
+@@ -2112,7 +2452,10 @@ static void HWR_AddLine(seg_t * line)
  			return;
  	}
  
@@ -2555,7 +2596,7 @@ index b5e8fca5a..41164b880 100644
  	return;
  }
  
-@@ -2500,6 +2822,18 @@ static void HWR_Subsector(size_t num)
+@@ -2500,6 +2843,18 @@ static void HWR_Subsector(size_t num)
  		line = NULL;
  	}
  
@@ -2574,7 +2615,7 @@ index b5e8fca5a..41164b880 100644
  	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
  	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
  								&ceilinglightlevel, false);
-@@ -2632,6 +2966,8 @@ static void HWR_Subsector(size_t num)
+@@ -2632,6 +2987,8 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -2583,7 +2624,7 @@ index b5e8fca5a..41164b880 100644
  			if (sub->validcount == validcount)
  				continue;
  
-@@ -2879,10 +3215,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+@@ -2879,10 +3236,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
  	hwbbox = bsp->bbox[side];
  
  	// Recursively divide front space.
@@ -2603,7 +2644,7 @@ index b5e8fca5a..41164b880 100644
  	{
  		// BP: big hack for a test in lighning ref : 1249753487AB
  		hwbbox = bsp->bbox[side^1];
-@@ -3656,7 +3999,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +4020,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -2612,7 +2653,7 @@ index b5e8fca5a..41164b880 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4597,6 +4940,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +4961,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -2623,7 +2664,7 @@ index b5e8fca5a..41164b880 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4968,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +4989,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -2636,7 +2677,7 @@ index b5e8fca5a..41164b880 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5006,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5027,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -2649,7 +2690,7 @@ index b5e8fca5a..41164b880 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5091,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4732,6 +5112,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -2661,7 +2702,7 @@ index b5e8fca5a..41164b880 100644
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +5597,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +5618,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -2673,7 +2714,7 @@ index b5e8fca5a..41164b880 100644
  	{
  		return;
  	}
-@@ -5791,21 +6159,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6180,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -2730,7 +2771,7 @@ index b5e8fca5a..41164b880 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6249,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6270,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -2766,7 +2807,7 @@ index b5e8fca5a..41164b880 100644
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6286,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6307,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -2777,7 +2818,7 @@ index b5e8fca5a..41164b880 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5957,12 +6374,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5957,12 +6395,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		HWR_CreateDrawNodes();
  	}
  
@@ -2938,7 +2979,7 @@ index b5e8fca5a..41164b880 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +6538,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6559,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -2948,7 +2989,7 @@ index b5e8fca5a..41164b880 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +6562,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +6583,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -2958,7 +2999,7 @@ index b5e8fca5a..41164b880 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6038,6 +6608,33 @@ void HWR_RenderPlayerView(void)
+@@ -6038,6 +6629,33 @@ void HWR_RenderPlayerView(void)
  
  void HWR_LoadLevel(void)
  {
@@ -2992,7 +3033,7 @@ index b5e8fca5a..41164b880 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6138,6 +6735,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6756,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -3001,7 +3042,7 @@ index b5e8fca5a..41164b880 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6856,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6877,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -3011,7 +3052,7 @@ index b5e8fca5a..41164b880 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6866,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6887,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -3022,20 +3063,21 @@ index b5e8fca5a..41164b880 100644
  		if (player->flashpal == PAL_NUKE)
  		{
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b40947..d739dfde7 100644
+index 652b40947..8fff1d11f 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
-@@ -27,6 +27,9 @@ extern "C" {
+@@ -27,6 +27,10 @@ extern "C" {
  
  // Startup & Shutdown the hardware mode renderer
  void HWR_Startup(void);
 +#ifdef _UWP
 +void HWR_UWPPrecacheLevel(boolean players_only);
++void HWR_UWPLoadKeepAlive(void);
 +#endif
  void HWR_Switch(void);
  void HWR_Shutdown(void);
  
-@@ -35,6 +38,9 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength);
+@@ -35,6 +39,9 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength);
  void HWR_DrawConsoleBack(UINT32 color, INT32 height);
  void HWR_EncoreInvertScreen(void);
  void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength);
@@ -3045,7 +3087,7 @@ index 652b40947..d739dfde7 100644
  void HWR_DrawTutorialBack(UINT32 color, INT32 boxheight);
  void HWR_RenderSkyboxView(player_t *player);
  void HWR_RenderPlayerView(void);
-@@ -100,6 +106,11 @@ extern consvar_t cv_glcoronasize;
+@@ -100,6 +107,11 @@ extern consvar_t cv_glcoronasize;
  #endif
  
  extern consvar_t cv_glshaders, cv_glallowshaders;
@@ -3057,7 +3099,7 @@ index 652b40947..d739dfde7 100644
  extern consvar_t cv_glmodels;
  
  // SRB2Kart: We don't like these options.
-@@ -133,6 +144,10 @@ extern float gl_viewsin, gl_viewcos;
+@@ -133,6 +145,10 @@ extern float gl_viewsin, gl_viewcos;
  
  
  // Render stats
@@ -3069,7 +3111,7 @@ index 652b40947..d739dfde7 100644
  extern precise_t ps_hw_nodesorttime;
  extern precise_t ps_hw_nodedrawtime;
 diff --git a/src/hardware/hw_md2.c b/src/hardware/hw_md2.c
-index 81a7d9a49..5e09675ee 100644
+index 81a7d9a49..7f5f1f658 100644
 --- a/src/hardware/hw_md2.c
 +++ b/src/hardware/hw_md2.c
 @@ -29,6 +29,7 @@
@@ -3211,7 +3253,7 @@ index 81a7d9a49..5e09675ee 100644
  
  	for (i = 0; i < model->numMeshes; i++)
  	{
-@@ -1315,6 +1360,168 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
+@@ -1315,6 +1360,169 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
  }
  
  //
@@ -3294,6 +3336,7 @@ index 81a7d9a49..5e09675ee 100644
 +	if (md2->notfound || md2->error || md2->scale < 0.0f)
 +		return;
 +	HWR_LoadModelResources(md2, NULL);
++	HWR_UWPLoadKeepAlive();
 +}
 +
 +void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures_loaded)
@@ -3380,7 +3423,7 @@ index 81a7d9a49..5e09675ee 100644
  // HWR_DrawModel
  //
  
-@@ -1322,7 +1529,6 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+@@ -1322,7 +1530,6 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
  {
  	md2_t *md2;
  
@@ -3388,7 +3431,7 @@ index 81a7d9a49..5e09675ee 100644
  	INT32 frame = 0;
  	INT32 nextFrame = -1;
  	UINT8 spr2 = 0;
-@@ -1381,7 +1587,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+@@ -1381,7 +1588,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
  	// Look at HWR_ProjectSprite for more
  	{
  		patch_t *gpatch, *blendgpatch;
@@ -3397,7 +3440,7 @@ index 81a7d9a49..5e09675ee 100644
  		float durs = (float)spr->mobj->state->tics;
  		float tics = (float)spr->mobj->tics;
  		const boolean papersprite = (R_ThingIsPaperSprite(spr->mobj) && !R_ThingIsFloorSprite(spr->mobj));
-@@ -1463,64 +1669,19 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+@@ -1463,64 +1670,19 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
  			md2 = &md2_models[spr->mobj->sprite];
  		}
  
@@ -3473,7 +3516,7 @@ index 81a7d9a49..5e09675ee 100644
  		//HWD.pfnSetBlend(blend); // This seems to actually break translucency?
  		//Hurdler: arf, I don't like that implementation at all... too much crappy
  
-@@ -1557,10 +1718,18 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
+@@ -1557,10 +1719,18 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
  			// Comparing floats with the != operator here should be okay because they
  			// are just copies of glpatches' max_s and max_t values.
  			// Instead of the != operator, memcmp is used to avoid a compiler warning.

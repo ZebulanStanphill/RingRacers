@@ -46,6 +46,7 @@ These are in the latest build but haven't yet been confirmed by a human to actua
 
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
 - **If Legacy GL runs out of video memory, it clears its texture cache.** This may cause a brief hitch instead of slowing to a crawl.
+- **Online: VibeRant D3D11 keeps answering the server while it loads a level.** Before this, the first race after joining a server could freeze just after loading and then time out.
 
 ## Notes
 
