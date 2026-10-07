@@ -1,0 +1,108 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include "doomdef.h"
+#include "r_main.h"
+#include "hardware/hw_defs.h"
+#include "i_video.h"
+#undef min
+#undef max
+#undef clamp
+using std::min;
+using std::max;
+using std::clamp;
+void I_Error(const char *, ...) { abort(); }
+static const int DISTMAP=2;
+static lighttable_t maps[NUMCOLORMAPS*256];
+lighttable_t *colormaps=maps;
+lighttable_t *scalelight[LIGHTLEVELS][MAXLIGHTSCALE], *zlight[LIGHTLEVELS][MAXLIGHTZ];
+viddef_t vid;
+INT32 viewwidth;
+@@FIXED_DIV@@
+@@SOFTWARE_Z@@
+static void InitScale() {
+    INT32 i,j,level,startmapl;
+@@SOFTWARE_SCALE@@
+}
+@@FOG_ROW@@
+using UINT=unsigned;
+struct Mat4 { float m[16]; };
+struct D3D11_BOX { UINT left,top,front,right,bottom,back; };
+@@BOUNDS@@
+using float2 = float __attribute__((ext_vector_type(2)));
+using float3 = float __attribute__((ext_vector_type(3)));
+using float4 = float __attribute__((ext_vector_type(4)));
+using int3 = int __attribute__((ext_vector_type(3)));
+float4 make4(float3 v,float a) { return {v.x,v.y,v.z,a}; }
+int3 makeint3(float2 v,int z) { return {(int)v.x,(int)v.y,z}; }
+int3 makeint3(int x,int y,int z) { return {x,y,z}; }
+struct VSOut { float4 pos; float fragz; };
+static int u_palette=1,u_fog_lightnum,u_fog_plane;
+static float u_lighting,u_fog_view_ratio;
+static int sceneLoads;
+struct Scene {
+    float4 Load(int3 p) { ++sceneLoads; assert(p.x>=0 && p.y>=0); return {(float)((p.x+p.y)%256)/255,0.4f,0.3f,1}; }
+} t_fog_scene;
+struct Table {
+    float4 Load(int3 p) { assert(p.x>=0 && p.x<256 && p.y>=0 && p.y<32); return {p.x/255.f,p.y/31.f,0.2f,1}; }
+} t_lighttable;
+static int PaletteIndex(float3 v) { return (int)roundf(v.r*255); }
+static float4 SoftwareTint(float4 v,float) { return v; }
+static float4 SoftwareFade(float4 v,float,float) { return v; }
+@@FOG_SHADER@@
+int main() {
+    R_InitLightTables(); int cases=0;
+    for(int light=0;light<32;++light) for(int index=0;index<140;++index) {
+        for(float fraction : {0.0f,0.25f,15.75f}) {
+            float d=index*16.0f+fraction;
+            int expected=(zlight[light][std::min(index,127)]-maps)/256;
+            assert(FogColormap(d,light,1,1.0f)==expected); ++cases;
+        }
+    }
+    for(int w : {640,1280,1920}) for(int splits : {1,2}) {
+        vid.width=w; viewwidth=w/splits; InitScale();
+        for(int light=0;light<32;++light) for(int index=0;index<60;++index) {
+            // Pick an interior distance that maps to this Software scale bucket.
+            float d=5120.0f/splits/(index+0.25f);
+            int expected=(scalelight[light][std::min(index,47)]-maps)/256;
+            assert(FogColormap(d,light,0,1.0f/splits)==expected); ++cases;
+        }
+    }
+    const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
+    for(unsigned vx : {0u,640u}) for(unsigned vy : {0u,360u}) {
+        int vp[]={(int)vx,(int)vy,640,360};
+        FOutVector vertices[4] = {{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
+        D3D11_BOX box; FogCaptureBounds(vertices,4,identity,vp,720,box);
+        assert(box.left==vx+160 && box.right==vx+480);
+        assert(box.top==720-vy-360+90 && box.bottom==720-vy-90);
+        assert(box.front==0 && box.back==1);
+        for(auto &v : vertices) { v.x*=10; v.y*=10; }
+        FogCaptureBounds(vertices,4,identity,vp,720,box);
+        assert(box.left==vx && box.right==vx+640 && box.top==720-vy-360 && box.bottom==720-vy);
+        Mat4 near=identity; near.m[15]=0;
+        FogCaptureBounds(vertices,4,near,vp,720,box);
+        assert(box.left==vx && box.right==vx+640 && box.top==720-vy-360 && box.bottom==720-vy);
+        for(auto &v : vertices) { v.x=10; v.y=10; }
+        FogCaptureBounds(vertices,4,identity,vp,720,box);
+        assert(box.left==box.right && box.top==box.bottom);
+    }
+    for(int plane : {0,1}) for(int light=0;light<32;++light)
+    for(int split : {1,2}) for(int bucket=0;bucket<128;++bucket) {
+        float distance=bucket*16.f+8;
+        u_fog_plane=plane; u_fog_lightnum=light; u_fog_view_ratio=1.f/split;
+        vid.width=1280; viewwidth=1280/split; InitScale();
+        // SV_Position.w holds interpolated clip w in D3D, unlike gl_FragCoord.w.
+        VSOut pixel={{100.5f,200.5f,0.9f,distance},distance};
+        auto out=PSFogRemap(pixel);
+        int row;
+        if(plane) row=(zlight[light][bucket]-maps)/256;
+        else { int index=std::min((int)floorf(5120.f/split/distance),47); row=(scalelight[light][index]-maps)/256; }
+        assert(fabsf(out.g-row/31.f)<0.000001f && out.a==1);
+        assert(fabsf(out.r-44/255.f)<0.000001f);
+    }
+    assert(sceneLoads==16384);
+    printf("%d fog rows match production Software tables; capture bounds passed\n",cases);
+}

@@ -53,6 +53,27 @@ def generate(engine, output):
         "FRAME_GATING": main.section("\tUWPTraceBeginFrame();", "\n#endif"),
     }, output / "trace.cpp")
 
+    fog = Source(engine / "src/hardware/r_d3d11/shaders.hlsl")
+    renderer = Source(engine / "src/r_main.cpp")
+    driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
+    fog_shader = fog.function("PSFogRemap").replace(" : SV_Target", "")
+    fog_shader = fog_shader.replace("int3(", "makeint3(").replace("float4(", "make4(")
+    fog_shader = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog_shader)
+    render(templates / "fog.cpp.in", {
+        "FOG_SHADER": fog_shader,
+        "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
+        "FOG_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("FogColormap")),
+        "SOFTWARE_Z": renderer.function("R_InitLightTables"),
+        "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
+        "BOUNDS": driver.function("FogCaptureBounds"),
+    }, output / "fog.cpp")
+
+    render(templates / "blend.cpp.in", {
+        "ENUMS": driver.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
+        "TO_BLEND": driver.function("ToD3DBlend"),
+        "BLEND_STATE": driver.function("GetBlendState"),
+    }, output / "blend.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):

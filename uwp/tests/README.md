@@ -61,6 +61,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fades, reverse masks, Encore wiggle, all 32 mask values and 200 base rows, screen
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
+- **Fog boundaries:** production fog shader row selection, Software light-table generation and projected capture bounds. Compare every light level and distance bucket, all wall-scale buckets at multiple widths/split scales, viewport/near-plane/off-screen rectangles, and palette remapping with D3D pixel coordinates/depth and CPU texture stubs. Windows CI compiles the GPU shader; native tests do not render complete fog volumes.
+- **Fog blend state:** the production blend-state factory disables framebuffer blending for a completed fog remap, retains color-write masks, and restores ordinary blending afterward. The test fails against the earlier double-blend implementation.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
