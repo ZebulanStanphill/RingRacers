@@ -61,6 +61,18 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fades, reverse masks, Encore wiggle, all 32 mask values and 200 base rows, screen
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
+- **Transparency ordering:** extract the production node builder, object pass,
+  model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
+  and slope helpers. Each UWP/desktop executable checks 174 scenes and cases,
+  including 128 seeded scenes with an independent depth-order and pixel-composite
+  oracle. Cover front/behind objects, mixed alpha flags, model load fallback and
+  player skins, empty/objects-only/faces-only frames, opaque objects, always-on-top,
+  linkdraw display offsets, actual precipitation-sized storage, disjoint bounds,
+  slanted walls, sloped floors, moved polyobject planes, near-plane crossings,
+  pitched billboards, translated viewpoints, and the toggle's Off path. Replacing
+  both production dispatchers with their pre-feature implementations fails the
+  front-object draw-order assertion in both variants. Dependency stubs record
+  draws and blend a shared CPU pixel; they do not render complete game scenes.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
@@ -72,7 +84,9 @@ fails instead of silently skipping its test.
 
 These are isolated native checks. The network simulation does not run UDP clients
 or the whole game; the wipe test does not compile HLSL or exercise GPU sampling.
-They do not validate Xbox rendering, frame presentation, deployment, controller
+The transparency tests do not validate GPU depth/stencil, portal clipping, model
+triangle rasterization, or the complete sprite/model drawing implementations.
+These tests do not validate Xbox rendering, frame presentation, deployment, controller
 input, performance, or complete replay/gameplay equivalence. Existing Windows CI
 continues to compile the actual UWP and shader code.
 

@@ -1,4 +1,4 @@
-From f4bfeaa4fbdf8902a93871165726ff2c2f89d3c3 Mon Sep 17 00:00:00 2001
+From d70b4acd673d3c1ecf1717c2e4499d065c08327d Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -206,6 +206,15 @@ RingRacers-dev, rebased onto v2.4.
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
 
+- Add the saved Better transparency ordering option (default Off) to
+  Legacy GL on all patched platforms. Insert blended sprites/models and
+  linkdraw attachments among BSP-ordered transparent surfaces using current
+  projected bounds, plane sides and stable depth/display-offset ties. Keep
+  opaque objects and ground shadows on the earlier pass, bypass the old
+  linkdraw depth masks when enabled, and retain the separate passes when off.
+  Share sprite geometry between drawing and ordering. Whole-object overlap
+  and model footprints remain approximate for intersecting geometry.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -216,7 +225,7 @@ Model: gpt-6.1-sol
  src/CMakeLists.txt                 |   44 +-
  src/console.c                      |   18 +
  src/core/thread_pool.cpp           |   19 +
- src/cvars.cpp                      |    3 +
+ src/cvars.cpp                      |    5 +
  src/d_clisrv.c                     |   49 +
  src/d_main.cpp                     |  354 +-
  src/f_finale.c                     |    6 +
@@ -232,8 +241,8 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  666 +++-
- src/hardware/hw_main.h             |   16 +
+ src/hardware/hw_main.c             | 1250 +++++-
+ src/hardware/hw_main.h             |   18 +-
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
  src/hardware/r_d3d11/r_d3d11.cpp   | 5656 ++++++++++++++++++++++++++++
@@ -245,14 +254,14 @@ Model: gpt-6.1-sol
  src/hwr2/resource_management.hpp   |   31 +-
  src/i_system.h                     |   66 +
  src/i_video_common.cpp             |   60 +-
- src/k_menu.h                       |    6 +
+ src/k_menu.h                       |    7 +
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
  src/menus/options-1.c              |   34 +
- src/menus/options-video-advanced.c |   32 +
+ src/menus/options-video-advanced.c |   35 +
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
@@ -287,7 +296,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11142 insertions(+), 507 deletions(-)
+ 76 files changed, 11599 insertions(+), 642 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -553,19 +562,21 @@ index 8a434ba63..0e3c54d64 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33d5..9f09579ab 100644
+index d589b33d5..b79d18926 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
-@@ -1479,6 +1479,9 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+@@ -1478,6 +1478,11 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+ 	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
  
  	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
- 
++	consvar_t cv_glbettertransparency = OpenGL("gr_bettertransparency", "Off").on_off()
++		.description("Sort transparent sprites and models among level surfaces; costs extra CPU time.");
++
 +	// [UWP]: Palette rendering, from SRB2, which needs shaders
 +	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
-+
+ 
  #ifdef ALAM_LIGHTING
  		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
- 		consvar_t cv_glcoronasize = OpenGL("gr_coronasize", "1").floating_point();
 diff --git a/src/d_clisrv.c b/src/d_clisrv.c
 index 1166b3c99..8c31e9299 100644
 --- a/src/d_clisrv.c
@@ -2180,11 +2191,14 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..6d033c817 100644
+index b5e8fca5a..e63bb8750 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
-@@ -14,6 +14,9 @@
+@@ -12,8 +12,12 @@
+ /// \brief hardware renderer, using the standard HardWareRender driver DLL for SRB2
+ 
  #include <math.h>
++#include <float.h>
  
  #include "../doomstat.h"
 +#ifdef _UWP
@@ -2193,7 +2207,7 @@ index b5e8fca5a..6d033c817 100644
  
  #ifdef HWRENDER
  #include "hw_glob.h"
-@@ -55,6 +58,10 @@
+@@ -55,6 +59,10 @@
  /// \note	SRB2CB port.
  ///      	SRB2CB itself ported this from PrBoom+
  #include "hw_clip.h"
@@ -2204,7 +2218,7 @@ index b5e8fca5a..6d033c817 100644
  
  #define R_FAKEFLOORS
  #define HWPRECIP
-@@ -65,6 +72,98 @@
+@@ -65,6 +73,98 @@
  // ==========================================================================
  struct hwdriver_s hwdriver;
  
@@ -2303,7 +2317,7 @@ index b5e8fca5a..6d033c817 100644
  // ==========================================================================
  //                                                                     PROTOS
  // ==========================================================================
-@@ -180,6 +279,100 @@ int ps_hw_numcolors = 0;
+@@ -180,6 +280,100 @@ int ps_hw_numcolors = 0;
  precise_t ps_hw_batchsorttime = 0;
  precise_t ps_hw_batchdrawtime = 0;
  
@@ -2404,7 +2418,7 @@ index b5e8fca5a..6d033c817 100644
  boolean gl_init = false;
  boolean gl_maploaded = false;
  boolean gl_sessioncommandsadded = false;
-@@ -194,6 +387,38 @@ static boolean HWR_UseShader(void)
+@@ -194,6 +388,38 @@ static boolean HWR_UseShader(void)
  	return (cv_glshaders.value && gl_shadersavailable);
  }
  
@@ -2443,7 +2457,7 @@ index b5e8fca5a..6d033c817 100644
  boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
  {
  	if (R_ThingIsFullBright(thing))
-@@ -261,13 +486,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
+@@ -261,13 +487,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
  	}
  }
  
@@ -2518,7 +2532,7 @@ index b5e8fca5a..6d033c817 100644
  
  	// Crappy backup coloring if you can't do shaders
  	if (!HWR_UseShader())
-@@ -309,6 +594,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -309,6 +595,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	// Clamp the light level, since it can sometimes go out of the 0-255 range from animations
  	light_level = min(max(light_level, 0), 255);
  
@@ -2533,7 +2547,7 @@ index b5e8fca5a..6d033c817 100644
  	Surface->PolyColor.rgba = poly_color.rgba;
  	Surface->TintColor.rgba = tint_color.rgba;
  	Surface->FadeColor.rgba = fade_color.rgba;
-@@ -318,6 +611,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -318,6 +612,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
  
  	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
@@ -2543,7 +2557,7 @@ index b5e8fca5a..6d033c817 100644
  }
  
  UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -1666,6 +1962,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1666,6 +1963,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2552,7 +2566,7 @@ index b5e8fca5a..6d033c817 100644
  				if (!(rover->fofflags & FOF_ALLSIDES) && rover->fofflags & FOF_INVERTSIDES)
  					continue;
  
-@@ -1828,6 +2126,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1828,6 +2127,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2561,7 +2575,7 @@ index b5e8fca5a..6d033c817 100644
  				if (!(rover->fofflags & FOF_ALLSIDES || rover->fofflags & FOF_INVERTSIDES))
  					continue;
  
-@@ -2038,6 +2338,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
+@@ -2038,6 +2339,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
  static void HWR_AddLine(seg_t * line)
  {
  	angle_t angle1, angle2;
@@ -2571,7 +2585,7 @@ index b5e8fca5a..6d033c817 100644
  
  	// SoM: Backsector needs to be run through R_FakeFlat
  	static sector_t tempsec;
-@@ -2053,6 +2356,15 @@ static void HWR_AddLine(seg_t * line)
+@@ -2053,6 +2357,15 @@ static void HWR_AddLine(seg_t * line)
  	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
  	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
  
@@ -2587,7 +2601,7 @@ index b5e8fca5a..6d033c817 100644
  	// OPTIMIZE: quickly reject orthogonal back sides.
  	angle1 = R_PointToAngle64(v1x, v1y);
  	angle2 = R_PointToAngle64(v2x, v2y);
-@@ -2068,13 +2380,35 @@ static void HWR_AddLine(seg_t * line)
+@@ -2068,13 +2381,35 @@ static void HWR_AddLine(seg_t * line)
  		return;
  	}
  
@@ -2624,7 +2638,7 @@ index b5e8fca5a..6d033c817 100644
  	}
  	else
  	{
-@@ -2095,13 +2429,19 @@ static void HWR_AddLine(seg_t * line)
+@@ -2095,13 +2430,19 @@ static void HWR_AddLine(seg_t * line)
  					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
  				return; // line is empty, don't even bother
  			// treat like wide open window instead
@@ -2646,7 +2660,7 @@ index b5e8fca5a..6d033c817 100644
  			checkforemptylines = false;
  		}
  		// Reject empty lines used for triggers and special events.
-@@ -2112,7 +2452,10 @@ static void HWR_AddLine(seg_t * line)
+@@ -2112,7 +2453,10 @@ static void HWR_AddLine(seg_t * line)
  			return;
  	}
  
@@ -2658,7 +2672,7 @@ index b5e8fca5a..6d033c817 100644
  	return;
  }
  
-@@ -2500,6 +2843,18 @@ static void HWR_Subsector(size_t num)
+@@ -2500,6 +2844,18 @@ static void HWR_Subsector(size_t num)
  		line = NULL;
  	}
  
@@ -2677,7 +2691,7 @@ index b5e8fca5a..6d033c817 100644
  	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
  	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
  								&ceilinglightlevel, false);
-@@ -2632,6 +2987,8 @@ static void HWR_Subsector(size_t num)
+@@ -2632,6 +2988,8 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -2686,7 +2700,7 @@ index b5e8fca5a..6d033c817 100644
  			if (sub->validcount == validcount)
  				continue;
  
-@@ -2879,10 +3236,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+@@ -2879,10 +3237,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
  	hwbbox = bsp->bbox[side];
  
  	// Recursively divide front space.
@@ -2706,7 +2720,16 @@ index b5e8fca5a..6d033c817 100644
  	{
  		// BP: big hack for a test in lighning ref : 1249753487AB
  		hwbbox = bsp->bbox[side^1];
-@@ -3656,7 +4020,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3046,6 +3411,8 @@ UINT32 linkdrawcount = 0;
+ // add the necessary data to the list for delayed z-buffer drawing
+ static void HWR_LinkDrawHackAdd(FOutVector *verts, gl_vissprite_t *spr)
+ {
++	if (cv_glbettertransparency.value)
++		return; // Linkdraw shapes participate in the shared order instead.
+ 	if (linkdrawcount < MAXVISSPRITES)
+ 	{
+ 		memcpy(linkdrawlist[linkdrawcount].verts, verts, sizeof(FOutVector) * 4);
+@@ -3656,7 +4023,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -2715,7 +2738,697 @@ index b5e8fca5a..6d033c817 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4597,6 +4961,10 @@ static void HWR_DrawSprites(void)
+@@ -3666,47 +4033,11 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+ //                  : (monsters, bonuses, weapons, lights, ...)
+ // Returns          :
+ // -----------------+
+-static void HWR_DrawSprite(gl_vissprite_t *spr)
++// Geometry shared by drawing and transparent-node overlap checks.
++static void HWR_SpriteVertices(gl_vissprite_t *spr, FOutVector *wallVerts)
+ {
+-	FOutVector wallVerts[4];
+-	patch_t *gpatch;
+-	FSurfaceInfo Surf;
+-	const boolean splat = R_ThingIsFloorSprite(spr->mobj);
+-
+-	if (!spr->mobj)
+-		return;
+-
+-	if (!spr->mobj->subsector)
+-		return;
+-
+-	if (spr->mobj->subsector->sector->numlights
+-		&& (spr->mobj->renderflags & RF_ABSOLUTELIGHTLEVEL) == 0
+-		&& !splat)
+-	{
+-		HWR_SplitSprite(spr);
+-		return;
+-	}
+-
+-	// cache sprite graphics
+-	//12/12/99: Hurdler:
+-	//          OK, I don't change anything for MD2 support because I want to be
+-	//          sure to do it the right way. So actually, we keep normal sprite
+-	//          in memory and we add the md2 model if it exists for that sprite
+-
+-	gpatch = spr->gpatch;
+-
+-#ifdef ALAM_LIGHTING
+-	if (!(spr->mobj->flags2 & MF2_DEBRIS) && (spr->mobj->sprite != SPR_PLAY))
+-		HWR_DL_AddLight(spr, gpatch);
+-#endif
+-
+-	// create the sprite billboard
+-	//
+-	//  3--2
+-	//  | /|
+-	//  |/ |
+-	//  0--1
+-
++	patch_t *gpatch = spr->gpatch;
++	const boolean splat = !spr->precip && R_ThingIsFloorSprite(spr->mobj);
+ 	if (splat)
+ 	{
+ 		F2DCoord verts[4];
+@@ -3718,15 +4049,11 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+ 		float xscale, yscale;
+ 		float xoffset, yoffset;
+ 		float leftoffset, topoffset;
+-		float scale = spr->scale;
+ 		float zoffset = (P_MobjFlip(spr->mobj) * 0.05f);
+ 		pslope_t *splatslope = NULL;
+ 		INT32 i;
+ 
+-		renderflags_t renderflags = spr->renderflags;
+-		if (renderflags & RF_SHADOWEFFECTS)
+-			scale *= spr->shadowscale;
+-
++		renderflags_t renderflags = (renderflags_t)spr->renderflags;
+ 		if (spr->rotateflags & SRF_3D || renderflags & RF_NOSPLATBILLBOARD)
+ 			angle = spr->angle;
+ 		else
+@@ -3828,6 +4155,67 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+ 		wallVerts[1].z = wallVerts[2].z = spr->z2;
+ 	}
+ 
++	if (!splat)
++	{
++		// if it has a dispoffset, push it a little towards the camera
++		if (spr->dispoffset) {
++			float co = -gl_viewcos*(0.05f*spr->dispoffset);
++			float si = -gl_viewsin*(0.05f*spr->dispoffset);
++			wallVerts[0].z = wallVerts[3].z = wallVerts[0].z+si;
++			wallVerts[1].z = wallVerts[2].z = wallVerts[1].z+si;
++			wallVerts[0].x = wallVerts[3].x = wallVerts[0].x+co;
++			wallVerts[1].x = wallVerts[2].x = wallVerts[1].x+co;
++		}
++
++		// Let dispoffset work first since this adjust each vertex
++		HWR_RotateSpritePolyToAim(spr, wallVerts, spr->precip);
++	}
++
++}
++
++static void HWR_DrawSprite(gl_vissprite_t *spr)
++{
++	FOutVector wallVerts[4];
++	patch_t *gpatch;
++	FSurfaceInfo Surf;
++	const boolean splat = R_ThingIsFloorSprite(spr->mobj);
++
++	if (!spr->mobj)
++		return;
++
++	if (!spr->mobj->subsector)
++		return;
++
++	if (spr->mobj->subsector->sector->numlights
++		&& (spr->mobj->renderflags & RF_ABSOLUTELIGHTLEVEL) == 0
++		&& !splat)
++	{
++		HWR_SplitSprite(spr);
++		return;
++	}
++
++	// cache sprite graphics
++	//12/12/99: Hurdler:
++	//          OK, I don't change anything for MD2 support because I want to be
++	//          sure to do it the right way. So actually, we keep normal sprite
++	//          in memory and we add the md2 model if it exists for that sprite
++
++	gpatch = spr->gpatch;
++
++#ifdef ALAM_LIGHTING
++	if (!(spr->mobj->flags2 & MF2_DEBRIS) && (spr->mobj->sprite != SPR_PLAY))
++		HWR_DL_AddLight(spr, gpatch);
++#endif
++
++	// create the sprite billboard
++	//
++	//  3--2
++	//  | /|
++	//  |/ |
++	//  0--1
++
++	HWR_SpriteVertices(spr, wallVerts);
++
+ 	// cache the patch in the graphics card memory
+ 	//12/12/99: Hurdler: same comment as above (for md2)
+ 	//Hurdler: 25/04/2000: now support colormap in hardware mode
+@@ -3852,21 +4240,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+ 		wallVerts[0].t = wallVerts[1].t = ((GLPatch_t *)gpatch->hardware)->max_t;
+ 	}
+ 
+-	if (!splat)
+-	{
+-		// if it has a dispoffset, push it a little towards the camera
+-		if (spr->dispoffset) {
+-			float co = -gl_viewcos*(0.05f*spr->dispoffset);
+-			float si = -gl_viewsin*(0.05f*spr->dispoffset);
+-			wallVerts[0].z = wallVerts[3].z = wallVerts[0].z+si;
+-			wallVerts[1].z = wallVerts[2].z = wallVerts[1].z+si;
+-			wallVerts[0].x = wallVerts[3].x = wallVerts[0].x+co;
+-			wallVerts[1].x = wallVerts[2].x = wallVerts[1].x+co;
+-		}
+-
+-		// Let dispoffset work first since this adjust each vertex
+-		HWR_RotateSpritePolyToAim(spr, wallVerts, false);
+-	}
+ 
+ 	// This needs to be AFTER the shadows so that the regular sprites aren't drawn completely black.
+ 	// sprite lighting by modulating the RGB components
+@@ -4379,25 +4752,298 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
+ 	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
+ }
+ 
++// Shared transparent ordering is optional: overlap checks cost O(sprites * faces).
++// Keep BSP face order, and insert blended objects before the first overlapping
++// face between them and the camera. Do not use a pairwise geometry comparator in
++// qsort: intersecting polygons can make that comparison non-transitive.
++typedef struct
++{
++	float left, right, bottom, top, nearDepth, farDepth;
++	float center[3], origin[3], previous[3], plane[4];
++	size_t vertices;
++	boolean nearClip, hasPlane;
++} hwr_transbounds_t;
++
++typedef struct
++{
++	size_t node, slot, sequence;
++	float depth;
++	INT32 dispoffset;
++} hwr_transsprite_t;
++
++static void HWR_BeginSpriteDraw(void);
++static void HWR_EndSpriteDraw(void);
++static void HWR_DrawVisSprite(gl_vissprite_t *spr);
++
++static boolean HWR_SpriteNeedsSorting(const gl_vissprite_t *spr)
++{
++	UINT32 flags, frame;
++	if (spr->bbox || !spr->mobj)
++		return false;
++	if (spr->precip)
++		return (((const precipmobj_t *)spr->mobj)->frame & (FF_TRANSMASK|FF_BLENDMASK)) != 0;
++	flags = spr->mobj->renderflags;
++	frame = spr->mobj->frame;
++	return (flags & (RF_TRANSMASK|RF_BLENDMASK|RF_ALWAYSONTOP))
++		|| (frame & (FF_TRANSMASK|FF_BLENDMASK))
++		|| ((spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer)
++		|| cv_debugrender_spriteclip.value;
++}
++
++static void HWR_TransparencyBoundsInit(hwr_transbounds_t *bounds)
++{
++	memset(bounds, 0, sizeof(*bounds));
++	bounds->left = bounds->bottom = bounds->nearDepth = FLT_MAX;
++	bounds->right = bounds->top = bounds->farDepth = -FLT_MAX;
++}
++
++static void HWR_TransparencyBoundsVertex(hwr_transbounds_t *bounds, const FOutVector *v)
++{
++	float x = v->x, y = v->y, z = v->z;
++	const float point[3] = {x, y, z};
++	size_t axis;
++	if (!bounds->vertices)
++		memcpy(bounds->origin, point, sizeof(point));
++	else if (bounds->vertices >= 2 && !bounds->hasPlane)
++	{
++		const float a[3] = {bounds->previous[0]-bounds->origin[0],
++			bounds->previous[1]-bounds->origin[1], bounds->previous[2]-bounds->origin[2]};
++		const float b[3] = {x-bounds->origin[0], y-bounds->origin[1], z-bounds->origin[2]};
++		float n[3] = {a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]};
++		const float length = max(fabsf(n[0]), max(fabsf(n[1]), fabsf(n[2])));
++		if (length > 0.00001f && isfinite(length))
++		{
++			for (axis = 0; axis < 3; ++axis)
++				bounds->plane[axis] = n[axis]/length;
++			bounds->plane[3] = -(bounds->plane[0]*bounds->origin[0]
++				+ bounds->plane[1]*bounds->origin[1] + bounds->plane[2]*bounds->origin[2]);
++			bounds->hasPlane = true;
++		}
++	}
++	for (axis = 0; axis < 3; ++axis)
++		bounds->center[axis] += point[axis];
++	memcpy(bounds->previous, point, sizeof(point));
++	++bounds->vertices;
++	transform(&x, &y, &z);
++	bounds->nearDepth = min(bounds->nearDepth, z);
++	bounds->farDepth = max(bounds->farDepth, z);
++	if (z <= ZCLIP_PLANE || !isfinite(x) || !isfinite(y) || !isfinite(z))
++	{
++		bounds->nearClip = true; // Conservative overlap for a near-plane crossing.
++		return;
++	}
++	x /= z;
++	y /= z;
++	bounds->left = min(bounds->left, x);
++	bounds->right = max(bounds->right, x);
++	bounds->bottom = min(bounds->bottom, y);
++	bounds->top = max(bounds->top, y);
++}
++
++static void HWR_TransparencyBoundsFinish(hwr_transbounds_t *bounds)
++{
++	size_t axis;
++	if (!bounds->vertices)
++		return;
++	for (axis = 0; axis < 3; ++axis)
++		bounds->center[axis] /= bounds->vertices;
++	if (bounds->nearClip)
++	{
++		bounds->left = bounds->bottom = -FLT_MAX;
++		bounds->right = bounds->top = FLT_MAX;
++	}
++}
++
++static void HWR_TransparencySurfaceBounds(const gl_drawnode_t *node, hwr_transbounds_t *bounds)
++{
++	size_t i;
++	HWR_TransparencyBoundsInit(bounds);
++	if (node->wall)
++	{
++		for (i = 0; i < 4; ++i)
++			HWR_TransparencyBoundsVertex(bounds, &node->wall->wallVerts[i]);
++	}
++	else if (node->polyplane)
++	{
++		const polyplaneinfo_t *plane = node->polyplane;
++		const polyobj_t *poly = plane->polysector;
++		for (i = 0; i < poly->numVertices; ++i)
++		{
++			FOutVector v = {0};
++			v.x = FIXED_TO_FLOAT(poly->vertices[i]->x);
++			v.y = FIXED_TO_FLOAT(plane->fixedheight);
++			v.z = FIXED_TO_FLOAT(poly->vertices[i]->y);
++			HWR_TransparencyBoundsVertex(bounds, &v);
++		}
++	}
++	else if (node->plane && node->plane->xsub && node->plane->xsub->planepoly)
++	{
++		const planeinfo_t *plane = node->plane;
++		const poly_t *poly = plane->xsub->planepoly;
++		const pslope_t *slope = plane->FOFSector
++			? (plane->isceiling ? plane->FOFSector->c_slope : plane->FOFSector->f_slope) : NULL;
++		if (poly->numpts < 3) return;
++		for (i = 0; i < (size_t)poly->numpts; ++i)
++		{
++			FOutVector v = {0};
++			v.x = poly->pts[i].x;
++			v.z = poly->pts[i].y;
++			v.y = FIXED_TO_FLOAT(slope ? P_GetSlopeZAt(slope, FLOAT_TO_FIXED(v.x), FLOAT_TO_FIXED(v.z)) : plane->fixedheight);
++			HWR_TransparencyBoundsVertex(bounds, &v);
++		}
++	}
++	HWR_TransparencyBoundsFinish(bounds);
++}
++
++static boolean HWR_TransparencyBehindSurface(const hwr_transbounds_t *sprite, const hwr_transbounds_t *face)
++{
++	float cameraSide, spriteSide;
++	if (!sprite->vertices || face->vertices < 3
++		|| sprite->right < face->left || sprite->left > face->right
++		|| sprite->top < face->bottom || sprite->bottom > face->top)
++		return false;
++	if (sprite->nearDepth > face->farDepth + 0.01f)
++		return true;
++	if (sprite->farDepth < face->nearDepth - 0.01f)
++		return false;
++	if (!face->hasPlane)
++		return false;
++	cameraSide = face->plane[0]*gl_viewx + face->plane[1]*gl_viewz
++		+ face->plane[2]*gl_viewy + face->plane[3];
++	spriteSide = face->plane[0]*sprite->center[0] + face->plane[1]*sprite->center[1]
++		+ face->plane[2]*sprite->center[2] + face->plane[3];
++	return (cameraSide > 0.01f && spriteSide < -0.01f)
++		|| (cameraSide < -0.01f && spriteSide > 0.01f);
++}
++
++static int HWR_CompareTransparentSprites(const void *a, const void *b)
++{
++	const hwr_transsprite_t *first = (const hwr_transsprite_t *)a;
++	const hwr_transsprite_t *second = (const hwr_transsprite_t *)b;
++	if (first->slot != second->slot)
++		return first->slot < second->slot ? -1 : 1;
++	if (first->depth != second->depth)
++		return first->depth > second->depth ? -1 : 1;
++	if (first->dispoffset != second->dispoffset)
++		return first->dispoffset < second->dispoffset ? -1 : 1;
++	return first->sequence < second->sequence ? -1 : first->sequence != second->sequence;
++}
++
++static size_t HWR_TransparentSpriteCount(void)
++{
++	size_t count = 0;
++	UINT32 i;
++	if (cv_glbettertransparency.value)
++		for (i = 0; i < gl_visspritecount; ++i)
++			count += HWR_SpriteNeedsSorting(HWR_GetVisSprite(i));
++	return count;
++}
++
++static float HWR_TransparencySpriteDepth(gl_vissprite_t *spr, const hwr_transbounds_t *bounds)
++{
++	float x = bounds->center[0], y = bounds->center[1], z = bounds->center[2];
++	if (!spr->precip && (spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer)
++	{
++		UINT32 i;
++		// Use the visible parent's actual billboard, including pitch/interpolation,
++		// so attached pieces keep its depth priority instead of their own origin's.
++		for (i = 0; i < gl_visspritecount; ++i)
++		{
++			gl_vissprite_t *parent = HWR_GetVisSprite(i);
++			if (!parent->precip && !parent->bbox && parent->mobj == spr->mobj->tracer)
++			{
++				FOutVector v[4] = {{0}};
++				HWR_SpriteVertices(parent, v);
++				x = (v[0].x+v[1].x+v[2].x+v[3].x)*0.25f;
++				y = (v[0].y+v[1].y+v[2].y+v[3].y)*0.25f;
++				z = (v[0].z+v[1].z+v[2].z+v[3].z)*0.25f;
++				transform(&x, &y, &z);
++				return z;
++			}
++		}
++		// An off-screen parent has no projected footprint in this view.
++		return spr->tracertz*gl_viewludsin
++			- (FIXED_TO_FLOAT(spr->mobj->tracer->z)-gl_viewz)*gl_viewludcos;
++	}
++	transform(&x, &y, &z);
++	return z;
++}
++
++static size_t HWR_InsertTransparentSprites(size_t faces, size_t sprites)
++{
++	hwr_transbounds_t *bounds;
++	hwr_transsprite_t *objects;
++	size_t *merged;
++	size_t i, j, count = 0, out = 0;
++	if (!sprites)
++		return faces;
++	bounds = NULL;
++	if (faces) bounds = Z_Calloc(faces*sizeof(*bounds), PU_STATIC, NULL);
++	objects = Z_Calloc(sprites*sizeof(*objects), PU_STATIC, NULL);
++	merged = Z_Malloc((faces+sprites)*sizeof(*merged), PU_STATIC, NULL);
++	for (i = 0; i < faces; ++i)
++		HWR_TransparencySurfaceBounds(&sortnode[sortindex[i]], &bounds[i]);
++	for (i = 0; i < gl_visspritecount; ++i)
++	{
++		gl_vissprite_t *spr = HWR_GetVisSprite((UINT32)i);
++		hwr_transbounds_t projected;
++		FOutVector v[4] = {{0}};
++		boolean onTop;
++		if (!HWR_SpriteNeedsSorting(spr))
++			continue;
++		HWR_SpriteVertices(spr, v);
++		HWR_TransparencyBoundsInit(&projected);
++		for (j = 0; j < 4; ++j)
++			HWR_TransparencyBoundsVertex(&projected, &v[j]);
++		HWR_TransparencyBoundsFinish(&projected);
++		onTop = !spr->precip && ((spr->mobj->renderflags & RF_ALWAYSONTOP) || cv_debugrender_spriteclip.value);
++		objects[count].slot = faces + (onTop ? 1 : 0);
++		if (!onTop)
++			for (j = 0; j < faces; ++j)
++				if (HWR_TransparencyBehindSurface(&projected, &bounds[j]))
++				{
++					objects[count].slot = j;
++					break;
++				}
++		objects[count].depth = HWR_TransparencySpriteDepth(spr, &projected);
++		if (!isfinite(objects[count].depth)) objects[count].depth = 0;
++		objects[count].dispoffset = spr->dispoffset;
++		objects[count].sequence = i;
++		objects[count].node = faces+count;
++		sortnode[faces+count].sprite = spr;
++		++count;
++	}
++	qsort(objects, count, sizeof(*objects), HWR_CompareTransparentSprites);
++	for (i = 0, j = 0; i <= faces; ++i)
++	{
++		while (j < count && objects[j].slot <= i)
++			merged[out++] = objects[j++].node;
++		if (i < faces)
++			merged[out++] = sortindex[i];
++	}
++	while (j < count) // RF_ALWAYSONTOP follows all surfaces and ordinary sprites.
++		merged[out++] = objects[j++].node;
++	memcpy(sortindex, merged, out*sizeof(*merged));
++	Z_Free(merged);
++	Z_Free(objects);
++	Z_Free(bounds);
++	return out;
++}
++
+ //
+ // HWR_CreateDrawNodes
+ // Creates and sorts a list of drawnodes for the scene being rendered.
+ static void HWR_CreateDrawNodes(void)
+ {
+-	UINT32 i = 0, p = 0;
++	size_t i = 0, p = 0;
++	const size_t sprites = HWR_TransparentSpriteCount();
++	const size_t capacity = numplanes + numpolyplanes + numwalls + sprites;
+ 	size_t run_start = 0;
+ 
+-	// Dump EVERYTHING into a huge drawnode list. Then we'll sort it!
+-	// Could this be optimized into _AddTransparentWall/_AddTransparentPlane?
+-	// Hell yes! But sort algorithm must be modified to use a linked list.
+-	sortnode = Z_Calloc((sizeof(planeinfo_t)*numplanes)
+-					+ (sizeof(polyplaneinfo_t)*numpolyplanes)
+-					+ (sizeof(wallinfo_t)*numwalls)
+-					,PU_STATIC, NULL);
+-	// todo:
+-	// However, in reality we shouldn't be re-copying and shifting all this information
+-	// that is already lying around. This should all be in some sort of linked list or lists.
+-	sortindex = Z_Calloc(sizeof(size_t) * (numplanes + numpolyplanes + numwalls), PU_STATIC, NULL);
++	if (!capacity)
++		return;
++	sortnode = Z_Calloc(capacity*sizeof(*sortnode), PU_STATIC, NULL);
++	sortindex = Z_Malloc(capacity*sizeof(*sortindex), PU_STATIC, NULL);
+ 
+ 	ps_hw_nodesorttime = I_GetPreciseTime();
+ 
+@@ -4428,7 +5074,7 @@ static void HWR_CreateDrawNodes(void)
+ 
+ 	// an additional pass is needed to correct the order of consecutive planes in the list.
+ 	// for each consecutive run of planes in the list, sort that run based on plane height and view height.
+-	while (run_start < p-1)// p-1 because a 1 plane run at the end of the list does not count
++	while (run_start + 1 < p)// p-1 because a 1 plane run at the end of the list does not count
+ 	{
+ 		// locate run start
+ 		if (sortnode[sortindex[run_start]].plane)
+@@ -4454,6 +5100,8 @@ static void HWR_CreateDrawNodes(void)
+ 		}
+ 	}
+ 
++	p = HWR_InsertTransparentSprites(p, sprites);
++	ps_numdrawnodes = (INT32)p;
+ 	ps_hw_nodesorttime = I_GetPreciseTime() - ps_hw_nodesorttime;
+ 
+ 	ps_hw_nodedrawtime = I_GetPreciseTime();
+@@ -4461,6 +5109,7 @@ static void HWR_CreateDrawNodes(void)
+ 	// Okay! Let's draw it all! Woo!
+ 	HWD.pfnSetTransform(&atransform);
+ 	HWD.pfnSetShader(SHADER_DEFAULT);
++	if (sprites) HWR_BeginSpriteDraw();
+ 
+ 	for (i = 0; i < p; i++)
+ 	{
+@@ -4491,7 +5140,13 @@ static void HWR_CreateDrawNodes(void)
+ 			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
+ 				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
+ 		}
++		else if (sortnode[sortindex[i]].sprite)
++		{
++			gl_frontsector = NULL;
++			HWR_DrawVisSprite(sortnode[sortindex[i]].sprite);
++		}
+ 	}
++	if (sprites) HWR_EndSpriteDraw();
+ 
+ 	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
+ 
+@@ -4502,6 +5157,8 @@ static void HWR_CreateDrawNodes(void)
+ 	// No mem leaks, please.
+ 	Z_Free(sortnode);
+ 	Z_Free(sortindex);
++	sortnode = NULL;
++	sortindex = NULL;
+ }
+ 
+ // --------------------------------------------------------------------------
+@@ -4509,94 +5166,121 @@ static void HWR_CreateDrawNodes(void)
+ // --------------------------------------------------------------------------
+ 
+ // added the stransform so they can be switched as drawing happenes so MD2s and sprites are sorted correctly with each other
+-static void HWR_DrawSprites(void)
++static void HWR_BeginSpriteDraw(void)
+ {
+-	UINT32 i;
+-	boolean skipshadow = false; // skip shadow if it was drawn already for a linkdraw sprite encountered earlier in the list
+-
+ #ifdef BAD_MODEL_OPTIONS
+ 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, cv_glmodellighting.value);
+ #else
+ 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 1);
+ #endif
+ 
+-	for (i = 0; i < gl_visspritecount; i++)
++}
++
++static void HWR_EndSpriteDraw(void)
++{
++	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 0);
++
++	// At the end of sprite drawing, draw shapes of linkdraw sprites to z-buffer, so they
++	// don't get drawn over by transparent surfaces.
++	HWR_LinkDrawHackFinish();
++	// Work around a r_opengl.c bug with PF_Invisible by making this SetBlend call
++	// where PF_Invisible is off and PF_Masked is on.
++	// (Other states probably don't matter. Here I left them same as in LinkDrawHackFinish)
++	// Without this workaround the rest of the draw calls in this frame (including UI, screen texture)
++	// can get drawn using an incorrect glBlendFunc, resulting in a occasional black screen.
++	HWD.pfnSetBlend(PF_Translucent|PF_Occlude|PF_Masked);
++}
++
++static void HWR_DrawSpriteShadow(gl_vissprite_t *spr, boolean *skipshadow)
++{
++	if (spr->bbox || spr->precip || !spr->mobj)
++		return;
++	if (spr->mobj && spr->mobj->shadowscale && cv_shadow.value && !*skipshadow)
+ 	{
+-		gl_vissprite_t *spr = gl_vsprorder[i];
+-		if (spr->bbox)
+-			HWR_DrawBoundingBox(spr);
+-		else
++		HWR_DrawDropShadow(spr->mobj, spr->mobj->shadowscale);
++	}
++
++	if ((spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer)
++	{
++		// If this linkdraw sprite is behind a sprite that has a shadow,
++		// then that shadow has to be drawn first, otherwise the shadow ends up on top of
++		// the linkdraw sprite because the linkdraw sprite does not modify the z-buffer.
++		// The !*skipshadow check is there in case there are multiple linkdraw sprites connected
++		// to the same tracer, so the tracer's shadow only gets drawn once.
++		if (cv_shadow.value && !*skipshadow && spr->dispoffset < 0 && spr->mobj->tracer->shadowscale)
++		{
++			HWR_DrawDropShadow(spr->mobj->tracer, spr->mobj->tracer->shadowscale);
++			*skipshadow = true;
++			// The next sprite in this loop should be either another linkdraw sprite or the tracer.
++			// When the tracer is inevitably encountered, skipshadow will cause it's shadow
++			// to get skipped and skipshadow will get set to false by the 'else' clause below.
++		}
++	}
++	else
++	{
++		*skipshadow = false;
++	}
++}
++
++static void HWR_DrawVisSprite(gl_vissprite_t *spr)
++{
++	if (spr->bbox)
++		HWR_DrawBoundingBox(spr);
++	else
+ #ifdef HWPRECIP
+-		if (spr->precip)
+-			HWR_DrawPrecipitationSprite(spr);
+-		else
++	if (spr->precip)
++		HWR_DrawPrecipitationSprite(spr);
++	else
+ #endif
+-		{
+-			if (spr->mobj && spr->mobj->shadowscale && cv_shadow.value && !skipshadow)
+-			{
+-				HWR_DrawDropShadow(spr->mobj, spr->mobj->shadowscale);
+-			}
++	{
+ 
+-			if ((spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer)
+-			{
+-				// If this linkdraw sprite is behind a sprite that has a shadow,
+-				// then that shadow has to be drawn first, otherwise the shadow ends up on top of
+-				// the linkdraw sprite because the linkdraw sprite does not modify the z-buffer.
+-				// The !skipshadow check is there in case there are multiple linkdraw sprites connected
+-				// to the same tracer, so the tracer's shadow only gets drawn once.
+-				if (cv_shadow.value && !skipshadow && spr->dispoffset < 0 && spr->mobj->tracer->shadowscale)
+-				{
+-					HWR_DrawDropShadow(spr->mobj->tracer, spr->mobj->tracer->shadowscale);
+-					skipshadow = true;
+-					// The next sprite in this loop should be either another linkdraw sprite or the tracer.
+-					// When the tracer is inevitably encountered, skipshadow will cause it's shadow
+-					// to get skipped and skipshadow will get set to false by the 'else' clause below.
+-				}
+-			}
++		if (spr->mobj && spr->mobj->skin && spr->mobj->sprite == SPR_PLAY)
++		{
++			if (!cv_glmodels.value || md2_playermodels[((skin_t*)(spr->mobj->skin))->skinnum].notfound || md2_playermodels[((skin_t*)(spr->mobj->skin))->skinnum].scale < 0.0f)
++				HWR_DrawSprite(spr);
+ 			else
+ 			{
+-				skipshadow = false;
+-			}
+-
+-			if (spr->mobj && spr->mobj->skin && spr->mobj->sprite == SPR_PLAY)
+-			{
+-				if (!cv_glmodels.value || md2_playermodels[((skin_t*)(spr->mobj->skin))->skinnum].notfound || md2_playermodels[((skin_t*)(spr->mobj->skin))->skinnum].scale < 0.0f)
++				if (!HWR_DrawModel(spr))
+ 					HWR_DrawSprite(spr);
+-				else
+-				{
+-					if (!HWR_DrawModel(spr))
+-						HWR_DrawSprite(spr);
+-				}
+ 			}
++		}
++		else
++		{
++			if (!cv_glmodels.value || md2_models[spr->mobj->sprite].notfound || md2_models[spr->mobj->sprite].scale < 0.0f)
++				HWR_DrawSprite(spr);
+ 			else
+ 			{
+-				if (!cv_glmodels.value || md2_models[spr->mobj->sprite].notfound || md2_models[spr->mobj->sprite].scale < 0.0f)
++				if (!HWR_DrawModel(spr))
+ 					HWR_DrawSprite(spr);
+-				else
+-				{
+-					if (!HWR_DrawModel(spr))
+-						HWR_DrawSprite(spr);
+-				}
+ 			}
+ 		}
+ 	}
+-	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 0);
++}
+ 
+-	// At the end of sprite drawing, draw shapes of linkdraw sprites to z-buffer, so they
+-	// don't get drawn over by transparent surfaces.
+-	HWR_LinkDrawHackFinish();
+-	// Work around a r_opengl.c bug with PF_Invisible by making this SetBlend call
+-	// where PF_Invisible is off and PF_Masked is on.
+-	// (Other states probably don't matter. Here I left them same as in LinkDrawHackFinish)
+-	// Without this workaround the rest of the draw calls in this frame (including UI, screen texture)
+-	// can get drawn using an incorrect glBlendFunc, resulting in a occasional black screen.
+-	HWD.pfnSetBlend(PF_Translucent|PF_Occlude|PF_Masked);
++static void HWR_DrawSprites(void)
++{
++	UINT32 i;
++	boolean skipshadow = false;
++	HWR_BeginSpriteDraw();
++	for (i = 0; i < gl_visspritecount; ++i)
++	{
++		gl_vissprite_t *spr = gl_vsprorder[i];
++		// Shadows stay on the ground pass so water/fog in front can affect them.
++		HWR_DrawSpriteShadow(spr, &skipshadow);
++		if (!cv_glbettertransparency.value || !HWR_SpriteNeedsSorting(spr))
++			HWR_DrawVisSprite(spr);
++	}
++	HWR_EndSpriteDraw();
+ }
+ 
+ // --------------------------------------------------------------------------
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -2726,7 +3439,7 @@ index b5e8fca5a..6d033c817 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4989,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +5305,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -2739,7 +3452,7 @@ index b5e8fca5a..6d033c817 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5027,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5343,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -2752,7 +3465,7 @@ index b5e8fca5a..6d033c817 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5112,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4732,6 +5428,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -2764,7 +3477,7 @@ index b5e8fca5a..6d033c817 100644
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +5618,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +5934,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -2776,7 +3489,7 @@ index b5e8fca5a..6d033c817 100644
  	{
  		return;
  	}
-@@ -5791,21 +6180,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6496,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -2833,7 +3546,7 @@ index b5e8fca5a..6d033c817 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6270,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6586,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -2869,7 +3582,7 @@ index b5e8fca5a..6d033c817 100644
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6307,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6623,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -2880,7 +3593,13 @@ index b5e8fca5a..6d033c817 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5957,12 +6395,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5952,17 +6706,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+ 		ps_hw_nodedrawtime = 0;
+ 	}
+ 
+-	if (numplanes || numpolyplanes || numwalls) //Hurdler: render 3D water and transparent walls after everything
++	if (numplanes || numpolyplanes || numwalls || HWR_TransparentSpriteCount())
+ 	{
  		HWR_CreateDrawNodes();
  	}
  
@@ -3041,7 +3760,7 @@ index b5e8fca5a..6d033c817 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +6559,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6875,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -3051,7 +3770,7 @@ index b5e8fca5a..6d033c817 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +6583,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +6899,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -3061,7 +3780,7 @@ index b5e8fca5a..6d033c817 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6038,6 +6629,33 @@ void HWR_RenderPlayerView(void)
+@@ -6038,6 +6945,33 @@ void HWR_RenderPlayerView(void)
  
  void HWR_LoadLevel(void)
  {
@@ -3095,7 +3814,7 @@ index b5e8fca5a..6d033c817 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6138,6 +6756,8 @@ void HWR_Switch(void)
+@@ -6138,6 +7072,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -3104,7 +3823,7 @@ index b5e8fca5a..6d033c817 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6877,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +7193,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -3114,7 +3833,7 @@ index b5e8fca5a..6d033c817 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6887,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +7203,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -3125,7 +3844,7 @@ index b5e8fca5a..6d033c817 100644
  		if (player->flashpal == PAL_NUKE)
  		{
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b40947..8fff1d11f 100644
+index 652b40947..4d9ab9fbd 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,10 @@ extern "C" {
@@ -3161,6 +3880,15 @@ index 652b40947..8fff1d11f 100644
  extern consvar_t cv_glmodels;
  
  // SRB2Kart: We don't like these options.
+@@ -120,7 +132,7 @@ extern consvar_t cv_glshearing;
+ extern consvar_t cv_glspritebillboarding;
+ extern consvar_t cv_glskydome;
+ 
+-extern consvar_t cv_glbatching;
++extern consvar_t cv_glbatching, cv_glbettertransparency;
+ 
+ extern float gl_viewwidth, gl_viewheight, gl_baseviewwindowy;
+ 
 @@ -133,6 +145,10 @@ extern float gl_viewsin, gl_viewcos;
  
  
@@ -10344,10 +11072,10 @@ index f52f9298e..ff724f09e 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb..a560fd668 100644
+index d52750abb..4ebebb6da 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
-@@ -420,11 +420,17 @@ typedef enum
+@@ -420,11 +420,18 @@ typedef enum
  	vaopt_spacer7,
  	vaopt_spacer8,
  	vaopt_spacer9,
@@ -10362,6 +11090,7 @@ index d52750abb..a560fd668 100644
  	vaopt_3dmodels,
  	vaopt_shaders,
 +	vaopt_paletterendering, // [UWP]
++	vaopt_bettertransparency,
  	vaopt_spacer11,
  	vaopt_texturequal,
  	vaopt_anisotropic,
@@ -10921,7 +11650,7 @@ index 41bc817aa..ccb395820 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..1e9304903 100644
+index c2e40ae04..d99326e0a 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -10984,12 +11713,15 @@ index c2e40ae04..1e9304903 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
-@@ -74,6 +103,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -74,6 +103,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
  		NULL, {.cvar = &cv_glshaders}, 0, 0},
  
 +	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
 +		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
++
++	{IT_STRING | IT_CVAR, "Better transparency ordering", "Sort transparent objects with water, fog & walls. Costs extra CPU time.",
++		NULL, {.cvar = &cv_glbettertransparency}, 0, 0},
 +
  	{IT_SPACE | IT_NOTHING, NULL,  NULL,
  		NULL, {NULL}, 0, 0},
