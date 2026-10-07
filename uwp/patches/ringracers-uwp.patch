@@ -1,4 +1,4 @@
-From f4bfeaa4fbdf8902a93871165726ff2c2f89d3c3 Mon Sep 17 00:00:00 2001
+From 1c443976954c125e4ae34405907043e05352f99b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -206,6 +206,10 @@ RingRacers-dev, rebased onto v2.4.
   followed by which drives the app can see and whether each has a
   ringracers folder, and save it to E:\ringracers\error.txt
 
+- Render moving polyobject ripple planes with SHADER_WATER using the
+  control sector floor/ceiling flags; retain translucent-plane handling.
+  Honor Reduce VFX for ordinary and moving ripple surfaces.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -228,11 +232,11 @@ Model: gpt-6.1-sol
  src/hardware/hw_cache.c            |  196 +-
  src/hardware/hw_clip.c             |   15 +
  src/hardware/hw_clip.h             |    5 +
- src/hardware/hw_defs.h             |    5 +
+ src/hardware/hw_defs.h             |    7 +-
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  666 +++-
+ src/hardware/hw_main.c             |  673 +++-
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
@@ -287,7 +291,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11142 insertions(+), 507 deletions(-)
+ 76 files changed, 11148 insertions(+), 510 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1956,7 +1960,7 @@ index 1942f426b..71bda4724 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  void gld_FrustrumSetup(void);
 diff --git a/src/hardware/hw_defs.h b/src/hardware/hw_defs.h
-index 1ce225f19..34702a64c 100644
+index 1ce225f19..5053cee12 100644
 --- a/src/hardware/hw_defs.h
 +++ b/src/hardware/hw_defs.h
 @@ -21,6 +21,9 @@ extern "C" {
@@ -1969,6 +1973,15 @@ index 1ce225f19..34702a64c 100644
  #define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
  
  // ==========================================================================
+@@ -243,7 +246,7 @@ enum EPolyFlags
+ 	PF_RemoveYWrap      = 0x00010000,   // Forces clamp texture on Y
+ 	PF_ForceWrapX       = 0x00020000,   // Forces repeat texture on X
+ 	PF_ForceWrapY       = 0x00040000,   // Forces repeat texture on Y
+-	PF_Ripple           = 0x00100000,   // Water ripple effect. The current backend doesn't use it for anything.
++	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
+ 	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles
+ };
+ 
 @@ -291,6 +294,7 @@ struct FSurfaceInfo
  	RGBA_t			TintColor;
  	RGBA_t			FadeColor;
@@ -2180,7 +2193,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..6d033c817 100644
+index b5e8fca5a..5b6276420 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -2658,7 +2671,28 @@ index b5e8fca5a..6d033c817 100644
  	return;
  }
  
-@@ -2500,6 +2843,18 @@ static void HWR_Subsector(size_t num)
+@@ -2369,7 +2712,10 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling,
+ 
+ 	if (HWR_UseShader())
+ 	{
+-		shader = SHADER_FLOOR;
++		const sector_t *rippleSector = FOFsector ? FOFsector : gl_frontsector;
++		if (!cv_reducevfx.value && rippleSector && R_IsRipplePlane((sector_t *)rippleSector, NULL, isceiling))
++			blendmode |= PF_Ripple;
++		shader = (blendmode & PF_Ripple) ? SHADER_WATER : SHADER_FLOOR;
+ 		blendmode |= PF_ColorMapped;
+ 	}
+ 
+@@ -2445,7 +2791,7 @@ static void HWR_AddPolyObjectPlanes(void)
+ 
+ static FBITFIELD HWR_RippleBlend(sector_t *sector, ffloor_t *rover, boolean ceiling)
+ {
+-	return R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
++	return !cv_reducevfx.value && R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
+ }
+ 
+ // -----------------+
+@@ -2500,6 +2846,18 @@ static void HWR_Subsector(size_t num)
  		line = NULL;
  	}
  
@@ -2677,7 +2711,7 @@ index b5e8fca5a..6d033c817 100644
  	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
  	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
  								&ceilinglightlevel, false);
-@@ -2632,6 +2987,8 @@ static void HWR_Subsector(size_t num)
+@@ -2632,6 +2990,8 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -2686,7 +2720,7 @@ index b5e8fca5a..6d033c817 100644
  			if (sub->validcount == validcount)
  				continue;
  
-@@ -2879,10 +3236,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+@@ -2879,10 +3239,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
  	hwbbox = bsp->bbox[side];
  
  	// Recursively divide front space.
@@ -2706,7 +2740,7 @@ index b5e8fca5a..6d033c817 100644
  	{
  		// BP: big hack for a test in lighning ref : 1249753487AB
  		hwbbox = bsp->bbox[side^1];
-@@ -3656,7 +4020,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +4023,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -2715,7 +2749,7 @@ index b5e8fca5a..6d033c817 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4597,6 +4961,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +4964,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -2726,7 +2760,7 @@ index b5e8fca5a..6d033c817 100644
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +4989,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +4992,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -2739,7 +2773,7 @@ index b5e8fca5a..6d033c817 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5027,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5030,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -2752,7 +2786,7 @@ index b5e8fca5a..6d033c817 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5112,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4732,6 +5115,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -2764,7 +2798,7 @@ index b5e8fca5a..6d033c817 100644
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +5618,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +5621,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -2776,7 +2810,7 @@ index b5e8fca5a..6d033c817 100644
  	{
  		return;
  	}
-@@ -5791,21 +6180,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6183,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -2833,7 +2867,7 @@ index b5e8fca5a..6d033c817 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6270,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6273,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -2869,7 +2903,7 @@ index b5e8fca5a..6d033c817 100644
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6307,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6310,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -2880,7 +2914,7 @@ index b5e8fca5a..6d033c817 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5957,12 +6395,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5957,12 +6398,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		HWR_CreateDrawNodes();
  	}
  
@@ -3041,7 +3075,7 @@ index b5e8fca5a..6d033c817 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +6559,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6562,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -3051,7 +3085,7 @@ index b5e8fca5a..6d033c817 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +6583,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +6586,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -3061,7 +3095,7 @@ index b5e8fca5a..6d033c817 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6038,6 +6629,33 @@ void HWR_RenderPlayerView(void)
+@@ -6038,6 +6632,33 @@ void HWR_RenderPlayerView(void)
  
  void HWR_LoadLevel(void)
  {
@@ -3095,7 +3129,7 @@ index b5e8fca5a..6d033c817 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6138,6 +6756,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6759,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -3104,7 +3138,7 @@ index b5e8fca5a..6d033c817 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6877,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6880,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -3114,7 +3148,7 @@ index b5e8fca5a..6d033c817 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6887,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6890,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  

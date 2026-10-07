@@ -61,6 +61,16 @@ def generate(engine, output):
     shader = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", shader)
     render(templates / "wipe.cpp.in", {"WIPE_SHADER": shader}, output / "wipe.cpp")
 
+    hardware = Source(engine / "src/hardware/hw_main.c")
+    bsp = Source(engine / "src/r_bsp.cpp")
+    render(templates / "ripples.cpp.in", {
+        "RIPPLE_PLANE": bsp.function("R_IsRipplePlane"),
+        "USE_SHADER": hardware.function("HWR_UseShader"),
+        "POLYOBJECT_PLANE": hardware.function("HWR_RenderPolyObjectPlane"),
+        "RIPPLE_BLEND": hardware.function("HWR_RippleBlend"),
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+    }, output / "ripples.cpp")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

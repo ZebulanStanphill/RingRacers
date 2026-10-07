@@ -61,6 +61,16 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fades, reverse masks, Encore wiggle, all 32 mask values and 200 base rows, screen
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
+- **Polyobject ripples:** run the production `HWR_RenderPolyObjectPlane`,
+  `HWR_RippleBlend`, shader availability check, and shared `R_IsRipplePlane`
+  against real engine structures. Each UWP/desktop executable checks 1,600
+  combinations of independent floor/ceiling flags, control-sector precedence,
+  surrounding-sector fallback, absent sectors, Reduce VFX, shader availability,
+  opaque/translucent planes, and ordinary-sector/FOF ripple flags. Inspect the
+  submitted shader, blend flags, alpha, and translated polygon geometry; invalid
+  polygons must submit no draw. Replacing either changed renderer function with
+  its pre-feature implementation fails the corresponding behavior assertion in
+  both platform variants.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
@@ -72,7 +82,8 @@ fails instead of silently skipping its test.
 
 These are isolated native checks. The network simulation does not run UDP clients
 or the whole game; the wipe test does not compile HLSL or exercise GPU sampling.
-They do not validate Xbox rendering, frame presentation, deployment, controller
+The ripple harness records submitted polygons without executing a GPU shader.
+These tests do not validate Xbox rendering, frame presentation, deployment, controller
 input, performance, or complete replay/gameplay equivalence. Existing Windows CI
 continues to compile the actual UWP and shader code.
 
