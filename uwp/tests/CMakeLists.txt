@@ -20,6 +20,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${templates} source.py generate.py
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
+    "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d11/r_d3d11.cpp"
     "${RR_SOURCE_DIR}/src/menus/options-1.c"
     "${RR_SOURCE_DIR}/src/d_main.cpp"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
@@ -58,6 +60,7 @@ regression(menu_desktop menu)
 regression(trace_uwp_hw trace _UWP HWRENDER)
 regression(trace_uwp_soft trace _UWP)
 regression(wipe_math wipe)
+regression(split_distortion distortion _UWP HWRENDER)
 add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)

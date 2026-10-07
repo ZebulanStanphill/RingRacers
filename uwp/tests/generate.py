@@ -53,6 +53,13 @@ def generate(engine, output):
         "FRAME_GATING": main.section("\tUWPTraceBeginFrame();", "\n#endif"),
     }, output / "trace.cpp")
 
+    driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
+    hardware = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "distortion.cpp.in", {
+        "VERTEX": driver.function("PostImageVertex"),
+        "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
+    }, output / "distortion.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):
