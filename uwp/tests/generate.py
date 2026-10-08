@@ -199,6 +199,26 @@ def generate(engine, output):
         "RIPPLE_BLEND": hardware.function("HWR_RippleBlend"),
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
     }, output / "ripples.cpp")
+    hardware = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "transparency.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "SLOPE_Z": Source(engine / "src/p_slopes.c").function("P_GetSlopeZAt"),
+        "PAPER_SPRITE": Source(engine / "src/r_things.cpp").function("R_ThingIsPaperSprite"),
+        "FLOOR_SPRITE": Source(engine / "src/r_things.cpp").function("R_ThingIsFloorSprite"),
+        "MOBJ_FLIP": Source(engine / "src/p_mobj.c").function("P_MobjFlip"),
+        "TRANSFORM": hardware.function("transform"),
+        "BILLBOARD": hardware.function("HWR_RotateSpritePolyToAim"),
+        "SPRITE_VERTICES": hardware.function("HWR_SpriteVertices"),
+        "DRAW_NODES": hardware.section("// A drawnode is something", "//\n// HWR_CreateDrawNodes\n"),
+        "ADD_WALL": hardware.function("HWR_AddTransparentWall"),
+        "CREATE_NODES": hardware.function("HWR_CreateDrawNodes"),
+        "BEGIN_SPRITES": hardware.function("HWR_BeginSpriteDraw"),
+        "END_SPRITES": hardware.function("HWR_EndSpriteDraw"),
+        "SPRITE_SHADOW": hardware.function("HWR_DrawSpriteShadow"),
+        "DRAW_SPRITE": hardware.function("HWR_DrawVisSprite"),
+        "DRAW_SPRITES": hardware.function("HWR_DrawSprites"),
+        "LINK_ADD": hardware.function("HWR_LinkDrawHackAdd"),
+    }, output / "transparency.cpp")
 
 
 if __name__ == "__main__":

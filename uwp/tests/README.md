@@ -73,6 +73,21 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   its pre-feature implementation fails the corresponding behavior assertion in
   both platform variants.
 - **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 600,000 UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing, paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user reported improved single-view underwater intensity on Xbox; heat and all two-/three-/four-player visual checks remain untested.
+- **Transparency ordering:** extract the production node builder, object pass,
+  model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
+  and slope helpers. Each UWP/desktop executable checks 180 scenes and cases,
+  including 128 seeded scenes with an independent depth-order and pixel-composite
+  oracle. Cover front/behind objects, mixed alpha flags, model load fallback and
+  player skins, empty/objects-only/faces-only frames, opaque objects, always-on-top,
+  linkdraw display offsets, actual precipitation-sized storage, disjoint bounds,
+  slanted walls, sloped floors, moved polyobject planes, near-plane crossings,
+  pitched billboards, translated viewpoints, and the toggle's Off path. Six integration
+  cases execute the merged dispatcher with adjacent water pieces and inserted
+  sprites/models, checking capture continuation, interruption and end-of-view reset
+  with both toggle settings; desktop builds retain their existing capture behavior. Replacing
+  both production dispatchers with their pre-feature implementations fails the
+  front-object draw-order assertion in both variants. Dependency stubs record
+  draws and blend a shared CPU pixel; they do not render complete game scenes.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
@@ -85,6 +100,8 @@ fails instead of silently skipping its test.
 These are isolated native checks. The network simulation does not run UDP clients
 or the whole game; the wipe test does not compile HLSL or exercise GPU sampling.
 The ripple harness records submitted polygons without executing a GPU shader.
+The transparency tests do not validate GPU depth/stencil, portal clipping, model
+triangle rasterization, or the complete sprite/model drawing implementations.
 These tests do not validate Xbox rendering, frame presentation, deployment, controller
 input, performance, or complete replay/gameplay equivalence. Existing Windows CI
 continues to compile the actual UWP and shader code.

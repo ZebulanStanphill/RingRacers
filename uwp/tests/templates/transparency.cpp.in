@@ -1,0 +1,402 @@
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cfloat>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <set>
+#include <vector>
+#include "doomstat.h"
+#include "p_local.h"
+#include "p_polyobj.h"
+#include "p_slopes.h"
+#include "r_bsp.h"
+#include "r_fps.h"
+#include "r_main.h"
+#include "r_things.h"
+#include "r_textures.h"
+#include "hardware/hw_glob.h"
+#include "hardware/hw_drv.h"
+#include "hardware/hw_md2.h"
+#include "hardware/hw_batching.h"
+#include "z_zone.h"
+#undef min
+#undef max
+using std::min;
+using std::max;
+using std::isfinite;
+
+consvar_t cv_glbettertransparency{}, cv_glmodels{}, cv_shadow{}, cv_glspritebillboarding{}, cv_debugrender_spriteclip{};
+static float gl_viewx, gl_viewy, gl_viewz, gl_viewludsin = 1, gl_viewludcos, gl_fovlud = 1;
+float gl_viewsin, gl_viewcos = 1;
+angle_t viewangle;
+fixed_t viewz, rendertimefrac = FRACUNIT;
+UINT8 paused;
+FTransform atransform{};
+static sector_t *gl_frontsector;
+static UINT32 gl_visspritecount;
+static gl_vissprite_t testSprites[64];
+gl_vissprite_t *gl_vsprorder[MAXVISSPRITES];
+static mobj_t mobjs[64];
+md2_t md2_models[NUMSPRITES]{}, md2_playermodels[MAXSKINS]{};
+precise_t ps_hw_nodesorttime, ps_hw_nodedrawtime;
+INT32 ps_numdrawnodes;
+fixed_t finesine[5*FINEANGLES/4]{};
+fixed_t *finecosine = &finesine[FINEANGLES/4];
+hwdriver_s hwdriver{};
+
+// Platform allocator stubs retain the production allocation sizes. The wrapper
+// only permits C's void-pointer conversions when extracting C into this C++ harness.
+static std::set<void *> allocations;
+struct Allocation {
+    void *pointer;
+    template<class T> operator T *() const { return static_cast<T *>(pointer); }
+};
+static Allocation allocate(size_t size, bool zero, void *user = nullptr) {
+    void *p = zero ? calloc(1, size) : malloc(size);
+    assert(p && size); allocations.insert(p);
+    if (user) memcpy(user, &p, sizeof(p));
+    return {p};
+}
+static Allocation reallocate(void *old, size_t size, void *user) {
+    if (old) { assert(allocations.erase(old) == 1); }
+    void *p = realloc(old, size); assert(p); allocations.insert(p);
+    if (user) memcpy(user, &p, sizeof(p));
+    return {p};
+}
+static void release(void *p) { if (p) { assert(allocations.erase(p) == 1); free(p); } }
+#undef Z_Malloc
+#undef Z_Calloc
+#undef Z_Realloc
+#undef Z_Free
+#define Z_Malloc(s,t,u) allocate(s, false, u)
+#define Z_Calloc(s,t,u) allocate(s, true, u)
+#define Z_Realloc(p,s,t,u) reallocate(p, s, u)
+#define Z_Free(p) release(p)
+void I_Error(const char *, ...) { abort(); }
+precise_t I_GetPreciseTime() { static precise_t clock; return ++clock; }
+boolean R_UsingFrameInterpolation() { return false; }
+void R_InterpolateMobjState(mobj_t *mo, fixed_t, interpmobjstate_t *out) { out->z = mo->z; }
+void R_InterpolatePrecipMobjState(precipmobj_t *mo, fixed_t, interpmobjstate_t *out) { out->z = mo->z; }
+boolean R_NoEncore(sector_t *, levelflat_t *, boolean) { return false; }
+static gl_vissprite_t *HWR_GetVisSprite(UINT32 n) { assert(n < 64); return &testSprites[n]; }
+void HWR_GetLevelFlat(levelflat_t *, boolean) {}
+void *M_Memcpy(void *dest, const void *src, size_t size) { return memcpy(dest, src, size); }
+GLMapTexture_t *HWR_GetTexture(INT32, INT32) { return nullptr; }
+static UINT32 linkdrawcount;
+static struct { FOutVector verts[4]; gl_vissprite_t *spr; } linkdrawlist[MAXVISSPRITES];
+static int hackFinishes, modelLighting, modelsDrawn, modelAttempts, shadowDraws;
+static bool modelSucceeds = true;
+static void HWR_LinkDrawHackFinish() { ++hackFinishes; linkdrawcount = 0; }
+static std::vector<int> waterStates;
+static int waterState;
+static void State(hwdspecialstate_t state, INT32 value) {
+    if (state == HWD_SET_MODEL_LIGHTING) modelLighting = value;
+    if (state == HWD_SET_WATER_SURFACE) { waterStates.push_back(value); waterState=value; }
+}
+static void Blend(FBITFIELD) {}
+static void Transform(FTransform *) {}
+static void Shader(INT32) {}
+struct Pixel { float r{}, g{}, b{}; };
+static Pixel pixel;
+static std::vector<int> draws;
+static std::vector<Pixel> colors;
+static void composite(Pixel &dst, Pixel src, float alpha) {
+    dst = {src.r*alpha+dst.r*(1-alpha), src.g*alpha+dst.g*(1-alpha), src.b*alpha+dst.b*(1-alpha)};
+}
+static void capture(gl_vissprite_t *spr) {
+    assert(waterState==0); // Objects cannot continue an earlier water snapshot.
+    int id = int(spr - testSprites);
+    draws.push_back(id);
+    composite(pixel, colors[id], 0.5f);
+}
+static void HWR_DrawSprite(gl_vissprite_t *spr) { capture(spr); }
+static void HWR_DrawBoundingBox(gl_vissprite_t *spr) { draws.push_back(int(spr-testSprites)); }
+static void HWR_DrawPrecipitationSprite(gl_vissprite_t *spr) { capture(spr); }
+static void HWR_DrawDropShadow(mobj_t *, fixed_t) { ++shadowDraws; }
+boolean HWR_DrawModel(gl_vissprite_t *spr) {
+    assert(modelLighting); ++modelAttempts;
+    if (modelSucceeds) { ++modelsDrawn; capture(spr); }
+    return modelSucceeds;
+}
+
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SLOPE_Z@@
+@@PAPER_SPRITE@@
+@@FLOOR_SPRITE@@
+@@MOBJ_FLIP@@
+@@TRANSFORM@@
+@@BILLBOARD@@
+@@SPRITE_VERTICES@@
+@@LINK_ADD@@
+#define ABS(x) ((x) < 0 ? -(x) : (x))
+@@DRAW_NODES@@
+@@ADD_WALL@@
+static void HWR_RenderPlane(subsector_t *, extrasubsector_t *, boolean, fixed_t,
+    FBITFIELD, INT32 light, levelflat_t *, sector_t *, UINT8, extracolormap_t *) { draws.push_back(-light); }
+static void HWR_RenderPolyObjectPlane(polyobj_t *, boolean, fixed_t, FBITFIELD,
+    UINT8 light, levelflat_t *, sector_t *, UINT8, extracolormap_t *) { draws.push_back(-light); }
+void HWR_RenderWall(FOutVector *, FSurfaceInfo *surf, FBITFIELD, boolean, INT32 light, extracolormap_t *) {
+    draws.push_back(-light);
+    composite(pixel, {surf->PolyColor.s.red/255.f, surf->PolyColor.s.green/255.f, surf->PolyColor.s.blue/255.f}, 0.5f);
+}
+@@CREATE_NODES@@
+@@BEGIN_SPRITES@@
+@@END_SPRITES@@
+@@SPRITE_SHADOW@@
+@@DRAW_SPRITE@@
+@@DRAW_SPRITES@@
+
+static void reset() {
+    assert(!allocations.size());
+    memset(testSprites, 0, sizeof testSprites); memset(mobjs, 0, sizeof mobjs);
+    memset(md2_models, 0, sizeof md2_models); memset(md2_playermodels, 0, sizeof md2_playermodels);
+    gl_visspritecount = 0; gl_frontsector = nullptr;
+    wallinfo = nullptr; planeinfo = nullptr; polyplaneinfo = nullptr;
+    numwalls = numplanes = numpolyplanes = 0;
+    sortnode = nullptr; sortindex = nullptr;
+    cv_glbettertransparency.value = 1; cv_glmodels.value = 0;
+    cv_glspritebillboarding.value = cv_shadow.value = cv_debugrender_spriteclip.value = 0;
+    modelSucceeds = true; hackFinishes = modelsDrawn = modelAttempts = shadowDraws = 0;
+    gl_viewx = gl_viewy = gl_viewz = 0; viewz = 0;
+    gl_viewludsin = gl_viewcos = gl_fovlud = 1; gl_viewludcos = gl_viewsin = 0;
+    draws.clear(); colors.clear(); pixel = {0,0,1}; linkdrawcount = 0;
+    waterStates.clear(); waterState=0;
+}
+static void sprite(float depth, UINT32 frame = FF_TRANS50, float lateral = 0) {
+    auto i = gl_visspritecount++;
+    mobjs[i].sprite = SPR_RING; mobjs[i].frame = frame;
+    mobjs[i].x = FLOAT_TO_FIXED(depth); mobjs[i].z = 0;
+    auto &spr = testSprites[i]; spr.mobj = &mobjs[i]; spr.tz = depth;
+    spr.x1 = spr.x2 = depth; spr.z1 = lateral-2; spr.z2 = lateral+2;
+    spr.gz = -2; spr.gzt = 2;
+    gl_vsprorder[i] = &spr; colors.push_back({1,0,0});
+}
+static void wall(float depth, int id = 1, float lateral = 0) {
+    FOutVector v[4] = {{depth,-4,lateral-4,0,0},{depth,-4,lateral+4,0,0},
+                      {depth,4,lateral+4,0,0},{depth,4,lateral-4,0,0}};
+    FSurfaceInfo surf{}; surf.PolyColor.s.green = 255;
+    HWR_AddTransparentWall(v, &surf, PF_NoTexture, PF_NoTexture, PF_Translucent|PF_NoTexture, false, id, nullptr);
+}
+static void finish() {
+    HWR_DrawSprites(); HWR_CreateDrawNodes();
+    assert(modelLighting == 0 && linkdrawcount == 0);
+    assert(numwalls == 0 && numplanes == 0 && numpolyplanes == 0);
+    release(wallinfo); release(planeinfo); release(polyplaneinfo);
+    assert(allocations.empty());
+}
+static void order(std::initializer_list<int> ids) { assert(draws == std::vector<int>(ids)); }
+static void samePixel(Pixel expected) {
+    assert(fabsf(pixel.r-expected.r)<0.000001f);
+    assert(fabsf(pixel.g-expected.g)<0.000001f);
+    assert(fabsf(pixel.b-expected.b)<0.000001f);
+}
+static hwr_transbounds_t bounds(const std::vector<FOutVector> &v) {
+    hwr_transbounds_t result; HWR_TransparencyBoundsInit(&result);
+    for (auto &point : v) HWR_TransparencyBoundsVertex(&result, &point);
+    HWR_TransparencyBoundsFinish(&result); return result;
+}
+int main() {
+    HWD.pfnSetSpecialState = State; HWD.pfnSetBlend = Blend;
+    HWD.pfnSetTransform = Transform; HWD.pfnSetShader = Shader;
+    unsigned cases = 0;
+    // Front sprite must blend over the glass/water/fog, not be overwritten by it.
+    // Keep this first: replacing the two production dispatchers by the old code
+    // reproduces the wrong pixel without depending on new helper source spelling.
+    reset(); sprite(32); wall(64); finish(); order({-1,0});
+    samePixel({0.5f,0.25f,0.25f}); ++cases;
+    reset(); sprite(96); wall(64); finish(); order({0,-1});
+    samePixel({0.25f,0.5f,0.25f}); ++cases;
+    // Toggle Off retains the previous path, including its near-object overlap.
+    reset(); cv_glbettertransparency.value=0; sprite(32); wall(64); finish(); order({0,-1});
+    samePixel({0.25f,0.5f,0.25f}); ++cases;
+    // Far to near across three faces. Alpha amount must not determine priority.
+    reset(); sprite(16, FF_TRANS10); sprite(160, FF_TRANS90); sprite(80); sprite(112);
+    wall(32,1); wall(64,2); wall(128,3); finish(); order({1,-3,3,2,-2,-1,0}); ++cases;
+    // Models use exactly the same position in the list; failed loads fall back once.
+    for (int enabled : {0,1}) for (bool success : {false,true}) {
+        reset(); cv_glmodels.value=enabled; modelSucceeds=success;
+        sprite(32); sprite(96); wall(64); finish(); order({1,-1,0});
+        assert(modelAttempts == (enabled ? 2 : 0));
+        assert(modelsDrawn == (enabled && success ? 2 : 0)); ++cases;
+    }
+    // Empty frames, only objects, and only faces have no count underflow or stale nodes.
+    reset(); finish(); order({}); ++cases;
+    reset(); sprite(32); sprite(96); finish(); order({1,0}); ++cases;
+    reset(); wall(32,1); wall(96,2); finish(); order({-2,-1}); ++cases;
+    reset(); sprite(32,0); sprite(96); wall(64); finish(); order({0,1,-1}); ++cases;
+    // An on-top object is last even if it is farther away or nominally opaque.
+    reset(); sprite(96,0); mobjs[0].renderflags=RF_ALWAYSONTOP; sprite(32); wall(64);
+    finish(); order({-1,1,0}); ++cases;
+    // The linkdraw workaround must not insert opaque depth masks into the sorted pass.
+    for (int enabled : {0,1}) {
+        reset(); cv_glbettertransparency.value=enabled;
+        sprite(32,0); mobjs[0].flags2=MF2_LINKDRAW; mobjs[0].tracer=&mobjs[1];
+        assert(HWR_SpriteNeedsSorting(&testSprites[0]));
+        FOutVector v[4]{}; HWR_LinkDrawHackAdd(v,&testSprites[0]);
+        assert(linkdrawcount == (enabled ? 0u : 1u));
+        finish(); order({0}); ++cases;
+    }
+    // Deterministic equal-depth priority and parent-anchored linkdraw ordering.
+    reset(); sprite(64); sprite(64); sprite(64); sprite(64);
+    testSprites[1].dispoffset=-1; testSprites[3].dispoffset=1;
+    mobjs[2].flags2=MF2_LINKDRAW; mobjs[2].tracer=&mobjs[0]; testSprites[2].tracertz=64;
+    testSprites[2].tz=1000; finish(); order({1,0,2,3}); ++cases;
+    // Genuine precipitation-sized storage catches accidental ordinary-mobj reads.
+    reset(); precipmobj_t rain{}; rain.frame=FF_TRANS50; sprite(96);
+    testSprites[0].mobj=reinterpret_cast<mobj_t *>(&rain); testSprites[0].precip=true;
+    wall(64); finish(); order({0,-1}); ++cases;
+    // No surface overlap: retain ordinary object depth ordering.
+    reset(); sprite(32); sprite(96); wall(64,1,1000); finish(); order({-1,1,0}); ++cases;
+    // A slanted wall's centroid is far away, but its near edge is in front of the
+    // object. Plane-side ordering must win over the misleading average depth.
+    reset(); auto slanted=bounds({{16,-4,-4,0,0},{200,-4,100,0,0},{200,4,100,0,0},{16,4,-4,0,0}});
+    auto behind=bounds({{32,-2,-2,0,0},{32,-2,2,0,0},{32,2,2,0,0},{32,2,-2,0,0}});
+    auto ahead=bounds({{8,-2,-2,0,0},{8,-2,2,0,0},{8,2,2,0,0},{8,2,-2,0,0}});
+    assert(HWR_TransparencyBehindSurface(&behind,&slanted));
+    assert(!HWR_TransparencyBehindSurface(&ahead,&slanted)); ++cases;
+    // Real plane metadata, including the current control-sector slope and moved
+    // polyobject vertices. Do not substitute average depth for a sloped plane.
+    struct PlaneStorage { INT32 numpts; polyvertex_t points[4]; } storage{
+        4, {{16,-4,0},{64,-4,0},{64,4,0},{16,4,0}}};
+    extrasubsector_t sub{reinterpret_cast<poly_t *>(&storage)};
+    sector_t sector{}; pslope_t slope{};
+    slope.o.z=-8*FRACUNIT; slope.d.x=FRACUNIT; slope.zdelta=FRACUNIT/4;
+    sector.f_slope=&slope;
+    planeinfo_t plane{}; plane.xsub=&sub; plane.FOFSector=&sector;
+    plane.fixedheight=-8*FRACUNIT;
+    gl_drawnode_t node{}; node.plane=&plane;
+    hwr_transbounds_t actual; HWR_TransparencySurfaceBounds(&node,&actual);
+    assert(actual.hasPlane && actual.vertices==4);
+    for (const auto &v : storage.points) {
+        float height=-8+v.x/4;
+        assert(fabsf(actual.plane[0]*v.x+actual.plane[1]*height+actual.plane[2]*v.y+actual.plane[3])<0.00001f);
+    }
+    auto belowSlope=bounds({{32,-3,-2,0,0},{32,-3,2,0,0},{32,-1,2,0,0},{32,-1,-2,0,0}});
+    assert(HWR_TransparencyBehindSurface(&belowSlope,&actual));
+    plane.isceiling=true; HWR_TransparencySurfaceBounds(&node,&actual);
+    assert(actual.center[1]==-8); ++cases;
+    vertex_t moved[4]{}; vertex_t *pointers[4]; polyobj_t poly{};
+    for (int i=0;i<4;++i) {
+        moved[i].x=FLOAT_TO_FIXED(storage.points[i].x+32);
+        moved[i].y=FLOAT_TO_FIXED(storage.points[i].y); pointers[i]=&moved[i];
+    }
+    poly.vertices=pointers; poly.numVertices=4;
+    polyplaneinfo_t polyplane{}; polyplane.polysector=&poly; polyplane.fixedheight=-8*FRACUNIT;
+    node={}; node.polyplane=&polyplane; HWR_TransparencySurfaceBounds(&node,&actual);
+    assert(actual.vertices==4 && actual.center[0]==72 && actual.center[1]==-8); ++cases;
+    // Plane and polyobject nodes use the same dispatcher as walls.
+    for (bool moving : {false,true}) {
+        reset(); sprite(64); testSprites[0].gz=-20; testSprites[0].gzt=-8;
+        if (moving) HWR_AddTransparentPolyobjectFloor(nullptr,&poly,false,-8*FRACUNIT,7,128,nullptr,PF_NoTexture,nullptr);
+        else HWR_AddTransparentFloor(nullptr,&sub,false,-8*FRACUNIT,7,128,nullptr,PF_NoTexture,false,nullptr);
+        // Native level submission stores 255 for non-fog lighting, independently
+        // of the caller's light value; this is the observed renderer contract.
+        finish(); order({0,-255}); ++cases;
+    }
+    // Near-plane crossing gets conservative bounds; missing/degenerate geometry
+    // cannot produce a bogus plane equation or read absent vertices.
+    auto crossing=bounds({{0,-4,-4,0,0},{64,-4,4,0,0},{64,4,4,0,0},{0,4,-4,0,0}});
+    assert(crossing.nearClip && crossing.left == -FLT_MAX && crossing.right == FLT_MAX);
+    auto empty=bounds({}); assert(!HWR_TransparencyBehindSurface(&behind,&empty));
+    auto line=bounds({{64,0,0,0,0},{64,0,0,0,0},{64,0,0,0,0}}); assert(!line.hasPlane); ++cases;
+    // Billboarding must use the actual vertex positions, including pitched views
+    // and precipitation's shorter struct (which has no mobj gravity fields).
+    for (int pitch : {-1,1}) {
+        reset(); sprite(96); cv_glspritebillboarding.value=1;
+        gl_viewludcos=pitch*0.6f; gl_viewludsin=0.8f;
+        FOutVector v[4]{}; HWR_SpriteVertices(&testSprites[0],v);
+        assert(v[0].y==-1.6f && v[2].y==1.6f);
+        assert(fabsf(v[0].x-(96-pitch*1.2f))<0.00001f);
+        precipmobj_t precipitation{}; precipitation.frame=FF_TRANS50;
+        testSprites[0].mobj=reinterpret_cast<mobj_t *>(&precipitation); testSprites[0].precip=true;
+        wall(64); finish(); order({0,-1}); ++cases;
+    }
+    // Pitched billboards at equal yaw depth lie on different camera-depth planes.
+    // They overlap on screen, and must not retain their original insertion order.
+    reset(); cv_glspritebillboarding.value=1; gl_viewludcos=0.6f; gl_viewludsin=0.8f;
+    sprite(64); sprite(64);
+    mobjs[0].z=12*FRACUNIT; testSprites[0].gz=-8; testSprites[0].gzt=32;
+    mobjs[1].z=-12*FRACUNIT; testSprites[1].gz=-32; testSprites[1].gzt=8;
+    finish(); order({1,0}); ++cases;
+    // A linked piece shares its visible parent's camera-depth priority even if
+    // its own vertical origin would put it behind the unrelated far billboard.
+    reset(); cv_glspritebillboarding.value=1; gl_viewludcos=0.6f; gl_viewludsin=0.8f;
+    sprite(64); sprite(64); sprite(64);
+    mobjs[0].z=12*FRACUNIT; testSprites[0].gz=-8; testSprites[0].gzt=32;
+    mobjs[1].z=-12*FRACUNIT; testSprites[1].gz=-32; testSprites[1].gzt=8;
+    mobjs[2].z=-24*FRACUNIT; testSprites[2].gz=-44; testSprites[2].gzt=-4;
+    mobjs[2].flags2=MF2_LINKDRAW; mobjs[2].tracer=&mobjs[0]; testSprites[2].dispoffset=-1;
+    finish(); order({1,2,0}); ++cases;
+    for (UINT32 flag : {UINT32(FF_ADD),UINT32(FF_SUBTRACT),UINT32(FF_REVERSESUBTRACT),UINT32(FF_MODULATE)}) {
+        reset(); sprite(32,flag); wall(64); finish(); order({-1,0}); ++cases;
+    }
+    // Player models use their skin's entry, and still fall back when it is missing.
+    for (bool missing : {false,true}) {
+        reset(); sprite(32); skin_t skin{}; skin.skinnum=3;
+        mobjs[0].sprite=SPR_PLAY; mobjs[0].skin=&skin; cv_glmodels.value=1;
+        md2_playermodels[3].notfound=missing; wall(64); finish(); order({-1,0});
+        assert(modelAttempts==(missing ? 0 : 1)); ++cases;
+    }
+    // Repeat with translated cameras, like separate split-screen/portal views.
+    for (int camera : {-100,0,100}) for (int depth : {16,32,96,128}) {
+        reset(); gl_viewx=float(camera); sprite(float(camera+depth)); wall(float(camera+64));
+        finish(); if (depth<64) order({-1,0}); else order({0,-1}); ++cases;
+    }
+    // Seeded shared-pixel scenes have an independent exact depth-order oracle.
+    // This checks the whole merge, not merely a comparator's return value.
+    UINT32 seed=0x7a2401;
+    for (int scene=0;scene<128;++scene) {
+        reset();
+        struct Event { int id; int depth; Pixel color; };
+        std::vector<Event> expected;
+        for (int depth : {32,64,128}) {
+            int id=depth/32; wall(float(depth),id); expected.push_back({-id,depth,{0,1,0}});
+        }
+        int count=4+(scene%21);
+        for (int i=0;i<count;++i) {
+            seed=seed*1664525u+1013904223u;
+            int depth=8+int(seed%180);
+            if (depth==32 || depth==64 || depth==128) ++depth;
+            sprite(float(depth));
+            colors[i]={float(seed&15)/15,float((seed>>4)&15)/15,float((seed>>8)&15)/15};
+            expected.push_back({i,depth,colors[i]});
+        }
+        std::stable_sort(expected.begin(),expected.end(),[](const Event &a,const Event &b){ return a.depth>b.depth; });
+        Pixel oracle{0,0,1}; std::vector<int> ids;
+        for (auto &event : expected) { ids.push_back(event.id); composite(oracle,event.color,0.5f); }
+        finish(); assert(draws==ids); samePixel(oracle); ++cases;
+    }
+    // Exercise the merged production dispatcher: neighboring water pieces share
+    // a capture, but an inserted sprite/model must end it before the next piece.
+    for (int enabled : {0,1}) for (int object : {0,1,2}) {
+        reset(); cv_glbettertransparency.value=enabled; gl_viewz=8;
+        cv_glmodels.value=object==2;
+        PlaneStorage nearWater{4,{{16,-4,0},{48,-4,0},{48,4,0},{16,4,0}}};
+        PlaneStorage farWater{4,{{80,-4,0},{112,-4,0},{112,4,0},{80,4,0}}};
+        extrasubsector_t nearSub{reinterpret_cast<poly_t *>(&nearWater)};
+        extrasubsector_t farSub{reinterpret_cast<poly_t *>(&farWater)};
+        sector_t waterSector{};
+        const FBITFIELD flags=PF_NoTexture|PF_Translucent|PF_Ripple;
+        HWR_AddTransparentFloor(nullptr,&nearSub,false,0,255,128,&waterSector,flags,false,nullptr);
+        HWR_AddTransparentFloor(nullptr,&farSub,false,0,255,128,&waterSector,flags,false,nullptr);
+        if(object) { sprite(64); testSprites[0].gz=-4; testSprites[0].gzt=4; }
+        finish();
+        if(enabled && object) order({-255,0,-255});
+        else if(object) order({0,-255,-255});
+        else order({-255,-255});
+#ifdef _UWP
+        if(enabled && object) assert((waterStates==std::vector<int>{1,0,1,0}));
+        else assert((waterStates==std::vector<int>{1,2,0}));
+        assert(waterState==0);
+#else
+        assert(waterStates.empty());
+#endif
+        ++cases;
+    }
+    printf("%u shared draw-order, compositing, model, attachment and bounds cases passed\n", cases);
+}

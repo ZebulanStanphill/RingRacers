@@ -31,6 +31,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/p_slopes.c"
     "${RR_SOURCE_DIR}/src/taglist.c"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
+    "${RR_SOURCE_DIR}/src/r_things.cpp"
+    "${RR_SOURCE_DIR}/src/p_mobj.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate.py"
@@ -78,6 +80,10 @@ regression(water_visibility water_visibility HWRENDER)
 regression(water_blend_state blend _UWP)
 regression(sky_offsets sky)
 regression(horizon_visibility horizon HWRENDER)
+regression(transparency_uwp transparency _UWP HWRENDER HWPRECIP)
+regression(transparency_desktop transparency HWRENDER HWPRECIP)
+target_compile_options(transparency_uwp PRIVATE -Wno-missing-field-initializers)
+target_compile_options(transparency_desktop PRIVATE -Wno-missing-field-initializers)
 add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)
