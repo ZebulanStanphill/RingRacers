@@ -62,6 +62,11 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "sky_trace.cpp.in", {
+        "TRACE": hardware.function("HWR_TraceSkyGeometry"),
+        "PLANE_DISPATCH": hardware.section("\tif (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, \"~015\"))", "\n#endif"),
+        "WALL_DISPATCH": hardware.section("\tif (gl_curline && !gl_curline->polyseg)", "\n#endif"),
+    }, output / "sky_trace.cpp")
     render(templates / "distortion.cpp.in", {
         "VERTEX": driver.function("PostImageVertex"),
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
