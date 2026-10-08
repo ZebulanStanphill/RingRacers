@@ -1,4 +1,4 @@
-From a49f4b924490af92d06caf01d8325d37aa685071 Mon Sep 17 00:00:00 2001
+From 5640997a8480e5743bf700c768ee02f10075d4a0 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -280,6 +280,9 @@ RingRacers-dev, rebased onto v2.4.
   Retain its On default and session-only reset on launch, and align the
   advanced-menu item indices with the conditional UWP entry.
 
+- Remove the blank Advanced Video menu rows before Texture Quality and
+  Sprite Billboarding, and keep the hardware option indices aligned.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -319,14 +322,14 @@ Model: gpt-6.1-sol
  src/hwr2/resource_management.hpp   |   31 +-
  src/i_system.h                     |   66 +
  src/i_video_common.cpp             |   60 +-
- src/k_menu.h                       |   10 +
+ src/k_menu.h                       |   12 +-
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
  src/menus/options-1.c              |   34 +
- src/menus/options-video-advanced.c |   40 +
+ src/menus/options-video-advanced.c |   44 +-
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
@@ -362,7 +365,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 12137 insertions(+), 710 deletions(-)
+ 77 files changed, 12136 insertions(+), 717 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -11876,10 +11879,10 @@ index f52f9298e..ff724f09e 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb..9358f15d3 100644
+index d52750abb..c2d4447ef 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
-@@ -420,11 +420,21 @@ typedef enum
+@@ -420,15 +420,23 @@ typedef enum
  	vaopt_spacer7,
  	vaopt_spacer8,
  	vaopt_spacer9,
@@ -11893,14 +11896,18 @@ index d52750abb..9358f15d3 100644
  	vaopt_spacer10 = vaopt_legacygl_begin,
  	vaopt_3dmodels,
  	vaopt_shaders,
+-	vaopt_spacer11,
 +	vaopt_paletterendering, // [UWP]
 +	vaopt_bettertransparency,
 +#ifdef _UWP
 +	vaopt_batching,
 +#endif
- 	vaopt_spacer11,
  	vaopt_texturequal,
  	vaopt_anisotropic,
+-	vaopt_spacer12,
+ 	vaopt_billboarding,
+ 	vaopt_perspective,
+ 	vaopt_legacygl_end,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
 index 812c7f80e..56eba74cb 100644
 --- a/src/k_menufunc.c
@@ -12457,7 +12464,7 @@ index 41bc817aa..ccb395820 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..94c3ae59d 100644
+index c2e40ae04..700ae9665 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -12520,10 +12527,12 @@ index c2e40ae04..94c3ae59d 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
-@@ -74,6 +103,17 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -74,8 +103,16 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
  		NULL, {.cvar = &cv_glshaders}, 0, 0},
  
+-	{IT_SPACE | IT_NOTHING, NULL,  NULL,
+-		NULL, {NULL}, 0, 0},
 +	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
 +		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
 +
@@ -12534,9 +12543,18 @@ index c2e40ae04..94c3ae59d 100644
 +	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
 +		NULL, {.cvar = &cv_glbatching}, 0, 0},
 +#endif
-+
- 	{IT_SPACE | IT_NOTHING, NULL,  NULL,
- 		NULL, {NULL}, 0, 0},
+ 
+ 	{IT_STRING | IT_CVAR, "Texture Quality", "Texture depth. Higher values are recommended.",
+ 		NULL, {.cvar = &cv_scr_depth}, 0, 0},
+@@ -88,9 +125,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+ 	{IT_STRING | IT_CVAR, "Anisotropic", "Lower values will improve performance at a minor quality loss.",
+ 		NULL, {.cvar = &cv_glanisotropicmode}, 0, 0},
+ 
+-	{IT_SPACE | IT_NOTHING, NULL,  NULL,
+-		NULL, {NULL}, 0, 0},
+-
+ 	{IT_STRING | IT_CVAR, "Sprite Billboarding", "Adjusts sprites when viewed from above or below to not make them appear flat.",
+ 		NULL, {.cvar = &cv_glspritebillboarding}, 0, 0},
  
 diff --git a/src/p_lights.c b/src/p_lights.c
 index fe167838a..7d2074376 100644

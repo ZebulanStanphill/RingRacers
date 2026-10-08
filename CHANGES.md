@@ -39,6 +39,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
 
 ## Graphics
 
+- **Hardware video options spacing**. Remove the blank menu rows before **Texture Quality** and **Sprite Billboarding**, keeping the VibeRant D3D11 options more compact. The corresponding menu indices stay aligned. Applies to every patched hardware-renderer platform.
 - **OpenGL ES through ANGLE.** The game renders with OpenGL ES 2 on ANGLE, which runs on Direct3D 11, instead of desktop OpenGL. Mesa's Direct3D 12 driver, which worleydl's port used, needs shader model 6, which Xbox One consoles don't offer to UWP games. To support this, the GL2 RHI backend:
   - creates OpenGL ES 2 contexts
   - compiles shaders as GLSL ES 1.00
