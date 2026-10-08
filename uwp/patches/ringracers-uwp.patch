@@ -1,4 +1,4 @@
-From ebf2fa6b9ae5a616a0424fa790f87f18c7755d3b Mon Sep 17 00:00:00 2001
+From 954c7c3d9f1677bfca470b7bb7d09ded6c6bd4d0 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -3857,7 +3857,7 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..876fc010b
+index 000000000..8e95d382e
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
 @@ -0,0 +1,5769 @@
@@ -3911,8 +3911,8 @@ index 000000000..876fc010b
 +#ifdef _UWP
 +#include "../../sdl/i_uwptrace.h"
 +#include "../../v_video.h"
-+#include "../../doomstat.h"
-+#include "../../r_main.h"
++#include "../../p_tick.h"
++#include "../../r_fps.h"
 +#include "../../d_netcmd.h"
 +#include "../../tables.h"
 +#endif
