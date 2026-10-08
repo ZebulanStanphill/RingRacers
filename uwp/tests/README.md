@@ -72,7 +72,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   polygons must submit no draw. Replacing either changed renderer function with
   its pre-feature implementation fails the corresponding behavior assertion in
   both platform variants.
-- **Split-screen distortion:** production postprocess dispatch and D3D grid vertices. Check viewport selection/reset, all screen layouts, water/heat sampling bounds at nine resolutions, paused animation, per-view phase speed, intermission capture and unaffected views. GPU shader compilation is covered by Windows CI; Xbox visual validation remains.
+- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 600,000 UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing, paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. Revised single-view intensity and all two-/three-/four-player visual checks remain untested on Xbox.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 

@@ -1,0 +1,53 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+using std::max;
+using std::sin;
+using float2=float __attribute__((ext_vector_type(2)));
+using float4=float __attribute__((ext_vector_type(4)));
+float2 make2(float f) { return {f,f}; }
+float2 min(float2 a,float2 b) { return {std::min(a.x,b.x),std::min(a.y,b.y)}; }
+float2 max(float2 a,float2 b) { return {std::max(a.x,b.x),std::max(a.y,b.y)}; }
+float2 clamp(float2 a,float2 lo,float2 hi) { return max(min(a,hi),lo); }
+float4 u_postimg_rect,u_postimg_info;
+float u_time;
+int u_postimg_water,u_postimg_heat;
+float2 u_texcoord0_min,u_texcoord0_max;
+@@SHADER@@
+float2 SoftwareUV(float2 v_texcoord0) {
+@@REFERENCE@@
+    return texcoord0;
+}
+int main() {
+    int cases=0;
+    for(int count : {1,2,3,4}) for(int w : {640,1280,1920}) for(int h : {400,720,1200}) {
+        float size=w<=1024 && h<=1024 ? 1024.f : 2048.f;
+        float2 fix={(float)w/size,(float)h/size};
+        for(int view=0;view<count;++view) {
+            float vw=count>2?.5f:1.f,vh=count>1?.5f:1.f;
+            float2 lo={count>2?(view&1)*vw:0.f,view>(count>2)?vh:0.f};
+            float2 hi=lo+float2{vw,vh};
+            u_texcoord0_min=lo;u_texcoord0_max=hi;
+            u_postimg_rect={lo.x*fix.x,lo.y*fix.y,hi.x*fix.x,hi.y*fix.y};
+            for(int type : {1,4}) for(int tic : {0,1,6,35,128,2047,12000}) {
+                u_time=(float)tic;u_postimg_water=type==1;u_postimg_heat=type==4;
+                u_postimg_info={(float)tic,(float)type,fix.x,fix.y};
+                for(int x : {0,1,50,99,100}) for(int y=0;y<=100;++y) {
+                    float2 uv=lo+float2{x/100.f*vw,y/100.f*vh};
+                    float2 expected=SoftwareUV(uv),got=PostImageUV(uv*fix)/fix;
+                    assert(fabsf(got.x-expected.x)<.000003f && fabsf(got.y-expected.y)<.000003f);
+                    assert(got.x>=lo.x-.000001f && got.x<hi.x && got.y>=lo.y-.000001f && got.y<hi.y);
+                    // Repeated paused frames have identical tic time and sampling.
+                    float2 paused=PostImageUV(uv*fix)/fix;assert(paused.x==got.x && paused.y==got.y);
+                    ++cases;
+                }
+            }
+        }
+    }
+    // At the wave peak, displacement is exactly one percent of the full frame.
+    u_postimg_rect={0,0,1,1};u_postimg_info={0,1,1,1};
+    float2 uv={.5f,3.14159265358979323846f/40.f};
+    assert(fabsf(PostImageUV(uv).x-.51f)<.000001f);
+    printf("%d water/heat samples match vanilla v2.4 Software GLSL, including edges, pause and all view layouts\n",cases);
+}

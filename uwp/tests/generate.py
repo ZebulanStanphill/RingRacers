@@ -67,6 +67,14 @@ def generate(engine, output):
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
     }, output / "distortion.cpp")
 
+    postimg = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PostImageUV")
+    postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
+    reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(
+        "\tvec2 texcoord0 = v_texcoord0;", "\n#ifdef ENABLE_S_SAMPLER1")
+    reference = reference.replace("vec2(", "make2(").replace("vec2 ", "float2 ")
+    reference = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", reference)
+    render(templates / "postimg.cpp.in", {"SHADER": postimg, "REFERENCE": reference}, output / "postimg.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):

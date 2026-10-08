@@ -1,4 +1,4 @@
-From 32277b9de54158f88306fbe356c4265e50a74eec Mon Sep 17 00:00:00 2001
+From 7ff8a5bff28ab814a8609cf2e41d0782767e7032 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -219,6 +219,9 @@ RingRacers-dev, rebased onto v2.4.
   sample its saved-screen rectangle with an independent animation phase,
   and restore the renderer state after the clip-space redraw.
 
+- Match Software's per-pixel underwater/heat sampling and tic timing in D3D11;
+  clamp each view to its capture and replace the legacy grid with one quad.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -245,13 +248,13 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  692 +++-
+ src/hardware/hw_main.c             |  699 +++-
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5637 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5622 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   59 +
- src/hardware/r_d3d11/shaders.hlsl  |  488 +++
+ src/hardware/r_d3d11/shaders.hlsl  |  514 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
  src/hwr2/resource_management.cpp   |  105 +-
@@ -300,7 +303,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11198 insertions(+), 570 deletions(-)
+ 76 files changed, 11216 insertions(+), 570 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1384,7 +1387,7 @@ index ce69d80c0..9db72cf64 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..751a0e121 100644
+index a0a0f280c..703f534f3 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1406,7 +1409,7 @@ index a0a0f280c..751a0e121 100644
 +	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
 +
 +	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
-+		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap)
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
 +		string(SUBSTRING "${entry}" 0 2 stage)
 +		string(TOLOWER "${stage}" stage)
 +		set(header "${d3d11_shader_dir}/${entry}.h")
@@ -2340,7 +2343,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..773517ed6 100644
+index b5e8fca5a..2f435f235 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -3305,7 +3308,7 @@ index b5e8fca5a..773517ed6 100644
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +6911,19 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +6911,20 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
@@ -3321,13 +3324,14 @@ index b5e8fca5a..773517ed6 100644
  		// 10 by 10 grid. 2 coordinates (xy)
  		float v[SCREENVERTS][SCREENVERTS][2];
 -		static double disStart = 0;
++#ifndef _UWP
 +		// Each view advances independently; drawing four views must not quadruple speed.
 +		static double disStart[MAXSPLITSCREENPLAYERS] = {0};
 +		const INT32 view = R_GetViewNumber();
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +6949,20 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +6950,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.
@@ -3336,6 +3340,10 @@ index b5e8fca5a..773517ed6 100644
  				v[x][y][1] = (y/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f;
  			}
  		}
++#else
++		// D3D samples in its pixel shader; the driver ignores the legacy grid.
++		memset(v, 0, sizeof v);
++#endif
 +#ifdef _UWP
 +		HWD.pfnGClipRect((INT32)gl_viewwindowx, (INT32)gl_viewwindowy,
 +			(INT32)(gl_viewwindowx + gl_viewwidth), (INT32)(gl_viewwindowy + gl_viewheight), NZCLIP_PLANE);
@@ -3344,9 +3352,11 @@ index b5e8fca5a..773517ed6 100644
 +#ifdef _UWP
 +		HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 +#endif
++#ifndef _UWP
  		if (!(paused || P_AutoPause()))
 -			disStart += FIXED_TO_FLOAT(renderdeltatics);
 +			disStart[view] += FIXED_TO_FLOAT(renderdeltatics);
++#endif
  
  		// Capture the screen again for screen waving on the intermission
  		if(gamestate != GS_INTERMISSION)
@@ -3843,10 +3853,10 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..386fbce5c
+index 000000000..6f38e61eb
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5637 @@
+@@ -0,0 +1,5622 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -3897,6 +3907,8 @@ index 000000000..386fbce5c
 +#ifdef _UWP
 +#include "../../sdl/i_uwptrace.h"
 +#include "../../v_video.h"
++#include "../../doomstat.h"
++#include "../../r_main.h"
 +#endif
 +#include "../../f_finale.h"
 +#include "../../i_system.h"
@@ -3926,6 +3938,7 @@ index 000000000..386fbce5c
 +#include "VSFullscreen.h"
 +#include "VSPostImage.h"
 +#include "PSFixed.h"
++#include "PSPostImage.h"
 +#include "PSDefault.h"
 +#include "PSSoftware.h"
 +#include "PSSoftwareModelLight.h"
@@ -4449,7 +4462,7 @@ index 000000000..386fbce5c
 +// ==========================================================================
 +
 +enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, VS_POSTIMAGE, NUMVS };
-+enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, PS_FADEMAP, NUMPS };
++enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, PS_FADEMAP, PS_POSTIMAGE, NUMPS };
 +enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
 +
 +struct ShaderCode
@@ -4484,6 +4497,7 @@ index 000000000..386fbce5c
 +	{g_PSWipeFull, sizeof g_PSWipeFull, "PSWipeFull"},
 +	{g_PSPalettePostprocess, sizeof g_PSPalettePostprocess, "PSPalettePostprocess"},
 +	{g_PSFadeMap, sizeof g_PSFadeMap, "PSFadeMap"},
++	{g_PSPostImage, sizeof g_PSPostImage, "PSPostImage"},
 +};
 +
 +ComPtr<ID3D11VertexShader> g_vertexShaders[NUMVS];
@@ -4511,10 +4525,12 @@ index 000000000..386fbce5c
 +#ifdef _UWP
 +	float clipPlane[4];
 +	float fullscreenDepth, portalPad[3];
++	float postImageRect[4];
++	float postImageInfo[4];
 +#endif
 +};
 +#ifdef _UWP
-+static_assert(sizeof(Constants) == 304, "Constants must match DrawConstants in shaders.hlsl");
++static_assert(sizeof(Constants) == 336, "Constants must match DrawConstants in shaders.hlsl");
 +#else
 +static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
 +#endif
@@ -5105,6 +5121,8 @@ index 000000000..386fbce5c
 +	}
 +}
 +
++int ScreenTextureSize();
++
 +void ApplyConstants()
 +{
 +	Constants c;
@@ -5116,6 +5134,18 @@ index 000000000..386fbce5c
 +#ifdef _UWP
 +	memcpy(c.clipPlane, g_gl.clipPlane, sizeof c.clipPlane);
 +	c.fullscreenDepth = g_gl.fullscreenDepth;
++	if (g_postImage)
++	{
++		const float size = (float)ScreenTextureSize();
++		c.postImageRect[0] = g_gl.viewport[0] / size;
++		c.postImageRect[1] = (g_screenHeight - g_gl.viewport[1] - g_gl.viewport[3]) / size;
++		c.postImageRect[2] = (g_gl.viewport[0] + g_gl.viewport[2]) / size;
++		c.postImageRect[3] = (g_screenHeight - g_gl.viewport[1]) / size;
++		c.postImageInfo[0] = (float)leveltime;
++		c.postImageInfo[1] = (float)postimgtype[R_GetViewNumber()];
++		c.postImageInfo[2] = g_screenWidth / size;
++		c.postImageInfo[3] = g_screenHeight / size;
++	}
 +#endif
 +
 +	if (g_program >= 0)
@@ -5234,7 +5264,7 @@ index 000000000..386fbce5c
 +	if (g_postImage)
 +	{
 +		vs = VS_POSTIMAGE;
-+		ps = PS_FIXED;
++		ps = PS_POSTIMAGE;
 +	}
 +
 +	ID3D11InputLayout *inputLayout = g_layouts[layout].Get();
@@ -8626,74 +8656,39 @@ index 000000000..386fbce5c
 +	return res;
 +}
 +
-+// The saved screen contains all views. Sample only this view's rectangle;
-+// the viewport clips displaced edges so an effect cannot overwrite its neighbor.
-+static FOutVector PostImageVertex(float points[SCREENVERTS][SCREENVERTS][2],
-+	int x, int y, const int viewport[4], int screenHeight, int textureSize)
++// The saved screen contains all views; the shader clamps sampling to this view.
++static FOutVector PostImageVertex(int x, int y, const int viewport[4], int screenHeight, int textureSize)
 +{
 +	FOutVector v = {};
-+	v.x = points[x][y][0] / 4.5f;
-+	v.y = points[x][y][1] / 4.5f;
-+	v.s = (viewport[0] + (float)x * viewport[2] / (SCREENVERTS-1)) / textureSize;
-+	v.t = (screenHeight - viewport[1] - (float)y * viewport[3] / (SCREENVERTS-1)) / textureSize;
++	v.x = 2.0f * x - 1.0f;
++	v.y = 2.0f * y - 1.0f;
++	v.s = (viewport[0] + (float)x * viewport[2]) / textureSize;
++	v.t = (screenHeight - viewport[1] - (float)y * viewport[3]) / textureSize;
 +	return v;
 +}
 +
 +void D3D_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
 +{
++	(void)points; // The UWP shader uses Software's per-pixel sampling, not Legacy GL's grid.
 +	CpuTimer timer(g_stats.drawTime);
 +	const int texsize = ScreenTextureSize();
 +	const GLState saved = g_gl;
 +	g_postImage = true;
 +	g_gl.depthTest = false;
++	g_gl.alphaTest = false;
 +	g_gl.blend = false;
 +	g_gl.cullFace = false;
-+
-+	// Clear only the active viewport; displaced grid edges leave black margins.
-+	FOutVector background[4] = {};
-+	background[0].x = background[3].x = -1;
-+	background[1].x = background[2].x = 1;
-+	background[0].y = background[1].y = -1;
-+	background[2].y = background[3].y = 1;
-+	static const UINT8 black[4] = {0, 0, 0, 255};
-+	SetColor(black);
-+	g_gl.texture2D = false;
-+	DrawArrays(LAYOUT_POLY, PRIM_FAN, background, 4);
 +	SetColor(kWhite);
 +	g_gl.texture2D = true;
 +	g_gl.texEnv = TE_REPLACE;
 +	BindTexture(0, g_screenTexture);
-+
-+	std::vector<FOutVector> vertices;
-+	std::vector<UINT32> indices;
-+	vertices.reserve((SCREENVERTS-1) * (SCREENVERTS-1) * 4);
-+	indices.reserve((SCREENVERTS-1) * (SCREENVERTS-1) * 6);
-+	for (int x = 0; x < SCREENVERTS-1; x++)
-+	{
-+		for (int y = 0; y < SCREENVERTS-1; y++)
-+		{
-+			const UINT32 first = (UINT32)vertices.size();
-+			vertices.push_back(PostImageVertex(points, x, y, g_gl.viewport, g_screenHeight, texsize));
-+			vertices.push_back(PostImageVertex(points, x, y+1, g_gl.viewport, g_screenHeight, texsize));
-+			vertices.push_back(PostImageVertex(points, x+1, y+1, g_gl.viewport, g_screenHeight, texsize));
-+			vertices.push_back(PostImageVertex(points, x+1, y, g_gl.viewport, g_screenHeight, texsize));
-+			const UINT32 fan[6] = {first, first+1, first+2, first, first+2, first+3};
-+			indices.insert(indices.end(), fan, fan+6);
-+		}
-+	}
-+	if (CanDraw())
-+	{
-+		const UINT stride = sizeof(FOutVector);
-+		const UINT vertexOffset = RingWrite(g_vertexRing, vertices.data(), (UINT)(vertices.size()*stride), stride);
-+		const UINT indexOffset = RingWrite(g_indexRing, indices.data(), (UINT)(indices.size()*sizeof(UINT32)), sizeof(UINT32));
-+		if (vertexOffset != UINT_MAX && indexOffset != UINT_MAX)
-+		{
-+			BindVertexBuffer(g_vertexRing.buffer.Get(), stride);
-+			BindIndexBuffer(g_indexRing.buffer.Get(), DXGI_FORMAT_R32_UINT);
-+			ApplyState(LAYOUT_POLY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-+			g_context->DrawIndexed((UINT)indices.size(), indexOffset/sizeof(UINT32), vertexOffset/stride);
-+		}
-+	}
++	FOutVector vertices[4] = {
++		PostImageVertex(0, 0, g_gl.viewport, g_screenHeight, texsize),
++		PostImageVertex(1, 0, g_gl.viewport, g_screenHeight, texsize),
++		PostImageVertex(1, 1, g_gl.viewport, g_screenHeight, texsize),
++		PostImageVertex(0, 1, g_gl.viewport, g_screenHeight, texsize),
++	};
++	DrawArrays(LAYOUT_POLY, PRIM_FAN, vertices, 4);
 +	g_postImage = false;
 +	g_gl = saved;
 +	g_stats.screens++;
@@ -9551,10 +9546,10 @@ index 000000000..e01eb8ec3
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..762baf767
+index 000000000..f76e2153c
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,514 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -9597,6 +9592,8 @@ index 000000000..762baf767
 +	float4 u_clip_plane; // camera space, evaluated after the full modelview
 +	float u_fullscreen_depth;
 +	float3 u_portal_pad;
++	float4 u_postimg_rect; // min/max UV in the square captured texture
++	float4 u_postimg_info; // tic time, postimg_t, full screen UV extent
 +#endif
 +};
 +
@@ -10042,6 +10039,30 @@ index 000000000..762baf767
 +	int index = PaletteIndex(rgb);
 +	int faded = (int)(t_fade_map.Load(int3(index, u_fade_map_row, 0)) * 255.0 + 0.5);
 +	return float4(t_master_palette.Load(int3(faded, 0, 0)).rgb, 1.0);
++}
++
++// Match v2.4's Software/RHI rhi_glsl_fragment_postimg, including split-view
++// amplitude in full-screen UV units. The capture is square and top-first.
++float2 PostImageUV(float2 uv)
++{
++	float2 screen = uv / u_postimg_info.zw;
++	float2 low = u_postimg_rect.xy / u_postimg_info.zw;
++	float2 high = u_postimg_rect.zw / u_postimg_info.zw;
++	float row = (screen.y - low.y) / (high.y - low.y);
++	float ticks = u_postimg_info.x;
++	if (u_postimg_info.y == 1.0) // postimg_water
++		screen.x += sin((ticks / 35.0) * 2.0 + row * 20.0) * 0.01;
++	else if (u_postimg_info.y == 4.0) // postimg_heat
++	{
++		screen.x += max(sin((ticks / 35.0) * 1.2 - row * 5.0) - 0.995, 0.0);
++		screen.x -= max(sin(((ticks + 24.0) / 35.0) * 0.2 - row * 1.5) - 0.990, 0.0);
++	}
++	return clamp(screen, low, high - 0.0001) * u_postimg_info.zw;
++}
++
++float4 PSPostImage(VSOut i) : SV_Target
++{
++	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
 diff --git a/src/http-mserv.c b/src/http-mserv.c
 index 4f9f9cb39..6854fc5e7 100644

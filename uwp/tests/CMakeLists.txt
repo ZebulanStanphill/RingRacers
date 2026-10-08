@@ -17,7 +17,7 @@ endif()
 # Reconfigure/regenerate when either a tested implementation or harness changes.
 file(GLOB templates CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/templates/*.in")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    ${templates} source.py generate.py
+    ${templates} source.py generate.py fixtures/rhi_glsl_fragment_postimg.glsl
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
@@ -67,6 +67,7 @@ regression(picture_formats pictures HWRENDER)
 regression(ripples_uwp ripples _UWP HWRENDER)
 regression(ripples_desktop ripples HWRENDER)
 regression(split_distortion distortion _UWP HWRENDER)
+regression(postimg_math postimg)
 add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)
