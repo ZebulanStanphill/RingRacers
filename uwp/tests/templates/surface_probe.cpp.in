@@ -1,0 +1,167 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
+using UINT=unsigned; using UINT32=uint32_t; using UINT64=uint64_t;
+struct D3D11_TEXTURE2D_DESC {
+    UINT Width,Height,MipLevels,ArraySize; int Format;
+    struct { UINT Count,Quality; } SampleDesc;
+    UINT Usage,BindFlags,CPUAccessFlags,MiscFlags;
+};
+struct D3D11_BOX { UINT left,top,front,right,bottom,back; };
+struct D3D11_MAPPED_SUBRESOURCE { void *pData; UINT RowPitch,DepthPitch; };
+enum { DXGI_FORMAT_R8G8B8A8_UNORM=28, DXGI_FORMAT_B8G8R8A8_UNORM=87,
+    D3D11_USAGE_DEFAULT=0, D3D11_USAGE_STAGING=3, D3D11_CPU_ACCESS_READ=1, D3D11_MAP_READ=1 };
+struct ID3D11Texture2D {
+    D3D11_TEXTURE2D_DESC desc;
+    UINT pitch;
+    std::vector<uint8_t> bytes;
+    void GetDesc(D3D11_TEXTURE2D_DESC *out) { *out=desc; }
+    uint8_t *at(UINT x,UINT y) { assert(x<desc.Width&&y<desc.Height); return bytes.data()+y*pitch+x*4; }
+};
+template<class T> struct ComPtr {
+    T *p=nullptr; T* Get(){return p;} T** operator&(){return &p;}
+    T* operator->(){return p;} explicit operator bool() const {return p;}
+    void Reset(){p=nullptr;}
+};
+struct Device {
+    unsigned creates=0,failAt=0;
+    std::vector<std::unique_ptr<ID3D11Texture2D>> resources;
+    int CreateTexture2D(const D3D11_TEXTURE2D_DESC *d,const void*,ID3D11Texture2D **out) {
+        if(++creates==failAt) return 1;
+        // Padding catches packed-row assumptions in the actual readback implementation.
+        resources.emplace_back(new ID3D11Texture2D{*d,d->Width*4+32,{}});
+        auto *t=resources.back().get();t->bytes.resize(t->pitch*d->Height);*out=t;return 0;
+    }
+} device;
+struct Context {
+    unsigned copies=0,maps=0,unmaps=0;bool failMap=false;
+    void CopySubresourceRegion(ID3D11Texture2D *dst,UINT sub,UINT x,UINT y,UINT z,
+        ID3D11Texture2D *src,UINT source,const D3D11_BOX *b) {
+        assert(sub==0&&source==0&&z==0&&b->front==0&&b->back==1);
+        assert(b->right==b->left+1&&b->bottom==b->top+1);
+        memcpy(dst->at(x,y),src->at(b->left,b->top),4);++copies;
+    }
+    void CopyResource(ID3D11Texture2D *dst,ID3D11Texture2D *src) {
+        assert(dst->desc.Width==src->desc.Width&&dst->desc.Height==src->desc.Height);
+        for(UINT y=0;y<src->desc.Height;++y)memcpy(dst->at(0,y),src->at(0,y),src->desc.Width*4);
+        ++copies;
+    }
+    int Map(ID3D11Texture2D *t,UINT sub,int mode,UINT flags,D3D11_MAPPED_SUBRESOURCE *m) {
+        assert(sub==0&&mode==D3D11_MAP_READ&&flags==0);++maps;
+        if(failMap)return 1;*m={t->bytes.data(),t->pitch,0};return 0;
+    }
+    void Unmap(ID3D11Texture2D*,UINT){++unmaps;}
+} context;
+auto *g_device=&device;auto *g_context=&context;
+ComPtr<ID3D11Texture2D> g_rt;
+UINT g_rtWidth=20,g_rtHeight=10;
+std::vector<std::string> messages;
+void Log(const char *format,...) {
+    char b[2048];va_list args;va_start(args,format);vsnprintf(b,sizeof b,format,args);va_end(args);
+    messages.emplace_back(b);
+}
+bool Failed(int result,const char*) { return result!=0; }
+bool drawable=true;
+bool CanDraw(){return drawable;}
+FBITFIELD g_currentPolyFlags=0;
+int g_program=-1;
+struct {UINT8 colorWriteMask=7;bool depthTest=true,depthMask=true,depthAlways=false;UINT8 color[4]={255,255,255,255};} g_gl;
+struct {float poly[4];} g_uniforms[16]={};
+struct Texture {UINT32 id;char probeName[9];};
+std::unordered_map<UINT32,Texture> g_textures;
+Texture *g_units[2]={};
+@@PROBE@@
+@@REQUEST@@
+@@SOURCE@@
+@@TEXTURE@@
+std::vector<std::string> args;
+size_t COM_Argc(){return (int)args.size();}
+const char *COM_Argv(int i){return args.at(i).c_str();}
+void CONS_Printf(const char *format,...) {
+    char b[512];va_list a;va_start(a,format);vsnprintf(b,sizeof b,format,a);va_end(a);messages.emplace_back(b);
+}
+constexpr int render_opengl=1;
+int rendermode=render_opengl,r_splitscreen=0;
+gamestate_t gamestate=GS_LEVEL;
+struct {int value=0;} cv_glbatching;
+@@COMMAND@@
+void setPixel(UINT32 c) { memcpy(g_rt->at(g_probeX,g_probeY),&c,4); }
+bool has(const std::string &s) { for(const auto &m:messages)if(m.find(s)!=std::string::npos)return true;return false; }
+int main() {
+    D3D11_TEXTURE2D_DESC rt={20,10,1,1,DXGI_FORMAT_R8G8B8A8_UNORM,{1,0},0,0,0,0};
+    assert(device.CreateTexture2D(&rt,nullptr,&g_rt)==0);
+    CaptureSurfaceProbe("ignored",reinterpret_cast<const FOutVector*>(1),UINT32_MAX);
+    EndSurfaceProbe();assert(!BeginSurfaceProbe());assert(context.copies==0&&context.maps==0);
+    assert(!D3D11_RequestSurfaceProbe(-1,10));assert(!D3D11_RequestSurfaceProbe(10,101));
+    assert(D3D11_RequestSurfaceProbe(15,35));assert(!D3D11_RequestSurfaceProbe(15,35));
+    assert(BeginSurfaceProbe());assert(g_probeX==3&&g_probeY==3);
+    assert(!D3D11_RequestSurfaceProbe(20,40));
+    g_textures[1]={1,{}};g_units[0]=&g_textures[1];
+    D3D11_SurfaceProbeTexture("GFZROCK-LONG");assert(!strcmp(g_units[0]->probeName,"GFZROCK-"));
+    FOutVector verts[9]={};verts[0].x=123;verts[0].z=-99;
+    g_currentPolyFlags=PF_Masked|PF_Occlude;g_program=1;g_uniforms[1].poly[3]=.25f;
+    D3D11_SurfaceProbeSource("wall",613);setPixel(0xff112233);
+    CaptureSurfaceProbe("polygon",verts,9);verts[0].x=999;
+    assert(g_probeRecords[0].source==613&&g_probeRecords[0].vertices[0].x==123);
+    assert(g_probeRecords[0].count==9&&g_probeRecords[0].alpha==.25f);
+    assert(g_probeKind==std::string("draw")&&g_probeSource==-1);
+    // A depth-only draw leaves the selected color unchanged; it must not be
+    // reported as the writer of the brown pixel.
+    g_currentPolyFlags=PF_Invisible|PF_Occlude;g_gl.colorWriteMask=0;
+    D3D11_SurfaceProbeSource("sky occluder",614);CaptureSurfaceProbe("polygon",verts,4);
+    assert(g_probeRecords[1].colorMask==0&&g_probeRecords[1].depthWrite);
+    g_program=-1;g_gl.colorWriteMask=7;g_gl.color[3]=128;
+    setPixel(0xff778899);CaptureSurfaceProbe("polygon",verts,4);
+    assert(g_probeRecords[2].alpha==128/255.f);
+    EndSurfaceProbe();assert(context.maps==1&&context.unmaps==1);
+    assert(has("source=613")&&!has("source=614")&&has("source=-1"));
+    assert(has("color_changes=2")&&has("draws=3"));
+    assert(!g_probeAtlas&&!g_probeReadback&&g_probeRecords.capacity()==0);
+    auto copies=context.copies;CaptureSurfaceProbe("idle",nullptr,0);assert(context.copies==copies);
+    // 100% is the final pixel, not an out-of-range box. BGRA preserves raw bytes.
+    g_rt->desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    assert(D3D11_RequestSurfaceProbe(100,100)&&BeginSurfaceProbe());
+    assert(g_probeX==19&&g_probeY==9&&g_units[0]->probeName[0]==0);
+    messages.clear();
+    for(UINT i=0;i<kProbeCapacity;++i) { setPixel(i);CaptureSurfaceProbe("polygon",nullptr,0); }
+    CaptureSurfaceProbe("overflow",nullptr,0);assert(g_probeOverflow&&g_probeRecords.size()==kProbeCapacity);
+    EndSurfaceProbe();assert(has("sample=64 raw=0x00000040")&&has("sample=255 raw=0x000000FF"));
+    assert(!has("sample=256 ")&&has("color_changes=8192")&&has("rows_omitted=7936 overflow=1"));
+    assert(!g_probeActive&&!g_probeAtlas&&!g_probeReadback);
+    // Failures consume the request and release partial allocations; the next
+    // request can retry. They must never leave a probe recording later frames.
+    device.failAt=device.creates+2;
+    assert(D3D11_RequestSurfaceProbe(0,0)&&!BeginSurfaceProbe());
+    assert(!g_probePending&&!g_probeActive&&!g_probeAtlas&&!g_probeReadback);
+    device.failAt=0;context.failMap=true;
+    assert(D3D11_RequestSurfaceProbe(0,0)&&BeginSurfaceProbe());CaptureSurfaceProbe("polygon",nullptr,0);
+    auto oldUnmaps=context.unmaps;EndSurfaceProbe();assert(context.unmaps==oldUnmaps&&!g_probeReadback);
+    context.failMap=false;g_rt->desc.SampleDesc.Count=4;
+    assert(D3D11_RequestSurfaceProbe(0,0)&&!BeginSurfaceProbe());assert(!g_probePending&&!g_probeActive);
+    g_rt->desc.SampleDesc.Count=1;drawable=false;
+    assert(D3D11_RequestSurfaceProbe(0,0)&&!BeginSurfaceProbe());assert(!g_probePending&&!g_probeActive);
+    drawable=true;
+    for(const char *bad:{"", "abc", "10.5", "-1", "101", "999999999999999999999999"}) {
+        args={"gr_surfaceprobe",bad,"35"};HWR_SurfaceProbe_f();assert(!g_probePending);
+    }
+    args={"gr_surfaceprobe","15"};HWR_SurfaceProbe_f();assert(!g_probePending);
+    args={"gr_surfaceprobe"};
+    cv_glbatching.value=1;HWR_SurfaceProbe_f();assert(!g_probePending&&has("Turn Batching Off first"));
+    cv_glbatching.value=0;r_splitscreen=1;HWR_SurfaceProbe_f();assert(!g_probePending);r_splitscreen=0;
+    gamestate=GS_NULL;HWR_SurfaceProbe_f();assert(!g_probePending);gamestate=GS_LEVEL;
+    rendermode=0;HWR_SurfaceProbe_f();assert(!g_probePending);rendermode=render_opengl;
+    HWR_SurfaceProbe_f();assert(g_probePending&&g_probePercentX==15&&g_probePercentY==35);
+    g_probePending=false;args={"gr_surfaceprobe","25","75"};HWR_SurfaceProbe_f();
+    assert(g_probePending&&g_probePercentX==25&&g_probePercentY==75);
+    puts("Surface probe: inactive path, pixel ownership, immutable metadata, padded rows, capacity, cleanup and retry passed");
+}

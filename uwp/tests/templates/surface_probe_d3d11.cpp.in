@@ -1,0 +1,82 @@
+// Run production pixel-copy/readback functions on a real SM4 WARP device.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <d3d11.h>
+#include <wrl/client.h>
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdarg>
+#include <cstring>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
+using Microsoft::WRL::ComPtr;
+ComPtr<ID3D11Device> g_device;
+ComPtr<ID3D11DeviceContext> g_context;
+ComPtr<ID3D11Texture2D> g_rt;
+UINT g_rtWidth=20,g_rtHeight=10;
+std::vector<std::string> messages;
+void Log(const char *format,...) {
+    char b[2048];va_list args;va_start(args,format);vsnprintf(b,sizeof b,format,args);va_end(args);
+    messages.emplace_back(b);puts(b);
+}
+bool Failed(HRESULT r,const char *what) { if(SUCCEEDED(r))return false;Log("%s: 0x%08X",what,(unsigned)r);return true; }
+void Require(bool b,const char *m) { if(!b){fprintf(stderr,"%s\n",m);exit(1);} }
+bool CanDraw(){return g_device&&g_context&&g_rt;}
+FBITFIELD g_currentPolyFlags=0;
+int g_program=-1;
+struct {UINT8 colorWriteMask=7;bool depthTest=true,depthMask=true,depthAlways=false;UINT8 color[4]={255,255,255,255};} g_gl;
+struct {float poly[4];} g_uniforms[16]={};
+struct Texture {UINT32 id;char probeName[9];};
+std::unordered_map<UINT32,Texture> g_textures;
+Texture *g_units[2]={};
+@@PROBE@@
+@@REQUEST@@
+@@SOURCE@@
+@@TEXTURE@@
+bool has(const std::string &s) { for(const auto &m:messages)if(m.find(s)!=std::string::npos)return true;return false; }
+int main() {
+    D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_10_1,actual;
+    Require(!Failed(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,&level,1,D3D11_SDK_VERSION,
+        &g_device,&actual,&g_context),"device"),"Cannot create WARP device");
+    Require(actual==level,"Probe must run on SM4 feature level 10.1");
+    D3D11_TEXTURE2D_DESC d={};d.Width=20;d.Height=10;d.MipLevels=d.ArraySize=1;
+    d.Format=DXGI_FORMAT_R8G8B8A8_UNORM;d.SampleDesc.Count=1;d.BindFlags=D3D11_BIND_RENDER_TARGET;
+    Require(!Failed(g_device->CreateTexture2D(&d,nullptr,&g_rt),"target"),"Cannot create target");
+    ComPtr<ID3D11RenderTargetView> rtv;
+    Require(!Failed(g_device->CreateRenderTargetView(g_rt.Get(),nullptr,&rtv),"view"),"Cannot create view");
+    ID3D11RenderTargetView *bound=rtv.Get();g_context->OMSetRenderTargets(1,&bound,nullptr);
+    float clear[]={.25f,.5f,.75f,1};g_context->ClearRenderTargetView(rtv.Get(),clear);
+    Require(D3D11_RequestSurfaceProbe(15,35)&&BeginSurfaceProbe(),"Cannot begin actual probe");
+    // Keep the source bound, as it is in the game. Command-ordered copies must
+    // retain each pixel's earlier color after later writes to that same target.
+    for(UINT i=0;i<130;++i) {
+        UINT32 raw=0xff000000|i;
+        D3D11_BOX b={g_probeX,g_probeY,0,g_probeX+1,g_probeY+1,1};
+        g_context->UpdateSubresource(g_rt.Get(),0,&b,&raw,4,0);
+        CaptureSurfaceProbe("polygon",nullptr,0);
+    }
+    ComPtr<ID3D11RenderTargetView> after;
+    g_context->OMGetRenderTargets(1,&after,nullptr);
+    Require(after.Get()==rtv.Get(),"Probe changed the bound render target");
+    EndSurfaceProbe();
+    Require(has("sample=0 raw=0xFF000000")&&has("sample=64 raw=0xFF000040")
+        &&has("sample=129 raw=0xFF000081")&&has("draws=130 color_changes=130"),
+        "GPU pixel history lost command ordering or readback rows");
+    Require(!g_probeActive&&!g_probeAtlas&&!g_probeReadback&&g_probeRecords.empty(),"Probe did not release resources");
+    d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> check;
+    Require(!Failed(g_device->CreateTexture2D(&d,nullptr,&check),"check"),"Cannot create check");
+    g_context->CopyResource(check.Get(),g_rt.Get());D3D11_MAPPED_SUBRESOURCE m;
+    Require(!Failed(g_context->Map(check.Get(),0,D3D11_MAP_READ,0,&m),"check map"),"Cannot map check");
+    UINT32 corner,selected;memcpy(&corner,m.pData,4);
+    memcpy(&selected,(const UINT8*)m.pData+g_probeY*m.RowPitch+g_probeX*4,4);
+    g_context->Unmap(check.Get(),0);
+    Require(selected==0xff000081&&corner!=selected,"Pixel probe altered the source target");
+    puts("SM4 WARP surface probe: 130 ordered pixel samples, source binding/color preserved");
+}

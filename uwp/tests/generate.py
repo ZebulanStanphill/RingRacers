@@ -62,6 +62,19 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "surface_probe.cpp.in", {
+        "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
+        "COMMAND": hardware.function("HWR_SurfaceProbe_f"),
+        "REQUEST": driver.function("D3D11_RequestSurfaceProbe"),
+        "SOURCE": driver.function("D3D11_SurfaceProbeSource"),
+        "TEXTURE": driver.function("D3D11_SurfaceProbeTexture"),
+    }, output / "surface_probe.cpp")
+    render(templates / "surface_probe_d3d11.cpp.in", {
+        "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
+        "REQUEST": driver.function("D3D11_RequestSurfaceProbe"),
+        "SOURCE": driver.function("D3D11_SurfaceProbeSource"),
+        "TEXTURE": driver.function("D3D11_SurfaceProbeTexture"),
+    }, output / "surface_probe_d3d11.cpp")
     render(templates / "sky_trace.cpp.in", {
         "TRACE": hardware.function("HWR_TraceSkyGeometry"),
         "PLANE_DISPATCH": hardware.section("\tif (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, \"~015\"))", "\n#endif"),
