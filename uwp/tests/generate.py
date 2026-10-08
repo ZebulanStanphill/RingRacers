@@ -53,6 +53,13 @@ def generate(engine, output):
         "FRAME_GATING": main.section("\tUWPTraceBeginFrame();", "\n#endif"),
     }, output / "trace.cpp")
 
+    cache = Source(engine / "src/hardware/hw_cache.c")
+    render(templates / "pictures.cpp.in", {
+        "PICTURE_TABLES": cache.section("// Source pixels and GPU pixels", "static void HWR_DrawPicInCache"),
+        "CONVERT": cache.function("HWR_DrawPicInCache"),
+        "GET_PIC": cache.function("HWR_GetPic"),
+    }, output / "pictures.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):

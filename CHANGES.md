@@ -74,6 +74,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
 - **Legacy GL: screen wipes.** Level and menu transitions use the Software renderer's Mega Drive-style fades to black and white, inversion, Encore wiggle, and reversed fades.
 - **Legacy GL: final transition frame**. Screen wipes show the current frame instead of the previous one, so Encore's inversion circle reaches the screen edges before presenting stops.
 - **Legacy GL: video memory safeguard** *(untested)*. If local video memory usage exceeds its budget, the next frame clears the texture cache, at most once every five seconds. This may cause a brief hitch instead of sustained slowdowns. Model buffers are retained.
+- **Legacy GL: raw picture formats** *(untested on Xbox)*. Add opaque intensity/grayscale and RGB24 pictures using RGBA textures. Preserve palette, intensity/alpha and RGBA pictures, including nearest-neighbor resizing; fix RGBA conversion writing past its destination. Validate picture headers, dimensions, modes and pixel lengths before conversion, and ignore trailing lump bytes. Applies to every patched platform. Native sanitizer tests cover all five modes, palette destination formats and resized pictures.
 - **Audio.** The audio driver is WASAPI instead of DirectSound.
 
 ## Files and startup

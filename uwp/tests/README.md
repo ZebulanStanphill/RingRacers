@@ -61,6 +61,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fades, reverse masks, Encore wiggle, all 32 mask values and 200 base rows, screen
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
+- **Raw picture formats:** production conversion and cache-loading functions. Check all five source modes, palette destination widths, grayscale/RGB alpha, downscaling and upscaling, row padding, malformed headers/modes/dimensions/pixel lengths, and trailing bytes. The RGB24 case fails with the pre-feature implementation.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
