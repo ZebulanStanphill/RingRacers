@@ -1,0 +1,97 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "i_video.h"
+#include "v_video.h"
+#include "p_local.h"
+#include "hardware/hw_drv.h"
+static int view;
+static INT32 R_GetViewNumber() { return view; }
+boolean HWR_ShouldUsePaletteRendering() { return true; }
+boolean P_AutoPause() { return false; }
+static void UWPTraceFade(const char *, ...) {}
+float gl_viewwindowx, gl_viewwindowy, gl_viewwidth, gl_viewheight;
+postimg_t postimgtype[MAXSPLITSCREENPLAYERS];
+int r_splitscreen;
+UINT8 paused;
+gamestate_t gamestate;
+viddef_t vid;
+static fixed_t renderdeltatics;
+static int captures, draws, rects;
+static int activeRect[4];
+static float capturedGrid[SCREENVERTS][SCREENVERTS][2];
+static void Unset() {}
+static void Capture() { ++captures; }
+static void Draw(FSurfaceInfo *, FOutVector *, FUINT, FBITFIELD) { assert(false); }
+static void Clip(INT32 x, INT32 y, INT32 maxx, INT32 maxy, float) {
+    ++rects; activeRect[0]=x; activeRect[1]=y; activeRect[2]=maxx-x; activeRect[3]=maxy-y;
+}
+static void Redraw(float p[SCREENVERTS][SCREENVERTS][2]) {
+    ++draws;
+    assert(activeRect[0] == gl_viewwindowx && activeRect[1] == gl_viewwindowy);
+    assert(activeRect[2] == gl_viewwidth && activeRect[3] == gl_viewheight);
+    memcpy(capturedGrid,p,sizeof capturedGrid);
+}
+hwdriver_s hwdriver = {};
+@@VERTEX@@
+@@POSTPROCESS@@
+static bool close(float a,float b) { return fabsf(a-b)<0.000002f; }
+int main() {
+    HWD.pfnUnSetShader=Unset; HWD.pfnDrawPolygon=Draw; HWD.pfnMakeScreenTexture=Capture;
+    HWD.pfnGClipRect=Clip; HWD.pfnPostImgRedraw=Redraw;
+    player_t player = {};
+    int cases=0;
+    for (int count : {1,2,3,4}) for (int w : {640,1280,1920}) for (int h : {400,720,1200}) {
+        vid.width=w; vid.height=h; r_splitscreen=count-1;
+        for (view=0; view<count; ++view) {
+            gl_viewwidth=count>2?w/2:w; gl_viewheight=count>1?h/2:h;
+            gl_viewwindowx=count>2 && (view&1) ? gl_viewwidth : 0;
+            gl_viewwindowy=view>(count>2) ? gl_viewheight : 0;
+            for (postimg_t type : {postimg_water,postimg_heat}) {
+                postimgtype[view]=type; renderdeltatics=0; gamestate=GS_LEVEL;
+                captures=draws=rects=0;
+                HWR_DoPostProcessor(&player);
+                assert(captures==2 && draws==1 && rects==2);
+                assert(activeRect[0]==0 && activeRect[1]==0 && activeRect[2]==w && activeRect[3]==h);
+                int vp[4] = {(int)gl_viewwindowx,h-(int)(gl_viewwindowy+gl_viewheight),(int)gl_viewwidth,(int)gl_viewheight};
+                int size=w<=512?512:w<=1024?1024:2048;
+                for (int x=0;x<SCREENVERTS;++x) for (int y=0;y<SCREENVERTS;++y) {
+                    auto v=PostImageVertex(capturedGrid,x,y,vp,h,size);
+                    assert(close(v.x,capturedGrid[x][y][0]/4.5f));
+                    assert(close(v.y,2.0f*y/(SCREENVERTS-1)-1.0f));
+                    assert(close(v.s,((float)gl_viewwindowx+x*gl_viewwidth/(SCREENVERTS-1))/size));
+                    assert(close(v.t,(gl_viewwindowy+gl_viewheight-y*gl_viewheight/(SCREENVERTS-1))/size));
+                    assert(v.s>=gl_viewwindowx/size && v.s<=(gl_viewwindowx+gl_viewwidth)/size);
+                    assert(v.t>=gl_viewwindowy/size && v.t<=(gl_viewwindowy+gl_viewheight)/size);
+                    ++cases;
+                }
+                gamestate=GS_INTERMISSION; captures=0;
+                HWR_DoPostProcessor(&player); assert(captures==0);
+                postimgtype[view]=postimg_none; captures=draws=rects=0;
+                gamestate=GS_LEVEL; HWR_DoPostProcessor(&player);
+                assert(captures==1 && draws==0 && rects==0);
+            }
+        }
+    }
+    // Every view starts in phase and advances once, rather than advancing the
+    // shared phase four times per frame. Paused frames retain that phase.
+    vid.width=1280; vid.height=720; gl_viewwidth=640; gl_viewheight=360;
+    r_splitscreen=3; renderdeltatics=FRACUNIT;
+    float samples[2][4];
+    for(int frame=0;frame<2;++frame) for(view=0;view<4;++view) {
+        gl_viewwindowx=(view&1)*640; gl_viewwindowy=(view/2)*360;
+        postimgtype[view]=postimg_water; HWR_DoPostProcessor(&player);
+        samples[frame][view]=capturedGrid[0][0][0];
+    }
+    for(int v=1;v<4;++v) for(int f=0;f<2;++f) assert(samples[f][v]==samples[f][0]);
+    assert(samples[0][0]!=samples[1][0]);
+    paused=1; view=0; gl_viewwindowx=gl_viewwindowy=0;
+    HWR_DoPostProcessor(&player); float sample=capturedGrid[0][0][0];
+    HWR_DoPostProcessor(&player); assert(sample==capturedGrid[0][0][0]);
+    printf("%d distortion vertices, view dispatch and animation checks passed\n",cases);
+}

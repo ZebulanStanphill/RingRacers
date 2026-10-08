@@ -1,4 +1,4 @@
-From 18a34d5e11e28d35994ae3f709bd04b16209d604 Mon Sep 17 00:00:00 2001
+From 32277b9de54158f88306fbe356c4265e50a74eec Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -215,6 +215,10 @@ RingRacers-dev, rebased onto v2.4.
   select independent floor/ceiling flags from their control sector, and
   honor Reduce VFX for both regular and polyobject ripple surfaces.
 
+- Draw water and heat distortion within each active UWP split-screen viewport,
+  sample its saved-screen rectangle with an independent animation phase,
+  and restore the renderer state after the clip-space redraw.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -241,13 +245,13 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  673 +++-
+ src/hardware/hw_main.c             |  692 +++-
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5656 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5637 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   59 +
- src/hardware/r_d3d11/shaders.hlsl  |  482 +++
+ src/hardware/r_d3d11/shaders.hlsl  |  488 +++
  src/http-mserv.c                   |    2 +
  src/hwr2/patch_atlas.cpp           |    8 +
  src/hwr2/resource_management.cpp   |  105 +-
@@ -296,7 +300,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 76 files changed, 11196 insertions(+), 566 deletions(-)
+ 76 files changed, 11198 insertions(+), 570 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1380,7 +1384,7 @@ index ce69d80c0..9db72cf64 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..61e4aca09 100644
+index a0a0f280c..751a0e121 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1401,7 +1405,7 @@ index a0a0f280c..61e4aca09 100644
 +	set(d3d11_shader_headers "")
 +	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
 +
-+	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen
++	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
 +		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap)
 +		string(SUBSTRING "${entry}" 0 2 stage)
 +		string(TOLOWER "${stage}" stage)
@@ -2336,7 +2340,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..5b6276420 100644
+index b5e8fca5a..773517ed6 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -3301,6 +3305,51 @@ index b5e8fca5a..5b6276420 100644
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
+@@ -6284,15 +6911,19 @@ void HWR_DoPostProcessor(player_t *player)
+ 	if(gamestate != GS_INTERMISSION)
+ 		HWD.pfnMakeScreenTexture();
+ 
+-	if (r_splitscreen) // Not supported in splitscreen - someone want to add support?
++#ifndef _UWP
++	if (r_splitscreen) // The OpenGL driver still only supports a whole-screen grid.
+ 		return;
++#endif
+ 
+ 	// Drunken vision! WooOOooo~
+ 	if (*type == postimg_water || *type == postimg_heat)
+ 	{
+ 		// 10 by 10 grid. 2 coordinates (xy)
+ 		float v[SCREENVERTS][SCREENVERTS][2];
+-		static double disStart = 0;
++		// Each view advances independently; drawing four views must not quadruple speed.
++		static double disStart[MAXSPLITSCREENPLAYERS] = {0};
++		const INT32 view = R_GetViewNumber();
+ 
+ 		UINT8 x, y;
+ 		INT32 WAVELENGTH;
+@@ -6318,13 +6949,20 @@ void HWR_DoPostProcessor(player_t *player)
+ 			for (y = 0; y < SCREENVERTS; y++)
+ 			{
+ 				// Change X position based on its Y position.
+-				v[x][y][0] = (x/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f + (float)sin((disStart+(y*WAVELENGTH))/FREQUENCY)/AMPLITUDE;
++				v[x][y][0] = (x/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f + (float)sin((disStart[view]+(y*WAVELENGTH))/FREQUENCY)/AMPLITUDE;
+ 				v[x][y][1] = (y/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f;
+ 			}
+ 		}
++#ifdef _UWP
++		HWD.pfnGClipRect((INT32)gl_viewwindowx, (INT32)gl_viewwindowy,
++			(INT32)(gl_viewwindowx + gl_viewwidth), (INT32)(gl_viewwindowy + gl_viewheight), NZCLIP_PLANE);
++#endif
+ 		HWD.pfnPostImgRedraw(v);
++#ifdef _UWP
++		HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
++#endif
+ 		if (!(paused || P_AutoPause()))
+-			disStart += FIXED_TO_FLOAT(renderdeltatics);
++			disStart[view] += FIXED_TO_FLOAT(renderdeltatics);
+ 
+ 		// Capture the screen again for screen waving on the intermission
+ 		if(gamestate != GS_INTERMISSION)
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
 index 652b40947..8fff1d11f 100644
 --- a/src/hardware/hw_main.h
@@ -3794,10 +3843,10 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..a2d5835d5
+index 000000000..386fbce5c
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5656 @@
+@@ -0,0 +1,5637 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -3875,6 +3924,7 @@ index 000000000..a2d5835d5
 +#include "VSModelLight.h"
 +#include "VSWipe.h"
 +#include "VSFullscreen.h"
++#include "VSPostImage.h"
 +#include "PSFixed.h"
 +#include "PSDefault.h"
 +#include "PSSoftware.h"
@@ -4398,7 +4448,7 @@ index 000000000..a2d5835d5
 +//                                                         DIRECT3D RESOURCES
 +// ==========================================================================
 +
-+enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, NUMVS };
++enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, VS_POSTIMAGE, NUMVS };
 +enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, PS_FADEMAP, NUMPS };
 +enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
 +
@@ -4418,6 +4468,7 @@ index 000000000..a2d5835d5
 +	{g_VSModelLight, sizeof g_VSModelLight, "VSModelLight"},
 +	{g_VSWipe, sizeof g_VSWipe, "VSWipe"},
 +	{g_VSFullscreen, sizeof g_VSFullscreen, "VSFullscreen"},
++	{g_VSPostImage, sizeof g_VSPostImage, "VSPostImage"},
 +};
 +
 +const ShaderCode kPixelShaders[NUMPS] =
@@ -4687,6 +4738,7 @@ index 000000000..a2d5835d5
 +int g_shaderCurrent = -1; // gl_shaderstate.current, as its type, or -1 for NULL
 +int g_shaderType = 0; // gl_shaderstate.type
 +bool g_shaderChanged = false; // gl_shaderstate.changed
++bool g_postImage = false;
 +int g_program = -1; // the program glUseProgram last set, as its type, or -1 for none
 +
 +INT32 g_shaderLeveltime = 0;
@@ -5177,6 +5229,12 @@ index 000000000..a2d5835d5
 +	{
 +		ps = wipe ? PS_WIPE : PS_FIXED;
 +		vs = layout == LAYOUT_SKY ? VS_SKY : layout == LAYOUT_MODEL ? VS_MODEL : wipe ? VS_WIPE : VS_POLY;
++	}
++
++	if (g_postImage)
++	{
++		vs = VS_POSTIMAGE;
++		ps = PS_FIXED;
 +	}
 +
 +	ID3D11InputLayout *inputLayout = g_layouts[layout].Get();
@@ -8568,104 +8626,76 @@ index 000000000..a2d5835d5
 +	return res;
 +}
 +
++// The saved screen contains all views. Sample only this view's rectangle;
++// the viewport clips displaced edges so an effect cannot overwrite its neighbor.
++static FOutVector PostImageVertex(float points[SCREENVERTS][SCREENVERTS][2],
++	int x, int y, const int viewport[4], int screenHeight, int textureSize)
++{
++	FOutVector v = {};
++	v.x = points[x][y][0] / 4.5f;
++	v.y = points[x][y][1] / 4.5f;
++	v.s = (viewport[0] + (float)x * viewport[2] / (SCREENVERTS-1)) / textureSize;
++	v.t = (screenHeight - viewport[1] - (float)y * viewport[3] / (SCREENVERTS-1)) / textureSize;
++	return v;
++}
++
 +void D3D_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
 +{
 +	CpuTimer timer(g_stats.drawTime);
 +	const int texsize = ScreenTextureSize();
-+
-+	// X/Y stretch fix for all resolutions(!)
-+	const float xfix = (float)(texsize)/((float)((g_screenWidth)/(float)(SCREENVERTS-1)));
-+	const float yfix = (float)(texsize)/((float)((g_screenHeight)/(float)(SCREENVERTS-1)));
-+	// Where the screen's top is in the texture, in OpenGL's t
-+	const float top = (float)g_screenHeight / texsize;
-+
++	const GLState saved = g_gl;
++	g_postImage = true;
 +	g_gl.depthTest = false;
 +	g_gl.blend = false;
++	g_gl.cullFace = false;
 +
-+	// Draw a black square behind the screen texture,
-+	// so nothing shows through the edges
-+	{
-+		static const UINT8 black[4] = {0, 0, 0, 255};
-+		const bool texture2D = g_gl.texture2D;
-+		FOutVector blackBack[4] = {};
++	// Clear only the active viewport; displaced grid edges leave black margins.
++	FOutVector background[4] = {};
++	background[0].x = background[3].x = -1;
++	background[1].x = background[2].x = 1;
++	background[0].y = background[1].y = -1;
++	background[2].y = background[3].y = 1;
++	static const UINT8 black[4] = {0, 0, 0, 255};
++	SetColor(black);
++	g_gl.texture2D = false;
++	DrawArrays(LAYOUT_POLY, PRIM_FAN, background, 4);
++	SetColor(kWhite);
++	g_gl.texture2D = true;
++	g_gl.texEnv = TE_REPLACE;
++	BindTexture(0, g_screenTexture);
 +
-+		blackBack[0].x = -16.0f; blackBack[0].y = -16.0f; blackBack[0].z = 6.0f;
-+		blackBack[1].x = -16.0f; blackBack[1].y = 16.0f; blackBack[1].z = 6.0f;
-+		blackBack[2].x = 16.0f; blackBack[2].y = 16.0f; blackBack[2].z = 6.0f;
-+		blackBack[3].x = 16.0f; blackBack[3].y = -16.0f; blackBack[3].z = 6.0f;
-+
-+		SetColor(black);
-+		g_gl.texture2D = false;
-+		DrawArrays(LAYOUT_POLY, PRIM_FAN, blackBack, 4);
-+		g_gl.texture2D = texture2D;
-+		SetColor(kWhite);
-+	}
-+
-+	// The grid, in one draw
 +	std::vector<FOutVector> vertices;
 +	std::vector<UINT32> indices;
 +	vertices.reserve((SCREENVERTS-1) * (SCREENVERTS-1) * 4);
 +	indices.reserve((SCREENVERTS-1) * (SCREENVERTS-1) * 6);
-+
 +	for (int x = 0; x < SCREENVERTS-1; x++)
 +	{
 +		for (int y = 0; y < SCREENVERTS-1; y++)
 +		{
-+			// Used for texture coordinates
-+			// Annoying magic numbers to scale the square texture to
-+			// a non-square screen..
-+			const float float_x = (float)(x/(xfix));
-+			const float float_y = (float)(y/(yfix));
-+			const float float_nextx = (float)(x+1)/(xfix);
-+			const float float_nexty = (float)(y+1)/(yfix);
 +			const UINT32 first = (UINT32)vertices.size();
-+			FOutVector v[4];
-+
-+			v[0].x = points[x][y][0];
-+			v[0].y = points[x][y][1];
-+			v[0].s = float_x;
-+			v[0].t = top - float_y;
-+			v[1].x = points[x][y + 1][0];
-+			v[1].y = points[x][y + 1][1];
-+			v[1].s = float_x;
-+			v[1].t = top - float_nexty;
-+			v[2].x = points[x + 1][y + 1][0];
-+			v[2].y = points[x + 1][y + 1][1];
-+			v[2].s = float_nextx;
-+			v[2].t = top - float_nexty;
-+			v[3].x = points[x + 1][y][0];
-+			v[3].y = points[x + 1][y][1];
-+			v[3].s = float_nextx;
-+			v[3].t = top - float_y;
-+
-+			for (FOutVector &vertex : v)
-+			{
-+				vertex.z = 4.4f;
-+				vertices.push_back(vertex);
-+			}
-+
-+			const UINT32 fan[6] = {first, first + 1, first + 2, first, first + 2, first + 3};
-+			indices.insert(indices.end(), fan, fan + 6);
++			vertices.push_back(PostImageVertex(points, x, y, g_gl.viewport, g_screenHeight, texsize));
++			vertices.push_back(PostImageVertex(points, x, y+1, g_gl.viewport, g_screenHeight, texsize));
++			vertices.push_back(PostImageVertex(points, x+1, y+1, g_gl.viewport, g_screenHeight, texsize));
++			vertices.push_back(PostImageVertex(points, x+1, y, g_gl.viewport, g_screenHeight, texsize));
++			const UINT32 fan[6] = {first, first+1, first+2, first, first+2, first+3};
++			indices.insert(indices.end(), fan, fan+6);
 +		}
 +	}
-+
 +	if (CanDraw())
 +	{
 +		const UINT stride = sizeof(FOutVector);
-+		const UINT vertexOffset = RingWrite(g_vertexRing, vertices.data(), (UINT)(vertices.size() * stride), stride);
-+		const UINT indexOffset = RingWrite(g_indexRing, indices.data(), (UINT)(indices.size() * sizeof(UINT32)), sizeof(UINT32));
-+
++		const UINT vertexOffset = RingWrite(g_vertexRing, vertices.data(), (UINT)(vertices.size()*stride), stride);
++		const UINT indexOffset = RingWrite(g_indexRing, indices.data(), (UINT)(indices.size()*sizeof(UINT32)), sizeof(UINT32));
 +		if (vertexOffset != UINT_MAX && indexOffset != UINT_MAX)
 +		{
 +			BindVertexBuffer(g_vertexRing.buffer.Get(), stride);
 +			BindIndexBuffer(g_indexRing.buffer.Get(), DXGI_FORMAT_R32_UINT);
 +			ApplyState(LAYOUT_POLY, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-+			g_context->DrawIndexed((UINT)indices.size(), indexOffset / sizeof(UINT32), vertexOffset / stride);
++			g_context->DrawIndexed((UINT)indices.size(), indexOffset/sizeof(UINT32), vertexOffset/stride);
 +		}
 +	}
-+
-+	g_gl.depthTest = true;
-+	g_gl.blend = true;
++	g_postImage = false;
++	g_gl = saved;
 +	g_stats.screens++;
 +}
 +
@@ -9521,10 +9551,10 @@ index 000000000..e01eb8ec3
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..5acf55488
+index 000000000..762baf767
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,488 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -9719,6 +9749,12 @@ index 000000000..5acf55488
 +	o.uv1 = float2(0.0, 0.0);
 +	o.fragz = 0.0;
 +	return o;
++}
++
++// Screen distortion uses clip-space vertices, independent of gameplay FOV.
++VSOut VSPostImage(float3 pos : POSITION, float2 uv : TEXCOORD0)
++{
++	return Finish(float4(pos.xy, 0.0, 1.0), u_color, uv);
 +}
 +
 +// The second pass of DoScreenWipe: the fade mask's texture coordinates come from the corners of the screen

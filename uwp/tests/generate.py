@@ -60,6 +60,13 @@ def generate(engine, output):
         "GET_PIC": cache.function("HWR_GetPic"),
     }, output / "pictures.cpp")
 
+    driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
+    hardware = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "distortion.cpp.in", {
+        "VERTEX": driver.function("PostImageVertex"),
+        "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
+    }, output / "distortion.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):
@@ -68,7 +75,6 @@ def generate(engine, output):
     shader = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", shader)
     render(templates / "wipe.cpp.in", {"WIPE_SHADER": shader}, output / "wipe.cpp")
 
-    hardware = Source(engine / "src/hardware/hw_main.c")
     bsp = Source(engine / "src/r_bsp.cpp")
     render(templates / "ripples.cpp.in", {
         "RIPPLE_PLANE": bsp.function("R_IsRipplePlane"),

@@ -72,6 +72,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   polygons must submit no draw. Replacing either changed renderer function with
   its pre-feature implementation fails the corresponding behavior assertion in
   both platform variants.
+- **Split-screen distortion:** production postprocess dispatch and D3D grid vertices. Check viewport selection/reset, all screen layouts, water/heat sampling bounds at nine resolutions, paused animation, per-view phase speed, intermission capture and unaffected views. GPU shader compilation is covered by Windows CI; Xbox visual validation remains.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
