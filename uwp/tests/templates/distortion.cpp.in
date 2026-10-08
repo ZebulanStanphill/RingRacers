@@ -21,6 +21,7 @@ int r_splitscreen;
 UINT8 paused;
 gamestate_t gamestate;
 viddef_t vid;
+consvar_t cv_reducevfx;
 [[maybe_unused]] static fixed_t renderdeltatics;
 static int captures, draws, rects;
 static int activeRect[4];
@@ -70,6 +71,10 @@ int main() {
                     assert(v.t>=gl_viewwindowy/size && v.t<=(gl_viewwindowy+gl_viewheight)/size);
                     ++cases;
                 }
+                cv_reducevfx.value=1; captures=draws=rects=0;
+                HWR_DoPostProcessor(&player);
+                assert(captures==1 && draws==0 && rects==0);
+                cv_reducevfx.value=0;
                 gamestate=GS_INTERMISSION; captures=0;
                 HWR_DoPostProcessor(&player); assert(captures==0);
                 postimgtype[view]=postimg_none; captures=draws=rects=0;

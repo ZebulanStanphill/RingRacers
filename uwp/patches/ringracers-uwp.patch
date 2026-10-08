@@ -1,4 +1,4 @@
-From b82960397d246bbb721ea76c2606513edbf5138f Mon Sep 17 00:00:00 2001
+From 1aeb3f178944743099f2e7cba0d22702eac48d57 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -221,6 +221,7 @@ RingRacers-dev, rebased onto v2.4.
 
 - Match Software's per-pixel underwater/heat sampling and tic timing in D3D11;
   clamp each view to its capture and replace the legacy grid with one quad.
+  Honor Reduce VFX for both water and heat postprocessing, as Software does.
 
 - Refract scenery through translucent ripple surfaces using Software's sine table,
   signed pixel offsets and distance attenuation; bound scene copies to the face
@@ -256,7 +257,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  712 +++-
+ src/hardware/hw_main.c             |  715 +++-
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
@@ -312,7 +313,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 11427 insertions(+), 572 deletions(-)
+ 77 files changed, 11430 insertions(+), 572 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -2352,7 +2353,7 @@ index 07dfb7a16..6df0269ce 100644
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..154c2d64e 100644
+index b5e8fca5a..0595f54c8 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -3351,12 +3352,15 @@ index b5e8fca5a..154c2d64e 100644
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +6924,20 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +6924,23 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
 -	if (r_splitscreen) // Not supported in splitscreen - someone want to add support?
-+#ifndef _UWP
++#ifdef _UWP
++	if (cv_reducevfx.value) // Match Software's accessibility gating for water and heat.
++		return;
++#else
 +	if (r_splitscreen) // The OpenGL driver still only supports a whole-screen grid.
  		return;
 +#endif
@@ -3374,7 +3378,7 @@ index b5e8fca5a..154c2d64e 100644
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +6963,26 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +6966,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.
