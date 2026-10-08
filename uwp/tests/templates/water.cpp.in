@@ -1,0 +1,113 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include "doomdef.h"
+#include "tables.h"
+#include "r_draw.h"
+#include "r_plane.h"
+#include "d_netcmd.h"
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
+#undef clamp
+using std::min;
+using std::max;
+using std::clamp;
+consvar_t cv_reducevfx;
+fixed_t oneSlope = FRACUNIT;
+fixed_t *yslope = &oneSlope;
+void I_Error(const char *, ...) { abort(); }
+#include "t_fsin.c"
+@@FIXED_DIV@@
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SOFTWARE_OFFSET@@
+using UINT=unsigned;
+struct Mat4 { float m[16]; };
+struct D3D11_BOX { UINT left,top,front,right,bottom,back; };
+@@BOUNDS@@
+using float2 = float __attribute__((ext_vector_type(2)));
+using float3 = float __attribute__((ext_vector_type(3)));
+using float4 = float __attribute__((ext_vector_type(4)));
+using int3 = int __attribute__((ext_vector_type(3)));
+float4 make4(float3 v,float a) { return {v.x,v.y,v.z,a}; }
+int3 makeint3(int x,int y,int z) { return {x,y,z}; }
+int3 makeint3(float2 v,int z) { return {(int)v.x,(int)v.y,z}; }
+float3 saturate(float3 v) { return {clamp(v.x,0.f,1.f),clamp(v.y,0.f,1.f),clamp(v.z,0.f,1.f)}; }
+float2 clamp(float2 p,float2 a,float2 b) { return {clamp(p.x,a.x,b.x),clamp(p.y,a.y,b.y)}; }
+float2 floor(float2 v) { return {floorf(v.x),floorf(v.y)}; }
+struct Sine {
+    int Load(int3 p) { assert(p.x>=0 && p.x<FINEANGLES && p.y==0 && p.z==0); return FINESINE(p.x); }
+} t_water_sine;
+@@OFFSET@@
+@@BLEND@@
+struct VSOut { float4 pos; };
+static float u_leveltime;
+static float4 u_water_viewport;
+static int u_water_blend;
+static float4 waterColor;
+static float4 PSWater(VSOut) { return waterColor; }
+static int3 lastLoad;
+struct Scene {
+    float4 Load(int3 p) {
+        lastLoad=p;
+        assert(p.x>=u_water_viewport.x && p.x<=u_water_viewport.z);
+        assert(p.y>=u_water_viewport.y && p.y<=u_water_viewport.w);
+        return {p.x/2048.f,p.y/2048.f,0.25f,1};
+    }
+} t_water_scene;
+@@WATER_SHADER@@
+int main() {
+    drawspandata_t ds={}; int offsets=0;
+    // Compare against Software's actual fixed-point function/table, across the
+    // complete ripple period and near/far distances (not an equivalent formula).
+    for(int tick=0;tick<2048;++tick) for(int step=0;step<64;++step) {
+        float distance=step*32.f + .125f;
+        ds.planeheight=(fixed_t)(distance*FRACUNIT);
+        ds.planeripple.offset=tick*140;
+        int expected=R_CalculateRippleOffset(&ds,0)>>FRACBITS;
+        assert((int)WaterBackgroundOffset(distance,tick/35.f)==expected); ++offsets;
+    }
+    const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
+    int pixels=0;
+    for(int vx : {0,640}) for(int vy : {0,360}) {
+        int vp[]={vx,vy,640,360};
+        FOutVector vertices[4]={{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
+        D3D11_BOX box; WaterCaptureBounds(vertices,4,identity,vp,720,box);
+        int top=720-vy-360;
+        assert(box.left==(unsigned)vx+160 && box.right==(unsigned)vx+480);
+        assert(box.top==(unsigned)top+90-16 && box.bottom==(unsigned)top+270+16);
+        Mat4 near=identity; near.m[15]=0;
+        WaterCaptureBounds(vertices,4,near,vp,720,box);
+        assert(box.left==(unsigned)vx && box.right==(unsigned)vx+640);
+        assert(box.top==(unsigned)top && box.bottom==(unsigned)top+360);
+        u_water_viewport={(float)vx,(float)top,(float)vx+639,(float)top+359};
+        for(int mode=0;mode<6;++mode) for(float alpha : {0.f,.1f,.5f,1.f})
+        for(int tick : {0,1,6,41,128,2047}) for(float d : {0.125f,64.125f,512.125f})
+        for(int y : {top,top+179,top+359}) {
+            u_water_blend=mode; u_leveltime=tick/35.f;
+            waterColor={.6f,.2f,.8f,alpha};
+            VSOut pixel={{(float)vx+320.5f,(float)y+.5f,.9f,1.f/d}};
+            ds.planeheight=(fixed_t)(d*FRACUNIT); ds.planeripple.offset=tick*140;
+            int sy=clamp(y+(R_CalculateRippleOffset(&ds,0)>>FRACBITS),top,top+359);
+            float4 out=PSWaterRefraction(pixel);
+            assert(lastLoad.x==vx+320 && lastLoad.y==sy && lastLoad.z==0);
+            float background[]={lastLoad.x/2048.f,sy/2048.f,.25f};
+            for(int c=0;c<3;++c) {
+                float src=waterColor[c],dst=background[c],expected;
+                if(mode==1) expected=src*alpha+dst;
+                else if(mode==2) expected=src*alpha-dst;
+                else if(mode==3) expected=dst-src*alpha;
+                else if(mode==4) expected=src*dst;
+                else if(mode==5) expected=src+dst*(1-alpha);
+                else expected=src*alpha+dst*(1-alpha);
+                assert(fabsf(out[c]-clamp(expected,0.f,1.f))<.000001f);
+            }
+            assert(out.a==1); ++pixels;
+        }
+    }
+    printf("%d offsets match Software; %d refraction composites, split-view clamps and capture bounds passed\n",offsets,pixels);
+}

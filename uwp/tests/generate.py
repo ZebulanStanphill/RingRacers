@@ -67,6 +67,28 @@ def generate(engine, output):
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
     }, output / "distortion.cpp")
 
+    water = Source(engine / "src/hardware/r_d3d11/shaders.hlsl")
+    driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
+    def native_water(name):
+        code = water.function(name).replace(" : SV_Target", "")
+        code = code.replace("int3(", "makeint3(").replace("float4(", "make4(")
+        return re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", code)
+    render(templates / "water.cpp.in", {
+        "OFFSET": native_water("WaterBackgroundOffset"),
+        "BLEND": native_water("BlendWaterScene"),
+        "WATER_SHADER": native_water("PSWaterRefraction"),
+        "BOUNDS": driver.function("WaterCaptureBounds"),
+        "SOFTWARE_OFFSET": Source(engine / "src/r_plane.cpp").function("R_CalculateRippleOffset"),
+        "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+    }, output / "water.cpp")
+
+    render(templates / "blend.cpp.in", {
+        "ENUMS": driver.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
+        "TO_BLEND": driver.function("ToD3DBlend"),
+        "BLEND_STATE": driver.function("GetBlendState"),
+    }, output / "blend.cpp")
+
     postimg = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PostImageUV")
     postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
     reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(

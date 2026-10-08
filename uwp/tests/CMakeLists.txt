@@ -68,6 +68,8 @@ regression(ripples_uwp ripples _UWP HWRENDER)
 regression(ripples_desktop ripples HWRENDER)
 regression(split_distortion distortion _UWP HWRENDER)
 regression(postimg_math postimg)
+regression(water_math water _UWP HWRENDER)
+regression(water_blend_state blend _UWP)
 add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)

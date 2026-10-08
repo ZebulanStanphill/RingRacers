@@ -49,6 +49,7 @@ Every push first runs the native regression tests on Linux, then builds the app 
 
 These are in the latest build but haven't yet been confirmed by a human to actually work:
 
+- **VibeRant D3D11: water-surface refraction** needs Xbox visual and performance validation; it adds bounded scene copies for translucent ripple surfaces.
 - **VibeRant D3D11: revised underwater/heat distortion and every split-screen visual check** remain untested on Xbox. Native regression tests cover all layouts; a second controller is needed to confirm view isolation, mixed underwater/above-water cameras, heat, and the HUD on the device.
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
 - **If Legacy GL runs out of video memory, it clears its texture cache.** This may cause a brief hitch instead of slowing to a crawl.

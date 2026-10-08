@@ -103,3 +103,5 @@ with the fix. Avoid tests that only assert a source spelling or duplicate the
 implementation. Keep randomized cases seeded and retain failing seeds as cases.
 To add a group, add its stubs/cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`.
+
+- **Water refraction:** extract Software's production fixed-point ripple calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader composites across blend modes, alpha values, distances, times and split-view edges. Tests use reciprocal clip w to model the actual `SV_Position.w` pixel-shader input. Check projected capture bounds and native D3D blend-state construction/restoration. Device copies, resource allocation/failure, depth/stencil execution and Xbox visual/performance results require device validation.
