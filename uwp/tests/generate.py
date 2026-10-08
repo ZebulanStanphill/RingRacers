@@ -95,6 +95,26 @@ def generate(engine, output):
         "WATER_SHADER": native_water("PSWaterRefraction"),
     }, output / "water_capture.cpp")
 
+    fixture = json.loads((templates.parent / "fixtures/water-palace-water.json").read_text())
+    fixed = lambda value: str(int(value * 65536))
+    fixture_code = ["const std::vector<Water> mapWater={"]
+    for w in fixture["waters"]:
+        fixture_code.append(f"    {{{w['line']},{fixed(w['bottom'])},{fixed(w['top'])}}},")
+    fixture_code.append("};\nconst std::vector<SectorCase> mapSectors={")
+    for case in fixture["sectors"]:
+        lines = ",".join(map(str, case["water_lines"]))
+        fixture_code.append(f"    {{{case['sector']},{fixed(case['floor'])},{fixed(case['ceiling'])},{{{lines}}}}},")
+    fixture_code.append("};")
+    software = Source(engine / "src/r_plane.cpp")
+    render(templates / "water_visibility.cpp.in", {
+        "HIDDEN": hardware.function("HWR_FOFPlaneIsHidden"),
+        "SOFTWARE": software.section("\t\t\t// Don't draw planes that shouldn't be drawn.",
+            "\n\t\t\tif (pl->ffloor->fofflags & FOF_TRANSLUCENT)").replace("return;", "return true;"),
+        "TOP": hardware.section("\t\t\tif (!HWR_FOFPlaneIsHidden(rover, *rover->topheight)", "\n\t\t\t{"),
+        "BOTTOM": hardware.section("\t\t\tif (!HWR_FOFPlaneIsHidden(rover, *rover->bottomheight)", "\n\t\t\t{"),
+        "FIXTURE": "\n".join(fixture_code),
+    }, output / "water_visibility.cpp")
+
     render(templates / "blend.cpp.in", {
         "ENUMS": driver.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
         "TO_BLEND": driver.function("ToD3DBlend"),

@@ -1,4 +1,4 @@
-From 2afe65c4e2d35904037e82addd0366a350c926ae Mon Sep 17 00:00:00 2001
+From 6bcbfe2ce1f5369782064d59b3815f20f102291b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -243,6 +243,11 @@ RingRacers-dev, rebased onto v2.4.
   Palace's lower sky remains available behind translucent water; retain
   real, one-sided and ordinary non-sky horizon extensions
 
+- Skip internal extra-FOF faces before hardware queueing when Software's
+  CUTEXTRA rule rejects them: require matching water/fog flags and strict
+  containment in another extra volume, for both upper and lower faces.
+  Read control heights each frame and preserve touching boundaries.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -269,7 +274,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  773 +++-
+ src/hardware/hw_main.c             |  796 +++-
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
@@ -325,7 +330,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 11516 insertions(+), 573 deletions(-)
+ 77 files changed, 11537 insertions(+), 575 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -2366,7 +2371,7 @@ index 07dfb7a1601e15332c88d036ebc1d07f577bb2a9..6df0269ce4ec5236881b833a3af45a01
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d461e61dac2 100644
+index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..576aed0a259e2e922314c490fdca9820a08d3e1e 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -2902,16 +2907,33 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  		blendmode |= PF_ColorMapped;
  	}
  
-@@ -2445,7 +2821,7 @@ static void HWR_AddPolyObjectPlanes(void)
+@@ -2445,7 +2821,24 @@ static void HWR_AddPolyObjectPlanes(void)
  
  static FBITFIELD HWR_RippleBlend(sector_t *sector, ffloor_t *rover, boolean ceiling)
  {
 -	return R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
 +	return !cv_reducevfx.value && R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
++}
++
++// Match R_DrawSinglePlane's CUTEXTRA visibility rule before queuing either
++// face. A boundary inside matching water/fog is not an exposed surface; drawing
++// it would refract the already-composited outer volume again.
++static boolean HWR_FOFPlaneIsHidden(const ffloor_t *plane, fixed_t height)
++{
++	const ffloor_t *other;
++	if (!(plane->fofflags & FOF_CUTEXTRA) || !(plane->fofflags & FOF_EXTRA))
++		return false;
++
++	for (other = plane->target->ffloors; other; other = other->next)
++		if ((other->fofflags & FOF_EXTRA)
++			&& (plane->fofflags & (FOF_FOG|FOF_SWIMMABLE)) == (other->fofflags & (FOF_FOG|FOF_SWIMMABLE))
++			&& height < *other->topheight && height > *other->bottomheight)
++			return true;
++	return false;
  }
  
  // -----------------+
-@@ -2500,6 +2876,18 @@ static void HWR_Subsector(size_t num)
+@@ -2500,6 +2893,18 @@ static void HWR_Subsector(size_t num)
  		line = NULL;
  	}
  
@@ -2930,7 +2952,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
  	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
  								&ceilinglightlevel, false);
-@@ -2632,6 +3020,8 @@ static void HWR_Subsector(size_t num)
+@@ -2632,10 +3037,13 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -2939,7 +2961,23 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  			if (sub->validcount == validcount)
  				continue;
  
-@@ -2879,10 +3269,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+-			if (centerHeight <= locCeilingHeight &&
++			if (!HWR_FOFPlaneIsHidden(rover, *rover->bottomheight) &&
++			    centerHeight <= locCeilingHeight &&
+ 			    centerHeight >= locFloorHeight &&
+ 			    ((dup_viewz < cullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
+ 			     (dup_viewz > cullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
+@@ -2683,7 +3091,8 @@ static void HWR_Subsector(size_t num)
+ 			cullHeight   = P_GetFFloorTopZAt(rover, viewx, viewy);
+ 			centerHeight = P_GetFFloorTopZAt(rover, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
+ 
+-			if (centerHeight >= locFloorHeight &&
++			if (!HWR_FOFPlaneIsHidden(rover, *rover->topheight) &&
++			    centerHeight >= locFloorHeight &&
+ 			    centerHeight <= locCeilingHeight &&
+ 			    ((dup_viewz > cullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
+ 			     (dup_viewz < cullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
+@@ -2879,10 +3288,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
  	hwbbox = bsp->bbox[side];
  
  	// Recursively divide front space.
@@ -2959,7 +2997,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	{
  		// BP: big hack for a test in lighning ref : 1249753487AB
  		hwbbox = bsp->bbox[side^1];
-@@ -3656,7 +4053,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +4072,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -2968,7 +3006,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4379,6 +4776,22 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
+@@ -4379,6 +4795,22 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
  	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
  }
  
@@ -2991,7 +3029,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  //
  // HWR_CreateDrawNodes
  // Creates and sorts a list of drawnodes for the scene being rendered.
-@@ -4464,6 +4877,12 @@ static void HWR_CreateDrawNodes(void)
+@@ -4464,6 +4896,12 @@ static void HWR_CreateDrawNodes(void)
  
  	for (i = 0; i < p; i++)
  	{
@@ -3004,7 +3042,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  		if (sortnode[sortindex[i]].plane)
  		{
  			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
-@@ -4493,6 +4912,10 @@ static void HWR_CreateDrawNodes(void)
+@@ -4493,6 +4931,10 @@ static void HWR_CreateDrawNodes(void)
  		}
  	}
  
@@ -3015,7 +3053,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
  
  	numwalls = 0;
-@@ -4597,6 +5020,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +5039,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -3026,7 +3064,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +5048,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +5067,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -3039,7 +3077,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5086,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5105,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -3052,7 +3090,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5171,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4732,6 +5190,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -3064,7 +3102,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +5677,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +5696,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -3076,7 +3114,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	{
  		return;
  	}
-@@ -5396,6 +5844,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
+@@ -5396,6 +5863,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
  
  static gl_sky_t gl_sky;
  
@@ -3090,7 +3128,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, signed char yflip, float delta, boolean foglayer)
  {
  	const float radians = (float)(M_PIl / 180.0f);
-@@ -5426,6 +5881,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
+@@ -5426,6 +5900,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
  			vbo->v = (r / (float)sky->rows) + 0.5f;
  		else
  			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
@@ -3098,7 +3136,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	}
  
  	if (r != 4)
-@@ -5662,6 +6118,11 @@ static void HWR_DrawSkyBackground(player_t *player)
+@@ -5662,6 +6137,11 @@ static void HWR_DrawSkyBackground(player_t *player)
  			v[0].t = v[1].t -= ((float) angle / angleturn);
  		}
  
@@ -3110,7 +3148,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  		HWD.pfnUnSetShader();
  		HWD.pfnDrawPolygon(NULL, v, 4, 0);
  	}
-@@ -5791,21 +6252,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6271,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -3167,7 +3205,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6342,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6361,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -3203,7 +3241,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6379,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6398,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -3214,7 +3252,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5957,12 +6467,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5957,12 +6486,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		HWR_CreateDrawNodes();
  	}
  
@@ -3375,7 +3413,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  }
  
  // ==========================================================================
-@@ -5973,7 +6631,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6650,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -3385,7 +3423,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  }
  
  // ==========================================================================
-@@ -5995,6 +6655,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +6674,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -3395,7 +3433,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6038,6 +6701,33 @@ void HWR_RenderPlayerView(void)
+@@ -6038,6 +6720,33 @@ void HWR_RenderPlayerView(void)
  
  void HWR_LoadLevel(void)
  {
@@ -3429,7 +3467,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6138,6 +6828,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6847,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -3438,7 +3476,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6949,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6968,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -3448,7 +3486,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6959,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6978,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -3458,7 +3496,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +6980,23 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +6999,23 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
@@ -3484,7 +3522,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d46
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +7022,26 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +7041,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.

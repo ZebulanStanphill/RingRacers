@@ -49,8 +49,8 @@ Every push first runs the native regression tests on Linux, then builds the app 
 
 These are in the latest build but haven't yet been confirmed by a human to actually work:
 
-- **Legacy GL: empty sky horizon boundaries** no longer extend an opaque floor over the background that Software leaves visible. This addresses the Water Palace cutoff separately from the water capture fix and needs an Xbox retest. The revised sky position was confirmed.
-- **VibeRant D3D11: water-surface refraction** now shares one scene capture across coplanar water pieces to prevent repeated edge distortion and opacity. This revision needs Xbox visual and performance validation.
+- **Legacy GL: water boundaries inside other water volumes** now follow Software's visibility rule, preventing extra ripple surfaces from distorting scenery again. The new Water Palace regression checks both faces against Software. This revision needs Xbox visual validation; the user confirmed that the background cutoff and sky position are fixed.
+- **VibeRant D3D11: water-surface refraction** shares one scene capture across coplanar water pieces. The latest Xbox run still showed jagged scenery beyond the waterfall, prompting the visibility fix above. Capture counts fell substantially in the new log; exact before/after GPU cost has not been measured.
 - **VibeRant D3D11: heat distortion and every split-screen visual check** remain untested on Xbox. The user reported improved single-view underwater intensity. Native regression tests cover all layouts; a second controller is needed to confirm view isolation, mixed underwater/above-water cameras, heat, and the HUD on the device.
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
 - **If Legacy GL runs out of video memory, it clears its texture cache.** This may cause a brief hitch instead of slowing to a crawl.

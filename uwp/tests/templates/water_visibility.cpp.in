@@ -1,0 +1,88 @@
+#include <cassert>
+#include <cstdio>
+#include <vector>
+#include <initializer_list>
+#include "r_defs.h"
+
+@@HIDDEN@@
+// Independent oracle: execute Software's actual visibility block.
+bool SoftwareHidden(ffloor_t *plane, fixed_t height) {
+    struct Plane { ffloor_t *ffloor; fixed_t height; } value={plane,height};
+    Plane *pl=&value;ffloor_t *rover;
+@@SOFTWARE@@
+    return false;
+}
+// Execute the actual top/bottom admission conditions, not just the helper.
+bool HardwareDraws(ffloor_t *rover, bool ceiling, fixed_t view) {
+    fixed_t centerHeight=ceiling?*rover->topheight:*rover->bottomheight;
+    fixed_t cullHeight=centerHeight,dup_viewz=view;
+    fixed_t locFloorHeight=rover->target->floorheight;
+    fixed_t locCeilingHeight=rover->target->ceilingheight;
+    if(ceiling) {
+@@TOP@@
+            return true;
+    } else {
+@@BOTTOM@@
+            return true;
+    }
+    return false;
+}
+struct Water { int line;fixed_t bottom,top; };
+struct SectorCase { int number;fixed_t floor,ceiling;std::vector<int> lines; };
+@@FIXTURE@@
+int main() {
+    int decisions=0,hidden=0;
+    for(const auto &input:mapSectors) {
+        sector_t sector={};sector.floorheight=input.floor;sector.ceilingheight=input.ceiling;
+        std::vector<ffloor_t> planes(input.lines.size());
+        for(size_t i=0;i<planes.size();++i) {
+            const Water *water=nullptr;
+            for(const auto &w:mapWater)if(w.line==input.lines[i])water=&w;
+            assert(water);
+            planes[i].fofflags=static_cast<ffloortype_e>(FOF_EXISTS|FOF_RENDERPLANES|FOF_BOTHPLANES|FOF_CUTEXTRA|FOF_EXTRA|FOF_SWIMMABLE|FOF_RIPPLE);
+            planes[i].target=&sector;
+            // Engine fields point to heights in the control sector.
+            planes[i].bottomheight=const_cast<fixed_t*>(&water->bottom);
+            planes[i].topheight=const_cast<fixed_t*>(&water->top);
+            planes[i].next=i+1<planes.size()?&planes[i+1]:nullptr;
+        }
+        sector.ffloors=planes.data();
+        for(auto &plane:planes) for(bool top:{false,true}) {
+            fixed_t height=top?*plane.topheight:*plane.bottomheight;
+            if(height<input.floor || height>input.ceiling)continue;
+            bool expected=SoftwareHidden(&plane,height);
+            assert(HWR_FOFPlaneIsHidden(&plane,height)==expected);
+            // Both sides of each face must obey the same visibility rule.
+            assert(HardwareDraws(&plane,top,height-FRACUNIT)==!expected);
+            assert(HardwareDraws(&plane,top,height+FRACUNIT)==!expected);
+            ++decisions;if(expected)++hidden;
+        }
+    }
+    assert(hidden==15);
+    // Flag combinations, exact touching boundaries, disjoint/overlapping
+    // volumes and moving control heights. No shallow alpha/depth approximation.
+    sector_t sector={};sector.floorheight=-1024*FRACUNIT;sector.ceilingheight=1024*FRACUNIT;
+    fixed_t bottom=-64*FRACUNIT,upper=64*FRACUNIT;
+    fixed_t ownBottom=-128*FRACUNIT,ownTop=0;
+    ffloor_t plane={},other={};plane.target=other.target=&sector;
+    plane.topheight=&ownTop;plane.bottomheight=&ownBottom;
+    other.topheight=&upper;other.bottomheight=&bottom;
+    plane.next=&other;sector.ffloors=&plane;
+    for(int cut:{0,1})for(int extra:{0,1})for(int otherExtra:{0,1})
+    for(int kind:{0,1,2,3})for(int otherKind:{0,1,2,3})
+    for(int h:{-100,-64,-63,0,63,64,100}) {
+        auto flags=[](int kind){return (kind&1?FOF_SWIMMABLE:0)|(kind&2?FOF_FOG:0);};
+        plane.fofflags=static_cast<ffloortype_e>((cut?FOF_CUTEXTRA:0)|(extra?FOF_EXTRA:0)|flags(kind)|FOF_BOTHPLANES);
+        other.fofflags=static_cast<ffloortype_e>((otherExtra?FOF_EXTRA:0)|flags(otherKind));
+        fixed_t height=h*FRACUNIT;ownTop=height;
+        bool expected=SoftwareHidden(&plane,height);
+        assert(expected==(cut && extra && otherExtra && kind==otherKind && h>-64 && h<64));
+        assert(HWR_FOFPlaneIsHidden(&plane,height)==expected);
+        assert(HardwareDraws(&plane,true,height+FRACUNIT)==!expected);++decisions;
+    }
+    plane.fofflags=other.fofflags=static_cast<ffloortype_e>(FOF_CUTEXTRA|FOF_EXTRA|FOF_SWIMMABLE);
+    ownTop=0;assert(HWR_FOFPlaneIsHidden(&plane,0));
+    bottom=FRACUNIT;assert(!HWR_FOFPlaneIsHidden(&plane,0));
+    sector.ffloors=nullptr;assert(!HWR_FOFPlaneIsHidden(&plane,32*FRACUNIT));
+    printf("%d FOF visibility decisions match Software; %d internal Water Palace planes suppressed, both faces and moving heights passed\n",decisions,hidden);
+}
