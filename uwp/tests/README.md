@@ -55,6 +55,18 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   load resets, tics across the unlogged gap, camera/presentation snapshots, missing
   player objects, unpresented frames, and that tracing
   leaves the player's object unchanged. Compile/run hardware and software variants.
+- **Wall light slices:** execute production UWP wall splitting and clipping with
+  real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
+  capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the
+  water light plane at -52. The pre-fix splitter draws outside the original
+  wall and fails the vertex-bound assertion. Check 144 fixtures, including
+  100 seeded sloped walls, reversed slopes, crossing light planes, zero-height
+  endpoints, a tier that closes inside its span, the first capture's normal
+  fence, NOSHADE, solid FOF holes and matching/nonmatching CUTEXTRA kinds.
+  An independent sampled polygon oracle checks exact coverage, lighting,
+  preserved UVs and no outside geometry; draw stubs check opaque/queued/fog
+  dispatch, texture IDs, colormaps and alpha. These tests verify submitted
+  geometry, not Xbox visuals or performance.
 - **Pixel history diagnostic:** execute the production copy/readback and command handlers against padded-row resource mocks. Verify inactive paths make no GPU calls, the selected color's actual writer is reported, unchanged depth-only draws are excluded from color-writer rows, metadata stays immutable, 100% clamps to the final pixel, shader-off alpha is normalized, atlas rows/capacity and report limits are respected, partial allocation/readback failures clean up, and malformed coordinates or unsupported rendering modes are rejected. The Windows WARP harness also executes the same extracted driver functions on a real SM4 device: 130 command-ordered copies across atlas rows must preserve their earlier colors while the source remains bound, without changing the source target or binding. This validates the diagnostic, not the underlying brown-wall rendering.
 - **Suspect sky-surface diagnostics:** execute the production trace and both floor/wall dispatch conditions against real engine structures. Check per-type caps, one sampled frame per five-second interval and view, 64-bit frame IDs, map/time resets, portal/skybox exclusions, regular-floor selection, original sector IDs alongside fake-flat heights, settings, unchanged vertices, eight-vertex limits and bounded rows with one log write per surface. These checks validate diagnostics; they do not reproduce or fix the reported brown walls.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native

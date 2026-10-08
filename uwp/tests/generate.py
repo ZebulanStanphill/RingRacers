@@ -62,6 +62,15 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    slopes = Source(engine / "src/p_slopes.c")
+    render(templates / "wall_light.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),
+        "LIGHT_HEIGHT": slopes.function("P_GetLightZAt"),
+        "FOF_BOTTOM": slopes.function("P_GetFFloorBottomZAt"),
+        "CLIP_SLICE": hardware.function("HWR_DrawWallLightSlice"),
+        "SPLIT_WALL": hardware.function("HWR_SplitWall"),
+    }, output / "wall_light.cpp")
     render(templates / "surface_probe.cpp.in", {
         "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
         "COMMAND": hardware.function("HWR_SurfaceProbe_f"),
