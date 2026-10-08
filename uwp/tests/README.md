@@ -104,10 +104,28 @@ implementation. Keep randomized cases seeded and retain failing seeds as cases.
 To add a group, add its stubs/cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`. Register extracted production and reference source files as configure dependencies too, so editing Software's ripple calculation regenerates its water-refraction oracle.
 
-- **Water refraction:** extract Software's production fixed-point ripple calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader composites across blend modes, alpha values, distances, times and split-view edges. Tests use reciprocal clip w to model the actual `SV_Position.w` pixel-shader input. Check projected capture bounds and native D3D blend-state construction/restoration. `water_capture` executes the actual capture function and transparent-node dispatch with mocked D3D resources: 21,888 composites across 2/16/96 overlapping water pieces must preserve the skyline contribution and a sharp edge. It checks one copy per coplanar run, changes of layer/slope, intervening walls/non-ripple planes, standalone draws, all four view rectangles, allocation failure and target resize. Reverting to per-face capture must fail. Actual GPU copies/allocation and depth/stencil execution require device validation. The latest Xbox run confirmed the sky cutoff is fixed but still showed jagged scenery beyond the waterfall; it also recorded substantially fewer screen operations. A controlled GPU comparison remains pending.
+- **Water refraction:** extract Software's production fixed-point ripple calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader composites across blend modes, alpha values, distances, times and split-view edges. Native harnesses now supply depth for Direct3D's `SV_Position.w`; the earlier reciprocal-depth assumption was incorrect. Check projected capture bounds and native D3D blend-state construction/restoration. `water_capture` executes the actual capture function and transparent-node dispatch with mocked D3D resources: 21,888 composites across 2/16/96 overlapping water pieces must preserve the skyline contribution and a sharp edge. It checks one copy per coplanar run, changes of layer/slope, intervening walls/non-ripple planes, standalone draws, all four view rectangles, allocation failure and target resize. Reverting to per-face capture must fail. Actual GPU copies/allocation and depth/stencil execution require device validation. The latest Xbox run confirmed the sky cutoff is fixed but still showed jagged scenery beyond the waterfall; it also recorded substantially fewer screen operations. A controlled GPU comparison remains pending.
 
 - **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment; the user confirmed the revised position on Xbox. They do not verify background visibility through water.
 
 - **Horizon visibility:** use all 23 horizon boundaries from vanilla 2.4 Water Palace's TEXTMAP, with source/archive identity recorded in `fixtures/water-palace-horizons.json`. Compare the actual hardware horizon draw condition and helper to Software's production line acceptance, fake-flat and empty-line functions. Check its 22 empty sky boundaries, the remaining real boundary, lighting/texture/colormap/tag/slope changes, camera side, fake-flat control sectors, minisegs, one-sided horizons and ordinary non-sky horizons. The old unconditional horizon condition fails. This verifies the renderer's geometry decision; the user confirmed that the background cutoff is fixed on Xbox. Surface ripple artifacts are tracked separately.
 
 - **Internal FOF visibility:** extract Software's actual `R_DrawSinglePlane` rejection block, the hardware helper, and both face-admission conditions. Compare 945 decisions using real engine FOF structures, all CUTEXTRA/EXTRA/water/fog combinations, touching boundaries, moving control heights, and all 29 overlapping-water sectors recorded from vanilla 2.4 Water Palace in `fixtures/water-palace-water.json`. The old hardware height checks admit 15 internal water boundaries that Software suppresses. Removing the new condition from either face fails this test. This verifies the visibility decision; the reported scenery artifacts still require an Xbox retest.
+
+- **Direct3D water shader runtime:** Windows CI compiles the actual production
+  `VSPoly` and `PSWaterRefraction` shaders at SM4 and executes them on D3D11 WARP
+  at feature level 10.1. A probe measures pixel-position depth and checks it
+  against perspective interpolation, including a tilted triangle. Check 73,728
+  scenery samples across near/far depths, wave phases and four view rectangles;
+  samples outside the selected view must stay untouched. Use transparent water
+  to isolate the background row chosen by the production shader. Injecting the
+  old reciprocal-depth expression must fail the same pixel oracle. This covers
+  rasterizer semantics and real shader execution, while Xbox gameplay visuals
+  remain a separate device check.
+
+From an x64 Visual Studio developer PowerShell on Windows, run:
+
+```powershell
+python tests/prepare-source.py build/shader-regression-source
+./tests/run-d3d11.ps1 -Engine build/shader-regression-source
+```

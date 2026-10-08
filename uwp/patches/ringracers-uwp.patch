@@ -1,4 +1,4 @@
-From 6bcbfe2ce1f5369782064d59b3815f20f102291b Mon Sep 17 00:00:00 2001
+From d7117d8bb8ec7ea5c93be9d86006c718feff3526 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -247,6 +247,10 @@ RingRacers-dev, rebased onto v2.4.
   CUTEXTRA rule rejects them: require matching water/fog flags and strict
   containment in another extra volume, for both upper and lower faces.
   Read control heights each frame and preserve touching boundaries.
+
+- Use native Direct3D PS SV_Position.w directly as depth for water
+  refraction attenuation; the reciprocal used OpenGL's convention and
+  made distant ripples much too strong.
 
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
@@ -9912,7 +9916,7 @@ index 0000000000000000000000000000000000000000..e01eb8ec3ab253abee019438c36ea70a
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..55817a5a83bde9931060d50b044d0b11901c48f3
+index 0000000000000000000000000000000000000000..791b1b43f7d12dd2a0a7f358106d394462baa5c0
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
 @@ -0,0 +1,563 @@
@@ -10336,7 +10340,7 @@ index 0000000000000000000000000000000000000000..55817a5a83bde9931060d50b044d0b11
 +};
 +
 +// Software's ripple phase and distance attenuation, in world units. The caller
-+// recovers clip w from reciprocal SV_Position.w. Floor reproduces Software's
++// passes native Direct3D SV_Position.w (clip w/depth). Floor reproduces Software's
 +// signed fixed-point shift, including negative offsets.
 +float WaterBackgroundOffset(float distance, float seconds)
 +{
@@ -10363,9 +10367,9 @@ index 0000000000000000000000000000000000000000..55817a5a83bde9931060d50b044d0b11
 +{
 +	// Keep texture/brightmap lighting and alpha-test holes from the regular shader.
 +	float4 water = PSWater(i);
-+	// SV_Position.w is reciprocal clip w, not camera distance.
++	// Native Direct3D supplies interpolated clip w here, unlike gl_FragCoord.w.
 +	float2 pixel = floor(i.pos.xy);
-+	pixel.y += WaterBackgroundOffset(1.0 / i.pos.w, u_leveltime);
++	pixel.y += WaterBackgroundOffset(i.pos.w, u_leveltime);
 +	pixel = clamp(pixel, u_water_viewport.xy, u_water_viewport.zw);
 +	float4 background = t_water_scene.Load(int3(pixel, 0));
 +	// This complete composite is drawn with blending disabled, avoiding a second

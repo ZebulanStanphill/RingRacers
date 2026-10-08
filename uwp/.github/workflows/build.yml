@@ -85,6 +85,13 @@ jobs:
             }
           }
 
+      - name: Direct3D SM4 water shader regressions (WARP)
+        shell: pwsh
+        run: |
+          python tests/prepare-source.py build/shader-regression-source
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/run-d3d11.ps1 -Engine build/shader-regression-source
+
       - name: Build
         shell: pwsh
         run: ./build.ps1

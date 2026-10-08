@@ -171,7 +171,7 @@ int main() {
             assert(box.left==(UINT)vx && box.right==(UINT)vx+64);
             assert(box.top==(UINT)top && box.bottom==(UINT)top+48);
             for(int row=47;row>=0;--row) {
-                VSOut pixel={{vx+55.5f,top+row+.5f,.9f,1.f/32}};
+                VSOut pixel={{vx+55.5f,top+row+.5f,.9f,32.f}};
                 float4 color=PSWaterRefraction(pixel);
                 if(n==0) {
                     int sy=clamp(top+row+(int)WaterBackgroundOffset(32,u_leveltime),top,top+47);

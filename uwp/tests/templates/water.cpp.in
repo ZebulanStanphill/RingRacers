@@ -90,7 +90,7 @@ int main() {
         for(int y : {top,top+179,top+359}) {
             u_water_blend=mode; u_leveltime=tick/35.f;
             waterColor={.6f,.2f,.8f,alpha};
-            VSOut pixel={{(float)vx+320.5f,(float)y+.5f,.9f,1.f/d}};
+            VSOut pixel={{(float)vx+320.5f,(float)y+.5f,.9f,d}};
             ds.planeheight=(fixed_t)(d*FRACUNIT); ds.planeripple.offset=tick*140;
             int sy=clamp(y+(R_CalculateRippleOffset(&ds,0)>>FRACBITS),top,top+359);
             float4 out=PSWaterRefraction(pixel);
