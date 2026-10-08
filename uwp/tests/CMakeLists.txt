@@ -26,6 +26,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/d_main.cpp"
     "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
     "${RR_SOURCE_DIR}/src/r_bsp.cpp"
+    "${RR_SOURCE_DIR}/src/r_sky.c"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
 execute_process(
@@ -70,6 +71,7 @@ regression(split_distortion distortion _UWP HWRENDER)
 regression(postimg_math postimg)
 regression(water_math water _UWP HWRENDER)
 regression(water_blend_state blend _UWP)
+regression(sky_offsets sky)
 add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)

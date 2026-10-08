@@ -89,6 +89,12 @@ def generate(engine, output):
         "BLEND_STATE": driver.function("GetBlendState"),
     }, output / "blend.cpp")
 
+    render(templates / "sky.cpp.in", {
+        "SETUP": Source(engine / "src/r_sky.c").function("R_SetupSkyDraw"),
+        "OFFSETS": hardware.function("HWR_ApplySkyTextureOffsets"),
+        "VERTEX": hardware.function("HWR_SkyDomeVertex"),
+    }, output / "sky.cpp")
+
     postimg = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PostImageUV")
     postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
     reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(

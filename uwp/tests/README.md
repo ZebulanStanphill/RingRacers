@@ -105,3 +105,5 @@ To add a group, add its stubs/cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`.
 
 - **Water refraction:** extract Software's production fixed-point ripple calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader composites across blend modes, alpha values, distances, times and split-view edges. Tests use reciprocal clip w to model the actual `SV_Position.w` pixel-shader input. Check projected capture bounds and native D3D blend-state construction/restoration. Device copies, resource allocation/failure, depth/stencil execution and Xbox visual/performance results require device validation.
+
+- **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment, not visibility through water or device rendering.

@@ -1,0 +1,61 @@
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdint>
+#include <initializer_list>
+using INT32=int32_t;
+using fixed_t=int32_t;
+using boolean=bool;
+constexpr int FRACBITS=16;
+constexpr int FRACUNIT=1<<FRACBITS;
+using std::fpclassify;
+#ifndef M_PIl
+constexpr double M_PIl=3.14159265358979323846;
+#endif
+#define FIXED_TO_FLOAT(x) ((float)(x)/FRACUNIT)
+constexpr int TEXTURETYPE_SINGLEPATCH=1;
+struct texpatch_t { int wad,lump; };
+struct texture_t { int width,height,type; texpatch_t *patches; };
+struct patch_t { int16_t width,height,leftoffset,topoffset; };
+patch_t patch={512,224,0,16}; // Water Palace WPZSKY1's actual Doom patch header.
+patch_t *W_CachePatchNumPwad(int,int,int) { return &patch; }
+constexpr int PU_CACHE=1;
+void R_SetSkyScale() {}
+texture_t texture={512,224,TEXTURETYPE_SINGLEPATCH,nullptr};
+texture_t *textures[]={&texture};
+INT32 skytexture=0,skytexturemid,skytextureoffset;
+struct gl_sky_t { int width,height,rows,columns; };
+struct gl_skyvertex_t { float x,y,z,u,v; uint8_t r,g,b,a; };
+@@SETUP@@
+@@OFFSETS@@
+@@VERTEX@@
+int main() {
+    texpatch_t origin={0,0};texture.patches=&origin;
+    gl_sky_t sky={512,224,4,64};
+    int cases=0;
+    for(int width : {256,512,1024}) for(int height : {223,224,256})
+    for(int left : {-24,0,16}) for(int top : {-16,0,16}) {
+        texture.width=sky.width=width;texture.height=sky.height=height;
+        patch.leftoffset=(int16_t)left;patch.topoffset=(int16_t)top;
+        R_SetupSkyDraw();
+        int softwareMid=skytexturemid/FRACUNIT;
+        assert(softwareMid==height/2+top);
+        for(int flip=0;flip<2;++flip) for(int r=0;r<=4;++r) for(int c=0;c<=64;++c) {
+            gl_skyvertex_t v={};HWR_SkyDomeVertex(&sky,&v,r,c,(signed char)flip,0,false);
+            float baseU=-4.f*256/width*c/64;
+            float baseV=flip ? 1.5f+(4-r)/4.f : .5f+r/4.f;
+            assert(fabsf((v.u-baseU)*width-skytextureoffset/FRACUNIT)<.0003f);
+            assert(fabsf((v.v-baseV)*height-(softwareMid-height*.5f))<.0003f);
+            if(r==4) assert(fabsf((v.v-floorf(v.v))*height-softwareMid)<.0003f);
+            ++cases;
+        }
+    }
+    // Exact reported sky: both hemisphere horizons sample Software's row 128.
+    texture.width=sky.width=512;texture.height=sky.height=224;
+    patch.leftoffset=0;patch.topoffset=16;R_SetupSkyDraw();
+    for(int flip : {0,1}) {
+        gl_skyvertex_t v={};HWR_SkyDomeVertex(&sky,&v,4,0,(signed char)flip,0,false);
+        assert(fabsf((v.v-floorf(v.v))*224-128)<.00003f);
+    }
+    printf("%d sky vertices honor Software patch offsets; Water Palace horizon row 128 passed\n",cases);
+}
