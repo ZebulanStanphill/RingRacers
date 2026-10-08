@@ -1,4 +1,4 @@
-From 1aeb3f178944743099f2e7cba0d22702eac48d57 Mon Sep 17 00:00:00 2001
+From 3f1cf1f7c70c0a878d61c116e835ba5189a41443 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -9740,7 +9740,7 @@ index 000000000..e01eb8ec3
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..3e98bd4fd
+index 000000000..55817a5a8
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
 @@ -0,0 +1,563 @@
@@ -10163,9 +10163,9 @@ index 000000000..3e98bd4fd
 +	int3 u_water_pad;
 +};
 +
-+// Software's ripple phase and distance attenuation, in world units. Pixel w in
-+// D3D is clip w; gl_FragCoord.w would contain its reciprocal. Floor reproduces
-+// Software's signed fixed-point shift, including negative offsets.
++// Software's ripple phase and distance attenuation, in world units. The caller
++// recovers clip w from reciprocal SV_Position.w. Floor reproduces Software's
++// signed fixed-point shift, including negative offsets.
 +float WaterBackgroundOffset(float distance, float seconds)
 +{
 +	int tick = (int)round(seconds * 35.0) % 2048;
