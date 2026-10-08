@@ -1,4 +1,4 @@
-From bd6fe1ee3bb121f7ff4e6be596785839ab6f33c8 Mon Sep 17 00:00:00 2001
+From cb5a87266d2dc235bde1cda39fd773f412b37323 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -255,6 +255,10 @@ RingRacers-dev, rebased onto v2.4.
 - Keep sky walls and sprite silhouettes depth-only with a color-write mask;
   blend changes between invisible draws cannot paint them.
 
+- Bound shared water captures to visible polygons plus the ripple margin;
+  grow with disjoint strips without recapturing earlier water, skip clipped
+  faces, and report water copy counts/pixels separately in profiles.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -285,7 +289,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5805 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5840 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   59 +
  src/hardware/r_d3d11/shaders.hlsl  |  563 +++
  src/http-mserv.c                   |    2 +
@@ -326,7 +330,7 @@ Model: gpt-6.1-sol
  src/sdl/hwsym_sdl.c                |    7 +
  src/sdl/i_main.cpp                 |   11 +-
  src/sdl/i_system.cpp               |  132 +-
- src/sdl/i_uwpprofile.cpp           |  863 +++++
+ src/sdl/i_uwpprofile.cpp           |  863 ++++
  src/sdl/i_uwptrace.h               |   25 +
  src/sdl/i_video.cpp                |   98 +-
  src/sdl/mixer_sound.c              |    4 +-
@@ -337,7 +341,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 11545 insertions(+), 575 deletions(-)
+ 77 files changed, 11580 insertions(+), 575 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -4051,10 +4055,10 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..99b59fb90
+index 000000000..b6820d85f
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5805 @@
+@@ -0,0 +1,5840 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -4200,6 +4204,8 @@ index 000000000..99b59fb90
 +{
 +	int frames;
 +	int polygons, batches, skies, models, lines, screens;
++	int waterCopies;
++	UINT64 waterPixels;
 +	INT64 vertices, indices;
 +	int constantUpdates;
 +	int constantWraps;
@@ -8143,6 +8149,7 @@ index 000000000..99b59fb90
 +ComPtr<ID3D11Texture2D> g_waterSine;
 +ComPtr<ID3D11ShaderResourceView> g_waterSineSrv;
 +static bool g_waterCaptureGrouped = false, g_waterCaptureReady = false;
++static D3D11_BOX g_waterCapturedBounds = {};
 +
 +static void SetWaterSurface(INT32 state)
 +{
@@ -8157,6 +8164,15 @@ index 000000000..99b59fb90
 +{
 +	const float left = (float)viewport[0], top = (float)height - viewport[1] - viewport[3];
 +	float x0 = left + viewport[2], y0 = top + viewport[3], x1 = left, y1 = top;
++	UINT inFront = 0;
++	for (UINT i = 0; i < count; i++)
++		inFront += matrix.m[3]*vertices[i].x + matrix.m[7]*vertices[i].y
++			+ matrix.m[11]*vertices[i].z + matrix.m[15] > 0.0001f;
++	if (!inFront)
++	{
++		box = {0, 0, 0, 0, 0, 1};
++		return; // a fully clipped face cannot sample the scene
++	}
 +	for (UINT i = 0; i < count; i++)
 +	{
 +		const FOutVector &v = vertices[i];
@@ -8185,6 +8201,9 @@ index 000000000..99b59fb90
 +{
 +	if (!CanDraw() || !surface || !g_rt || !vertices || !count)
 +		return false;
++	D3D11_BOX needed;
++	WaterCaptureBounds(vertices, count, Multiply(g_projection, g_modelview.back()), g_gl.viewport, g_rtHeight, needed);
++	if (needed.right <= needed.left || needed.bottom <= needed.top) return false;
 +	D3D11_TEXTURE2D_DESC desc;
 +	g_rt->GetDesc(&desc);
 +	D3D11_TEXTURE2D_DESC old = {};
@@ -8250,26 +8269,44 @@ index 000000000..99b59fb90
 +	g_context->UpdateSubresource(g_waterConstants.Get(), 0, nullptr, &constants, 0, 0);
 +	ID3D11Buffer *buffer = g_waterConstants.Get();
 +	g_context->PSSetConstantBuffers(5, 1, &buffer);
-+	if (!g_waterCaptureGrouped || !g_waterCaptureReady)
++	// Grow an immutable capture only into pixels no earlier piece could have
++	// touched. The old rectangle already includes every earlier polygon and
++	// its ripple margin. Never overwrite it with the partially refracted scene.
++	const bool fresh = !g_waterCaptureGrouped || !g_waterCaptureReady;
++	D3D11_BOX bounds = needed;
++	if (!fresh)
++	{
++		bounds.left = std::min(bounds.left, g_waterCapturedBounds.left);
++		bounds.top = std::min(bounds.top, g_waterCapturedBounds.top);
++		bounds.right = std::max(bounds.right, g_waterCapturedBounds.right);
++		bounds.bottom = std::max(bounds.bottom, g_waterCapturedBounds.bottom);
++	}
++	if (fresh || bounds.left != g_waterCapturedBounds.left || bounds.top != g_waterCapturedBounds.top
++		|| bounds.right != g_waterCapturedBounds.right || bounds.bottom != g_waterCapturedBounds.bottom)
 +	{
 +		ID3D11ShaderResourceView *none = nullptr;
 +		g_context->PSSetShaderResources(9, 1, &none);
-+		D3D11_BOX box;
-+		if (g_waterCaptureGrouped)
++		const auto copy = [&](UINT left, UINT top, UINT right, UINT bottom)
 +		{
-+			// Later pieces can cover any part of this view. Copy it once, before
-+			// drawing the run, rather than recapturing its own displaced edges.
-+			box = {(UINT)g_gl.viewport[0],
-+				(UINT)(g_rtHeight - g_gl.viewport[1] - g_gl.viewport[3]), 0,
-+				(UINT)(g_gl.viewport[0] + g_gl.viewport[2]),
-+				(UINT)(g_rtHeight - g_gl.viewport[1]), 1};
-+		}
++			if (right <= left || bottom <= top) return;
++			const D3D11_BOX box = {left, top, 0, right, bottom, 1};
++			g_context->CopySubresourceRegion(g_waterScene.Get(), 0, left, top, 0, g_rt.Get(), 0, &box);
++			g_stats.screens++;
++			g_stats.waterCopies++;
++			g_stats.waterPixels += (UINT64)(right - left) * (bottom - top);
++		};
++		if (fresh)
++			copy(bounds.left, bounds.top, bounds.right, bounds.bottom);
 +		else
-+			WaterCaptureBounds(vertices, count, Multiply(g_projection, g_modelview.back()), g_gl.viewport, g_rtHeight, box);
-+		if (box.right <= box.left || box.bottom <= box.top) return false;
-+		g_context->CopySubresourceRegion(g_waterScene.Get(), 0, box.left, box.top, 0, g_rt.Get(), 0, &box);
++		{
++			const D3D11_BOX &old = g_waterCapturedBounds;
++			copy(bounds.left, bounds.top, bounds.right, old.top);
++			copy(bounds.left, old.bottom, bounds.right, bounds.bottom);
++			copy(bounds.left, old.top, old.left, old.bottom);
++			copy(old.right, old.top, bounds.right, old.bottom);
++		}
++		g_waterCapturedBounds = bounds;
 +		g_waterCaptureReady = g_waterCaptureGrouped;
-+		g_stats.screens++;
 +	}
 +	ID3D11ShaderResourceView *srv = g_waterSceneSrv.Get();
 +	g_context->PSSetShaderResources(9, 1, &srv);
@@ -9788,6 +9825,8 @@ index 000000000..99b59fb90
 +
 +	I_OutputMsg("UWP perf:   D3D11: %.1f frames/s; per frame %.0f polygons, %.0f batches, %.1f models, %.1f skies (%.1f rebuilt), %.1f lines, %.1f screen copies or draws\n",
 +		s.frames / seconds, s.polygons / n, s.batches / n, s.models / n, s.skies / n, s.skyBuilds / n, s.lines / n, s.screens / n);
++	I_OutputMsg("UWP perf:   D3D11: water refraction: %.1f region copies, %.3f megapixels (%.2f MB) copied per frame\n",
++		s.waterCopies / n, s.waterPixels / n / 1000000.0, s.waterPixels / n * 4 / 1048576.0);
 +	I_OutputMsg("UWP perf:   D3D11: per frame %.0f vertices, %.0f indices, %.0f KB uploaded, %.0f constant updates, %.0f shader, %.0f blend, %.0f depth, %.0f raster changes, %.0f texture binds; %d buffer wraps\n",
 +		s.vertices / n, s.indices / n, s.uploadBytes / n / 1024.0, s.constantUpdates / n, s.shaderChanges / n,
 +		s.blendChanges / n, s.depthChanges / n, s.rasterChanges / n, s.textureBinds / n, s.ringWraps);

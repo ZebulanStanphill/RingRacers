@@ -82,6 +82,9 @@ int main() {
         assert(box.top==(unsigned)top+90-16 && box.bottom==(unsigned)top+270+16);
         Mat4 near=identity; near.m[15]=0;
         WaterCaptureBounds(vertices,4,near,vp,720,box);
+        assert(box.left==box.right && box.top==box.bottom); // all behind eye
+        near.m[3]=1; // half the polygon crosses the eye plane
+        WaterCaptureBounds(vertices,4,near,vp,720,box);
         assert(box.left==(unsigned)vx && box.right==(unsigned)vx+640);
         assert(box.top==(unsigned)top && box.bottom==(unsigned)top+360);
         u_water_viewport={(float)vx,(float)top,(float)vx+639,(float)top+359};

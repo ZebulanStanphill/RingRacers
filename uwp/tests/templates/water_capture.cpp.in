@@ -96,7 +96,7 @@ Context *g_context=&context;
 struct { int viewport[4]; } g_gl;
 UINT g_rtHeight;
 UINT64 g_textureBytes=0;
-struct { int texturesCreated=0,screens=0; } g_stats;
+struct { int texturesCreated=0,screens=0,waterCopies=0; UINT64 waterPixels=0; } g_stats;
 ComPtr<ID3D11Texture2D> g_rt;
 bool canDraw=true;
 bool CanDraw(){return canDraw;}
@@ -147,7 +147,7 @@ int main() {
     assert(!HWR_WaterPlaneContinues(&left,&right));
     b.f_slope=&slopeA;assert(HWR_WaterPlaneContinues(&left,&right));
     a.f_slope=b.f_slope=nullptr;
-    FOutVector poly[]={{-.8f,-.8f,0,0,0},{-.1f,-.8f,0,0,0},{-.1f,.8f,0,0,0}};
+    FOutVector poly[]={{-.8f,-.8f,0,0,0},{.8f,-.8f,0,0,0},{.8f,.8f,0,0,0}};
     FSurfaceInfo surf={};
     int composites=0;
     for(int vx:{0,64}) for(int vy:{0,48}) for(int pieces:{2,16,96}) {
@@ -168,7 +168,7 @@ int main() {
             assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
             assert(context.copies.size()==before+1);
             const D3D11_BOX &box=context.copies.back();
-            assert(box.left==(UINT)vx && box.right==(UINT)vx+64);
+            assert(box.left==(UINT)vx+6 && box.right==(UINT)vx+58);
             assert(box.top==(UINT)top && box.bottom==(UINT)top+48);
             for(int row=47;row>=0;--row) {
                 VSOut pixel={{vx+55.5f,top+row+.5f,.9f,32.f}};
@@ -193,6 +193,57 @@ int main() {
             assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
         }
     }
+    // Growing runs move in every direction and overlap earlier pieces. Every
+    // copied pixel must come from the untouched scenery, at most once per run.
+    // The polygon bounds include the complete 16-pixel ripple sampling margin.
+    const int viewport[]={0,0,128,96};std::copy(viewport,viewport+4,g_gl.viewport);
+    const std::vector<std::vector<int>> rectangles={{52,40,60,48},{48,38,58,46},
+        {57,43,66,53},{50,25,62,42},{44,48,64,61},{40,20,70,67}};
+    for(int reverse:{0,1}) {
+        for(UINT y=0;y<96;++y) for(UINT x=0;x<128;++x)
+            g_rt->pixels[y*128+x]={x/128.f,y/96.f,.7f,1};
+        const auto original=g_rt->pixels;
+        std::vector<bool> copied(128*96,false);
+        SetWaterSurface(1);UINT64 pixelsBefore=g_stats.waterPixels;
+        for(size_t i=0;i<rectangles.size();++i) {
+            const auto &r=rectangles[reverse?rectangles.size()-1-i:i];
+            const float x0=r[0]/64.f-1,x1=r[2]/64.f-1;
+            const float y0=1-r[3]/48.f,y1=1-r[1]/48.f;
+            FOutVector piece[]={{x0,y0,0,0,0},{x1,y0,0,0,0},{x1,y1,0,0,0},{x0,y1,0,0,0}};
+            size_t copiesBefore=context.copies.size();
+            if(i)SetWaterSurface(2);
+            assert(CaptureWaterScene(&surf,PF_Translucent,piece,4));
+            for(size_t n=copiesBefore;n<context.copies.size();++n) {
+                auto box=context.copies[n];
+                for(UINT y=box.top;y<box.bottom;++y) for(UINT x=box.left;x<box.right;++x) {
+                    assert(!copied[y*128+x]);copied[y*128+x]=true;
+                }
+            }
+            for(size_t n=0;n<copied.size();++n) if(copied[n])
+                for(int c=0;c<4;++c)assert(g_waterScene->pixels[n][c]==original[n][c]);
+            // Earlier water draws alter only their actual rectangle. Expanding
+            // the capture must not import this refraction into old pixels.
+            for(int y=r[1];y<r[3];++y)for(int x=r[0];x<r[2];++x)
+                g_rt->pixels[y*128+x]={.8f,.1f,.2f,1};
+        }
+        UINT count=(UINT)std::count(copied.begin(),copied.end(),true);
+        assert(g_stats.waterPixels-pixelsBefore==count);
+        assert(count<128*96/2); // old whole-viewport copying fails this check
+    }
+    // Many short runs separated by walls only need small rectangles; fully
+    // offscreen/behind-eye faces issue no copies or resource updates.
+    FOutVector tiny[]={{-.75f,-.25f,0,0,0},{-.6875f,-.25f,0,0,0},
+        {-.6875f,-.16666667f,0,0,0},{-.75f,-.16666667f,0,0,0}};
+    UINT64 smallBefore=g_stats.waterPixels;
+    for(int i=0;i<200;++i){SetWaterSurface(1);assert(CaptureWaterScene(&surf,PF_Translucent,tiny,4));}
+    assert(g_stats.waterPixels-smallBefore<=200*4*37);
+    assert(g_stats.waterPixels-smallBefore<200*128*96/50);
+    size_t clippedBefore=context.copies.size();
+    FOutVector offscreen[]={{2,2,0,0,0},{3,2,0,0,0},{3,3,0,0,0}};
+    SetWaterSurface(1);assert(!CaptureWaterScene(&surf,PF_Translucent,offscreen,3));
+    g_projection.m[15]=-1;
+    assert(!CaptureWaterScene(&surf,PF_Translucent,poly,3));g_projection=identity;
+    assert(context.copies.size()==clippedBefore && !g_waterCaptureReady);
     // Starting a new view/frame discards the previous capture even at identical
     // plane height; standalone polyobject draws still capture each polygon.
     SetWaterSurface(0);size_t before=context.copies.size();
