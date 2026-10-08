@@ -27,6 +27,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
     "${RR_SOURCE_DIR}/src/r_bsp.cpp"
     "${RR_SOURCE_DIR}/src/r_sky.c"
+    "${RR_SOURCE_DIR}/src/r_plane.cpp"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
 execute_process(
