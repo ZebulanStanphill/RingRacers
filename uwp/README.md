@@ -58,7 +58,13 @@ These are in the latest build but haven't yet been confirmed by a human to actua
 
 ## Brown-wall diagnostic build
 
-The `diagnostics/hw-brown-surfaces` branch adds bounded surface logging without changing rendering. Use its GitHub Actions package when investigating the brown walls; this is not a visual fix. On Water Palace, stop the kart where the walls appear and leave the game unpaused for at least five seconds with Batching on. Turn Batching off under Options → Video → Advanced, then return to gameplay and remain there for another five seconds. Record whether the walls change and save `latest-log.txt` before another launch. The `UWP sky geometry:` and `UWP sky surface:` lines identify candidate map surfaces and the active settings. [Diagnostic details and limits](CHANGES.md#diagnostics).
+The `diagnostics/hw-brown-surfaces` branch adds bounded surface logging for investigating the brown walls. Its latest package also adds a **Batching** switch under **Options → Video → Advanced**, in the **VibeRant D3D11 Options** section directly below **Better transparency ordering**. Change it with Left/Right on the controller. It starts On and resets to On on the next launch. Build 90 and current master do not have this menu entry; use a later package from this diagnostic branch.
+
+1. On Water Palace with VibeRant D3D11 enabled, stop the kart where the walls appear. Leave gameplay unpaused for at least five seconds with Batching On.
+2. Open Options → Video → Advanced and set Batching Off. Return to gameplay at the same spot and leave it unpaused for another five seconds.
+3. Note whether the walls disappear and save `latest-log.txt` before another launch. You can set Batching back to On after the comparison.
+
+The `UWP sky geometry:` and `UWP sky surface:` lines identify candidate map surfaces and the active settings. The added switch exposes the existing `gr_batching` setting; it does not fix the walls. [Diagnostic details and limits](CHANGES.md#diagnostics).
 
 ## Notes
 

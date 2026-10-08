@@ -1,4 +1,4 @@
-From 5b63a0d60a4e0ea8eda75ad04f3e50b5c4f762f8 Mon Sep 17 00:00:00 2001
+From a49f4b924490af92d06caf01d8325d37aa685071 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -275,6 +275,11 @@ RingRacers-dev, rebased onto v2.4.
   rendering, traversal and capture behavior. These are submitted surfaces,
   not proven visible pixels; the reported brown-wall cause remains unresolved.
 
+- Expose the existing gr_batching On/Off setting in UWP's Advanced Video
+  menu below Better transparency ordering, allowing controller-only tests.
+  Retain its On default and session-only reset on launch, and align the
+  advanced-menu item indices with the conditional UWP entry.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -314,14 +319,14 @@ Model: gpt-6.1-sol
  src/hwr2/resource_management.hpp   |   31 +-
  src/i_system.h                     |   66 +
  src/i_video_common.cpp             |   60 +-
- src/k_menu.h                       |    7 +
+ src/k_menu.h                       |   10 +
  src/k_menufunc.c                   |    6 +
  src/lua_script.c                   |  127 +
  src/m_fixed.h                      |   11 +
  src/m_perfstats.c                  |  244 ++
  src/m_perfstats.h                  |   11 +
  src/menus/options-1.c              |   34 +
- src/menus/options-video-advanced.c |   35 +
+ src/menus/options-video-advanced.c |   40 +
  src/p_lights.c                     |    9 +
  src/p_mobj.c                       |   98 +-
  src/p_mobj.h                       |   11 +
@@ -357,7 +362,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 12129 insertions(+), 710 deletions(-)
+ 77 files changed, 12137 insertions(+), 710 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -11871,10 +11876,10 @@ index f52f9298e..ff724f09e 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb..4ebebb6da 100644
+index d52750abb..9358f15d3 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
-@@ -420,11 +420,18 @@ typedef enum
+@@ -420,11 +420,21 @@ typedef enum
  	vaopt_spacer7,
  	vaopt_spacer8,
  	vaopt_spacer9,
@@ -11890,6 +11895,9 @@ index d52750abb..4ebebb6da 100644
  	vaopt_shaders,
 +	vaopt_paletterendering, // [UWP]
 +	vaopt_bettertransparency,
++#ifdef _UWP
++	vaopt_batching,
++#endif
  	vaopt_spacer11,
  	vaopt_texturequal,
  	vaopt_anisotropic,
@@ -12449,7 +12457,7 @@ index 41bc817aa..ccb395820 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..d99326e0a 100644
+index c2e40ae04..94c3ae59d 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -12512,7 +12520,7 @@ index c2e40ae04..d99326e0a 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
-@@ -74,6 +103,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -74,6 +103,17 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
  		NULL, {.cvar = &cv_glshaders}, 0, 0},
  
@@ -12521,6 +12529,11 @@ index c2e40ae04..d99326e0a 100644
 +
 +	{IT_STRING | IT_CVAR, "Better transparency ordering", "Sort transparent objects with water, fog & walls. Costs extra CPU time.",
 +		NULL, {.cvar = &cv_glbettertransparency}, 0, 0},
++
++#ifdef _UWP
++	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
++		NULL, {.cvar = &cv_glbatching}, 0, 0},
++#endif
 +
  	{IT_SPACE | IT_NOTHING, NULL,  NULL,
  		NULL, {NULL}, 0, 0},

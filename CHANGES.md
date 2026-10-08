@@ -150,6 +150,7 @@ The CPU cost of GL calls through ANGLE is high on Xbox, so the GL2 RHI backend m
 
 ## Diagnostics
 
+- **Batching menu control** (UWP only, diagnostic build). Options → Video → Advanced exposes the existing `gr_batching` setting as **Batching**, directly below **Better transparency ordering** in the VibeRant D3D11 section. Left/Right changes On/Off with a controller. It defaults to On and retains the existing session-only behavior, resetting on launch. This makes the Water Palace comparison possible without a keyboard; build 90 and current master do not have this menu entry. It adds no rendering behavior beyond changing the existing setting, and the surface trace records its active value.
 - **Startup log.** `latest-log.txt` records:
   - the OpenGL strings, surface size, and shader compiles
   - each step of the first frames
