@@ -1,0 +1,211 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <memory>
+#include <vector>
+#include <cstring>
+#include "doomdef.h"
+#include "tables.h"
+#include "hardware/hw_defs.h"
+#include "r_defs.h"
+#undef min
+#undef max
+#undef clamp
+using std::min; using std::max; using std::clamp;
+#include "t_fsin.c"
+using UINT=unsigned; using UINT64=uint64_t;
+using float2 = float __attribute__((ext_vector_type(2)));
+using float3 = float __attribute__((ext_vector_type(3)));
+using float4 = float __attribute__((ext_vector_type(4)));
+using int3 = int __attribute__((ext_vector_type(3)));
+float4 make4(float3 v,float a) { return {v.x,v.y,v.z,a}; }
+int3 makeint3(int x,int y,int z) { return {x,y,z}; }
+int3 makeint3(float2 v,int z) { return {(int)v.x,(int)v.y,z}; }
+float3 saturate(float3 v) { return {clamp(v.x,0.f,1.f),clamp(v.y,0.f,1.f),clamp(v.z,0.f,1.f)}; }
+float2 clamp(float2 p,float2 a,float2 b) { return {clamp(p.x,a.x,b.x),clamp(p.y,a.y,b.y)}; }
+float2 floor(float2 v) { return {floorf(v.x),floorf(v.y)}; }
+struct Mat4 { float m[16]; };
+const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
+@@MULTIPLY@@
+Mat4 g_projection=identity;
+std::vector<Mat4> g_modelview={identity};
+struct D3D11_BOX { UINT left,top,front,right,bottom,back; };
+struct D3D11_TEXTURE2D_DESC {
+    UINT Width,Height,MipLevels,ArraySize; int Format;
+    struct { UINT Count; } SampleDesc;
+    UINT Usage,BindFlags,MiscFlags;
+};
+struct D3D11_SUBRESOURCE_DATA { const void *pSysMem; UINT SysMemPitch; };
+struct D3D11_BUFFER_DESC { UINT ByteWidth,Usage,BindFlags; };
+enum { D3D11_BIND_SHADER_RESOURCE=1, D3D11_BIND_CONSTANT_BUFFER=2,
+    D3D11_USAGE_IMMUTABLE=3, D3D11_USAGE_DEFAULT=4, DXGI_FORMAT_R32_SINT=5 };
+struct ID3D11Texture2D {
+    D3D11_TEXTURE2D_DESC desc;
+    std::vector<float4> pixels;
+    void GetDesc(D3D11_TEXTURE2D_DESC *out) { *out=desc; }
+};
+struct ID3D11ShaderResourceView { ID3D11Texture2D *texture; };
+struct ID3D11Buffer {};
+template<class T> struct ComPtr {
+    T *p=nullptr; T* Get(){return p;} T** operator&(){return &p;}
+    T* operator->(){return p;} explicit operator bool() const {return p;}
+    void Reset(){p=nullptr;}
+};
+struct Device {
+    std::vector<std::unique_ptr<ID3D11Texture2D>> textures;
+    std::vector<std::unique_ptr<ID3D11ShaderResourceView>> views;
+    std::vector<std::unique_ptr<ID3D11Buffer>> buffers;
+    bool fail=false;
+    int CreateTexture2D(const D3D11_TEXTURE2D_DESC *desc,const D3D11_SUBRESOURCE_DATA *,ID3D11Texture2D **out) {
+        if(fail) return 1;
+        textures.emplace_back(new ID3D11Texture2D{*desc,{}});
+        textures.back()->pixels.resize(desc->Width*desc->Height);
+        *out=textures.back().get(); return 0;
+    }
+    int CreateShaderResourceView(ID3D11Texture2D *t,const void *,ID3D11ShaderResourceView **out) {
+        if(fail) return 1;
+        views.emplace_back(new ID3D11ShaderResourceView{t}); *out=views.back().get();return 0;
+    }
+    int CreateBuffer(const D3D11_BUFFER_DESC *,const void *,ID3D11Buffer **out) {
+        if(fail) return 1;
+        buffers.emplace_back(new ID3D11Buffer);*out=buffers.back().get();return 0;
+    }
+} device;
+Device *g_device=&device;
+static float4 u_water_viewport;
+static int u_water_blend;
+struct Context {
+    ID3D11ShaderResourceView *bound=nullptr;
+    std::vector<D3D11_BOX> copies;
+    void PSSetShaderResources(UINT slot,UINT,ID3D11ShaderResourceView **view) { if(slot==9) bound=*view; }
+    void PSSetConstantBuffers(UINT,UINT,ID3D11Buffer **) {}
+    void UpdateSubresource(ID3D11Buffer *,UINT,const void *,const void *data,UINT,UINT) {
+        memcpy(&u_water_viewport,data,16);memcpy(&u_water_blend,(const char*)data+16,4);
+    }
+    void CopySubresourceRegion(ID3D11Texture2D *dst,UINT,UINT x,UINT y,UINT,
+                               ID3D11Texture2D *src,UINT,const D3D11_BOX *box) {
+        assert(!bound); assert(box->front==0 && box->back==1);
+        assert(box->right<=src->desc.Width && box->bottom<=src->desc.Height);
+        for(UINT row=box->top;row<box->bottom;++row) for(UINT col=box->left;col<box->right;++col)
+            dst->pixels[(y+row-box->top)*dst->desc.Width+x+col-box->left]=src->pixels[row*src->desc.Width+col];
+        copies.push_back(*box);
+    }
+} context;
+Context *g_context=&context;
+struct { int viewport[4]; } g_gl;
+UINT g_rtHeight;
+UINT64 g_textureBytes=0;
+struct { int texturesCreated=0,screens=0; } g_stats;
+ComPtr<ID3D11Texture2D> g_rt;
+bool canDraw=true;
+bool CanDraw(){return canDraw;}
+bool Failed(int code,const char*){return code!=0;}
+@@CAPTURE_GLOBALS@@
+@@BOUNDS@@
+@@CAPTURE@@
+struct planeinfo_t { boolean isceiling; fixed_t fixedheight; sector_t *FOFSector; FBITFIELD blend; };
+@@CONTINUES@@
+// Run the actual dispatcher snippet, including transitions past walls/non-water.
+void DispatchWater(const std::vector<planeinfo_t*> &planes,UINT i) {
+    struct Node { planeinfo_t *plane; };
+    std::vector<Node> sortnode;std::vector<size_t> sortindex;
+    for(auto plane:planes){sortindex.push_back(sortnode.size());sortnode.push_back({plane});}
+    struct Driver { static void State(hwdspecialstate_t state,INT32 value) {
+        assert(state==HWD_SET_WATER_SURFACE);SetWaterSurface(value);
+    } void (*pfnSetSpecialState)(hwdspecialstate_t,INT32)=State; } HWD;
+@@DISPATCH@@
+}
+struct Sine { int Load(int3 p) { return FINESINE(p.x); } } t_water_sine;
+@@OFFSET@@
+@@BLEND@@
+struct VSOut { float4 pos; };
+static float u_leveltime;
+static float4 waterColor;
+float4 PSWater(VSOut) { return waterColor; }
+struct Scene { float4 Load(int3 p) {
+    assert(context.bound==g_waterSceneSrv.Get());
+    assert(p.x>=u_water_viewport.x && p.x<=u_water_viewport.z);
+    assert(p.y>=u_water_viewport.y && p.y<=u_water_viewport.w);
+    return g_waterScene->pixels[p.y*g_waterScene->desc.Width+p.x];
+} } t_water_scene;
+@@WATER_SHADER@@
+
+int main() {
+    D3D11_TEXTURE2D_DESC desc={}; desc.Width=128;desc.Height=96;desc.Format=1;
+    assert(!device.CreateTexture2D(&desc,nullptr,&g_rt)); g_rtHeight=desc.Height;
+    sector_t a={},b={}; pslope_t slopeA={},slopeB={};
+    planeinfo_t left={false,84*FRACUNIT,&a,PF_Ripple|PF_Translucent};
+    planeinfo_t right=left; right.FOFSector=&b;
+    planeinfo_t layer=left;layer.fixedheight+=FRACUNIT;
+    planeinfo_t plain=left;plain.blend=PF_Translucent;
+    assert(!HWR_WaterPlaneContinues(nullptr,&left));
+    assert(HWR_WaterPlaneContinues(&left,&right));
+    assert(!HWR_WaterPlaneContinues(&left,&layer));
+    assert(!HWR_WaterPlaneContinues(&left,&plain));
+    a.f_slope=&slopeA;b.f_slope=&slopeB;
+    assert(!HWR_WaterPlaneContinues(&left,&right));
+    b.f_slope=&slopeA;assert(HWR_WaterPlaneContinues(&left,&right));
+    a.f_slope=b.f_slope=nullptr;
+    FOutVector poly[]={{-.8f,-.8f,0,0,0},{-.1f,-.8f,0,0,0},{-.1f,.8f,0,0,0}};
+    FSurfaceInfo surf={};
+    int composites=0;
+    for(int vx:{0,64}) for(int vy:{0,48}) for(int pieces:{2,16,96}) {
+        const int viewport[]={vx,vy,64,48};
+        std::copy(viewport,viewport+4,g_gl.viewport);
+        int top=96-vy-48;
+        // Skyline plus a sharp pillar edge: pieces overlap and draw in reverse
+        // row order, so per-polygon recapture would propagate that edge.
+        for(UINT y=0;y<desc.Height;++y) for(UINT x=0;x<desc.Width;++x)
+            g_rt->pixels[y*desc.Width+x]={x/128.f,(int)y<top+16?.9f:.2f,.7f,1};
+        const auto original=g_rt->pixels;
+        waterColor={.1f,.5f,.8f,65/255.f};u_leveltime=6/35.f;
+        std::vector<planeinfo_t*> run(pieces,&left);run.back()=&right;
+        size_t before=context.copies.size();
+        std::vector<float4> expected;
+        for(int n=0;n<pieces;++n) {
+            DispatchWater(run,n);
+            assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
+            assert(context.copies.size()==before+1);
+            const D3D11_BOX &box=context.copies.back();
+            assert(box.left==(UINT)vx && box.right==(UINT)vx+64);
+            assert(box.top==(UINT)top && box.bottom==(UINT)top+48);
+            for(int row=47;row>=0;--row) {
+                VSOut pixel={{vx+55.5f,top+row+.5f,.9f,1.f/32}};
+                float4 color=PSWaterRefraction(pixel);
+                if(n==0) {
+                    int sy=clamp(top+row+(int)WaterBackgroundOffset(32,u_leveltime),top,top+47);
+                    float4 background=original[sy*desc.Width+vx+55];
+                    // Independent ordinary alpha blend: skyline contribution
+                    // remains 190/255 regardless of overlapping piece count.
+                    for(int c=0;c<3;++c) assert(fabsf(color[c]-(waterColor[c]*waterColor.a+background[c]*(1-waterColor.a)))<1e-6f);
+                    expected.push_back(color);
+                }
+                else for(int c=0;c<4;++c) assert(fabsf(color[c]-expected[47-row][c])<1e-6f);
+                g_rt->pixels[(top+row)*desc.Width+vx+55]=color;++composites;
+            }
+        }
+        // A different layer or intervening wall/non-ripple node must take the
+        // newly drawn scene, rather than reusing an earlier layer's snapshot.
+        for(const auto &sequence : std::vector<std::vector<planeinfo_t*>>{{&left,&layer},{&left,nullptr,&right},{&left,&plain,&right}}) {
+            size_t last=sequence.size()-1;DispatchWater(sequence,(UINT)last);
+            assert(!g_waterCaptureReady);
+            assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
+        }
+    }
+    // Starting a new view/frame discards the previous capture even at identical
+    // plane height; standalone polyobject draws still capture each polygon.
+    SetWaterSurface(0);size_t before=context.copies.size();
+    for(int i=0;i<2;++i)assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
+    assert(context.copies.size()==before+2);
+    SetWaterSurface(1);canDraw=false;
+    assert(!CaptureWaterScene(&surf,PF_Translucent,poly,3) && !g_waterCaptureReady);
+    canDraw=true;g_waterConstants.Reset();device.fail=true;
+    assert(!CaptureWaterScene(&surf,PF_Translucent,poly,3) && !g_waterCaptureReady);
+    device.fail=false;assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
+    // Recreated targets invalidate the source even if a group was active.
+    desc.Width=256;assert(!device.CreateTexture2D(&desc,nullptr,&g_rt));
+    before=context.copies.size();assert(CaptureWaterScene(&surf,PF_Translucent,poly,3));
+    assert(context.copies.size()==before+1 && g_waterScene->desc.Width==256);
+    printf("%d overlapping-water composites preserve skyline/edges; capture dispatch, layers, split-view isolation and failure fallback passed\n",composites);
+}

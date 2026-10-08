@@ -71,6 +71,7 @@ regression(ripples_desktop ripples HWRENDER)
 regression(split_distortion distortion _UWP HWRENDER)
 regression(postimg_math postimg)
 regression(water_math water _UWP HWRENDER)
+regression(water_capture water_capture _UWP HWRENDER)
 regression(water_blend_state blend _UWP)
 regression(sky_offsets sky)
 add_test(NAME source_extraction

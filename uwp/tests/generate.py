@@ -83,6 +83,18 @@ def generate(engine, output):
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
     }, output / "water.cpp")
 
+    render(templates / "water_capture.cpp.in", {
+        "MULTIPLY": driver.function("Multiply"),
+        "CAPTURE_GLOBALS": driver.section("ComPtr<ID3D11Texture2D> g_waterScene;", "// Conservative projected bounds."),
+        "BOUNDS": driver.function("WaterCaptureBounds"),
+        "CAPTURE": driver.function("CaptureWaterScene"),
+        "CONTINUES": hardware.function("HWR_WaterPlaneContinues"),
+        "DISPATCH": hardware.section("\t\tconst planeinfo_t *plane = sortnode[sortindex[i]].plane;", "\n#endif"),
+        "OFFSET": native_water("WaterBackgroundOffset"),
+        "BLEND": native_water("BlendWaterScene"),
+        "WATER_SHADER": native_water("PSWaterRefraction"),
+    }, output / "water_capture.cpp")
+
     render(templates / "blend.cpp.in", {
         "ENUMS": driver.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
         "TO_BLEND": driver.function("ToD3DBlend"),
