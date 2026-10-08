@@ -119,6 +119,8 @@ def generate(engine, output):
         "ENUMS": driver.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
         "TO_BLEND": driver.function("ToD3DBlend"),
         "BLEND_STATE": driver.function("GetBlendState"),
+        "SET_BLEND_MODE": driver.function("SetBlendMode"),
+        "SET_BLEND": driver.function("D3D_SetBlend"),
     }, output / "blend.cpp")
 
     render(templates / "sky.cpp.in", {

@@ -1,4 +1,4 @@
-From d7117d8bb8ec7ea5c93be9d86006c718feff3526 Mon Sep 17 00:00:00 2001
+From bd6fe1ee3bb121f7ff4e6be596785839ab6f33c8 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -252,6 +252,9 @@ RingRacers-dev, rebased onto v2.4.
   refraction attenuation; the reciprocal used OpenGL's convention and
   made distant ripples much too strong.
 
+- Keep sky walls and sprite silhouettes depth-only with a color-write mask;
+  blend changes between invisible draws cannot paint them.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -282,7 +285,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5797 ++++++++++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp   | 5805 ++++++++++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h     |   59 +
  src/hardware/r_d3d11/shaders.hlsl  |  563 +++
  src/http-mserv.c                   |    2 +
@@ -334,7 +337,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 11537 insertions(+), 575 deletions(-)
+ 77 files changed, 11545 insertions(+), 575 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -342,7 +345,7 @@ Model: gpt-6.1-sol
  create mode 100644 src/sdl/i_uwptrace.h
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fc82385dd1e3a30710171be663e82f3dcc9b6eb7..8b691cc0d6549f33a0b89f41bf0aea5576a5140d 100644
+index fc82385dd..8b691cc0d 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1,4 +1,5 @@
@@ -395,7 +398,7 @@ index fc82385dd1e3a30710171be663e82f3dcc9b6eb7..8b691cc0d6549f33a0b89f41bf0aea55
  		string(REGEX REPLACE "[\\\/\^\$]" "_" SAFE_REVISION "${SRB2_GIT_REVISION}")
  		list(APPEND EXE_NAME_PARTS ${SAFE_REVISION})
 diff --git a/CMakePresets.json b/CMakePresets.json
-index a52a087bd29f5a39d9fec69d7306a8f6d5d3c720..b96f55aa17cae8202a0dcc199fb38a3e58b9b862 100644
+index a52a087bd..b96f55aa1 100644
 --- a/CMakePresets.json
 +++ b/CMakePresets.json
 @@ -79,6 +79,13 @@
@@ -437,7 +440,7 @@ index a52a087bd29f5a39d9fec69d7306a8f6d5d3c720..b96f55aa17cae8202a0dcc199fb38a3e
  			"name": "ninja-x64_osx_vcpkg-debug",
  			"configurePreset": "ninja-x64_osx_vcpkg-debug"
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 9eb0bcbf18e4ce940a6b99039c417bb4183c4507..46543dc45534f44989684fa1bdb3ca92f1576a7b 100644
+index 9eb0bcbf1..46543dc45 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -1,6 +1,6 @@
@@ -526,7 +529,7 @@ index 9eb0bcbf18e4ce940a6b99039c417bb4183c4507..46543dc45534f44989684fa1bdb3ca92
  
  # Setup clang-tidy
 diff --git a/src/console.c b/src/console.c
-index 1e7585fbc1dac36b4164d1ee6a273dbb89aa530a..fc9c5fb3ccae4566710b3f5ec5932ec6b2f54b8f 100644
+index 1e7585fbc..fc9c5fb3c 100644
 --- a/src/console.c
 +++ b/src/console.c
 @@ -1948,7 +1948,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
@@ -556,7 +559,7 @@ index 1e7585fbc1dac36b4164d1ee6a273dbb89aa530a..fc9c5fb3ccae4566710b3f5ec5932ec6
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
-index 8a434ba63d5a0123a9700466bc2658d039c8d938..0e3c54d6494612875113bae9fb0fcfd25c8b1d85 100644
+index 8a434ba63..0e3c54d64 100644
 --- a/src/core/thread_pool.cpp
 +++ b/src/core/thread_pool.cpp
 @@ -24,6 +24,11 @@
@@ -600,7 +603,7 @@ index 8a434ba63d5a0123a9700466bc2658d039c8d938..0e3c54d6494612875113bae9fb0fcfd2
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33d57fe9cb5015b414910797370199bc925..9f09579ab0d7366b59aad6c63ba848d8ee9c6889 100644
+index d589b33d5..9f09579ab 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
 @@ -1479,6 +1479,9 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
@@ -614,7 +617,7 @@ index d589b33d57fe9cb5015b414910797370199bc925..9f09579ab0d7366b59aad6c63ba848d8
  		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
  		consvar_t cv_glcoronasize = OpenGL("gr_coronasize", "1").floating_point();
 diff --git a/src/d_clisrv.c b/src/d_clisrv.c
-index 1166b3c99530ce249f714cd46256426ac473d364..8c31e92997f0e15e1187fbdd67ace996259f2883 100644
+index 1166b3c99..8c31e9299 100644
 --- a/src/d_clisrv.c
 +++ b/src/d_clisrv.c
 @@ -3126,6 +3126,12 @@ static void Got_KickCmd(const UINT8 **p, INT32 playernum)
@@ -705,7 +708,7 @@ index 1166b3c99530ce249f714cd46256426ac473d364..8c31e92997f0e15e1187fbdd67ace996
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a79f27bfab9ec3a2d994ca5a9db8d135b..685e7ea906c3d6a4c28ebb08a390bcb972d5539a 100644
+index 19fcfe0a7..685e7ea90 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -33,8 +33,14 @@
@@ -1215,7 +1218,7 @@ index 19fcfe0a79f27bfab9ec3a2d994ca5a9db8d135b..685e7ea906c3d6a4c28ebb08a390bcb9
  
  	if (M_CheckParm("-home") && M_IsNextParm())
 diff --git a/src/f_finale.c b/src/f_finale.c
-index bacb041cefa06ca9fb84551e40e688d638f5446e..1b1c6b12c33d24f015c6c9595f2c6256f75683bb 100644
+index bacb041ce..1b1c6b12c 100644
 --- a/src/f_finale.c
 +++ b/src/f_finale.c
 @@ -13,6 +13,9 @@
@@ -1239,7 +1242,7 @@ index bacb041cefa06ca9fb84551e40e688d638f5446e..1b1c6b12c33d24f015c6c9595f2c6256
  
  	// Draw that sky!
 diff --git a/src/f_wipe.cpp b/src/f_wipe.cpp
-index 2b7d95d410ec8684e3bf3986f2c9344028f5c476..8dff0c3130ef56adef3bd7e42e508d8bde157be9 100644
+index 2b7d95d41..8dff0c313 100644
 --- a/src/f_wipe.cpp
 +++ b/src/f_wipe.cpp
 @@ -14,6 +14,9 @@
@@ -1320,7 +1323,7 @@ index 2b7d95d410ec8684e3bf3986f2c9344028f5c476..8dff0c3130ef56adef3bd7e42e508d8b
  
  	if (fcolor)
 diff --git a/src/g_game.c b/src/g_game.c
-index ce69d80c09e9d8fd99bf2f85e2fe9065ed6b1ca6..9db72cf64328456b42a663f76ba429eff9c567b8 100644
+index ce69d80c0..9db72cf64 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
 @@ -13,6 +13,9 @@
@@ -1418,7 +1421,7 @@ index ce69d80c09e9d8fd99bf2f85e2fe9065ed6b1ca6..9db72cf64328456b42a663f76ba429ef
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c9a7af300cb52ce8742742c77475af8f..a5d4353605a2d781e9be6fe6feb21d2f71c5ac1f 100644
+index a0a0f280c..a5d435360 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1461,7 +1464,7 @@ index a0a0f280c9a7af300cb52ce8742742c77475af8f..a5d4353605a2d781e9be6fe6feb21d2f
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
 +endif()
 diff --git a/src/hardware/hw_batching.c b/src/hardware/hw_batching.c
-index 9c0e2f6e9e11e53732554655ddfe9f8f809cbfa8..58bd38e246d515d371186c33ae6242f61a9916ff 100644
+index 9c0e2f6e9..58bd38e24 100644
 --- a/src/hardware/hw_batching.c
 +++ b/src/hardware/hw_batching.c
 @@ -206,8 +206,13 @@ static int comparePolygons(const void *p1, const void *p2)
@@ -1498,7 +1501,7 @@ index 9c0e2f6e9e11e53732554655ddfe9f8f809cbfa8..58bd38e246d515d371186c33ae6242f6
  					changeState = true;
  					changeSurfaceInfo = true;
 diff --git a/src/hardware/hw_bsp.c b/src/hardware/hw_bsp.c
-index 0b036ead02cbc5e8db8da92cfbed3342543a6d56..80fbf275b1993b85faa70ed2cc04a4f7bfdc01e9 100644
+index 0b036ead0..80fbf275b 100644
 --- a/src/hardware/hw_bsp.c
 +++ b/src/hardware/hw_bsp.c
 @@ -15,6 +15,9 @@
@@ -1677,7 +1680,7 @@ index 0b036ead02cbc5e8db8da92cfbed3342543a6d56..80fbf275b1993b85faa70ed2cc04a4f7
  	i = SolveTProblem();
  	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
-index aee197ab5248bca160835fe38e276fd9959dd9dc..ac4b31ceadf174a8baf459fcd58f48abb4d84d71 100644
+index aee197ab5..ac4b31cea 100644
 --- a/src/hardware/hw_cache.c
 +++ b/src/hardware/hw_cache.c
 @@ -25,6 +25,7 @@
@@ -2099,7 +2102,7 @@ index aee197ab5248bca160835fe38e276fd9959dd9dc..ac4b31ceadf174a8baf459fcd58f48ab
  
  			dest++;
 diff --git a/src/hardware/hw_clip.c b/src/hardware/hw_clip.c
-index 3ea21c16a2d11aa7705cf61e43d50332bea2b9b5..fe21623eadd1c42f967059852224542954e216cb 100644
+index 3ea21c16a..fe21623ea 100644
 --- a/src/hardware/hw_clip.c
 +++ b/src/hardware/hw_clip.c
 @@ -320,6 +320,21 @@ void gld_clipper_Clear(void)
@@ -2125,7 +2128,7 @@ index 3ea21c16a2d11aa7705cf61e43d50332bea2b9b5..fe21623eadd1c42f9670598522245429
  
  angle_t gld_FrustumAngle(angle_t tiltangle)
 diff --git a/src/hardware/hw_clip.h b/src/hardware/hw_clip.h
-index 1942f426b93b89c4d20b34573f4c7ba11b5badda..71bda4724cfdd6803b839fdca8b8efeec2f13131 100644
+index 1942f426b..71bda4724 100644
 --- a/src/hardware/hw_clip.h
 +++ b/src/hardware/hw_clip.h
 @@ -34,6 +34,11 @@ extern "C" {
@@ -2141,7 +2144,7 @@ index 1942f426b93b89c4d20b34573f4c7ba11b5badda..71bda4724cfdd6803b839fdca8b8efee
  #ifdef HAVE_SPHEREFRUSTRUM
  void gld_FrustrumSetup(void);
 diff --git a/src/hardware/hw_defs.h b/src/hardware/hw_defs.h
-index 1ce225f19d745f684dc4efd23ea3917d1f1886ee..71c197750e828dc0b34ac77f6ed932c905abda5b 100644
+index 1ce225f19..71c197750 100644
 --- a/src/hardware/hw_defs.h
 +++ b/src/hardware/hw_defs.h
 @@ -21,6 +21,9 @@ extern "C" {
@@ -2181,7 +2184,7 @@ index 1ce225f19d745f684dc4efd23ea3917d1f1886ee..71c197750e828dc0b34ac77f6ed932c9
  	HWD_NUMSTATE
  };
 diff --git a/src/hardware/hw_draw.c b/src/hardware/hw_draw.c
-index d4ba786147dbb13e4d79ddaf0ce64f123251c60a..09e9939c171c6a06a891d10d6d931107b091a641 100644
+index d4ba78614..09e9939c1 100644
 --- a/src/hardware/hw_draw.c
 +++ b/src/hardware/hw_draw.c
 @@ -16,11 +16,18 @@
@@ -2324,7 +2327,7 @@ index d4ba786147dbb13e4d79ddaf0ce64f123251c60a..09e9939c171c6a06a891d10d6d931107
  	HWD.pfnDrawPolygon(&Surf, v, 4,
  		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
 diff --git a/src/hardware/hw_drv.h b/src/hardware/hw_drv.h
-index c4396c8e500fe0d3cdb36f41a8769a5253ae5a61..4ace846ad73150190860af505a68aa3c42f5d0d6 100644
+index c4396c8e5..4ace846ad 100644
 --- a/src/hardware/hw_drv.h
 +++ b/src/hardware/hw_drv.h
 @@ -78,6 +78,13 @@ EXPORT void HWRAPI(UnSetShader) (void);
@@ -2355,7 +2358,7 @@ index c4396c8e500fe0d3cdb36f41a8769a5253ae5a61..4ace846ad73150190860af505a68aa3c
  
  extern struct hwdriver_s hwdriver;
 diff --git a/src/hardware/hw_glob.h b/src/hardware/hw_glob.h
-index 07dfb7a1601e15332c88d036ebc1d07f577bb2a9..6df0269ce4ec5236881b833a3af45a01dc95bc1a 100644
+index 07dfb7a16..6df0269ce 100644
 --- a/src/hardware/hw_glob.h
 +++ b/src/hardware/hw_glob.h
 @@ -142,6 +142,15 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
@@ -2375,7 +2378,7 @@ index 07dfb7a1601e15332c88d036ebc1d07f577bb2a9..6df0269ce4ec5236881b833a3af45a01
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..576aed0a259e2e922314c490fdca9820a08d3e1e 100644
+index b5e8fca5a..576aed0a2 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -3556,7 +3559,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..576aed0a259e2e922314c490fdca9820
  		// Capture the screen again for screen waving on the intermission
  		if(gamestate != GS_INTERMISSION)
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b409476190dcc6bb8f05d25f8e9ef0d42801c..8fff1d11fcfe098ed9bceb9a5ae877584919ed4c 100644
+index 652b40947..8fff1d11f 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,10 @@ extern "C" {
@@ -3604,7 +3607,7 @@ index 652b409476190dcc6bb8f05d25f8e9ef0d42801c..8fff1d11fcfe098ed9bceb9a5ae87758
  extern precise_t ps_hw_nodesorttime;
  extern precise_t ps_hw_nodedrawtime;
 diff --git a/src/hardware/hw_md2.c b/src/hardware/hw_md2.c
-index 81a7d9a493cbbdfa9f1c76dc2049ee34678007c4..7f5f1f65865f6d6b9ff14874820ed43dd2c622c8 100644
+index 81a7d9a49..7f5f1f658 100644
 --- a/src/hardware/hw_md2.c
 +++ b/src/hardware/hw_md2.c
 @@ -29,6 +29,7 @@
@@ -4032,7 +4035,7 @@ index 81a7d9a493cbbdfa9f1c76dc2049ee34678007c4..7f5f1f65865f6d6b9ff14874820ed43d
  
  		if (spr->mobj->frame & FF_ANIMATE)
 diff --git a/src/hardware/hw_md2.h b/src/hardware/hw_md2.h
-index dbfa84aa19ead748372615b83fa92ca14fe772a4..c44c8489398ae27b88692a0551b387c15b185b23 100644
+index dbfa84aa1..c44c84893 100644
 --- a/src/hardware/hw_md2.h
 +++ b/src/hardware/hw_md2.h
 @@ -48,6 +48,10 @@ void HWR_InitModels(void);
@@ -4048,10 +4051,10 @@ index dbfa84aa19ead748372615b83fa92ca14fe772a4..c44c8489398ae27b88692a0551b387c1
  
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..df13631b5ca5a12b0587e320889cc7f0adb2f1c8
+index 000000000..99b59fb90
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5797 @@
+@@ -0,0 +1,5805 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -5752,6 +5755,11 @@ index 0000000000000000000000000000000000000000..df13631b5ca5a12b0587e320889cc7f0
 +void D3D_SetBlend(FBITFIELD PolyFlags)
 +{
 +	g_waterRefraction = false;
++#ifdef _UWP
++	// Sky occluders and sprite silhouettes only write depth. Blend factors can
++	// change while both draws are Invisible, so they cannot enforce this mask.
++	g_gl.colorWriteMask = (PolyFlags & PF_Invisible) ? 0 : 7;
++#endif
 +	const FBITFIELD Xor = g_currentPolyFlags ^ PolyFlags;
 +
 +	if (Xor & (PF_Blending|PF_RemoveYWrap|PF_ForceWrapX|PF_ForceWrapY|PF_Occlude|PF_NoTexture|PF_Modulated|PF_NoDepthTest|PF_Decal|PF_Invisible))
@@ -5783,6 +5791,7 @@ index 0000000000000000000000000000000000000000..df13631b5ca5a12b0587e320889cc7f0
 +		if (Xor & PF_Occlude) // depth test but (no) depth write
 +			g_gl.depthMask = (PolyFlags & PF_Occlude) != 0;
 +
++#ifndef _UWP
 +		if (Xor & PF_Invisible)
 +		{
 +			if (PolyFlags & PF_Invisible)
@@ -5796,6 +5805,8 @@ index 0000000000000000000000000000000000000000..df13631b5ca5a12b0587e320889cc7f0
 +				g_gl.blendDst = BF_ZERO;
 +			}
 +		}
++
++#endif
 +
 +		if (PolyFlags & PF_NoTexture)
 +			SetNoTexture(0);
@@ -9851,7 +9862,7 @@ index 0000000000000000000000000000000000000000..df13631b5ca5a12b0587e320889cc7f0
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e01eb8ec3ab253abee019438c36ea70aca48827c
+index 000000000..e01eb8ec3
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
 @@ -0,0 +1,59 @@
@@ -9916,7 +9927,7 @@ index 0000000000000000000000000000000000000000..e01eb8ec3ab253abee019438c36ea70a
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 0000000000000000000000000000000000000000..791b1b43f7d12dd2a0a7f358106d394462baa5c0
+index 000000000..791b1b43f
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
 @@ -0,0 +1,563 @@
@@ -10484,7 +10495,7 @@ index 0000000000000000000000000000000000000000..791b1b43f7d12dd2a0a7f358106d3944
 +	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
 diff --git a/src/http-mserv.c b/src/http-mserv.c
-index 4f9f9cb39d5d8bdb6751eda383248704f8fa5724..6854fc5e73f6015e33e46c51daba4e1505a723e0 100644
+index 4f9f9cb39..6854fc5e7 100644
 --- a/src/http-mserv.c
 +++ b/src/http-mserv.c
 @@ -185,11 +185,13 @@ HMS_connect (const char *format, ...)
@@ -10502,7 +10513,7 @@ index 4f9f9cb39d5d8bdb6751eda383248704f8fa5724..6854fc5e73f6015e33e46c51daba4e15
  	if (M_CheckParm("-bindaddr") && M_IsNextParm())
  	{
 diff --git a/src/hwr2/patch_atlas.cpp b/src/hwr2/patch_atlas.cpp
-index 395b286014561b3af8f0d3979edc871d5cd4c28a..76227a56953879d6b185a85eeb3557256f3ac676 100644
+index 395b28601..76227a569 100644
 --- a/src/hwr2/patch_atlas.cpp
 +++ b/src/hwr2/patch_atlas.cpp
 @@ -14,6 +14,11 @@
@@ -10528,7 +10539,7 @@ index 395b286014561b3af8f0d3979edc871d5cd4c28a..76227a56953879d6b185a85eeb355725
  	{
  		rhi.destroy_texture(atlas.texture());
 diff --git a/src/hwr2/resource_management.cpp b/src/hwr2/resource_management.cpp
-index 0ac7d735870633977886101253fa5d24b6b26ea3..d3b9b920c66958cf9744e23f7e90b7b36ec2fe64 100644
+index 0ac7d7358..d3b9b920c 100644
 --- a/src/hwr2/resource_management.cpp
 +++ b/src/hwr2/resource_management.cpp
 @@ -10,6 +10,8 @@
@@ -10697,7 +10708,7 @@ index 0ac7d735870633977886101253fa5d24b6b26ea3..d3b9b920c66958cf9744e23f7e90b7b3
  
  FlatTextureManager::FlatTextureManager() = default;
 diff --git a/src/hwr2/resource_management.hpp b/src/hwr2/resource_management.hpp
-index 3fd6666cf34f3aa44c9e5b509d12283ad9a36a7c..3cfcb18f11657fbbefa804f4f13fdf234da810fc 100644
+index 3fd6666cf..3cfcb18f1 100644
 --- a/src/hwr2/resource_management.hpp
 +++ b/src/hwr2/resource_management.hpp
 @@ -11,6 +11,8 @@
@@ -10760,7 +10771,7 @@ index 3fd6666cf34f3aa44c9e5b509d12283ad9a36a7c..3cfcb18f11657fbbefa804f4f13fdf23
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e908c695cfbcd3507130e9d9f10fab3c82..3d1986b0ee2d01c150db5826a9124044c7e0d260 100644
+index 56d507e90..3d1986b0e 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
 @@ -313,8 +313,74 @@ boolean I_HasOpenURL(void);
@@ -10839,7 +10850,7 @@ index 56d507e908c695cfbcd3507130e9d9f10fab3c82..3d1986b0ee2d01c150db5826a9124044
 +
  #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
-index f52f9298e73d2f083392303fc5f877f174f8f85d..ff724f09e591481f333016cce3a83f79e4b189f7 100644
+index f52f9298e..ff724f09e 100644
 --- a/src/i_video_common.cpp
 +++ b/src/i_video_common.cpp
 @@ -33,6 +33,12 @@
@@ -10997,7 +11008,7 @@ index f52f9298e73d2f083392303fc5f877f174f8f85d..ff724f09e591481f333016cce3a83f79
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb70226885680638631af20e75a33bda1..a560fd6682c2b1e750cb3ded658b614daa959560 100644
+index d52750abb..a560fd668 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
 @@ -420,11 +420,17 @@ typedef enum
@@ -11019,7 +11030,7 @@ index d52750abb70226885680638631af20e75a33bda1..a560fd6682c2b1e750cb3ded658b614d
  	vaopt_texturequal,
  	vaopt_anisotropic,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
-index 812c7f80eeb4da51f2e10c12727e135b8da4d36c..56eba74cb75c543d4289ddf083341bfd271b69ff 100644
+index 812c7f80e..56eba74cb 100644
 --- a/src/k_menufunc.c
 +++ b/src/k_menufunc.c
 @@ -203,8 +203,14 @@ static void M_ChangeCvar(INT32 choice)
@@ -11038,7 +11049,7 @@ index 812c7f80eeb4da51f2e10c12727e135b8da4d36c..56eba74cb75c543d4289ddf083341bfd
  			"ARE YOU SURE?",
  			M_ChangeCvarResponse,
 diff --git a/src/lua_script.c b/src/lua_script.c
-index 51cef5129f69153b1da57447f1ecff44b49ca9d7..8581c102e2012c9c8b3a4043dd5b7006e7b209b7 100644
+index 51cef5129..8581c102e 100644
 --- a/src/lua_script.c
 +++ b/src/lua_script.c
 @@ -42,6 +42,126 @@
@@ -11197,7 +11208,7 @@ index 51cef5129f69153b1da57447f1ecff44b49ca9d7..8581c102e2012c9c8b3a4043dd5b7006
  	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
  	I_Assert(lua_istable(gL, -1));
 diff --git a/src/m_fixed.h b/src/m_fixed.h
-index de4b0f252494892e8123ed33a4e84d3badf600d4..420d0290d8146ab341d15603e444abd05ca34cb2 100644
+index de4b0f252..420d0290d 100644
 --- a/src/m_fixed.h
 +++ b/src/m_fixed.h
 @@ -171,6 +171,17 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FloatToFixed(float f)
@@ -11219,7 +11230,7 @@ index de4b0f252494892e8123ed33a4e84d3badf600d4..420d0290d8146ab341d15603e444abd0
  	#define __USE_C_FIXEDMUL__
  	#define __USE_C_FIXEDDIV__
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eabf300f6848b84c77c0da9cd57fdb364c..bcf741eabb18dc1519e5c35a090728f85b6e03d4 100644
+index 705b60eab..bcf741eab 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
 @@ -25,6 +25,14 @@
@@ -11478,7 +11489,7 @@ index 705b60eabf300f6848b84c77c0da9cd57fdb364c..bcf741eabb18dc1519e5c35a090728f8
 +}
 +#endif
 diff --git a/src/m_perfstats.h b/src/m_perfstats.h
-index f92b1d8e08e7c7d1d568a9de12babfdd409e33ea..4e4f82a8faa3f8a6bc2d601f55565f6bc946e734 100644
+index f92b1d8e0..4e4f82a8f 100644
 --- a/src/m_perfstats.h
 +++ b/src/m_perfstats.h
 @@ -70,6 +70,17 @@ void PS_ResetBotInfo(void);
@@ -11500,7 +11511,7 @@ index f92b1d8e08e7c7d1d568a9de12babfdd409e33ea..4e4f82a8faa3f8a6bc2d601f55565f6b
  } // extern "C"
  #endif
 diff --git a/src/menus/options-1.c b/src/menus/options-1.c
-index 41bc817aae25d653ee6456e6e235124f0f916931..ccb395820f3949a8329eefe796549c1a2b810cf9 100644
+index 41bc817aa..ccb395820 100644
 --- a/src/menus/options-1.c
 +++ b/src/menus/options-1.c
 @@ -73,6 +73,11 @@ menu_t OPTIONS_MainDef = {
@@ -11574,7 +11585,7 @@ index 41bc817aae25d653ee6456e6e235124f0f916931..ccb395820f3949a8329eefe796549c1a
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04cecb3069eb4846d3c512f6db15165e7..1e930490379f3514e9402c9463840e0041928572 100644
+index c2e40ae04..1e9304903 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -11648,7 +11659,7 @@ index c2e40ae04cecb3069eb4846d3c512f6db15165e7..1e930490379f3514e9402c9463840e00
  		NULL, {NULL}, 0, 0},
  
 diff --git a/src/p_lights.c b/src/p_lights.c
-index fe167838ad1aca716aee8594af340b5596a8a762..7d2074376e25338662b96184eb2605b8aab8ae07 100644
+index fe167838a..7d2074376 100644
 --- a/src/p_lights.c
 +++ b/src/p_lights.c
 @@ -14,6 +14,9 @@
@@ -11679,7 +11690,7 @@ index fe167838ad1aca716aee8594af340b5596a8a762..7d2074376e25338662b96184eb2605b8
 +#endif
  }
 diff --git a/src/p_mobj.c b/src/p_mobj.c
-index 305a75e0e491629cddc4096f9811c84e3be07550..9da767720e2bbb1c20e23aa9db4a9d98f9859040 100644
+index 305a75e0e..9da767720 100644
 --- a/src/p_mobj.c
 +++ b/src/p_mobj.c
 @@ -216,6 +216,40 @@ static void P_CyclePlayerMobjState(mobj_t *mobj)
@@ -11891,7 +11902,7 @@ index 305a75e0e491629cddc4096f9811c84e3be07550..9da767720e2bbb1c20e23aa9db4a9d98
  void P_FreePrecipMobj(precipmobj_t *mobj)
  {
 diff --git a/src/p_mobj.h b/src/p_mobj.h
-index 02f46b56fe6d9c402e328dc987029168df218352..f6f4e46a475279a5a881e2cb97c39717279cc552 100644
+index 02f46b56f..f6f4e46a4 100644
 --- a/src/p_mobj.h
 +++ b/src/p_mobj.h
 @@ -454,6 +454,9 @@ struct mobj_t
@@ -11921,7 +11932,7 @@ index 02f46b56fe6d9c402e328dc987029168df218352..f6f4e46a475279a5a881e2cb97c39717
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce775c9bbb3f98bb4a8b978210922cac08f..8441380d9a27dbac67c436fe0caa5f5d9e03b50e 100644
+index e5208ce77..8441380d9 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
 @@ -17,6 +17,9 @@
@@ -12020,7 +12031,7 @@ index e5208ce775c9bbb3f98bb4a8b978210922cac08f..8441380d9a27dbac67c436fe0caa5f5d
  	levelloading = false;
  
 diff --git a/src/p_tick.h b/src/p_tick.h
-index b735d9b1ddebf674fa52b80b4a538505d20131d2..5d78a91b7305b69c8d9c814440a7fc274beccf51 100644
+index b735d9b1d..5d78a91b7 100644
 --- a/src/p_tick.h
 +++ b/src/p_tick.h
 @@ -16,6 +16,9 @@
@@ -12053,7 +12064,7 @@ index b735d9b1ddebf674fa52b80b4a538505d20131d2..5d78a91b7305b69c8d9c814440a7fc27
  #define P_SetTarget P_SetTarget2
  #endif
 diff --git a/src/r_draw.h b/src/r_draw.h
-index b3b71e176ddffc2a102924b30acef87f09c3fde6..ed1dbf75970b815be3f141870fbcc05da1412550 100644
+index b3b71e176..ed1dbf759 100644
 --- a/src/r_draw.h
 +++ b/src/r_draw.h
 @@ -71,7 +71,7 @@ extern lumpnum_t viewborderlump[8];
@@ -12116,7 +12127,7 @@ index b3b71e176ddffc2a102924b30acef87f09c3fde6..ed1dbf75970b815be3f141870fbcc05d
  void R_DrawTiltedSpan_Flat(drawspandata_t* ds);
  
 diff --git a/src/r_draw_column.cpp b/src/r_draw_column.cpp
-index c867aa6ff897c1dc4d3d4b5348f5bb34d451ccd8..6885a6087438a799f2a8488fca27a537611e3e02 100644
+index c867aa6ff..6885a6087 100644
 --- a/src/r_draw_column.cpp
 +++ b/src/r_draw_column.cpp
 @@ -32,7 +32,7 @@ enum DrawColumnType
@@ -12201,7 +12212,7 @@ index c867aa6ff897c1dc4d3d4b5348f5bb34d451ccd8..6885a6087438a799f2a8488fca27a537
  	ZoneScoped;
  
 diff --git a/src/r_fps.cpp b/src/r_fps.cpp
-index 08750043bec6ac19eb78bf749e2a358a5d9de883..d38fe5405d8603b1f7f794c39c2a969959f8105f 100644
+index 08750043b..d38fe5405 100644
 --- a/src/r_fps.cpp
 +++ b/src/r_fps.cpp
 @@ -608,6 +608,7 @@ static std::vector<mobj_t*> interpolated_mobjs;
@@ -12249,7 +12260,7 @@ index 08750043bec6ac19eb78bf749e2a358a5d9de883..d38fe5405d8603b1f7f794c39c2a9699
  
  void R_InitMobjInterpolators(void)
 diff --git a/src/r_main.cpp b/src/r_main.cpp
-index 639f74437d1595693c630dd01dd1fb22915ba92e..a7863d9fa85fd8ce6671784d29a8c208fba907a1 100644
+index 639f74437..a7863d9fa 100644
 --- a/src/r_main.cpp
 +++ b/src/r_main.cpp
 @@ -17,6 +17,9 @@
@@ -12564,7 +12575,7 @@ index 639f74437d1595693c630dd01dd1fb22915ba92e..a7863d9fa85fd8ce6671784d29a8c208
  
  void R_SkyboxFrame(int s)
 diff --git a/src/r_main.h b/src/r_main.h
-index f17ef95519cd16c71811abbdd63907e863243ec7..42643d3d364f712ea6954ef07683aec9febc82d4 100644
+index f17ef9551..42643d3d3 100644
 --- a/src/r_main.h
 +++ b/src/r_main.h
 @@ -89,6 +89,14 @@ fixed_t R_ScaleFromGlobalAngle(angle_t visangle);
@@ -12583,7 +12594,7 @@ index f17ef95519cd16c71811abbdd63907e863243ec7..42643d3d364f712ea6954ef07683aec9
  
  void R_GetRenderBlockMapDimensions(fixed_t drawdist, INT32 *xl, INT32 *xh, INT32 *yl, INT32 *yh);
 diff --git a/src/r_plane.cpp b/src/r_plane.cpp
-index 36f9b6b03efeb26be9ef4eef8b144daaa83e7070..52d0309b7ea9db59c447e7029cbea61282b42e70 100644
+index 36f9b6b03..52d0309b7 100644
 --- a/src/r_plane.cpp
 +++ b/src/r_plane.cpp
 @@ -341,6 +341,17 @@ static visplane_t *new_visplane(unsigned hash)
@@ -12634,7 +12645,7 @@ index 36f9b6b03efeb26be9ef4eef8b144daaa83e7070..52d0309b7ea9db59c447e7029cbea612
  	INT32 x;
  	drawcolumndata_t dc {0};
 diff --git a/src/r_segs.cpp b/src/r_segs.cpp
-index 6dd45359a07c66eddef85674e8eb0c8133194e54..0fd2c0d1a2236173d8ede125c93076380e40415e 100644
+index 6dd45359a..0fd2c0d1a 100644
 --- a/src/r_segs.cpp
 +++ b/src/r_segs.cpp
 @@ -1389,13 +1389,15 @@ static void R_DrawWallColumn(drawcolumndata_t* dc, INT32 yl, INT32 yh, fixed_t m
@@ -12669,7 +12680,7 @@ index 6dd45359a07c66eddef85674e8eb0c8133194e54..0fd2c0d1a2236173d8ede125c9307638
  	if (numffloors)
  	{
 diff --git a/src/r_sky.c b/src/r_sky.c
-index d66d0e3e59fb22da414472dcd19fa6308665e0f7..67604448c12b90c91f61866178880658b696b108 100644
+index d66d0e3e5..67604448c 100644
 --- a/src/r_sky.c
 +++ b/src/r_sky.c
 @@ -76,8 +76,8 @@ void R_SetupSkyDraw(void)
@@ -12684,7 +12695,7 @@ index d66d0e3e59fb22da414472dcd19fa6308665e0f7..67604448c12b90c91f61866178880658
  
  	R_SetSkyScale();
 diff --git a/src/r_textures.cpp b/src/r_textures.cpp
-index 57ca9303cbffa1aa759eb5c2ae1a061eb4e92e1f..22874a984eb1d108ed2036b46830ef0092c5ee79 100644
+index 57ca9303c..22874a984 100644
 --- a/src/r_textures.cpp
 +++ b/src/r_textures.cpp
 @@ -817,12 +817,14 @@ UINT8 *R_GenerateTextureBrightmap(size_t texnum)
@@ -12703,7 +12714,7 @@ index 57ca9303cbffa1aa759eb5c2ae1a061eb4e92e1f..22874a984eb1d108ed2036b46830ef00
  //
  // R_GetTextureBrightmap
 diff --git a/src/r_textures.h b/src/r_textures.h
-index 4f0447989060e389bda567ffa68110e82f4bc94b..147e7e62357738499d4a784bb0531823b56915cd 100644
+index 4f0447989..147e7e623 100644
 --- a/src/r_textures.h
 +++ b/src/r_textures.h
 @@ -89,7 +89,17 @@ void R_FlushTextureCache(void);
@@ -12725,7 +12736,7 @@ index 4f0447989060e389bda567ffa68110e82f4bc94b..147e7e62357738499d4a784bb0531823
  boolean R_TextureHasBrightmap(INT32 texnum);
  boolean R_TextureCanRemap(INT32 texnum);
 diff --git a/src/r_things.cpp b/src/r_things.cpp
-index 7e608da9c723e78eaab767a37ba4eb3cee838648..b0aaca1048bb7b6aae19fbb25dcf6adebfb847ec 100644
+index 7e608da9c..b0aaca104 100644
 --- a/src/r_things.cpp
 +++ b/src/r_things.cpp
 @@ -650,6 +650,18 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
@@ -13042,7 +13053,7 @@ index 7e608da9c723e78eaab767a37ba4eb3cee838648..b0aaca1048bb7b6aae19fbb25dcf6ade
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b0909d9763d277cfb83f2dc661fa8b6d46..41754ced9f22c0f9cca9fea49387e5e7403bb219 100644
+index bf1e28b09..41754ced9 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
 @@ -266,6 +266,11 @@ struct drawnode_t
@@ -13058,7 +13069,7 @@ index bf1e28b0909d9763d277cfb83f2dc661fa8b6d46..41754ced9f22c0f9cca9fea49387e5e7
  
  void R_InitDrawNodes(void);
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
-index cf35eebb56f03545771cbe1d65919ea850cff95b..6b9f258416ebbb0120ce86fbb65380a899be39b5 100644
+index cf35eebb5..6b9f25841 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
 +++ b/src/rhi/gl2/gl2_rhi.cpp
 @@ -10,6 +10,7 @@
@@ -14031,7 +14042,7 @@ index cf35eebb56f03545771cbe1d65919ea850cff95b..6b9f258416ebbb0120ce86fbb65380a8
  	GL_ASSERT;
  }
 diff --git a/src/rhi/gl2/gl2_rhi.hpp b/src/rhi/gl2/gl2_rhi.hpp
-index f8b62987b513c44aa3a79e15d5818df18c602977..fbc3822581dfb4c80e6e6bd8476a756cddd83035 100644
+index f8b62987b..fbc382258 100644
 --- a/src/rhi/gl2/gl2_rhi.hpp
 +++ b/src/rhi/gl2/gl2_rhi.hpp
 @@ -11,6 +11,7 @@
@@ -14109,7 +14120,7 @@ index f8b62987b513c44aa3a79e15d5818df18c602977..fbc3822581dfb4c80e6e6bd8476a756c
  	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);
  	virtual ~Gl2Rhi();
 diff --git a/src/screen.c b/src/screen.c
-index 67b8f13fb6a338d71e1e6df7ea64538528b8e568..3db17c55f7768264b78abfbc43a02748ad682493 100644
+index 67b8f13fb..3db17c55f 100644
 --- a/src/screen.c
 +++ b/src/screen.c
 @@ -58,7 +58,9 @@ UINT8 setrenderneeded = 0;
@@ -14124,7 +14135,7 @@ index 67b8f13fb6a338d71e1e6df7ea64538528b8e568..3db17c55f7768264b78abfbc43a02748
  #endif
  	{0, NULL}
 diff --git a/src/sdl/CMakeLists.txt b/src/sdl/CMakeLists.txt
-index d6f32a67c81cd6ddc854372472f69efb6fd0362b..537495d51a4c7302337cdbad345ce4f951fc7d40 100644
+index d6f32a67c..537495d51 100644
 --- a/src/sdl/CMakeLists.txt
 +++ b/src/sdl/CMakeLists.txt
 @@ -58,10 +58,15 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
@@ -14144,7 +14155,7 @@ index d6f32a67c81cd6ddc854372472f69efb6fd0362b..537495d51a4c7302337cdbad345ce4f9
  if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)
  	target_link_libraries(SRB2SDL2 PRIVATE m rt)
 diff --git a/src/sdl/hwsym_sdl.c b/src/sdl/hwsym_sdl.c
-index a801c73e9cfa2132f6442c40e8e1e245c06f929b..ac98ad3b4e4595ea8c294b54d1de9460168701bc 100644
+index a801c73e9..ac98ad3b4 100644
 --- a/src/sdl/hwsym_sdl.c
 +++ b/src/sdl/hwsym_sdl.c
 @@ -41,6 +41,9 @@
@@ -14169,7 +14180,7 @@ index a801c73e9cfa2132f6442c40e8e1e245c06f929b..ac98ad3b4e4595ea8c294b54d1de9460
  	if (0 == strcmp("SetPalette", funcName))
  		funcPointer = FUNCPTRCAST(&OglSdlSetPalette);
 diff --git a/src/sdl/i_main.cpp b/src/sdl/i_main.cpp
-index f2fa2fce9282c34e861f51b51be340463cc3236c..73f659db8133938736024f970d9385ed003f0b5c 100644
+index f2fa2fce9..73f659db8 100644
 --- a/src/sdl/i_main.cpp
 +++ b/src/sdl/i_main.cpp
 @@ -42,6 +42,10 @@
@@ -14219,7 +14230,7 @@ index f2fa2fce9282c34e861f51b51be340463cc3236c..73f659db8133938736024f970d9385ed
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b142fcf274c48711f0b363bbf3a8377d3..03eded313b0b848a2cdc30d985a5e3175900b57c 100644
+index 827f493b1..03eded313 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -14412,7 +14423,7 @@ index 827f493b142fcf274c48711f0b363bbf3a8377d3..03eded313b0b848a2cdc30d985a5e317
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..24cc8f49c82de0a16d4c580d86007a62491b1583
+index 000000000..24cc8f49c
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
 @@ -0,0 +1,863 @@
@@ -15281,7 +15292,7 @@ index 0000000000000000000000000000000000000000..24cc8f49c82de0a16d4c580d86007a62
 +}
 diff --git a/src/sdl/i_uwptrace.h b/src/sdl/i_uwptrace.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..b41da89abcae54205d74d1997353c0e2c8ce0c2d
+index 000000000..b41da89ab
 --- /dev/null
 +++ b/src/sdl/i_uwptrace.h
 @@ -0,0 +1,25 @@
@@ -15311,7 +15322,7 @@ index 0000000000000000000000000000000000000000..b41da89abcae54205d74d1997353c0e2
 +#endif
 +#endif
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c3ffdc0753f4ad05698f2670773ecdac61..6feb76f065be1106ed5bdb98618f15f0bac84a20 100644
+index 7fa8e0c3f..6feb76f06 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
 @@ -29,6 +29,12 @@
@@ -15504,7 +15515,7 @@ index 7fa8e0c3ffdc0753f4ad05698f2670773ecdac61..6feb76f065be1106ed5bdb98618f15f0
  	}
  
 diff --git a/src/sdl/mixer_sound.c b/src/sdl/mixer_sound.c
-index b6b9e72f973321b6bb1f05023c18aa87102dd72e..40105963cd05b8c34cb9fd477bde605783092f66 100644
+index b6b9e72f9..40105963c 100644
 --- a/src/sdl/mixer_sound.c
 +++ b/src/sdl/mixer_sound.c
 @@ -191,7 +191,9 @@ void I_StartupSound(void)
@@ -15519,7 +15530,7 @@ index b6b9e72f973321b6bb1f05023c18aa87102dd72e..40105963cd05b8c34cb9fd477bde6057
  	// SDL 2.0.6+ defaults to the latter and it screws up our sound effects
  	SDL_setenv("SDL_AUDIODRIVER", "directsound", 1);
 diff --git a/src/sdl/ogl_sdl.c b/src/sdl/ogl_sdl.c
-index 17eb1b8b34fed55843f67ba170a7968541669cd9..113476a1b10c80dba29830b26858c67978b0ae0d 100644
+index 17eb1b8b3..113476a1b 100644
 --- a/src/sdl/ogl_sdl.c
 +++ b/src/sdl/ogl_sdl.c
 @@ -15,6 +15,10 @@
@@ -15546,7 +15557,7 @@ index 17eb1b8b34fed55843f67ba170a7968541669cd9..113476a1b10c80dba29830b26858c679
  	HWR_MakeScreenFinalTexture();
  	HWR_DrawScreenFinalTexture(sdlw, sdlh);
 diff --git a/src/sdl/rhi_gl2_platform.cpp b/src/sdl/rhi_gl2_platform.cpp
-index f3f10fe90bec51ff02f32269d01f05f4e49dfda8..c85cbe0b495a97e69993b63541b0e29d3364141d 100644
+index f3f10fe90..c85cbe0b4 100644
 --- a/src/sdl/rhi_gl2_platform.cpp
 +++ b/src/sdl/rhi_gl2_platform.cpp
 @@ -23,6 +23,10 @@
@@ -15573,7 +15584,7 @@ index f3f10fe90bec51ff02f32269d01f05f4e49dfda8..c85cbe0b495a97e69993b63541b0e29d
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
 diff --git a/src/st_stuff.c b/src/st_stuff.c
-index 6f67d6a8f041e1c58e7feb2e2506daac6cef787d..0a95580e2319f7ec1c7cd79fccb167c517c369f7 100644
+index 6f67d6a8f..0a95580e2 100644
 --- a/src/st_stuff.c
 +++ b/src/st_stuff.c
 @@ -129,7 +129,7 @@ void ST_doPaletteStuff(void)
@@ -15608,7 +15619,7 @@ index 6f67d6a8f041e1c58e7feb2e2506daac6cef787d..0a95580e2319f7ec1c7cd79fccb167c5
  		V_SetPalette(0);
  
 diff --git a/src/v_video.cpp b/src/v_video.cpp
-index 481a70d5f90219333dd0819a1f3cfe64ef67a9c6..e0242069b643a4c79e91d5e24e4caafbd906616f 100644
+index 481a70d5f..e0242069b 100644
 --- a/src/v_video.cpp
 +++ b/src/v_video.cpp
 @@ -20,6 +20,9 @@
@@ -15686,7 +15697,7 @@ index 481a70d5f90219333dd0819a1f3cfe64ef67a9c6..e0242069b643a4c79e91d5e24e4caafb
  	if (rendermode == render_opengl)
  	{
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
-index 3c68b13787643fa04218b4cb51506d9d69fd0cc0..2444f431cddfc54e8d1acd4866a94a547965c3e6 100644
+index 3c68b1378..2444f431c 100644
 --- a/src/w_wad.cpp
 +++ b/src/w_wad.cpp
 @@ -114,6 +114,14 @@ static UINT16 lumpnumcacheindex = 0;
@@ -15907,7 +15918,7 @@ index 3c68b13787643fa04218b4cb51506d9d69fd0cc0..2444f431cddfc54e8d1acd4866a94a54
  	{
  		const char * error = "ZIP file has holes (%ld extra bytes)\n";
 diff --git a/src/w_wad.h b/src/w_wad.h
-index 7024826dca8722e526180c4c812031b85afc20d6..4c6f717728c3a18de868db28fae990dc9145ac86 100644
+index 7024826dc..4c6f71772 100644
 --- a/src/w_wad.h
 +++ b/src/w_wad.h
 @@ -75,6 +75,9 @@ struct lumpinfo_t
@@ -15935,7 +15946,7 @@ index 7024826dca8722e526180c4c812031b85afc20d6..4c6f717728c3a18de868db28fae990dc
  
  void W_Shutdown(void);
 diff --git a/src/z_zone.cpp b/src/z_zone.cpp
-index b5f73450b2bb24a91a210450150cbe4fbd523b8f..521623929d024a7414375d732e9ad3de49b365f8 100644
+index b5f73450b..521623929 100644
 --- a/src/z_zone.cpp
 +++ b/src/z_zone.cpp
 @@ -111,6 +111,11 @@ void Z_Init(void)

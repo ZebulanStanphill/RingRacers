@@ -129,3 +129,5 @@ From an x64 Visual Studio developer PowerShell on Windows, run:
 python tests/prepare-source.py build/shader-regression-source
 ./tests/run-d3d11.ps1 -Engine build/shader-regression-source
 ```
+
+- **Invisible geometry state:** execute production `SetBlendMode`, `D3D_SetBlend` and `GetBlendState`, including the translucent sprite-silhouette to untextured sky-wall transition. All 100 pairs of blend modes must preserve the target color and depth writes, then restore RGB writes and the proper visible blend. The old implementation fails. This tests the actual D3D descriptor construction; Xbox wall appearance still needs confirmation.

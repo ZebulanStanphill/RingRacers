@@ -4,6 +4,10 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include "doomdef.h"
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
 using UINT8=uint8_t;
 using UINT32=uint32_t;
 @@ENUMS@@
@@ -28,10 +32,17 @@ struct Device {
 Device *g_device=&device;
 static bool Failed(int result,const char *) { return result!=0; }
 std::unordered_map<UINT32,ComPtr<ID3D11BlendState>> g_blendStates;
-struct { bool blend; UINT8 blendSrc,blendDst,blendEquation,colorWriteMask; } g_gl;
+enum { AF_ALWAYS,AF_NOTEQUAL,AF_GREATER,TE_MODULATE,TE_REPLACE };
+struct { bool blend=true; UINT8 blendSrc=BF_ONE,blendDst=BF_ZERO,blendEquation=BE_ADD,colorWriteMask=7;
+    int alphaFunc=AF_ALWAYS,texEnv=TE_MODULATE; float alphaRef=0;
+    bool alphaTest=true,polygonOffset=false,depthAlways=false,depthMask=true; } g_gl;
+FBITFIELD g_currentPolyFlags=0;
+void SetRepeatT(bool) {} void SetRepeatS(bool) {} void SetNoTexture(int) {}
 bool g_waterRefraction;
 @@TO_BLEND@@
 @@BLEND_STATE@@
+@@SET_BLEND_MODE@@
+@@SET_BLEND@@
 int main() {
     g_gl.blend=true; g_gl.blendSrc=BF_SRC_ALPHA; g_gl.blendDst=BF_SRC_COLOR;
     g_gl.blendEquation=BE_ADD;
@@ -50,5 +61,34 @@ int main() {
         assert(GetBlendState()->desc.RenderTarget[0].BlendEnable);
         assert(GetBlendState()->desc.RenderTarget[0].RenderTargetWriteMask==mask);
     }
+    // Depth-only sky walls and linkdraw sprite silhouettes can use different
+    // blend modes while PF_Invisible remains set. Every transition must leave
+    // the target unchanged, then restore the visible surface's actual blend.
+    const FBITFIELD modes[]={0,PF_Masked,PF_Translucent,PF_Environment,PF_Additive,
+        PF_Subtractive,PF_ReverseSubtract,PF_Multiplicative,PF_Invert,PF_Fog};
+    D3D_SetBlend(PF_Translucent|PF_Invisible|PF_Occlude);
+    D3D_SetBlend(PF_Invisible|PF_NoTexture|PF_Occlude);
+    auto sky=GetBlendState()->desc.RenderTarget[0];
+    assert(sky.RenderTargetWriteMask==0 || (sky.BlendEnable &&
+        sky.SrcBlend==D3D11_BLEND_ZERO && sky.DestBlend==D3D11_BLEND_ONE));
+    int transitions=0;
+    for(auto from:modes) for(auto to:modes) {
+        D3D_SetBlend(from|PF_Invisible|PF_Occlude);
+        D3D_SetBlend(to|PF_Invisible|PF_NoTexture|PF_Occlude);
+        auto hidden=GetBlendState()->desc.RenderTarget[0];
+        assert(g_gl.depthMask && !g_gl.depthAlways);
+        // A zero write mask is ideal; legacy zero/one additive blending also
+        // preserves color. The old same-Invisible transition violates both.
+        assert(hidden.RenderTargetWriteMask==0 || (hidden.BlendEnable &&
+            hidden.SrcBlend==D3D11_BLEND_ZERO && hidden.DestBlend==D3D11_BLEND_ONE && hidden.BlendOp==D3D11_BLEND_OP_ADD));
+        D3D_SetBlend(to|PF_Occlude);
+        auto visible=GetBlendState()->desc.RenderTarget[0];
+        assert(visible.RenderTargetWriteMask==7);
+        auto src=g_gl.blendSrc,dst=g_gl.blendDst,op=g_gl.blendEquation;
+        SetBlendMode(to);
+        assert(src==g_gl.blendSrc && dst==g_gl.blendDst && op==g_gl.blendEquation);
+        ++transitions;
+    }
+    printf("%d invisible/visible blend transitions preserve color and depth, and restore visible blending\n",transitions);
     puts("Complete composites bypass a second framebuffer blend and preserve write masks/state restoration");
 }
