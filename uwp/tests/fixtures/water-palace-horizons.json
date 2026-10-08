@@ -1,0 +1,601 @@
+{
+  "source": "Vanilla Ring Racers v2.4 data/maps.pk3/maps/race/RR_WaterPalace.wad TEXTMAP (GPLv2)",
+  "maps_pk3_md5": "97ded03bb428f32e55fbf1df7b1dd6e9",
+  "horizons": [
+    {
+      "line": 10,
+      "front_sector": 131,
+      "back_sector": 4,
+      "front": {
+        "heightfloor": "-800",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-800",
+        "heightceiling": "-800",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "131",
+        "offsetx": "5760",
+        "texturetop": "GFZROCK"
+      }
+    },
+    {
+      "line": 12,
+      "front_sector": 80,
+      "back_sector": 175,
+      "front": {
+        "heightfloor": "-172",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-172",
+        "heightceiling": "-180",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "80"
+      }
+    },
+    {
+      "line": 17,
+      "front_sector": 383,
+      "back_sector": 171,
+      "front": {
+        "heightfloor": "-214",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-214",
+        "heightceiling": "-214",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "383",
+        "offsetx": "1472"
+      }
+    },
+    {
+      "line": 328,
+      "front_sector": 349,
+      "back_sector": 456,
+      "front": {
+        "heightfloor": "-494",
+        "heightceiling": "694",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-494",
+        "heightceiling": "-494",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "349",
+        "offsetx": "1233",
+        "texturetop": "WTPBR1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 508,
+      "front_sector": 383,
+      "back_sector": 171,
+      "front": {
+        "heightfloor": "-214",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-214",
+        "heightceiling": "-214",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "383",
+        "offsetx": "2944"
+      }
+    },
+    {
+      "line": 511,
+      "front_sector": 638,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-70",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "638",
+        "offsetx": "80",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 548,
+      "front_sector": 393,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-70",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "393",
+        "offsetx": "112",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 549,
+      "front_sector": 155,
+      "back_sector": 617,
+      "front": {
+        "heightfloor": "128",
+        "heightceiling": "128",
+        "texturefloor": "WCZFLA01",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "155",
+        "offsetx": "1125",
+        "texturetop": "GFZROCK",
+        "texturebottom": "WTPFEN1"
+      }
+    },
+    {
+      "line": 554,
+      "front_sector": 383,
+      "back_sector": 151,
+      "front": {
+        "heightfloor": "-214",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-214",
+        "heightceiling": "-214",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "383",
+        "offsetx": "100",
+        "texturetop": "GFZROCK",
+        "texturebottom": "WTPFEN1"
+      }
+    },
+    {
+      "line": 642,
+      "front_sector": 483,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-375",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "483",
+        "offsetx": "-239"
+      }
+    },
+    {
+      "line": 645,
+      "front_sector": 483,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-375",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "483",
+        "offsetx": "-48",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 653,
+      "front_sector": 383,
+      "back_sector": 174,
+      "front": {
+        "heightfloor": "-214",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-214",
+        "heightceiling": "-214",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "383",
+        "texturetop": "GFZROCK"
+      }
+    },
+    {
+      "line": 658,
+      "front_sector": 91,
+      "back_sector": 203,
+      "front": {
+        "heightfloor": "-800",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-800",
+        "heightceiling": "-800",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "91",
+        "offsetx": "2944"
+      }
+    },
+    {
+      "line": 767,
+      "front_sector": 186,
+      "back_sector": 187,
+      "front": {
+        "heightfloor": "-510",
+        "heightceiling": "-92",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-510",
+        "heightceiling": "-510",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "186"
+      }
+    },
+    {
+      "line": 770,
+      "front_sector": 187,
+      "back_sector": 186,
+      "front": {
+        "heightfloor": "-510",
+        "heightceiling": "-510",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "back": {
+        "heightfloor": "-510",
+        "heightceiling": "-92",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "187"
+      }
+    },
+    {
+      "line": 847,
+      "front_sector": 350,
+      "back_sector": 457,
+      "front": {
+        "heightfloor": "-494",
+        "heightceiling": "694",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-494",
+        "heightceiling": "-494",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "350",
+        "offsetx": "-1591",
+        "texturetop": "WTPBR1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 1112,
+      "front_sector": 389,
+      "back_sector": 275,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-350",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "389",
+        "offsetx": "126",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 1270,
+      "front_sector": 638,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-70",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "638",
+        "offsetx": "16",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 1580,
+      "front_sector": 321,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-350",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit",
+        "xpanningceiling": "0.0",
+        "ypanningceiling": "0.0",
+        "rotationceiling": "0.0",
+        "xscaleceiling": "1.0",
+        "yscaleceiling": "1.0",
+        "xpanningfloor": "0.0",
+        "ypanningfloor": "0.0",
+        "rotationfloor": "0.0",
+        "xscalefloor": "1.0",
+        "yscalefloor": "1.0"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "321",
+        "offsetx": "48",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 1582,
+      "front_sector": 385,
+      "back_sector": 275,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-70",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "385",
+        "offsetx": "62",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    },
+    {
+      "line": 2075,
+      "front_sector": 80,
+      "back_sector": 175,
+      "front": {
+        "heightfloor": "-172",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-172",
+        "heightceiling": "-180",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "80"
+      }
+    },
+    {
+      "line": 2232,
+      "front_sector": 80,
+      "back_sector": 487,
+      "front": {
+        "heightfloor": "-172",
+        "heightceiling": "1500",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-172",
+        "heightceiling": "-172",
+        "texturefloor": "~015",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224"
+      },
+      "side": {
+        "sector": "80",
+        "offsetx": "5760",
+        "texturetop": "GFZROCK"
+      }
+    },
+    {
+      "line": 2457,
+      "front_sector": 393,
+      "back_sector": 224,
+      "front": {
+        "heightfloor": "-1062",
+        "heightceiling": "-70",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "back": {
+        "heightfloor": "-1062",
+        "heightceiling": "-1062",
+        "texturefloor": "F_SKY1",
+        "textureceiling": "F_SKY1",
+        "lightlevel": "224",
+        "damagetype": "DeathPit"
+      },
+      "side": {
+        "sector": "393",
+        "offsetx": "80",
+        "texturetop": "WTPFEN1",
+        "texturebottom": "WTPBR1"
+      }
+    }
+  ]
+}

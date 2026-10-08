@@ -1,4 +1,4 @@
-From 59d691d88dfd6ceafea4eacf18ca5df335148643 Mon Sep 17 00:00:00 2001
+From 2afe65c4e2d35904037e82addd0366a350c926ae Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -238,6 +238,11 @@ RingRacers-dev, rebased onto v2.4.
   Retain bounded captures for standalone faces and ordinary rendering
   when capture resources fail
 
+- Skip opaque horizon extensions at empty two-sided sky boundaries that
+  Software rejects. Use its fake-flat and empty-line checks so Water
+  Palace's lower sky remains available behind translucent water; retain
+  real, one-sided and ordinary non-sky horizon extensions
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -264,7 +269,7 @@ Model: gpt-6.1-sol
  src/hardware/hw_draw.c             |   57 +-
  src/hardware/hw_drv.h              |   13 +
  src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             |  741 +++-
+ src/hardware/hw_main.c             |  773 +++-
  src/hardware/hw_main.h             |   16 +
  src/hardware/hw_md2.c              |  304 +-
  src/hardware/hw_md2.h              |    4 +
@@ -320,7 +325,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                      |  117 +
  src/w_wad.h                        |   10 +
  src/z_zone.cpp                     |    5 +
- 77 files changed, 11485 insertions(+), 572 deletions(-)
+ 77 files changed, 11516 insertions(+), 573 deletions(-)
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -2361,7 +2366,7 @@ index 07dfb7a1601e15332c88d036ebc1d07f577bb2a9..6df0269ce4ec5236881b833a3af45a01
  // --------
  // hw_draw.c
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e930eedddd 100644
+index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..d0d2f4a06248a564d3999a912f9a1d461e61dac2 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -14,6 +14,9 @@
@@ -2724,7 +2729,53 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  }
  
  UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -1666,6 +1962,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -386,6 +682,36 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t
+ 
+ #ifdef DOPLANES
+ 
++// A two-sided line can be empty even when its sky ceiling heights differ.
++// Software rejects such lines before drawing horizon spans; extending an
++// opaque hardware floor anyway covers the sky behind translucent water.
++static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
++{
++	sector_t temp, *back;
++	boolean ceilingsky, floorsky;
++	if (line->glseg || line->linedef->special != HORIZONSPECIAL)
++		return false;
++	if (!line->backsector)
++		return true;
++	back = R_FakeFlat(line->backsector, &temp, NULL, NULL, true);
++	ceilingsky = front->ceilingpic == skyflatnum && back->ceilingpic == skyflatnum;
++	floorsky = front->floorpic == skyflatnum && back->floorpic == skyflatnum;
++	if (!ceilingsky && !floorsky)
++		return true; // retain ordinary horizon behavior
++	if (ceilingsky && floorsky && !R_IsDebugLine(line) && !line->polyseg
++		&& !line->sidedef->midtexture && ((!front->ffloors && !back->ffloors)
++			|| Tag_Compare(&front->tags, &back->tags)))
++		return false; // Software's all-sky fast path
++
++	// R_IsEmptyLine checks slope identity and all surface/lighting properties.
++	// Shared slopes define the plane height independently of the base height.
++	if ((ceilingsky || front->c_slope || front->ceilingheight == back->ceilingheight)
++		&& (floorsky || front->f_slope || front->floorheight == back->floorheight)
++		&& R_IsEmptyLine(line, front, back))
++		return false;
++	return true;
++}
++
+ // -----------------+
+ // HWR_RenderPlane  : Render a floor or ceiling convex polygon
+ // -----------------+
+@@ -604,7 +930,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+ 
+ 		for (i = 0; i < subsector->numlines; i++, line++)
+ 		{
+-			if (!line->glseg && line->linedef->special == HORIZONSPECIAL && R_PointOnSegSide(dup_viewx, dup_viewy, line) == 0)
++			if (HWR_ShouldExtendHorizon(line, gl_frontsector) && R_PointOnSegSide(dup_viewx, dup_viewy, line) == 0)
+ 			{
+ 				P_ClosestPointOnLine(viewx, viewy, line->linedef, &v);
+ 				dist = FIXED_TO_FLOAT(R_PointToDist(v.x, v.y));
+@@ -1666,6 +1992,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2733,7 +2784,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  				if (!(rover->fofflags & FOF_ALLSIDES) && rover->fofflags & FOF_INVERTSIDES)
  					continue;
  
-@@ -1828,6 +2126,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1828,6 +2156,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -2742,7 +2793,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  				if (!(rover->fofflags & FOF_ALLSIDES || rover->fofflags & FOF_INVERTSIDES))
  					continue;
  
-@@ -2038,6 +2338,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
+@@ -2038,6 +2368,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
  static void HWR_AddLine(seg_t * line)
  {
  	angle_t angle1, angle2;
@@ -2752,7 +2803,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  
  	// SoM: Backsector needs to be run through R_FakeFlat
  	static sector_t tempsec;
-@@ -2053,6 +2356,15 @@ static void HWR_AddLine(seg_t * line)
+@@ -2053,6 +2386,15 @@ static void HWR_AddLine(seg_t * line)
  	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
  	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
  
@@ -2768,7 +2819,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	// OPTIMIZE: quickly reject orthogonal back sides.
  	angle1 = R_PointToAngle64(v1x, v1y);
  	angle2 = R_PointToAngle64(v2x, v2y);
-@@ -2068,13 +2380,35 @@ static void HWR_AddLine(seg_t * line)
+@@ -2068,13 +2410,35 @@ static void HWR_AddLine(seg_t * line)
  		return;
  	}
  
@@ -2805,7 +2856,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	}
  	else
  	{
-@@ -2095,13 +2429,19 @@ static void HWR_AddLine(seg_t * line)
+@@ -2095,13 +2459,19 @@ static void HWR_AddLine(seg_t * line)
  					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
  				return; // line is empty, don't even bother
  			// treat like wide open window instead
@@ -2827,7 +2878,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  			checkforemptylines = false;
  		}
  		// Reject empty lines used for triggers and special events.
-@@ -2112,7 +2452,10 @@ static void HWR_AddLine(seg_t * line)
+@@ -2112,7 +2482,10 @@ static void HWR_AddLine(seg_t * line)
  			return;
  	}
  
@@ -2839,7 +2890,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	return;
  }
  
-@@ -2369,7 +2712,10 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling,
+@@ -2369,7 +2742,10 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling,
  
  	if (HWR_UseShader())
  	{
@@ -2851,7 +2902,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  		blendmode |= PF_ColorMapped;
  	}
  
-@@ -2445,7 +2791,7 @@ static void HWR_AddPolyObjectPlanes(void)
+@@ -2445,7 +2821,7 @@ static void HWR_AddPolyObjectPlanes(void)
  
  static FBITFIELD HWR_RippleBlend(sector_t *sector, ffloor_t *rover, boolean ceiling)
  {
@@ -2860,7 +2911,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  }
  
  // -----------------+
-@@ -2500,6 +2846,18 @@ static void HWR_Subsector(size_t num)
+@@ -2500,6 +2876,18 @@ static void HWR_Subsector(size_t num)
  		line = NULL;
  	}
  
@@ -2879,7 +2930,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
  	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
  								&ceilinglightlevel, false);
-@@ -2632,6 +2990,8 @@ static void HWR_Subsector(size_t num)
+@@ -2632,6 +3020,8 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -2888,7 +2939,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  			if (sub->validcount == validcount)
  				continue;
  
-@@ -2879,10 +3239,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+@@ -2879,10 +3269,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
  	hwbbox = bsp->bbox[side];
  
  	// Recursively divide front space.
@@ -2908,7 +2959,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	{
  		// BP: big hack for a test in lighning ref : 1249753487AB
  		hwbbox = bsp->bbox[side^1];
-@@ -3656,7 +4023,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +4053,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -2917,7 +2968,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -4379,6 +4746,22 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
+@@ -4379,6 +4776,22 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
  	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
  }
  
@@ -2940,7 +2991,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  //
  // HWR_CreateDrawNodes
  // Creates and sorts a list of drawnodes for the scene being rendered.
-@@ -4464,6 +4847,12 @@ static void HWR_CreateDrawNodes(void)
+@@ -4464,6 +4877,12 @@ static void HWR_CreateDrawNodes(void)
  
  	for (i = 0; i < p; i++)
  	{
@@ -2953,7 +3004,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  		if (sortnode[sortindex[i]].plane)
  		{
  			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
-@@ -4493,6 +4882,10 @@ static void HWR_CreateDrawNodes(void)
+@@ -4493,6 +4912,10 @@ static void HWR_CreateDrawNodes(void)
  		}
  	}
  
@@ -2964,7 +3015,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
  
  	numwalls = 0;
-@@ -4597,6 +4990,10 @@ static void HWR_DrawSprites(void)
+@@ -4597,6 +5020,10 @@ static void HWR_DrawSprites(void)
  // HWR_AddSprites
  // During BSP traversal, this adds sprites by sector.
  // --------------------------------------------------------------------------
@@ -2975,7 +3026,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  static UINT8 sectorlight;
  static void HWR_AddSprites(sector_t *sec)
  {
-@@ -4621,6 +5018,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +5048,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -2988,7 +3039,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5056,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5086,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -3001,7 +3052,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5141,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4732,6 +5171,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -3013,7 +3064,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +5647,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +5677,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -3025,7 +3076,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	{
  		return;
  	}
-@@ -5396,6 +5814,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
+@@ -5396,6 +5844,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
  
  static gl_sky_t gl_sky;
  
@@ -3039,7 +3090,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, signed char yflip, float delta, boolean foglayer)
  {
  	const float radians = (float)(M_PIl / 180.0f);
-@@ -5426,6 +5851,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
+@@ -5426,6 +5881,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
  			vbo->v = (r / (float)sky->rows) + 0.5f;
  		else
  			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
@@ -3047,7 +3098,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	}
  
  	if (r != 4)
-@@ -5662,6 +6088,11 @@ static void HWR_DrawSkyBackground(player_t *player)
+@@ -5662,6 +6118,11 @@ static void HWR_DrawSkyBackground(player_t *player)
  			v[0].t = v[1].t -= ((float) angle / angleturn);
  		}
  
@@ -3059,7 +3110,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  		HWD.pfnUnSetShader();
  		HWD.pfnDrawPolygon(NULL, v, 4, 0);
  	}
-@@ -5791,21 +6222,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6252,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -3116,7 +3167,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6312,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6342,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -3152,7 +3203,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6349,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6379,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -3163,7 +3214,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5957,12 +6437,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5957,12 +6467,160 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		HWR_CreateDrawNodes();
  	}
  
@@ -3324,7 +3375,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  }
  
  // ==========================================================================
-@@ -5973,7 +6601,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +6631,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -3334,7 +3385,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  }
  
  // ==========================================================================
-@@ -5995,6 +6625,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +6655,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -3344,7 +3395,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6038,6 +6671,33 @@ void HWR_RenderPlayerView(void)
+@@ -6038,6 +6701,33 @@ void HWR_RenderPlayerView(void)
  
  void HWR_LoadLevel(void)
  {
@@ -3378,7 +3429,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6138,6 +6798,8 @@ void HWR_Switch(void)
+@@ -6138,6 +6828,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -3387,7 +3438,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6257,7 +6919,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +6949,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -3397,7 +3448,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +6929,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +6959,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -3407,7 +3458,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +6950,23 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +6980,23 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
@@ -3433,7 +3484,7 @@ index b5e8fca5a18d6f7a906cd20f99ce931352c3a4c5..689ecec4b6bc01adef0e9224b38838e9
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +6992,26 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +7022,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.

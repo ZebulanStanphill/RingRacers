@@ -49,7 +49,7 @@ Every push first runs the native regression tests on Linux, then builds the app 
 
 These are in the latest build but haven't yet been confirmed by a human to actually work:
 
-- **Water Palace background visibility from above water** still needs retesting after the water capture fix. The user confirmed the revised sky position, including its 16-pixel patch offset.
+- **Legacy GL: empty sky horizon boundaries** no longer extend an opaque floor over the background that Software leaves visible. This addresses the Water Palace cutoff separately from the water capture fix and needs an Xbox retest. The revised sky position was confirmed.
 - **VibeRant D3D11: water-surface refraction** now shares one scene capture across coplanar water pieces to prevent repeated edge distortion and opacity. This revision needs Xbox visual and performance validation.
 - **VibeRant D3D11: heat distortion and every split-screen visual check** remain untested on Xbox. The user reported improved single-view underwater intensity. Native regression tests cover all layouts; a second controller is needed to confirm view isolation, mixed underwater/above-water cameras, heat, and the HUD on the device.
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.

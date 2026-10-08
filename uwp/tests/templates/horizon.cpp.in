@@ -1,0 +1,110 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <initializer_list>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "r_bsp.h"
+#include "r_main.h"
+#include "p_local.h"
+#include "p_slopes.h"
+#include "d_netcmd.h"
+#undef min
+#undef max
+consvar_t cv_debugfinishline{};
+INT32 skyflatnum=1;
+sector_t *sectors;
+player_t *viewplayer;
+fixed_t viewz;
+camera_t camera[MAXSPLITSCREENPLAYERS];
+INT32 r_splitscreen=0;
+UINT8 R_GetViewNumber() { return 0; }
+subsector_t viewSub{};
+subsector_t *R_PointInSubsector(fixed_t,fixed_t) { return &viewSub; }
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SLOPE_HEIGHT@@
+@@HEIGHT@@
+@@TAGS@@
+@@FAKE_FLAT@@
+@@DEBUG_LINE@@
+@@EMPTY_LINE@@
+@@EXTEND@@
+static int cameraSide;
+INT32 R_PointOnSegSide(fixed_t,fixed_t,seg_t *) { return cameraSide; }
+bool RenderHorizonCondition(seg_t *line,sector_t *gl_frontsector) {
+    fixed_t dup_viewx=0,dup_viewy=0;
+@@DRAW_CONDITION@@
+        return true;
+    return false;
+}
+bool SoftwareDrawsLine(seg_t *line,sector_t *frontsector) {
+    sector_t tempsec,*backsector=line->backsector;
+    seg_t *curline=line;
+    bool bothceilingssky=false,bothfloorssky=false,doorclosed=false;
+    if(!backsector)return true;
+@@SOFTWARE_DECISION@@
+clippass: return true;
+clipsolid: return true;
+}
+sector_t BlankSector() {
+    sector_t s={};s.floorlightsec=s.ceilinglightsec=s.heightsec=-1;return s;
+}
+int main() {
+    int cases=0,skipped=0;
+    vertex_t v1={},v2={};v2.x=128*FRACUNIT;
+    line_t ld={};ld.special=HORIZONSPECIAL;
+    side_t side={};
+    seg_t seg={};seg.linedef=&ld;seg.sidedef=&side;seg.v1=&v1;seg.v2=&v2;
+@@FIXTURE@@
+    assert(cases==23 && skipped==22);
+    sector_t front=BlankSector(),back=BlankSector();
+    front.floorpic=back.floorpic=2;
+    front.ceilingpic=back.ceilingpic=skyflatnum;
+    front.floorheight=back.floorheight=-214*FRACUNIT;
+    front.ceilingheight=1500*FRACUNIT;back.ceilingheight=-214*FRACUNIT;
+    front.lightlevel=back.lightlevel=224;seg.backsector=&back;
+    ffloor_t water={};front.ffloors=back.ffloors=&water;
+    // Tag equality with global water, real two-sided boundaries and changes
+    // that turn an empty sky line into a visible horizon.
+    mtag_t t1=7,t2=9;
+    extracolormap_t color={};pslope_t slope={},otherSlope={};
+    for(int variant=0;variant<12;++variant) {
+        sector_t a=front,b=back;side_t savedSide=side;
+        if(variant==1)b.lightlevel--;
+        if(variant==2)side.midtexture=4;
+        if(variant==3)b.floorpic=3;
+        if(variant==4)b.floorheight+=FRACUNIT;
+        if(variant==5)b.floor_xoffs=FRACUNIT;
+        if(variant==6)b.extra_colormap=&color;
+        if(variant==7){a.tags={&t1,1};b.tags={&t2,1};}
+        if(variant==8){a.f_slope=b.f_slope=&slope;b.floorheight+=FRACUNIT;}
+        if(variant==9){a.f_slope=&slope;b.f_slope=&otherSlope;}
+        if(variant==10){a.floorpic=b.floorpic=skyflatnum;b.lightlevel--;}
+        if(variant==11){a.floorpic=b.floorpic=skyflatnum;a.tags={&t1,1};b.tags={&t2,1};}
+        seg.backsector=&b;
+        assert((bool)HWR_ShouldExtendHorizon(&seg,&a)==SoftwareDrawsLine(&seg,&a));
+        side=savedSide;++cases;
+    }
+    cameraSide=1;seg.backsector=nullptr;
+    assert(!RenderHorizonCondition(&seg,&front));cameraSide=0;
+    // One-sided and non-sky horizons keep their original behavior. Minisegs
+    // and ordinary map lines cannot trigger the extension.
+    seg.backsector=nullptr;assert(HWR_ShouldExtendHorizon(&seg,&front));
+    seg.backsector=&back;front.ceilingpic=back.ceilingpic=3;
+    assert(HWR_ShouldExtendHorizon(&seg,&front));
+    seg.glseg=true;assert(!HWR_ShouldExtendHorizon(&seg,&front));seg.glseg=false;
+    ld.special=0;assert(!HWR_ShouldExtendHorizon(&seg,&front));ld.special=HORIZONSPECIAL;
+    // Fake-flat control sectors must be considered before deciding equality.
+    sector_t control=BlankSector();control.floorheight=front.floorheight;
+    control.ceilingheight=front.ceilingheight;
+    sectors=&control;back.heightsec=0;back.floorheight=-300*FRACUNIT;
+    front.ceilingpic=back.ceilingpic=skyflatnum;
+    mobj_t mo={};mo.subsector=&viewSub;player_t player={};player.mo=&mo;
+    viewplayer=&player;viewSub.sector=&front;viewz=0;
+    seg.backsector=&back;
+    assert((bool)HWR_ShouldExtendHorizon(&seg,&front)==SoftwareDrawsLine(&seg,&front));
+    printf("%d horizon decisions match Software; 22 empty Water Palace sky boundaries no longer extend opaque floors\n",cases);
+}

@@ -107,6 +107,52 @@ def generate(engine, output):
         "VERTEX": hardware.function("HWR_SkyDomeVertex"),
     }, output / "sky.cpp")
 
+    bsp = Source(engine / "src/r_bsp.cpp")
+    fixture = json.loads((templates.parent / "fixtures/water-palace-horizons.json").read_text())
+    names = {"F_SKY1": 1, "~015": 2, "WCZFLA01": 3}
+    fixture_code = []
+    for case in fixture["horizons"]:
+        fixture_code.append(f"    {{ // Water Palace line {case['line']}, sectors {case['front_sector']}/{case['back_sector']}")
+        fixture_code.append("        sector_t a=BlankSector(),b=BlankSector();")
+        for variable, fields in (("a", case["front"]), ("b", case["back"])):
+            for key, member in (("heightfloor", "floorheight"), ("heightceiling", "ceilingheight")):
+                fixture_code.append(f"        {variable}.{member}={int(float(fields[key])*65536)};")
+            for key, member in (("texturefloor", "floorpic"), ("textureceiling", "ceilingpic")):
+                fixture_code.append(f"        {variable}.{member}={names[fields[key]]};")
+            fixture_code.append(f"        {variable}.lightlevel={fields['lightlevel']};")
+            if "damagetype" in fields:
+                if fields["damagetype"] != "DeathPit":
+                    raise ValueError("Unexpected fixture damage type")
+                fixture_code.append(f"        {variable}.damagetype=SD_DEATHPIT;")
+            # The actual horizon sectors have default offsets, slope pointers,
+            # lighting overrides and no tags. Fail if the fixture changes.
+            allowed = {"heightfloor", "heightceiling", "texturefloor", "textureceiling", "lightlevel", "damagetype"}
+            defaults = {"yscalefloor": "1.0", "yscaleceiling": "1.0", "xscalefloor": "1.0", "xscaleceiling": "1.0",
+                        "xpanningfloor": "0.0", "ypanningfloor": "0.0", "xpanningceiling": "0.0", "ypanningceiling": "0.0",
+                        "rotationfloor": "0.0", "rotationceiling": "0.0"}
+            if any(k not in allowed and fields[k] != defaults.get(k) for k in fields):
+                raise ValueError("Unexpected fixture surface properties")
+        if case["side"].get("texturemiddle", "-") != "-":
+            raise ValueError("Unexpected fixture middle texture")
+        fixture_code.extend(["        seg.backsector=&b;",
+            "        bool extend=RenderHorizonCondition(&seg,&a);",
+            "        assert(extend==SoftwareDrawsLine(&seg,&a));",
+            "        ++cases;if(!extend)++skipped;", "    }"])
+    decision = bsp.section("\tbacksector = R_FakeFlat(backsector, &tempsec, NULL, NULL, true);", "\nclippass:")
+    render(templates / "horizon.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "SLOPE_HEIGHT": Source(engine / "src/p_slopes.c").function("P_GetSlopeZAt"),
+        "HEIGHT": Source(engine / "src/p_slopes.c").function("P_GetZAt"),
+        "TAGS": Source(engine / "src/taglist.c").section("boolean Tag_Compare (", "/// Search for an element"),
+        "FAKE_FLAT": bsp.function("R_FakeFlat"),
+        "DEBUG_LINE": bsp.function("R_IsDebugLine"),
+        "EMPTY_LINE": bsp.function("R_IsEmptyLine"),
+        "EXTEND": hardware.function("HWR_ShouldExtendHorizon"),
+        "DRAW_CONDITION": hardware.section("\t\t\tif (HWR_ShouldExtendHorizon", "\n\t\t\t{"),
+        "SOFTWARE_DECISION": decision.replace("return;", "return false;"),
+        "FIXTURE": "\n".join(fixture_code),
+    }, output / "horizon.cpp")
+
     postimg = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PostImageUV")
     postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
     reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(
