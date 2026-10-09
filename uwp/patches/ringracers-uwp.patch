@@ -1,4 +1,4 @@
-From 3ad10ac6af13c0cd6a8e1c6ff7d02899b07f333f Mon Sep 17 00:00:00 2001
+From dbcef9ff0719b95e4a4af22124ed77a1f7d6e997 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -84,7 +84,9 @@ RingRacers-dev, rebased onto v2.4.
   lump's colors, shaders turn texels back into palette indices with a
   64x64x64 lookup table and light them through each colormap's light
   table, and the finished frame is turned into the screen palette, which
-  brings palette flashes and color correction without remaking textures
+  brings palette flashes and color correction without remaking textures.
+  Brightmapped texels use the base colormap's full-bright level, kept as
+  a 33rd light-table row, like Software's dc->fullbright
 - Apply custom palette fades in Legacy GL on UWP through the real lump's
   256-column rows before the HUD when palette rendering is on. Cache R8
   tables by lump ID, clamp strength to the available rows, copy the full
@@ -343,7 +345,7 @@ Model: gpt-6.1-sol
  src/hardware/CMakeLists.txt               |   37 +
  src/hardware/hw_batching.c                |   11 +-
  src/hardware/hw_bsp.c                     |  113 +-
- src/hardware/hw_cache.c                   |  310 +-
+ src/hardware/hw_cache.c                   |  313 +-
  src/hardware/hw_clip.c                    |   15 +
  src/hardware/hw_clip.h                    |    5 +
  src/hardware/hw_defs.h                    |    9 +-
@@ -360,7 +362,7 @@ Model: gpt-6.1-sol
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
  src/hardware/r_d3d11/r_d3d11.cpp          | 6252 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   66 +
- src/hardware/r_d3d11/shaders.hlsl         |  610 ++
+ src/hardware/r_d3d11/shaders.hlsl         |  611 ++
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
  src/hwr2/patch_atlas.cpp                  |    8 +
@@ -411,7 +413,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                             |  117 +
  src/w_wad.h                               |   10 +
  src/z_zone.cpp                            |    5 +
- 82 files changed, 13502 insertions(+), 1057 deletions(-)
+ 82 files changed, 13506 insertions(+), 1057 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1762,7 +1764,7 @@ index 0b036ea..80fbf27 100644
  	i = SolveTProblem();
  	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
-index aee197a..a1824e7 100644
+index aee197a..0fcb116 100644
 --- a/src/hardware/hw_cache.c
 +++ b/src/hardware/hw_cache.c
 @@ -18,6 +18,9 @@
@@ -1868,7 +1870,7 @@ index aee197a..a1824e7 100644
  
  	// hardware driver will flush there own cache if cache is non paletized
  	// now flush data texture cache so 32 bit texture are recomputed
-@@ -781,6 +808,162 @@ void HWR_SetPalette(RGBA_t *palette)
+@@ -781,6 +808,165 @@ void HWR_SetPalette(RGBA_t *palette)
  	}
  }
  
@@ -1919,7 +1921,8 @@ index aee197a..a1824e7 100644
 +}
 +
 +// [UWP]: Palette rendering's light tables: each colormap's 32 light levels of 256 palette indices, as the colors
-+// they stand for. Encore's remap is already in the textures, so only the first, unremapped levels are used.
++// they stand for. Encore's remap is already in the textures, so only the first, unremapped levels are used. A 33rd
++// row holds the base colormap's full-bright level, which brightmapped texels use like Software's dc->fullbright.
 +typedef struct
 +{
 +	const extracolormap_t *colormap; // NULL for the default colormap
@@ -1950,11 +1953,13 @@ index aee197a..a1824e7 100644
 +
 +	for (i = 0; i < 256 * LIGHTLEVELS; i++)
 +		hw_lighttable[i] = mapPalette[source[i]];
++	for (i = 0; i < 256; i++)
++		hw_lighttable[256 * LIGHTLEVELS + i] = mapPalette[colormaps[i]];
 +}
 +
 +UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 +{
-+	static RGBA_t hw_lighttable[256 * LIGHTLEVELS];
++	static RGBA_t hw_lighttable[256 * (LIGHTLEVELS + 1)];
 +	const lighttable_t *source = (colormap && colormap->colormap) ? colormap->colormap : colormaps;
 +	hwlighttable_t *table;
 +	size_t i;
@@ -2031,7 +2036,7 @@ index aee197a..a1824e7 100644
  // --------------------------------------------------------------------------
  // Make sure texture is downloaded and set it as the source
  // --------------------------------------------------------------------------
-@@ -804,6 +987,9 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
+@@ -804,6 +990,9 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
  	if (!grtex->mipmap.downloaded)
  		HWD.pfnSetTexture(&grtex->mipmap);
  	HWR_SetCurrentTexture(&grtex->mipmap);
@@ -2041,7 +2046,7 @@ index aee197a..a1824e7 100644
  
  	// The system-memory data can be purged now.
  	Z_ChangeTag(grtex->mipmap.data, PU_HWRCACHE_UNLOCKED);
-@@ -1067,6 +1253,10 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
+@@ -1067,6 +1256,10 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
  #endif
  	else // set no texture
  		HWR_SetCurrentTexture(NULL);
@@ -2052,7 +2057,7 @@ index aee197a..a1824e7 100644
  }
  
  // --------------------+
-@@ -1181,77 +1371,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
+@@ -1181,77 +1374,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
  	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
  }
  
@@ -2169,7 +2174,7 @@ index aee197a..a1824e7 100644
  	}
  }
  
-@@ -1270,16 +1445,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
+@@ -1270,16 +1448,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
  		UINT8 *block;
  		size_t len;
  
@@ -2196,7 +2201,7 @@ index aee197a..a1824e7 100644
  		else
  			grPatch->mipmap->format = picmode2GR[pic->mode];
  
-@@ -1290,7 +1472,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
+@@ -1290,7 +1475,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
  
  		if (patch->width  == SHORT(pic->width) &&
  			patch->height == SHORT(pic->height) &&
@@ -2205,7 +2210,7 @@ index aee197a..a1824e7 100644
  		{
  			// no conversion needed
  			M_Memcpy(grPatch->mipmap->data, pic->data,len);
-@@ -1357,7 +1539,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
+@@ -1357,7 +1542,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
  		{
  			// fademask bpp is always 1, and is used just for alpha
  			texel = src[(posx)>>FRACBITS];
@@ -6075,7 +6080,7 @@ index 0000000..31f8d89
 +    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 0000000..6d9d977
+index 0000000..2d735d3
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
 @@ -0,0 +1,6252 @@
@@ -8767,7 +8772,7 @@ index 0000000..6d9d977
 +
 +	D3D11_TEXTURE2D_DESC desc = {};
 +	desc.Width = 256;
-+	desc.Height = 32;
++	desc.Height = 33; // 32 light levels, then the base colormap's full-bright level for brightmaps
 +	desc.MipLevels = 1;
 +	desc.ArraySize = 1;
 +	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -12405,10 +12410,10 @@ index 0000000..bb2921c
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 0000000..cc847cd
+index 0000000..ed8af15
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,611 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -12460,7 +12465,7 @@ index 0000000..cc847cd
 +Texture2D t_brightmap : register(t1); // also the fade mask of screen wipes
 +// Palette rendering, from SRB2
 +Texture3D<float> t_palette_lookup : register(t2); // RGB -> palette index / 255, 64 on each side
-+Texture2D t_lighttable : register(t3); // a colormap's 32 light levels of 256 colors
++Texture2D t_lighttable : register(t3); // a colormap's 32 light levels of 256 colors, then the base colormap's level 0
 +Texture2D t_screen_palette : register(t4); // 256 colors: the palette the finished frame is shown in
 +Texture2D<float> t_wipe_mask : register(t5); // raw lump bytes / 255, leaving the palette slots intact
 +Texture2D<float> t_fade_map : register(t6); // 256 columns of palette indices / 255 per strength row
@@ -12676,10 +12681,11 @@ index 0000000..cc847cd
 +}
 +
 +// Palette rendering: the texel's palette index, lit through the surface's light table like the software renderer's
-+// colormaps
-+float4 PaletteLight(float4 texel, float lighting, float z)
++// colormaps. Brightmapped texels skip the surface's colormap for the base one's full-bright level, like Software's
++// dc->fullbright.
++float4 PaletteLight(float4 texel, float lighting, float z, float brightmap_mix)
 +{
-+	int level = (int)clamp(floor(R_DoomColormap(lighting, z)), 0.0, 31.0);
++	int level = brightmap_mix > 0.0 ? 32 : (int)clamp(floor(R_DoomColormap(lighting, z)), 0.0, 31.0);
 +	float4 color = t_lighttable.Load(int3(PaletteIndex(texel.rgb), level, 0));
 +	color.rgb *= u_poly_color.rgb;
 +	color.a = texel.a * u_poly_color.a;
@@ -12780,7 +12786,7 @@ index 0000000..cc847cd
 +	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 +	float final_lighting = u_lighting + light_gain;
 +	if (u_palette)
-+		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz));
++		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz, brightmap_mix));
 +	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 +	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 +	final_color.a = texel.a * u_poly_color.a;
@@ -12797,7 +12803,7 @@ index 0000000..cc847cd
 +	float light_gain = (255.0 - final_lighting) * brightmap_mix;
 +	final_lighting += light_gain;
 +	if (u_palette)
-+		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz));
++		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz, brightmap_mix));
 +	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 +	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 +	final_color.a = texel.a * u_poly_color.a;
@@ -12822,7 +12828,7 @@ index 0000000..cc847cd
 +	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 +	float final_lighting = u_lighting + light_gain;
 +	if (u_palette)
-+		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz));
++		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz, brightmap_mix));
 +	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 +	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 +	final_color.a = texel.a * u_poly_color.a;

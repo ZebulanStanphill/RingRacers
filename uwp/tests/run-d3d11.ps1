@@ -20,6 +20,15 @@ if ($LASTEXITCODE -ne 0) { throw "Production Direct3D fog shader regression fail
 & $Fog $Engine --negative-control
 if ($LASTEXITCODE -ne 0) { throw "Reciprocal-depth fog shader was not rejected" }
 
+# Validate palette brightmaps on SM4: they must use the base full-bright light row.
+$Brightmap = Join-Path $Output "brightmap-d3d11.exe"
+& cl.exe /nologo /std:c++17 /O2 /EHsc /W3 /WX "/I$Engine\src" "/Fe:$Brightmap" "/Fo:$Output\brightmap-d3d11.obj" (Join-Path $PSScriptRoot "brightmap-d3d11.cpp") /link d3d11.lib d3dcompiler.lib dxguid.lib
+if ($LASTEXITCODE -ne 0) { throw "Direct3D brightmap test compilation failed" }
+& $Brightmap $Engine
+if ($LASTEXITCODE -ne 0) { throw "Production Direct3D brightmap shader regression failed" }
+& $Brightmap $Engine --negative-control
+if ($LASTEXITCODE -ne 0) { throw "Surface-colormap brightmap shader was not rejected" }
+
 # Generate the probe from the production driver; only the surrounding engine
 # state is supplied by the harness. GPU copies/readback use real Direct3D.
 python (Join-Path $PSScriptRoot "generate.py") --engine $Engine --output "$Output\generated"
