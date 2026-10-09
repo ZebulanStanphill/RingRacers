@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -19,6 +20,7 @@
 #include <vector>
 #include "hardware/hw_defs.h"
 #include "hardware/r_d3d11/custom_shader.h"
+#include "t_fsin.c"
 #undef min
 #undef max
 using Microsoft::WRL::ComPtr;
@@ -33,9 +35,151 @@ void Require(bool b,const char *s){if(!b){fprintf(stderr,"%s\n",s);exit(1);}}
 @@PROGRAMS@@
 @@COMPILE_STAGE@@
 @@CREATE_PROGRAM@@
+@@CREATE_REFRACTION@@
 std::string Read(const std::filesystem::path &p){std::ifstream f(p);Require(bool(f),"Missing translated GPU fixture");return std::string(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());}
+struct Pixel{float r,g,b,a;};
+// shaders.hlsl's BlendWaterScene, the built-in water composite.
+static Pixel Composite(Pixel w,Pixel bg,int mode) {
+    const float src[3]={w.r,w.g,w.b},back[3]={bg.r,bg.g,bg.b};float out[3];
+    for(int k=0;k<3;++k) {
+        const float s=src[k]*w.a;
+        out[k]=mode==1?s+back[k]:mode==2?s-back[k]:mode==3?back[k]-s:mode==4?src[k]*back[k]
+            :mode==5?src[k]+back[k]*(1-w.a):s+back[k]*(1-w.a);
+        out[k]=std::clamp(out[k],0.0f,1.0f);
+    }
+    return {out[0],out[1],out[2],1};
+}
+// Custom water drawn through the driver's composite variant, against the
+// built-in refraction's Software ripple oracle. The negative control draws
+// the ordinary custom program with framebuffer blending (the old behavior),
+// which must not show the distorted scene.
+static int Refraction(const std::filesystem::path &dir,bool negative) {
+    const UINT width=64,height=48;
+    const std::string vertex=Read(dir/"render-water.vert.hlsl");
+    CustomProgram program,depthProgram;
+    Require(CreateCustomProgram({vertex,Read(dir/"render-water.frag.hlsl")},LAYOUT_POLY,program),"Custom water creation failed");
+    Require(CreateCustomRefraction({vertex,Read(dir/"render-water-refraction.frag.hlsl")},program)&&program.refraction,"Custom water refraction creation failed");
+    Require(CreateCustomProgram({vertex,Read(dir/"render-depth.frag.hlsl")},LAYOUT_POLY,depthProgram),"Depth probe creation failed");
+    auto texture=[&](UINT w,UINT h,DXGI_FORMAT format,UINT bind,const void *data,UINT pitch) {
+        D3D11_TEXTURE2D_DESC desc={};desc.Width=w;desc.Height=h;desc.MipLevels=desc.ArraySize=1;
+        desc.SampleDesc.Count=1;desc.Format=format;desc.BindFlags=bind;
+        D3D11_SUBRESOURCE_DATA initial={};initial.pSysMem=data;initial.SysMemPitch=pitch;
+        ComPtr<ID3D11Texture2D> value;
+        Require(!Failed(g_device->CreateTexture2D(&desc,data?&initial:nullptr,&value),"texture"),"Cannot create texture");
+        return value;
+    };
+    std::vector<Pixel> scenery(width*height);
+    for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x)
+        scenery[y*width+x]={(float)x/width,(float)y/height,y<height/2?.9f:.1f,1};
+    auto scene=texture(width,height,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,scenery.data(),width*sizeof(Pixel));
+    auto sine=texture(8192,1,DXGI_FORMAT_R32_SINT,D3D11_BIND_SHADER_RESOURCE,finesine,8192*sizeof(finesine[0]));
+    auto target=texture(width,height,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_RENDER_TARGET,nullptr,0);
+    D3D11_TEXTURE2D_DESC stagingDesc={};target->GetDesc(&stagingDesc);stagingDesc.BindFlags=0;
+    stagingDesc.Usage=D3D11_USAGE_STAGING;stagingDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;Require(!Failed(g_device->CreateTexture2D(&stagingDesc,nullptr,&staging),"staging"),"Cannot create staging");
+    ComPtr<ID3D11RenderTargetView> rtv;Require(!Failed(g_device->CreateRenderTargetView(target.Get(),nullptr,&rtv),"rtv"),"Cannot create view");
+    ComPtr<ID3D11ShaderResourceView> sceneView,sineView;
+    Require(!Failed(g_device->CreateShaderResourceView(scene.Get(),nullptr,&sceneView),"srv")
+        &&!Failed(g_device->CreateShaderResourceView(sine.Get(),nullptr,&sineView),"srv"),"Cannot create resource views");
+    ID3D11ShaderResourceView *resources[]={sceneView.Get(),sineView.Get()};context->PSSetShaderResources(9,2,resources);
+    auto buffer=[&](UINT size,UINT bind) {
+        D3D11_BUFFER_DESC desc={};desc.ByteWidth=size;desc.BindFlags=bind;desc.Usage=D3D11_USAGE_DEFAULT;
+        ComPtr<ID3D11Buffer> value;Require(!Failed(g_device->CreateBuffer(&desc,nullptr,&value),"buffer"),"Cannot create buffer");return value;
+    };
+    auto drawCB=buffer(sizeof(Constants),D3D11_BIND_CONSTANT_BUFFER),viewCB=buffer(16,D3D11_BIND_CONSTANT_BUFFER);
+    auto waterCB=buffer(32,D3D11_BIND_CONSTANT_BUFFER),vb=buffer(3*sizeof(FOutVector),D3D11_BIND_VERTEX_BUFFER);
+    const float view[4]={(float)height,0,0,0};context->UpdateSubresource(viewCB.Get(),0,nullptr,view,0,0);
+    ID3D11Buffer *draw=drawCB.Get(),*viewBuffer=viewCB.Get(),*water=waterCB.Get();
+    context->VSSetConstantBuffers(0,1,&draw);context->PSSetConstantBuffers(0,1,&draw);
+    context->VSSetConstantBuffers(4,1,&viewBuffer);context->PSSetConstantBuffers(4,1,&viewBuffer);
+    context->PSSetConstantBuffers(5,1,&water);
+    UINT stride=sizeof(FOutVector),offset=0;ID3D11Buffer *vertices=vb.Get();
+    context->IASetVertexBuffers(0,1,&vertices,&stride,&offset);context->IASetInputLayout(program.layout.Get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->VSSetShader(program.vertex.Get(),nullptr,0);
+    ID3D11RenderTargetView *bound=rtv.Get();context->OMSetRenderTargets(1,&bound,nullptr);
+    D3D11_BLEND_DESC bd={};bd.RenderTarget[0].BlendEnable=TRUE;
+    bd.RenderTarget[0].SrcBlend=D3D11_BLEND_SRC_ALPHA;bd.RenderTarget[0].DestBlend=D3D11_BLEND_INV_SRC_ALPHA;
+    bd.RenderTarget[0].BlendOp=bd.RenderTarget[0].BlendOpAlpha=D3D11_BLEND_OP_ADD;
+    // Keep the scene's alpha: only the undistorted color may fail the oracle.
+    bd.RenderTarget[0].SrcBlendAlpha=D3D11_BLEND_ZERO;bd.RenderTarget[0].DestBlendAlpha=D3D11_BLEND_ONE;
+    bd.RenderTarget[0].RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
+    ComPtr<ID3D11BlendState> translucent;Require(!Failed(g_device->CreateBlendState(&bd,&translucent),"blend"),"Cannot create blend state");
+    auto run=[&](ID3D11PixelShader *ps,bool overScene,ID3D11BlendState *blend) {
+        const float sentinel[]={-1,-1,-1,-1};
+        if(overScene)context->CopyResource(target.Get(),scene.Get());else context->ClearRenderTargetView(rtv.Get(),sentinel);
+        context->OMSetBlendState(blend,nullptr,0xFFFFFFFF);context->PSSetShader(ps,nullptr,0);context->Draw(3,0);
+        context->OMSetBlendState(nullptr,nullptr,0xFFFFFFFF);
+        context->CopyResource(staging.Get(),target.Get());D3D11_MAPPED_SUBRESOURCE m={};
+        Require(!Failed(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&m),"map"),"Cannot map pixels");
+        std::vector<Pixel> out(width*height);
+        for(UINT y=0;y<height;++y)memcpy(&out[y*width],(const uint8_t*)m.pData+y*m.RowPitch,width*sizeof(Pixel));
+        context->Unmap(staging.Get(),0);return out;
+    };
+    const float distances[6][3]={{.125f,.125f,.125f},{32.125f,32.125f,32.125f},{128.125f,128.125f,128.125f},
+        {512.125f,512.125f,512.125f},{2048.125f,2048.125f,2048.125f},{16.125f,512.125f,64.125f}};
+    int pixels=0,depthPixels=0,mismatches=0,discarded=0;
+    for(int vx:{0,32})for(int vy:{0,24})for(const auto &d:distances)for(int tick:{0,6,41,128}) {
+        D3D11_VIEWPORT viewport={(float)vx,(float)vy,32,24,0,1};context->RSSetViewports(1,&viewport);
+        Constants c={};c.projection[0]=c.projection[5]=c.projection[11]=1; // clip w = vertex z
+        for(int i=0;i<4;++i){c.modelview[i*5]=1;c.color[i]=1;c.poly[i]=1;}
+        c.poly[3]=.625f;c.clipPlane[3]=1;c.leveltime=tick/35.f;
+        const FOutVector triangle[3]={{-d[0],-d[0],d[0],.1f,0},{-d[1],3*d[1],d[1],.4f,0},{3*d[2],-d[2],d[2],.9f,0}};
+        context->UpdateSubresource(vb.Get(),0,nullptr,triangle,0,0);
+        context->UpdateSubresource(drawCB.Get(),0,nullptr,&c,0,0);
+        const auto surface=run(program.pixel.Get(),false,nullptr),depth=run(depthProgram.pixel.Get(),false,nullptr);
+        for(int mode=0;mode<(negative?1:6);++mode) {
+            const struct {float bounds[4];INT32 mode,pad[3];} wc={{(float)vx,(float)vy,(float)vx+31,(float)vy+23},mode,{0,0,0}};
+            context->UpdateSubresource(waterCB.Get(),0,nullptr,&wc,0,0);
+            const auto result=negative?run(program.pixel.Get(),true,translucent.Get()):run(program.refraction.Get(),true,nullptr);
+            for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
+                const Pixel p=result[y*width+x];
+                if(x<(UINT)vx||x>=(UINT)vx+32||y<(UINT)vy||y>=(UINT)vy+24) {
+                    const Pixel s0=scenery[y*width+x];
+                    Require(p.r==s0.r&&p.g==s0.g&&p.b==s0.b&&p.a==s0.a,"Custom water leaked into another view");continue;
+                }
+                const Pixel z=depth[y*width+x],w=surface[y*width+x];
+                if(mode==0) {
+                    const float b2=(x-vx+.5f)/64,b1=(24-(y-vy+.5f))/48,b0=1-b1-b2,distance=1/(b0/d[0]+b1/d[1]+b2/d[2]);
+                    Require(fabsf(z.r-distance)<distance*.00001f,"1/gl_FragCoord.w must equal interpolated clip depth");
+                    Require(z.g==x+.5f&&z.b==height-(y+.5f),"GL fragment coordinates differ in the water view");
+                    Require(w.a==.625f&&w.g==.25f&&w.b==.75f,"Unexpected custom water output");
+                    ++depthPixels;
+                }
+                // Independent fixed-point ripple oracle, from the measured depth.
+                const int fx=(int)(z.r*65536),angle=(tick*140+(fx>>9))&8191;
+                const int shift=(int)floor((double)finesine[angle]/(4096+(fx>>11)));
+                const int sy=std::clamp((int)y+shift,vy,vy+23);
+                const Pixel e=Composite(w,scenery[sy*width+x],mode);
+                if(!(fabsf(p.r-e.r)<1e-5f&&fabsf(p.g-e.g)<1e-5f&&fabsf(p.b-e.b)<1e-5f&&p.a==1)) {
+                    if(!mismatches)fprintf(stderr,"First refraction mismatch at (%u,%u) mode %d tick %d depth %.8g: expected row %d (%.8g), got %.8g\n",x,y,mode,tick,z.r,sy,e.g,p.g);
+                    ++mismatches;
+                }
+                ++pixels;
+            }
+        }
+        if(tick==0&&d[0]==d[2]&&!negative) {
+            // Alpha-test holes leave the scene untouched; they never composite.
+            for(int func:{1,2}) {
+                c.alphaFunc=func;c.alphaRef=func==1?.75f:.625f;context->UpdateSubresource(drawCB.Get(),0,nullptr,&c,0,0);
+                const auto result=run(program.refraction.Get(),true,nullptr);
+                for(UINT i=0;i<width*height;++i) {
+                    Require(result[i].r==scenery[i].r&&result[i].g==scenery[i].g&&result[i].b==scenery[i].b,"Alpha-tested custom water was composited");
+                    ++discarded;
+                }
+            }
+        }
+    }
+    if(negative) {
+        Require(mismatches>0,"Unrefracted custom water unexpectedly matched the refraction oracle");
+        printf("SM4 custom water negative control: %d of %d unrefracted pixels rejected\n",mismatches,pixels);
+    } else {
+        Require(mismatches==0,"Custom water refraction sampled the wrong scenery");
+        printf("SM4 custom water refraction: %d composites over six blend modes, %d depth/coordinate pixels, %d alpha-test pixels\n",pixels,depthPixels,discarded);
+    }
+    return 0;
+}
 int main(int argc,char **argv) {
-    Require(argc==2,"Pass translated-shaders directory");
+    Require(argc==2||(argc==3&&std::string(argv[2])=="--negative-control"),"Pass translated-shaders directory and optional --negative-control");
     const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_10_1;D3D_FEATURE_LEVEL actual;
     Require(!Failed(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,&level,1,D3D11_SDK_VERSION,
         &g_device,&actual,&context),"device")&&actual==level,"Cannot create SM4 WARP device");
@@ -101,4 +245,5 @@ int main(int argc,char **argv) {
         }
     }
     printf("SM4 custom shaders: %d pixels verify three input layouts, driver constants, GL coordinates, alpha tests and portal clipping\n",pixels);
+    return Refraction(argv[1],argc==3);
 }

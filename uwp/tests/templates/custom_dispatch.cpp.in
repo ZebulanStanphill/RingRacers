@@ -43,18 +43,25 @@ int g_program=-1,g_shaderCurrent=-1,g_shaderType=0;
 consvar_t cv_reducevfx{};
 struct {ID3D11VertexShader *vs=nullptr;ID3D11PixelShader *ps=nullptr;ID3D11InputLayout *layout=nullptr;} g_bound;
 @@CUSTOM_STATE@@
-static int translated=0,created=0,failLayout=-1;
+static int translated=0,created=0,refractions=0,failLayout=-1;
+static bool failRefraction=false;
 static std::string lastVertex,lastFragment;
-bool TranslateLegacyShader(const std::string &v,const std::string &p,int,
-    LegacyShaderHLSL &out,std::string &error) {
+bool TranslateLegacyShader(const std::string &v,const std::string &p,int layout,
+    LegacyShaderHLSL &out,std::string &error,bool refraction) {
     ++translated;lastVertex=v;lastFragment=p;
-    if(v=="bad"||p=="bad"){error="invalid shader";return false;}
-    out={v,p};return true;
+    if(v=="bad"||p=="bad"||(refraction&&p=="no refraction")){error="invalid shader";return false;}
+    if(refraction){assert(layout==LAYOUT_POLY);++refractions;}
+    out={v,refraction?p+" refraction":p};return true;
 }
 static bool CreateCustomProgram(const LegacyShaderHLSL &,Layout l,CustomProgram &p) {
     ++created;if(l==failLayout)return false;
     p.vertex.p=std::make_shared<ID3D11VertexShader>();p.pixel.p=std::make_shared<ID3D11PixelShader>();
     p.layout.p=std::make_shared<ID3D11InputLayout>();return true;
+}
+static bool CreateCustomRefraction(const LegacyShaderHLSL &hlsl,CustomProgram &p) {
+    assert(hlsl.fragment.size()>11&&hlsl.fragment.compare(hlsl.fragment.size()-11,11," refraction")==0);
+    if(failRefraction)return false;
+    p.refraction.p=std::make_shared<ID3D11PixelShader>();return true;
 }
 @@COMPILE@@
 @@CLEAN@@
@@ -69,9 +76,11 @@ Selection Select(Layout layout,bool wipe=false) {
     return {vertexShader,pixelShader,inputLayout};
 }
 static int captures=0,fogCaptures=0;
-static bool fogCaptureOK=true;
+static bool fogCaptureOK=true,waterCaptureOK=true,wholeViewCapture=false;
 bool CaptureFogScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT){++fogCaptures;return fogCaptureOK;}
-bool CaptureWaterScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT){++captures;return true;}
+bool CaptureWaterScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT,bool wholeView){
+    ++captures;wholeViewCapture=wholeView;return waterCaptureOK;
+}
 void ArmWater(FBITFIELD PolyFlags) {
     FSurfaceInfo surface{};FSurfaceInfo *pSurf=&surface;
     FOutVector vertices[4]{};FUINT count=4;
@@ -89,7 +98,8 @@ int main() {
     }
     // Fragment-only replacement gets the real shared built-in vertex stage.
     Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
-    assert(translated==3&&created==3&&lastVertex==gl_shadersources[SHADER_WALL].vertex);
+    assert(translated==3&&created==3&&refractions==0&&lastVertex==gl_shadersources[SHADER_WALL].vertex);
+    for(auto &p:g_customShaders[SHADER_WALL].programs)assert(!p.refraction);
     for(Layout layout:{LAYOUT_POLY,LAYOUT_SKY,LAYOUT_MODEL}) {
         g_program=SHADER_WALL;const auto custom=Select(layout);
         assert(custom.v==g_customShaders[SHADER_WALL].programs[layout].vertex.Get());
@@ -119,17 +129,58 @@ int main() {
     g_modelLighting=true;D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL);
     Load(SHADER_MODEL_LIGHTING,"lit model");assert(D3D_CompileShaders());
     D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL_LIGHTING);
-    // Normal water retains one capture/composite; a custom water program owns
-    // its output and must neither capture scenery nor suppress alpha blending.
+    // Normal water retains one capture/composite with blending replaced.
     g_program=SHADER_WATER;ArmWater(PF_Ripple|PF_Translucent);
-    assert(g_waterRefraction&&captures==1);
+    assert(g_waterRefraction&&captures==1&&!wholeViewCapture);
     assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
-    Load(SHADER_WATER,"custom water");assert(D3D_CompileShaders());ArmWater(PF_Ripple|PF_Translucent);
-    assert(!g_waterRefraction&&captures==1);
-    assert(Select(LAYOUT_POLY).p==g_customShaders[SHADER_WATER].programs[LAYOUT_POLY].pixel.Get());
+    // Custom water gets a polygon-only composite variant, translated after
+    // its three ordinary layouts, and keeps its custom vertex stage/layout.
+    int translations=translated;
+    Load(SHADER_WATER,"custom water");assert(D3D_CompileShaders());
+    assert(translated==translations+4&&refractions==1);
+    const CustomProgram *water=g_customShaders[SHADER_WATER].programs;
+    assert(water[LAYOUT_POLY].refraction&&!water[LAYOUT_SKY].refraction&&!water[LAYOUT_MODEL].refraction);
+    ArmWater(PF_Ripple|PF_Translucent);
+    assert(g_waterRefraction&&captures==2&&!wholeViewCapture);
+    auto refracted=Select(LAYOUT_POLY);
+    assert(refracted.p==water[LAYOUT_POLY].refraction.Get()&&refracted.p!=water[LAYOUT_POLY].pixel.Get());
+    assert(refracted.v==water[LAYOUT_POLY].vertex.Get()&&refracted.l==water[LAYOUT_POLY].layout.Get());
+    for(FBITFIELD blend:{PF_Additive,PF_Subtractive,PF_ReverseSubtract,PF_Multiplicative,PF_Environment}) {
+        ArmWater(PF_Ripple|blend);assert(g_waterRefraction&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].refraction.Get());
+    }
+    // Without a capture the ordinary custom output is blended normally.
+    const int armed=captures;
+    waterCaptureOK=false;ArmWater(PF_Ripple|PF_Translucent);
+    assert(!g_waterRefraction&&captures==armed+1&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
+    waterCaptureOK=true;
+    for(FBITFIELD flags:{FBITFIELD(PF_Translucent),FBITFIELD(PF_Ripple|PF_Masked),FBITFIELD(PF_Ripple)}) {
+        ArmWater(flags);assert(!g_waterRefraction&&captures==armed+1);
+        assert(Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
+    }
+    cv_reducevfx.value=1;ArmWater(PF_Ripple|PF_Translucent);
+    assert(!g_waterRefraction&&captures==armed+1&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
+    cv_reducevfx.value=0;
+    // Ignore custom shaders restores the built-in refraction program.
     g_allowShaders=HWD_SHADEROPTION_NOCUSTOM;ArmWater(PF_Ripple|PF_Translucent);
-    assert(g_waterRefraction&&captures==2);
+    assert(g_waterRefraction&&captures==armed+2&&!wholeViewCapture);
     assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
+    g_allowShaders=HWD_SHADEROPTION_ON;
+    // A custom vertex stage may displace water; capture its whole view.
+    Load(SHADER_WATER,"wave vertex",false);assert(D3D_CompileShaders()&&refractions==2);
+    ArmWater(PF_Ripple|PF_Translucent);
+    assert(g_waterRefraction&&captures==armed+3&&wholeViewCapture);
+    assert(Select(LAYOUT_POLY).p==g_customShaders[SHADER_WATER].programs[LAYOUT_POLY].refraction.Get());
+    // A failed composite variant leaves valid, unrefracted custom water.
+    for(int failure=0;failure<2;++failure) {
+        failRefraction=failure==1;Load(SHADER_WATER,failure?"custom water":"no refraction");
+        assert(D3D_CompileShaders()&&g_customShaders[SHADER_WATER].valid);
+        assert(!water[LAYOUT_POLY].refraction&&water[LAYOUT_POLY].pixel);
+        const int before=captures;ArmWater(PF_Ripple|PF_Translucent);
+        assert(!g_waterRefraction&&captures==before&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
+    }
+    failRefraction=false;
+    Load(SHADER_WATER,"bad");assert(D3D_CompileShaders()&&!g_customShaders[SHADER_WATER].valid);
+    ArmWater(PF_Ripple|PF_Translucent);assert(g_waterRefraction&&Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
     g_allowShaders=HWD_SHADEROPTION_ON;
     // Fog remapping and custom fog own their output independently of water.
     g_program=SHADER_FOG;ArmWater(PF_Fog);

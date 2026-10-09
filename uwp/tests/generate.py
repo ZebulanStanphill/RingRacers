@@ -109,6 +109,7 @@ def generate(engine, output):
         "PROGRAMS": driver.section("struct CustomProgram\n{", "const CustomProgram *CustomDrawProgram"),
         "COMPILE_STAGE": driver.function("CompileCustomStage"),
         "CREATE_PROGRAM": driver.function("CreateCustomProgram"),
+        "CREATE_REFRACTION": driver.function("CreateCustomRefraction"),
     }, output / "custom_d3d11.cpp")
     slopes = Source(engine / "src/p_slopes.c")
     render(templates / "wall_light.cpp.in", {

@@ -17,6 +17,8 @@ to make custom shader selection unmistakable. Xbox visuals are **untested**.
    floors/walls check. Ordinary floors, ceilings and walls should have obvious
    **magenta/green checkers**; original texture details remain faintly visible.
    Ripple-enabled water surfaces should show smoothly moving **cyan/orange bands**.
+   Viewed from above, submerged geometry and the background beneath translucent
+   banded water should still ripple, as they do without the add-on.
 5. At the same spot, change **Shaders** to **Ignore custom shaders**. The checkers
    and colored water bands should disappear; normal built-in rendering, including
    the port's water refraction, should return. Set **On** to restore the markers.
@@ -29,7 +31,9 @@ can disallow custom shaders; other shader add-ons may override the same targets.
 
 The water check requires a surface with ripple effects enabled and **Reduce VFX
 Off**. Not every water-looking texture uses that shader. A valid custom water
-shader deliberately replaces the built-in surface refraction effect. Underwater
+shader replaces the water surface's color, while the port still refracts the
+scene beneath it. With Reduce VFX On, water uses the floor shader (and this
+pack's checkers) without refraction. Underwater
 screen distortion still uses its built-in postprocessing shader. Characters,
 models, sky and HUD are not replaced by this pack.
 

@@ -84,11 +84,20 @@ int main(int argc,char **argv) {
         std::ofstream(dir/(name+".vert.hlsl"))<<hlsl.vertex;
         std::ofstream(dir/(name+".frag.hlsl"))<<hlsl.fragment;
         ++pairs;
+        if(target==SHADER_WATER&&layout==0) {
+            // The packaged water also gets the driver's refraction variant.
+            LegacyShaderHLSL refraction;
+            if(!TranslateLegacyShader(vertex,loaded[target].fragment,layout,refraction,error,true)) {
+                std::fprintf(stderr,"Packaged water refraction: %s\n",error.c_str());return 1;
+            }
+            assert(refraction.vertex==hlsl.vertex&&refraction.fragment.find("register(t9)")!=std::string::npos);
+            std::ofstream(dir/"smoke-water-refraction.frag.hlsl")<<refraction.fragment;
+        }
     }
     // Wrong archive paths must be caught by the same loader, not silently pass.
     entries[3].fullname="wrong-folder/sh_smoke_water.frag";
     loaded[SHADER_WATER]={};alerts=loads=0;
     HWR_LoadCustomShadersFromFile(0,true);
     assert(alerts==1&&loads==4&&loaded[SHADER_WATER].fragment.empty());
-    std::printf("Shipped PK3: five loaded stages, %d translated pairs; bad path rejected\n",pairs);
+    std::printf("Shipped PK3: five loaded stages, %d translated pairs and water refraction; bad path rejected\n",pairs);
 }

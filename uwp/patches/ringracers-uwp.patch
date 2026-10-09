@@ -1,4 +1,4 @@
-From dbcef9ff0719b95e4a4af22124ed77a1f7d6e997 Mon Sep 17 00:00:00 2001
+From 7e39e232037e4ba45b17323190848fc447ac434e Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -321,8 +321,12 @@ RingRacers-dev, rebased onto v2.4.
   compilation failure and when Ignore custom shaders is selected. Share
   original GLSL sources with desktop OpenGL for missing-stage defaults.
   Adapt engine uniforms, varyings, fragment coordinates, alpha tests and
-  portal clipping. Preserve built-in underwater/heat postprocessing; custom
-  water shaders skip built-in scene captures and retain normal blending.
+  portal clipping. Preserve built-in underwater/heat postprocessing. Custom
+  water shaders keep their surface output and the built-in ripple refraction:
+  a second polygon pixel variant alpha-tests the custom result, then composites
+  it over the captured, distorted scene with the built-in blend equations.
+  Custom vertex stages capture the whole view; capture/variant failures and
+  Reduce VFX draw the custom output unrefracted with normal blending.
   Ship compiler license notices with the launcher. Add translation,
   production dispatch and real SM4/WARP rendering regressions.
 
@@ -357,10 +361,10 @@ Model: gpt-6.1-sol
  src/hardware/hw_main.h                    |   18 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
- src/hardware/r_d3d11/custom_shader.cpp    |  275 +
- src/hardware/r_d3d11/custom_shader.h      |    9 +
+ src/hardware/r_d3d11/custom_shader.cpp    |  308 +
+ src/hardware/r_d3d11/custom_shader.h      |   12 +
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
- src/hardware/r_d3d11/r_d3d11.cpp          | 6252 +++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp          | 6289 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   66 +
  src/hardware/r_d3d11/shaders.hlsl         |  611 ++
  src/hardware/r_opengl/r_opengl.c          |  308 +-
@@ -413,7 +417,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                             |  117 +
  src/w_wad.h                               |   10 +
  src/z_zone.cpp                            |    5 +
- 82 files changed, 13506 insertions(+), 1057 deletions(-)
+ 82 files changed, 13579 insertions(+), 1057 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -5720,10 +5724,10 @@ index dbfa84a..c44c848 100644
  
 diff --git a/src/hardware/r_d3d11/custom_shader.cpp b/src/hardware/r_d3d11/custom_shader.cpp
 new file mode 100644
-index 0000000..7472a89
+index 0000000..31fe2c2
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shader.cpp
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,308 @@
 +// GPL-2.0; runtime translation of Legacy GL add-on GLSL.
 +#include "custom_shader.h"
 +#include <algorithm>
@@ -5760,7 +5764,7 @@ index 0000000..7472a89
 +    return t;
 +}
 +
-+std::string Adapt(const std::string &source, bool fragment, int layout) {
++std::string Adapt(const std::string &source, bool fragment, int layout, bool refraction=false) {
 +    if(source.size()>1024*1024) throw std::runtime_error("shader source exceeds 1 MB");
 +    const auto tokens=Tokens(source);
 +    const std::map<std::string,std::string> known={
@@ -5823,7 +5827,9 @@ index 0000000..7472a89
 +    }
 +    for(auto it=edits.rbegin();it!=edits.rend();++it) body.replace(it->first.begin,it->first.end-it->first.begin,it->second);
 +    std::string pre=R"(#version 450
-+layout(std140,set=0,binding=0) uniform DrawConstants {
++)";
++    if(refraction) pre+="#extension GL_EXT_samplerless_texture_functions : require\n";
++    pre+=R"(layout(std140,set=0,binding=0) uniform DrawConstants {
 + mat4 rr_projection; mat4 rr_modelview;
 + vec4 poly_color; vec4 tint_color; vec4 fade_color; vec4 rr_color;
 + vec3 light_dir; float rr_lightdir_pad; vec4 rr_fflight;
@@ -5833,7 +5839,13 @@ index 0000000..7472a89
 + vec4 rr_clip_plane; float rr_fullscreen_depth; float rr_portal_pad0; float rr_portal_pad1; float rr_portal_pad2;
 +};
 +layout(std140,set=0,binding=4) uniform CustomView { vec4 rr_view; };
-+#define gl_ProjectionMatrix rr_projection
++)";
++    // Declared before the texture2D compatibility macro below.
++    if(refraction) pre+=R"(layout(set=1,binding=9) uniform texture2D rr_water_scene;
++layout(set=1,binding=10) uniform itexture2D rr_water_sine;
++layout(std140,set=0,binding=5) uniform WaterConstants { vec4 rr_water_viewport; int rr_water_blend; };
++)";
++    pre+=R"(#define gl_ProjectionMatrix rr_projection
 +#define gl_ModelViewMatrix rr_modelview
 +#define gl_ModelViewProjectionMatrix (rr_projection * rr_modelview)
 +#define gl_NormalMatrix transpose(inverse(mat3(rr_modelview)))
@@ -5880,6 +5892,25 @@ index 0000000..7472a89
 +        pre+=layout==2 ? "layout(location=2) in vec3 rr_normal;\n#define gl_Normal rr_normal\n" : "#define gl_Normal vec3(0.0,0.0,1.0)\n";
 +    }
 +    pre+="\n#line 1\n"+body+"\n#undef main\n";
++    if(fragment && refraction) pre+=R"(
++// shaders.hlsl's WaterBackgroundOffset and BlendWaterScene, on the same resources.
++float rr_water_offset(float distance, float seconds) {
++ int tick=int(round(seconds*35.0))%2048;
++ int angle=(tick*140+int(mod(floor(max(distance,0.0)*128.0),8192.0)))&8191;
++ int wave=texelFetch(rr_water_sine,ivec2(angle,0),0).x;
++ return floor(float(wave)/(4096.0+floor(max(distance,0.0)*32.0)));
++}
++vec4 rr_water_composite(vec4 water, vec4 background, int mode) {
++ vec3 source=water.rgb*water.a, result;
++ if(mode==1) result=source+background.rgb;
++ else if(mode==2) result=source-background.rgb;
++ else if(mode==3) result=background.rgb-source;
++ else if(mode==4) result=water.rgb*background.rgb;
++ else if(mode==5) result=water.rgb+background.rgb*(1.0-water.a);
++ else result=source+background.rgb*(1.0-water.a);
++ return vec4(clamp(result,0.0,1.0),1.0);
++}
++)";
 +    if(fragment) pre+=R"(
 +#undef gl_FragCoord
 +void main() {
@@ -5887,8 +5918,14 @@ index 0000000..7472a89
 + rr_user_main();
 + if(rr_alpha_func==1 && !(rr_result.a>rr_alpha_ref)) discard;
 + if(rr_alpha_func==2 && rr_result.a==rr_alpha_ref) discard;
-+}
 +)";
++    // Raw gl_FragCoord is Direct3D's top-left pixel center; 1/w is clip w.
++    if(fragment && refraction) pre+=R"( vec2 rr_pixel=floor(gl_FragCoord.xy);
++ rr_pixel.y+=rr_water_offset(1.0/gl_FragCoord.w,leveltime);
++ rr_pixel=clamp(rr_pixel,rr_water_viewport.xy,rr_water_viewport.zw);
++ rr_result=rr_water_composite(rr_result,texelFetch(rr_water_scene,ivec2(rr_pixel),0),rr_water_blend);
++)";
++    if(fragment) pre+="}\n";
 +    else pre+=R"(
 +void main() {
 + rr_texcoord[0]=vec4(rr_uv,0.0,1.0); rr_texcoord[1]=rr_texcoord[0];
@@ -5926,12 +5963,12 @@ index 0000000..7472a89
 +        compiler.add_vertex_attribute_remap({3,"COLOR0"});
 +    }
 +    const auto stage=fragment?spv::ExecutionModelFragment:spv::ExecutionModelVertex;
-+    for(unsigned binding : {0u,4u}) {
++    for(unsigned binding : {0u,4u,5u}) {
 +        spirv_cross::HLSLResourceBinding map;
 +        map.stage=stage; map.desc_set=0; map.binding=binding; map.cbv.register_binding=binding;
 +        compiler.add_hlsl_resource_binding(map);
 +    }
-+    for(unsigned binding : {0u,1u}) {
++    for(unsigned binding : {0u,1u,9u,10u}) {
 +        spirv_cross::HLSLResourceBinding map;
 +        map.stage=stage; map.desc_set=1; map.binding=binding;
 +        map.srv.register_binding=map.sampler.register_binding=binding;
@@ -5942,14 +5979,14 @@ index 0000000..7472a89
 +}
 +
 +bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
-+    int layout, LegacyShaderHLSL &output, std::string &error) {
++    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction) {
 +    output={}; error.clear();
 +    try {
 +        if(layout<0 || layout>2) throw std::runtime_error("invalid vertex layout");
 +        // The renderer compiles on its main thread; initialize once per process.
 +        static const bool initialized=glslang::InitializeProcess();
 +        if(!initialized) throw std::runtime_error("glslang initialization failed");
-+        std::string vs=Adapt(vertex,false,layout), ps=Adapt(fragment,true,layout);
++        std::string vs=Adapt(vertex,false,layout), ps=Adapt(fragment,true,layout,waterRefraction);
 +        glslang::TShader v(EShLangVertex), p(EShLangFragment);
 +        for(auto pair : {std::make_pair(&v,&vs),std::make_pair(&p,&ps)}) {
 +            const char *text=pair.second->c_str(); pair.first->setStrings(&text,1);
@@ -6001,18 +6038,21 @@ index 0000000..7472a89
 +}
 diff --git a/src/hardware/r_d3d11/custom_shader.h b/src/hardware/r_d3d11/custom_shader.h
 new file mode 100644
-index 0000000..2c54e99
+index 0000000..dbd7e2f
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shader.h
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,12 @@
 +// GPL-2.0; runtime translation of Legacy GL add-on GLSL.
 +#ifndef RR_CUSTOM_SHADER_H
 +#define RR_CUSTOM_SHADER_H
 +#include <string>
 +struct LegacyShaderHLSL { std::string vertex, fragment; };
 +// layout: 0 polygon, 1 sky, 2 model (the driver's vertex buffer layouts).
++// waterRefraction: the fragment stage also composites its alpha-tested result
++// over the captured scene with ripple distortion (t9/t10/b5, as PSWaterRefraction).
++// Its vertex stage and fragment inputs are the same as the normal variant's.
 +bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
-+    int layout, LegacyShaderHLSL &output, std::string &error);
++    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction = false);
 +#endif
 diff --git a/src/hardware/r_d3d11/custom_shaders.cmake b/src/hardware/r_d3d11/custom_shaders.cmake
 new file mode 100644
@@ -6080,10 +6120,10 @@ index 0000000..31f8d89
 +    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 0000000..2d735d3
+index 0000000..5f7febe
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,6252 @@
+@@ -0,0 +1,6289 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -7008,6 +7048,8 @@ index 0000000..2d735d3
 +	ComPtr<ID3D11VertexShader> vertex;
 +	ComPtr<ID3D11PixelShader> pixel;
 +	ComPtr<ID3D11InputLayout> layout;
++	// Custom water's polygon program also composites over the refracted scene.
++	ComPtr<ID3D11PixelShader> refraction;
 +};
 +struct CustomShader
 +{
@@ -7534,7 +7576,9 @@ index 0000000..2d735d3
 +
 +	const CustomProgram *custom = CustomDrawProgram(layout);
 +	ID3D11VertexShader *vertexShader = custom ? custom->vertex.Get() : g_vertexShaders[vs].Get();
-+	ID3D11PixelShader *pixelShader = custom ? custom->pixel.Get() : g_pixelShaders[ps].Get();
++	// Refraction is only armed for custom water with a composite variant.
++	ID3D11PixelShader *pixelShader = custom ? (g_waterRefraction && custom->refraction
++		? custom->refraction.Get() : custom->pixel.Get()) : g_pixelShaders[ps].Get();
 +	ID3D11InputLayout *inputLayout = custom ? custom->layout.Get() : g_layouts[layout].Get();
 +	if (custom && g_customViewConstants)
 +	{
@@ -10396,13 +10440,20 @@ index 0000000..2d735d3
 +	box.front = 0; box.back = 1;
 +}
 +
++// wholeView: an add-on vertex stage may move the surface, so the CPU-projected
++// bounds can't be trusted; capture its whole viewport instead.
 +static bool CaptureWaterScene(FSurfaceInfo *surface, FBITFIELD flags,
-+	const FOutVector *vertices, UINT count)
++	const FOutVector *vertices, UINT count, bool wholeView = false)
 +{
 +	if (!CanDraw() || !surface || !g_rt || !vertices || !count)
 +		return false;
 +	D3D11_BOX needed;
 +	WaterCaptureBounds(vertices, count, Multiply(g_projection, g_modelview.back()), g_gl.viewport, g_rtHeight, needed);
++	if (wholeView)
++	{
++		const UINT left = g_gl.viewport[0], top = g_rtHeight - g_gl.viewport[1] - g_gl.viewport[3];
++		needed = {left, top, 0, left + g_gl.viewport[2], top + g_gl.viewport[3], 1};
++	}
 +	if (needed.right <= needed.left || needed.bottom <= needed.top) return false;
 +	D3D11_TEXTURE2D_DESC desc;
 +	g_rt->GetDesc(&desc);
@@ -10667,9 +10718,13 @@ index 0000000..2d735d3
 +	const bool refractingBlend = blend == PF_Translucent || blend == PF_Additive
 +		|| blend == PF_Subtractive || blend == PF_ReverseSubtract
 +		|| blend == PF_Multiplicative || blend == PF_Environment;
++	// Custom water keeps its own surface color; its composite variant blends
++	// that over the refracted scene, like PSWaterRefraction does for PSWater.
++	const CustomProgram *customWater = CustomDrawProgram(LAYOUT_POLY);
 +	g_waterRefraction = (PolyFlags & PF_Ripple) && g_program == SHADER_WATER
-+		&& refractingBlend && !cv_reducevfx.value && !CustomDrawProgram(LAYOUT_POLY)
-+		&& CaptureWaterScene(pSurf, PolyFlags, vertices, count);
++		&& refractingBlend && !cv_reducevfx.value && (!customWater || customWater->refraction)
++		&& CaptureWaterScene(pSurf, PolyFlags, vertices, count,
++			customWater && !g_customShaders[SHADER_WATER].vertex.empty());
 +	g_fogRemap = (PolyFlags & PF_Fog) && g_program == SHADER_FOG
 +		&& !CustomDrawProgram(LAYOUT_POLY) && CaptureFogScene(pSurf, PolyFlags, vertices, count);
 +#else
@@ -11811,6 +11866,19 @@ index 0000000..2d735d3
 +	return !Failed(g_device->CreateInputLayout(elements, count, vertex->GetBufferPointer(), vertex->GetBufferSize(), &program.layout), "CreateInputLayout (custom)");
 +}
 +
++// The water-refraction variant of a custom water program's polygon pixel stage
++static bool CreateCustomRefraction(const LegacyShaderHLSL &hlsl, CustomProgram &program)
++{
++	ComPtr<ID3DBlob> pixel;
++	if (!CompileCustomStage(hlsl.fragment, "ps_4_0", pixel)
++		|| Failed(g_device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &program.refraction), "CreatePixelShader (custom refraction)"))
++	{
++		program.refraction.Reset();
++		return false;
++	}
++	return true;
++}
++
 +boolean D3D_CompileShaders(void)
 +{
 +	// A bad add-on must not disable the built-in shaders or palette rendering.
@@ -11842,6 +11910,15 @@ index 0000000..2d735d3
 +				valid = false; break;
 +			}
 +			if (!CreateCustomProgram(output, (Layout)layout, programs[layout])) { valid = false; break; }
++		}
++		if (valid && type == SHADER_WATER)
++		{
++			// Same vertex stage and inputs; without it, custom water draws unrefracted.
++			LegacyShaderHLSL output; std::string error;
++			if (!TranslateLegacyShader(vertex, fragment, LAYOUT_POLY, output, error, true))
++				Log("custom water refraction: %s; drawing custom water without refraction", error.c_str());
++			else if (!CreateCustomRefraction(output, programs[LAYOUT_POLY]))
++				Log("custom water refraction failed to compile; drawing custom water without refraction");
 +		}
 +		if (valid)
 +		{

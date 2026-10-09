@@ -47,3 +47,5 @@ $Fixture = Get-ChildItem (Join-Path $PSScriptRoot "..\regression-results") -Recu
 if ($null -eq $Fixture) { throw "No translated custom-shader GPU fixtures" }
 & $Custom $Fixture.DirectoryName
 if ($LASTEXITCODE -ne 0) { throw "Custom shader rendering regression failed" }
+& $Custom $Fixture.DirectoryName --negative-control
+if ($LASTEXITCODE -ne 0) { throw "Unrefracted custom water was not rejected" }

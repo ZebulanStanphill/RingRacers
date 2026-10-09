@@ -105,7 +105,7 @@ jobs:
         run: |
           $fxc = (Get-Command fxc -ErrorAction Stop).Source
           $fixtures = @(Get-ChildItem regression-results -Recurse -Filter *.hlsl)
-          if ($fixtures.Count -ne 90) { throw "Expected 90 translated shader stages; found $($fixtures.Count)" }
+          if ($fixtures.Count -ne 97) { throw "Expected 97 translated shader stages; found $($fixtures.Count)" }
           foreach ($fixture in $fixtures) {
             $profile = if ($fixture.Name.EndsWith('.vert.hlsl')) { 'vs_4_0' } else { 'ps_4_0' }
             & $fxc /nologo /O3 /T $profile /E main /Fo "$env:TEMP/rr-shader-test.cso" $fixture.FullName

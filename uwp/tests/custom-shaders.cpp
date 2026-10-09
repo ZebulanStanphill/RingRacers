@@ -4,11 +4,26 @@
 #include <fstream>
 #include <string>
 #include "hardware/r_d3d11/custom_shader.h"
+#include "hardware/hw_defs.h"
 #include "hardware/hw_glsl.h"
 static void Write(const std::filesystem::path &dir, const std::string &name, const LegacyShaderHLSL &s) {
     if(dir.empty()) return;
     std::ofstream(dir/(name+".vert.hlsl")) << s.vertex;
     std::ofstream(dir/(name+".frag.hlsl")) << s.fragment;
+}
+static bool Has(const std::string &s,const char *text){return s.find(text)!=std::string::npos;}
+// The water-refraction variant must be drawable with the normal variant's
+// vertex stage and must read the driver's water capture resources.
+static LegacyShaderHLSL Refraction(const std::filesystem::path &dir, const std::string &name,
+    const std::string &vertex, const std::string &fragment, const LegacyShaderHLSL &normal) {
+    LegacyShaderHLSL result; std::string error;
+    if(!TranslateLegacyShader(vertex,fragment,0,result,error,true)) fprintf(stderr,"%s: %s\n",name.c_str(),error.c_str());
+    assert(error.empty());
+    assert(error.empty() && result.vertex==normal.vertex && result.fragment!=normal.fragment);
+    assert(Has(result.fragment,"register(t9)") && Has(result.fragment,"register(t10)") && Has(result.fragment,"register(b5)"));
+    assert(!Has(normal.fragment,"register(t9)") && !Has(normal.fragment,"register(b5)"));
+    if(!dir.empty()) std::ofstream(dir/(name+".frag.hlsl")) << result.fragment;
+    return result;
 }
 int main(int argc,char **argv) {
     std::filesystem::path output=argc>1?argv[1]:"";
@@ -19,6 +34,9 @@ int main(int argc,char **argv) {
         assert(TranslateLegacyShader(gl_shadersources[type].vertex,gl_shadersources[type].fragment,layout,result,error));
         assert(error.empty() && !result.vertex.empty() && !result.fragment.empty());
         Write(output,"builtin-"+std::to_string(type)+"-"+std::to_string(layout),result); ++cases;
+        if(type==SHADER_WATER && layout==0) {
+            Refraction(output,"builtin-water-refraction",gl_shadersources[type].vertex,gl_shadersources[type].fragment,result); ++cases;
+        }
     }
     const std::string vertex=R"(#version 120
 // uniform lighting; comments and longer identifiers must survive adaptation.
@@ -59,6 +77,7 @@ void main() {
         assert(result.vertex.find("custom_uv : TEXCOORD4")!=std::string::npos);
         assert(result.fragment.find("custom_uv : TEXCOORD4")!=std::string::npos);
         Write(output,"addon-"+std::to_string(layout),result); ++cases;
+        if(layout==0) { Refraction(output,"addon-refraction",vertex,fragment,result); ++cases; }
         // Mismatched stage interfaces and syntax errors must fail atomically.
         std::string broken=fragment;
         auto pos=broken.find("varying vec3 custom_normal");
@@ -71,6 +90,9 @@ void main() {
         assert(!TranslateLegacyShader(std::string(1024*1024+1,' '),fragment,layout,result,error));
         // An error cannot poison the compiler used for the next add-on.
         assert(TranslateLegacyShader(vertex,fragment,layout,result,error));
+        // A broken shader has no refraction variant either.
+        assert(!TranslateLegacyShader(vertex,"void main() { this is invalid; }",0,result,error,true));
+        assert(result.vertex.empty() && result.fragment.empty() && !error.empty());
     }
     // GPU fixtures exercise real input layouts, driver constant offsets,
     // GL fragment coordinates, alpha tests and portal clipping in Windows CI.
@@ -87,5 +109,25 @@ void main() {
         assert(TranslateLegacyShader(gl_shadersources[0].vertex,renderFragment,layout,result,error));
         Write(output,"render-"+std::to_string(layout),result);++cases;
     }
+    // Custom water output composited over the refracted capture, plus a probe
+    // for the depth the translated stage sees: 1/gl_FragCoord.w is clip w.
+    const std::string waterFragment=R"(#version 120
+uniform vec4 poly_color;
+void main() {
+ gl_FragColor=vec4(gl_TexCoord[0].x,0.25,0.75,poly_color.a);
+}
+)";
+    const std::string depthFragment=R"(#version 120
+void main() {
+ gl_FragColor=vec4(1.0/gl_FragCoord.w,gl_FragCoord.x,gl_FragCoord.y,1.0);
+}
+)";
+    LegacyShaderHLSL water,depth;std::string error;
+    assert(TranslateLegacyShader(gl_shadersources[0].vertex,waterFragment,0,water,error));
+    Write(output,"render-water",water);++cases;
+    Refraction(output,"render-water-refraction",gl_shadersources[0].vertex,waterFragment,water);++cases;
+    assert(TranslateLegacyShader(gl_shadersources[0].vertex,depthFragment,0,depth,error));
+    assert(depth.vertex==water.vertex);
+    if(!output.empty()) std::ofstream(output/"render-depth.frag.hlsl")<<depth.fragment;++cases;
     printf("%d complete GLSL shader/layout pairs, interface errors and compiler recovery passed\n",cases);
 }
