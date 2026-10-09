@@ -63,11 +63,18 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   shader selection with GPU creation stubs: missing-stage defaults, dirty caching,
   atomic translation/GPU failures, Ignore custom shaders, sprite clipping variants,
   custom model lighting, normal/custom water captures and postprocessing priority.
-  Windows CI compiles all 72 stages with SM4 `fxc`, then runs the production shader
+  Windows CI compiles these 72 stages with SM4 `fxc`, then runs the production shader
   and input-layout factory on WARP: 36,864 pixels verify polygon/sky/model data,
   driver constants, UVs, GL fragment coordinates, alpha tests and portal clipping.
   Add-on visuals and load cost on Xbox remain untested; existing water and wall
   confirmations do not validate custom shaders.
+- **Installable shader smoke test:** [download and instructions](addons/shader-smoke/README.md).
+  The shipped PK3 marks ordinary floors/walls with magenta/green checkers and
+  ripple-enabled water with moving cyan/orange bands. Its packaged entries pass
+  through the production shader loader; native checks verify five stage bindings,
+  water's default vertex stage, untouched targets, missing-path rejection and nine
+  translated target/layout pairs. Windows CI compiles the pack's 18 SM4 stages,
+  bringing the combined translated corpus to 90 stages. Device visuals are untested.
 - **Wall light slices:** execute production UWP wall splitting and clipping with
   real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
   capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the

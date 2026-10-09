@@ -4,6 +4,8 @@
 import argparse
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 from source import Source
@@ -62,6 +64,13 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    subprocess.run([sys.executable, str(Path(__file__).parent / "addons/shader-smoke/build.py"),
+        "--check", "--header", str(output / "smoke_pk3.h")], check=True)
+    render(templates / "custom_pk3.cpp.in", {
+        "TARGETS": hardware.section("customshaderxlat_t shaderxlat[]", "void HWR_LoadAllCustomShaders"),
+        "FIND_DEFS": hardware.function("HWR_FindShaderDefs"),
+        "LOAD_SHADERS": hardware.function("HWR_LoadCustomShadersFromFile"),
+    }, output / "custom_pk3.cpp")
     fog = Source(engine / "src/hardware/r_d3d11/shaders.hlsl")
     renderer = Source(engine / "src/r_main.cpp")
     fog_shader = fog.function("PSFogRemap").replace(" : SV_Target", "")

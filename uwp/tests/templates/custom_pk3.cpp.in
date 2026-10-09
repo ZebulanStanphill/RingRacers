@@ -1,0 +1,94 @@
+// Feed the shipped PK3's entries through the production shader-definition loader.
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
+#include <cstdio>
+#include <cctype>
+#include <cstdarg>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <strings.h>
+#include "hardware/hw_defs.h"
+#include "hardware/hw_glsl.h"
+#include "hardware/r_d3d11/custom_shader.h"
+#include "smoke_pk3.h"
+#undef min
+#undef max
+
+struct TestLump { char name[9]{}; std::string fullname, data; };
+TestLump entries[4];
+lumpinfo_t lumpInfo[4]{};
+wadfile_t archive{};
+wadfile_t *wadfiles[MAX_WADFILES]={&archive};
+enum {PU_STATIC=0,PU_CACHE=0};
+int alerts=0,loads=0;
+void CONS_Alert(alerttype_t,const char *message,...) {
+    ++alerts;va_list args;va_start(args,message);std::vfprintf(stderr,message,args);va_end(args);
+}
+#define Z_Malloc(size,tag,user) static_cast<char *>(std::malloc(size))
+#define Z_Free std::free
+#define M_Memcpy std::memcpy
+void *W_CacheLumpNumPwad(UINT16 wad,UINT16 lump,int) {
+    assert(wad==0&&lump<4);return entries[lump].data.data();
+}
+#define W_CacheLumpNumPwad(wad,lump,tag) static_cast<char *>(W_CacheLumpNumPwad(wad,lump,tag))
+size_t W_LumpLengthPwad(UINT16 wad,UINT16 lump) {
+    assert(wad==0&&lump<4);return entries[lump].data.size();
+}
+UINT16 W_CheckNumForFullNamePK3(const char *name,UINT16 wad,UINT16) {
+    assert(wad==0);for(UINT16 i=0;i<4;++i)if(entries[i].fullname==name)return i;return INT16_MAX;
+}
+UINT16 W_CheckNumForNamePwad(const char *,UINT16,UINT16) { assert(false);return INT16_MAX; }
+void W_ReadLumpPwad(UINT16 wad,UINT16 lump,void *out) {
+    assert(wad==0&&lump<4);std::memcpy(out,entries[lump].data.data(),entries[lump].data.size());
+}
+struct StagePair {std::string vertex,fragment;};
+StagePair loaded[NUMBASESHADERS];
+void Load(int target,char *text,size_t size,boolean fragment) {
+    assert(target>0&&target<NUMBASESHADERS);++loads;
+    (fragment?loaded[target].fragment:loaded[target].vertex).assign(text,size);
+}
+struct {void (*pfnLoadCustomShader)(int,char *,size_t,boolean)=Load;} HWD;
+@@TARGETS@@
+@@FIND_DEFS@@
+@@LOAD_SHADERS@@
+
+int main(int argc,char **argv) {
+    archive.numlumps=4;archive.lumpinfo=lumpInfo;archive.type=RET_PK3;
+    char filename[]="D_ShaderSmoke_v1.pk3";archive.filename=filename;
+    for(size_t i=0;i<4;++i) {
+        entries[i].fullname=smokeFiles[i].name;entries[i].data=smokeFiles[i].source;
+        auto name=std::filesystem::path(entries[i].fullname).filename().string();
+        name=name.substr(0,name.find('.'));
+        for(size_t j=0;j<name.size()&&j<8;++j)lumpInfo[i].name[j]=(char)std::toupper((unsigned char)name[j]);
+    }
+    HWR_LoadCustomShadersFromFile(0,true);
+    assert(alerts==0&&loads==5);
+    assert(!loaded[SHADER_FLOOR].vertex.empty()&&!loaded[SHADER_FLOOR].fragment.empty());
+    assert(loaded[SHADER_WALL].vertex==loaded[SHADER_FLOOR].vertex);
+    assert(loaded[SHADER_WALL].fragment==loaded[SHADER_FLOOR].fragment);
+    assert(loaded[SHADER_WATER].vertex.empty()&&!loaded[SHADER_WATER].fragment.empty());
+    for(int target=1;target<NUMBASESHADERS;++target)
+        if(target!=SHADER_FLOOR&&target!=SHADER_WALL&&target!=SHADER_WATER)
+            assert(loaded[target].vertex.empty()&&loaded[target].fragment.empty());
+    const std::filesystem::path dir=argc>1?argv[1]:SMOKE_OUTPUT;std::filesystem::create_directories(dir);
+    int pairs=0;
+    for(int target:{SHADER_FLOOR,SHADER_WALL,SHADER_WATER})for(int layout=0;layout<3;++layout) {
+        const std::string vertex=loaded[target].vertex.empty()?gl_shadersources[target].vertex:loaded[target].vertex;
+        LegacyShaderHLSL hlsl;std::string error;
+        if(!TranslateLegacyShader(vertex,loaded[target].fragment,layout,hlsl,error)) {
+            std::fprintf(stderr,"Packaged shader %d/%d: %s\n",target,layout,error.c_str());return 1;
+        }
+        const auto name="smoke-"+std::to_string(target)+"-"+std::to_string(layout);
+        std::ofstream(dir/(name+".vert.hlsl"))<<hlsl.vertex;
+        std::ofstream(dir/(name+".frag.hlsl"))<<hlsl.fragment;
+        ++pairs;
+    }
+    // Wrong archive paths must be caught by the same loader, not silently pass.
+    entries[3].fullname="wrong-folder/sh_smoke_water.frag";
+    loaded[SHADER_WATER]={};alerts=loads=0;
+    HWR_LoadCustomShadersFromFile(0,true);
+    assert(alerts==1&&loads==4&&loaded[SHADER_WATER].fragment.empty());
+    std::printf("Shipped PK3: five loaded stages, %d translated pairs; bad path rejected\n",pairs);
+}

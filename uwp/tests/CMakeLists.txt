@@ -16,7 +16,9 @@ endif()
 
 # Reconfigure/regenerate when either a tested implementation or harness changes.
 file(GLOB templates CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/templates/*.in")
+file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/addons/shader-smoke/source/*")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
     ${templates} source.py generate.py fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
@@ -96,6 +98,11 @@ add_test(NAME source_extraction
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)
 
 include("${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shaders.cmake")
+regression(custom_shader_pk3 custom_pk3 HWRENDER _UWP)
+target_sources(custom_shader_pk3 PRIVATE "${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shader.cpp")
+target_link_libraries(custom_shader_pk3 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
+# Match the general translation suite's artifact directory for Windows fxc.
+target_compile_definitions(custom_shader_pk3 PRIVATE SMOKE_OUTPUT="${CMAKE_CURRENT_BINARY_DIR}/translated-shaders")
 add_executable(custom_shader_translation custom-shaders.cpp
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shader.cpp")
 target_compile_features(custom_shader_translation PRIVATE cxx_std_17)

@@ -9,6 +9,10 @@ Only tested on Xbox One X. Should also work (even better) on Xbox Series X|S, an
 
 Coding agents were used heavily in the development of this port.
 
+To test custom add-on shaders, use the small [shader smoke-test PK3 and Xbox
+instructions](tests/addons/shader-smoke/README.md). It adds conspicuous floor/wall
+checkers and colored water bands; compare Shaders On with Ignore custom shaders.
+
 [Native regression tests](tests/README.md) run isolated engine checks with memory
 and undefined-behavior sanitizers locally and in CI, without game assets or an Xbox.
 

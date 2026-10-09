@@ -1,0 +1,7 @@
+GLSL VERTEX
+Flat = smoke_world.vert
+WallTexture = smoke_world.vert
+GLSL FRAGMENT
+Flat = smoke_world.frag
+WallTexture = smoke_world.frag
+WaterRipple = smoke_water.frag
