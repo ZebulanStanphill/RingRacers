@@ -23,3 +23,18 @@ Model: gpt-6.1-sol
 Preserve the human Git author identity. Do not invent model names or attribute
 earlier work to the current agent. Apply this convention to embedded patch commit
 messages as well as this repository's commits.
+
+# Delegating work
+
+To reduce token usage, a more capable agent should hand routine work to
+subagents rather than doing it itself, and keep the design decisions, reviews
+and replies to the user. Give each subagent a self-contained brief: the
+settled design, constraints, and the commit attribution to use.
+
+- Menial tasks (mechanical edits, searches, log extraction, documentation
+  updates, patch exports): prefer Haiku 5.5, falling back to the latest GPT
+  Luna model.
+- Medium tasks (implementing a settled design, focused fixes, writing tests):
+  prefer GPT-6.1-Sol, falling back to Sonnet 5.5.
+
+Review a subagent's changes before committing or pushing them.
