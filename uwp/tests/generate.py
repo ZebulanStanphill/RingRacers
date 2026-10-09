@@ -62,6 +62,24 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "custom_dispatch.cpp.in", {
+        "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),
+        "CUSTOM_STATE": driver.section("struct CustomProgram\n{", "// r_opengl.c's Shader_SetUniforms"),
+        "COMPILE": driver.function("D3D_CompileShaders"),
+        "CLEAN": driver.function("D3D_CleanShaders"),
+        "LOAD": driver.function("D3D_LoadCustomShader"),
+        "SET_SHADER": driver.function("D3D_SetShader"),
+        "DISPATCH": driver.section("\tVSKind vs;\n\tPSKind ps;", "\n\tif (g_bound.layout != inputLayout)"),
+        "WATER": driver.section("\tconst FBITFIELD blend = PolyFlags &", "\n#endif"),
+    }, output / "custom_dispatch.cpp")
+    render(templates / "custom_d3d11.cpp.in", {
+        "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),
+        "MODEL_VERTEX": driver.section("struct ModelVertex", "// Dynamic buffers"),
+        "CONSTANTS": driver.section("struct Constants\n{", "ComPtr<ID3D11Buffer> g_constantBuffer;"),
+        "PROGRAMS": driver.section("struct CustomProgram\n{", "const CustomProgram *CustomDrawProgram"),
+        "COMPILE_STAGE": driver.function("CompileCustomStage"),
+        "CREATE_PROGRAM": driver.function("CreateCustomProgram"),
+    }, output / "custom_d3d11.cpp")
     slopes = Source(engine / "src/p_slopes.c")
     render(templates / "wall_light.cpp.in", {
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),

@@ -20,3 +20,12 @@ $Probe = Join-Path $Output "surface-probe-d3d11.exe"
 if ($LASTEXITCODE -ne 0) { throw "Direct3D surface probe compilation failed" }
 & $Probe
 if ($LASTEXITCODE -ne 0) { throw "Production Direct3D surface probe regression failed" }
+
+# Execute the production custom-program compiler/input-layout factory on SM4.
+$Custom = Join-Path $Output "custom-shaders-d3d11.exe"
+& cl.exe /nologo /std:c++17 /O2 /EHsc /W3 /WX /D_UWP /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM "/I$Engine\src" "/Fe:$Custom" "/Fo:$Output\custom-shaders-d3d11.obj" "$Output\generated\custom_d3d11.cpp" /link d3d11.lib d3dcompiler.lib
+if ($LASTEXITCODE -ne 0) { throw "Direct3D custom-shader compilation failed" }
+$Fixture = Get-ChildItem (Join-Path $PSScriptRoot "..\regression-results") -Recurse -Filter 'render-0.vert.hlsl' | Select-Object -First 1
+if ($null -eq $Fixture) { throw "No translated custom-shader GPU fixtures" }
+& $Custom $Fixture.DirectoryName
+if ($LASTEXITCODE -ne 0) { throw "Custom shader rendering regression failed" }

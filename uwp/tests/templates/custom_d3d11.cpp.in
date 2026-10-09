@@ -1,0 +1,104 @@
+// Production custom-program creation and translated GLSL on an actual SM4 device.
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <d3d11.h>
+#include <d3dcompiler.h>
+#include <wrl/client.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdarg>
+#include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
+#include "hardware/hw_defs.h"
+#include "hardware/r_d3d11/custom_shader.h"
+#undef min
+#undef max
+using Microsoft::WRL::ComPtr;
+ComPtr<ID3D11Device> g_device;
+ComPtr<ID3D11DeviceContext> context;
+void Log(const char *f,...){va_list a;va_start(a,f);vprintf(f,a);puts("");va_end(a);}
+bool Failed(HRESULT r,const char *what){if(SUCCEEDED(r))return false;Log("%s: %08X",what,(unsigned)r);return true;}
+void Require(bool b,const char *s){if(!b){fprintf(stderr,"%s\n",s);exit(1);}}
+@@ENUMS@@
+@@MODEL_VERTEX@@
+@@CONSTANTS@@
+@@PROGRAMS@@
+@@COMPILE_STAGE@@
+@@CREATE_PROGRAM@@
+std::string Read(const std::filesystem::path &p){std::ifstream f(p);Require(bool(f),"Missing translated GPU fixture");return std::string(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());}
+int main(int argc,char **argv) {
+    Require(argc==2,"Pass translated-shaders directory");
+    const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_10_1;D3D_FEATURE_LEVEL actual;
+    Require(!Failed(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,&level,1,D3D11_SDK_VERSION,
+        &g_device,&actual,&context),"device")&&actual==level,"Cannot create SM4 WARP device");
+    D3D11_TEXTURE2D_DESC td={};td.Width=td.Height=64;td.MipLevels=td.ArraySize=1;
+    td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.SampleDesc.Count=1;td.BindFlags=D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> target,readback;ComPtr<ID3D11RenderTargetView> rtv;
+    Require(!Failed(g_device->CreateTexture2D(&td,nullptr,&target),"target"),"Cannot create target");
+    Require(!Failed(g_device->CreateRenderTargetView(target.Get(),nullptr,&rtv),"view"),"Cannot create view");
+    td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    Require(!Failed(g_device->CreateTexture2D(&td,nullptr,&readback),"readback"),"Cannot create staging target");
+    ID3D11RenderTargetView *bound=rtv.Get();context->OMSetRenderTargets(1,&bound,nullptr);
+    D3D11_VIEWPORT viewport={0,0,64,64,0,1};context->RSSetViewports(1,&viewport);
+    D3D11_RASTERIZER_DESC rd={};rd.FillMode=D3D11_FILL_SOLID;rd.CullMode=D3D11_CULL_NONE;rd.DepthClipEnable=TRUE;
+    ComPtr<ID3D11RasterizerState> raster;
+    Require(!Failed(g_device->CreateRasterizerState(&rd,&raster),"raster"),"Cannot create raster state");
+    context->RSSetState(raster.Get());context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    Constants c={};for(int i=0;i<4;++i){c.projection[i*5]=2;c.modelview[i*5]=1;}
+    c.color[0]=.25f;c.poly[3]=.625f;c.clipPlane[3]=1;
+    D3D11_BUFFER_DESC bd={};bd.ByteWidth=sizeof c;bd.Usage=D3D11_USAGE_DEFAULT;bd.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    ComPtr<ID3D11Buffer> constants;Require(!Failed(g_device->CreateBuffer(&bd,nullptr,&constants),"constants"),"Cannot create constants");
+    ID3D11Buffer *cb=constants.Get();context->VSSetConstantBuffers(0,1,&cb);context->PSSetConstantBuffers(0,1,&cb);
+    bd.ByteWidth=16;const float view[]={64,0,0,0};D3D11_SUBRESOURCE_DATA vd={view,0,0};
+    Require(!Failed(g_device->CreateBuffer(&bd,&vd,&g_customViewConstants),"view constants"),"Cannot create view constants");
+    cb=g_customViewConstants.Get();context->VSSetConstantBuffers(4,1,&cb);context->PSSetConstantBuffers(4,1,&cb);
+    const float pos[6][2]={{-1,-1},{1,-1},{1,1},{-1,-1},{1,1},{-1,1}};
+    int pixels=0;
+    for(int layout=0;layout<3;++layout) {
+        const auto dir=std::filesystem::path(argv[1]);const auto name="render-"+std::to_string(layout);
+        LegacyShaderHLSL hlsl{Read(dir/(name+".vert.hlsl")),Read(dir/(name+".frag.hlsl"))};
+        CustomProgram program;Require(CreateCustomProgram(hlsl,(Layout)layout,program),"Production shader/input layout creation failed");
+        context->VSSetShader(program.vertex.Get(),nullptr,0);context->PSSetShader(program.pixel.Get(),nullptr,0);
+        context->IASetInputLayout(program.layout.Get());
+        FOutVector poly[6]={};gl_skyvertex_t sky[6]={};ModelVertex model[6]={};
+        for(int i=0;i<6;++i) {
+            poly[i].x=sky[i].x=model[i].x=pos[i][0];poly[i].y=sky[i].y=model[i].y=pos[i][1];
+            poly[i].s=sky[i].u=model[i].s=(pos[i][0]+1)/2;
+            poly[i].t=sky[i].v=model[i].t=(pos[i][1]+1)/2;
+            sky[i].r=64;sky[i].g=sky[i].b=sky[i].a=255;model[i].nz=1;
+        }
+        const UINT stride=layout==0?sizeof(FOutVector):layout==1?sizeof(gl_skyvertex_t):sizeof(ModelVertex);
+        bd.ByteWidth=stride*6;bd.BindFlags=D3D11_BIND_VERTEX_BUFFER;
+        D3D11_SUBRESOURCE_DATA vertices={layout==0?(void*)poly:layout==1?(void*)sky:(void*)model,0,0};
+        ComPtr<ID3D11Buffer> vb;Require(!Failed(g_device->CreateBuffer(&bd,&vertices,&vb),"vertices"),"Cannot create vertices");
+        ID3D11Buffer *vertexBuffer=vb.Get();UINT offset=0;context->IASetVertexBuffers(0,1,&vertexBuffer,&stride,&offset);
+        for(int mode=0;mode<3;++mode) {
+            c.alphaFunc=mode==1?1:0;c.alphaRef=.75f;
+            c.clipPlane[0]=mode==2?1.0f:0.0f;c.clipPlane[3]=mode==2?0.0f:1.0f;
+            context->UpdateSubresource(constants.Get(),0,nullptr,&c,0,0);
+            const float clear[]={0,0,0,0};context->ClearRenderTargetView(rtv.Get(),clear);context->Draw(6,0);
+            context->CopyResource(readback.Get(),target.Get());D3D11_MAPPED_SUBRESOURCE m={};
+            Require(!Failed(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&m),"map"),"Cannot map pixels");
+            for(int y=0;y<64;++y)for(int x=0;x<64;++x) {
+                const auto p=(const unsigned char*)m.pData+y*m.RowPitch+x*4;
+                const bool visible=mode!=1&&(mode!=2||x>=32);
+                const int expected[4]={visible?(int)std::lround((x+.5)/64*255):0,
+                    visible?(int)std::lround((1-(y+.5)/64)*255):0,visible?96:0,visible?159:0};
+                for(int k=0;k<4;++k)if(std::abs(int(p[k])-expected[k])>1) {
+                    fprintf(stderr,"layout=%d mode=%d pixel=(%d,%d) channel=%d expected=%d actual=%d\n",layout,mode,x,y,k,expected[k],p[k]);exit(1);
+                }
+                ++pixels;
+            }
+            context->Unmap(readback.Get(),0);
+        }
+    }
+    printf("SM4 custom shaders: %d pixels verify three input layouts, driver constants, GL coordinates, alpha tests and portal clipping\n",pixels);
+}

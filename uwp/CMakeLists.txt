@@ -66,9 +66,17 @@ set_source_files_properties(${PkgAssets} PROPERTIES
 	VS_DEPLOYMENT_LOCATION "Assets"
 )
 
+set(ShaderLicenses
+    "${RR_DIR}/legacy-shader-licenses/glslang.txt"
+    "${RR_DIR}/legacy-shader-licenses/SPIRV-Cross.txt")
+set_source_files_properties(${ShaderLicenses} PROPERTIES
+    VS_COPY_TO_OUT_DIR Always
+    VS_DEPLOYMENT_CONTENT 1 VS_DEPLOYMENT_LOCATION "Licenses")
+
 target_sources(${PROJECT_NAME} PRIVATE
 	${BinDeps}
 	${PkgAssets}
+	${ShaderLicenses}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -76,7 +84,13 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 set(VCPKG_LIB "${RR_DIR}/vcpkg_installed/x64-windows-static-md/lib")
+file(GLOB LegacyShaderLibs "${RR_DIR}/legacy-shader-libs/*.lib")
+if(NOT LegacyShaderLibs)
+	message(FATAL_ERROR "Runtime shader translator archives missing; rebuild the patched engine")
+endif()
 set(BinLibs
+	${LegacyShaderLibs}
+	d3dcompiler.lib
 	${RR_DIR}/src/ringracers.lib
 
 	${RR_DIR}/src/acs/vm/ACSVM/acsvm.lib

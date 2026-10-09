@@ -1,4 +1,4 @@
-From a563a9a01fdb40466a3e9eac945ffa00a837acf0 Mon Sep 17 00:00:00 2001
+From 8f63d52f2536b9555788958389574b09ef5aef26 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -304,89 +304,109 @@ RingRacers-dev, rebased onto v2.4.
   All split-screen visual checks and a controlled performance comparison
   remain untested.
 
+- Translate supported add-on Legacy GL GLSL shaders to Shader Model 4 HLSL
+  using pinned glslang and SPIRV-Cross. Build polygon, sky and model input
+  layouts atomically; retain built-in shaders after translation or GPU
+  compilation failure and when Ignore custom shaders is selected. Share
+  original GLSL sources with desktop OpenGL for missing-stage defaults.
+  Adapt engine uniforms, varyings, fragment coordinates, alpha tests and
+  portal clipping. Preserve built-in underwater/heat postprocessing; custom
+  water shaders skip built-in scene captures and retain normal blending.
+  Ship compiler license notices with the launcher. Add translation,
+  production dispatch and real SM4/WARP rendering regressions.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
 Model: gpt-6.1-sol
 ---
- CMakeLists.txt                     |   19 +-
- CMakePresets.json                  |   17 +
- src/CMakeLists.txt                 |   44 +-
- src/console.c                      |   18 +
- src/core/thread_pool.cpp           |   19 +
- src/cvars.cpp                      |    5 +
- src/d_clisrv.c                     |   49 +
- src/d_main.cpp                     |  354 +-
- src/f_finale.c                     |    6 +
- src/f_wipe.cpp                     |   35 +-
- src/g_game.c                       |   56 +
- src/hardware/CMakeLists.txt        |   35 +
- src/hardware/hw_batching.c         |   11 +-
- src/hardware/hw_bsp.c              |  113 +-
- src/hardware/hw_cache.c            |  310 +-
- src/hardware/hw_clip.c             |   15 +
- src/hardware/hw_clip.h             |    5 +
- src/hardware/hw_defs.h             |    8 +-
- src/hardware/hw_draw.c             |   57 +-
- src/hardware/hw_drv.h              |   13 +
- src/hardware/hw_glob.h             |    9 +
- src/hardware/hw_main.c             | 1703 +++++++-
- src/hardware/hw_main.h             |   18 +-
- src/hardware/hw_md2.c              |  304 +-
- src/hardware/hw_md2.h              |    4 +
- src/hardware/r_d3d11/r_d3d11.cpp   | 5997 ++++++++++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h     |   66 +
- src/hardware/r_d3d11/shaders.hlsl  |  563 +++
- src/http-mserv.c                   |    2 +
- src/hwr2/patch_atlas.cpp           |    8 +
- src/hwr2/resource_management.cpp   |  105 +-
- src/hwr2/resource_management.hpp   |   31 +-
- src/i_system.h                     |   66 +
- src/i_video_common.cpp             |   60 +-
- src/k_menu.h                       |   12 +-
- src/k_menufunc.c                   |    6 +
- src/lua_script.c                   |  127 +
- src/m_fixed.h                      |   11 +
- src/m_perfstats.c                  |  244 ++
- src/m_perfstats.h                  |   11 +
- src/menus/options-1.c              |   34 +
- src/menus/options-video-advanced.c |   44 +-
- src/p_lights.c                     |    9 +
- src/p_mobj.c                       |   98 +-
- src/p_mobj.h                       |   11 +
- src/p_setup.cpp                    |   44 +
- src/p_tick.h                       |   15 +
- src/r_draw.h                       |   38 +-
- src/r_draw_column.cpp              |   18 +-
- src/r_fps.cpp                      |   25 +-
- src/r_main.cpp                     |  181 +-
- src/r_main.h                       |    8 +
- src/r_plane.cpp                    |   19 +-
- src/r_segs.cpp                     |   15 +-
- src/r_sky.c                        |    4 +-
- src/r_textures.cpp                 |    2 +
- src/r_textures.h                   |   10 +
- src/r_things.cpp                   |  158 +-
- src/r_things.h                     |    5 +
- src/rhi/gl2/gl2_rhi.cpp            |  618 ++-
- src/rhi/gl2/gl2_rhi.hpp            |   36 +
- src/screen.c                       |    4 +-
- src/sdl/CMakeLists.txt             |    5 +
- src/sdl/hwsym_sdl.c                |    7 +
- src/sdl/i_main.cpp                 |   11 +-
- src/sdl/i_system.cpp               |  132 +-
- src/sdl/i_uwpprofile.cpp           |  863 ++++
- src/sdl/i_uwptrace.h               |   25 +
- src/sdl/i_video.cpp                |   98 +-
- src/sdl/mixer_sound.c              |    4 +-
- src/sdl/ogl_sdl.c                  |    8 +
- src/sdl/rhi_gl2_platform.cpp       |    9 +
- src/st_stuff.c                     |   10 +-
- src/v_video.cpp                    |   22 +
- src/w_wad.cpp                      |  117 +
- src/w_wad.h                        |   10 +
- src/z_zone.cpp                     |    5 +
- 77 files changed, 12515 insertions(+), 743 deletions(-)
+ CMakeLists.txt                            |   19 +-
+ CMakePresets.json                         |   17 +
+ src/CMakeLists.txt                        |   44 +-
+ src/console.c                             |   18 +
+ src/core/thread_pool.cpp                  |   19 +
+ src/cvars.cpp                             |    5 +
+ src/d_clisrv.c                            |   49 +
+ src/d_main.cpp                            |  354 +-
+ src/f_finale.c                            |    6 +
+ src/f_wipe.cpp                            |   35 +-
+ src/g_game.c                              |   56 +
+ src/hardware/CMakeLists.txt               |   37 +
+ src/hardware/hw_batching.c                |   11 +-
+ src/hardware/hw_bsp.c                     |  113 +-
+ src/hardware/hw_cache.c                   |  310 +-
+ src/hardware/hw_clip.c                    |   15 +
+ src/hardware/hw_clip.h                    |    5 +
+ src/hardware/hw_defs.h                    |    8 +-
+ src/hardware/hw_draw.c                    |   57 +-
+ src/hardware/hw_drv.h                     |   13 +
+ src/hardware/hw_glob.h                    |    9 +
+ src/hardware/hw_glsl.h                    |  321 ++
+ src/hardware/hw_main.c                    | 1703 +++++-
+ src/hardware/hw_main.h                    |   18 +-
+ src/hardware/hw_md2.c                     |  304 +-
+ src/hardware/hw_md2.h                     |    4 +
+ src/hardware/r_d3d11/custom_shader.cpp    |  275 +
+ src/hardware/r_d3d11/custom_shader.h      |    9 +
+ src/hardware/r_d3d11/custom_shaders.cmake |   58 +
+ src/hardware/r_d3d11/r_d3d11.cpp          | 6132 +++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h            |   66 +
+ src/hardware/r_d3d11/shaders.hlsl         |  563 ++
+ src/hardware/r_opengl/r_opengl.c          |  308 +-
+ src/http-mserv.c                          |    2 +
+ src/hwr2/patch_atlas.cpp                  |    8 +
+ src/hwr2/resource_management.cpp          |  105 +-
+ src/hwr2/resource_management.hpp          |   31 +-
+ src/i_system.h                            |   66 +
+ src/i_video_common.cpp                    |   60 +-
+ src/k_menu.h                              |   12 +-
+ src/k_menufunc.c                          |    6 +
+ src/lua_script.c                          |  127 +
+ src/m_fixed.h                             |   11 +
+ src/m_perfstats.c                         |  244 +
+ src/m_perfstats.h                         |   11 +
+ src/menus/options-1.c                     |   34 +
+ src/menus/options-video-advanced.c        |   44 +-
+ src/p_lights.c                            |    9 +
+ src/p_mobj.c                              |   98 +-
+ src/p_mobj.h                              |   11 +
+ src/p_setup.cpp                           |   44 +
+ src/p_tick.h                              |   15 +
+ src/r_draw.h                              |   38 +-
+ src/r_draw_column.cpp                     |   18 +-
+ src/r_fps.cpp                             |   25 +-
+ src/r_main.cpp                            |  181 +-
+ src/r_main.h                              |    8 +
+ src/r_plane.cpp                           |   19 +-
+ src/r_segs.cpp                            |   15 +-
+ src/r_sky.c                               |    4 +-
+ src/r_textures.cpp                        |    2 +
+ src/r_textures.h                          |   10 +
+ src/r_things.cpp                          |  158 +-
+ src/r_things.h                            |    5 +
+ src/rhi/gl2/gl2_rhi.cpp                   |  618 ++-
+ src/rhi/gl2/gl2_rhi.hpp                   |   36 +
+ src/screen.c                              |    4 +-
+ src/sdl/CMakeLists.txt                    |    5 +
+ src/sdl/hwsym_sdl.c                       |    7 +
+ src/sdl/i_main.cpp                        |   11 +-
+ src/sdl/i_system.cpp                      |  132 +-
+ src/sdl/i_uwpprofile.cpp                  |  863 +++
+ src/sdl/i_uwptrace.h                      |   25 +
+ src/sdl/i_video.cpp                       |   98 +-
+ src/sdl/mixer_sound.c                     |    4 +-
+ src/sdl/ogl_sdl.c                         |    8 +
+ src/sdl/rhi_gl2_platform.cpp              |    9 +
+ src/st_stuff.c                            |   10 +-
+ src/v_video.cpp                           |   22 +
+ src/w_wad.cpp                             |  117 +
+ src/w_wad.h                               |   10 +
+ src/z_zone.cpp                            |    5 +
+ 82 files changed, 13316 insertions(+), 1050 deletions(-)
+ create mode 100644 src/hardware/hw_glsl.h
+ create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
+ create mode 100644 src/hardware/r_d3d11/custom_shader.h
+ create mode 100644 src/hardware/r_d3d11/custom_shaders.cmake
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
@@ -1472,10 +1492,10 @@ index ce69d80c0..9db72cf64 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..a5d435360 100644
+index a0a0f280c..9e5183004 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
-@@ -13,3 +13,38 @@ target_sources(SRB2SDL2 PRIVATE
+@@ -13,3 +13,40 @@ target_sources(SRB2SDL2 PRIVATE
  	hw_batching.c
  	r_opengl/r_opengl.c
  )
@@ -1511,7 +1531,9 @@ index a0a0f280c..a5d435360 100644
 +	# A target of its own, since generated files are only visible to targets in the same directory
 +	add_custom_target(SRB2D3D11Shaders DEPENDS ${d3d11_shader_headers})
 +	add_dependencies(SRB2SDL2 SRB2D3D11Shaders)
-+	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp)
++	include(r_d3d11/custom_shaders.cmake)
++	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp)
++	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl d3dcompiler)
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
 +endif()
 diff --git a/src/hardware/hw_batching.c b/src/hardware/hw_batching.c
@@ -2459,6 +2481,333 @@ index 07dfb7a16..6df0269ce 100644
  
  // --------
  // hw_draw.c
+diff --git a/src/hardware/hw_glsl.h b/src/hardware/hw_glsl.h
+new file mode 100644
+index 000000000..c025b5a08
+--- /dev/null
++++ b/src/hardware/hw_glsl.h
+@@ -0,0 +1,321 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++// Copyright (C) 2020 by Sonic Team Junior.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++// Shared Legacy GL built-in GLSL sources (GPL-2.0; see r_opengl.c).
++#ifndef RR_HW_GLSL_H
++#define RR_HW_GLSL_H
++#define GLSL_DOOM_COLORMAP \
++	"float R_DoomColormap(float light, float z)\n" \
++	"{\n" \
++		"float lightnum = clamp(light / 17.0, 0.0, 15.0);\n" \
++		"float lightz = clamp(z / 16.0, 0.0, 127.0);\n" \
++		"float startmap = (15.0 - lightnum) * 4.0;\n" \
++		"float scale = 160.0 / (lightz + 1.0);\n" \
++		"return startmap - scale * 0.5;\n" \
++	"}\n"
++
++#define GLSL_DOOM_LIGHT_EQUATION \
++	"float R_DoomLightingEquation(float light)\n" \
++	"{\n" \
++		"float z = gl_FragCoord.z / gl_FragCoord.w;\n" \
++		"float colormap = floor(R_DoomColormap(light, z)) + 0.5;\n" \
++		"return clamp(colormap, 0.0, 31.0) / 32.0;\n" \
++	"}\n"
++
++#define GLSL_SOFTWARE_TINT_EQUATION \
++	"if (mix(tint_color.a, 0.0, brightmap_mix) > 0.0) {\n" \
++		"float color_bright = sqrt((base_color.r * base_color.r) + (base_color.g * base_color.g) + (base_color.b * base_color.b));\n" \
++		"float strength = sqrt(9.0 * mix(tint_color.a, 0.0, brightmap_mix));\n" \
++		"final_color.r = clamp((color_bright * (tint_color.r * strength)) + (base_color.r * (1.0 - strength)), 0.0, 1.0);\n" \
++		"final_color.g = clamp((color_bright * (tint_color.g * strength)) + (base_color.g * (1.0 - strength)), 0.0, 1.0);\n" \
++		"final_color.b = clamp((color_bright * (tint_color.b * strength)) + (base_color.b * (1.0 - strength)), 0.0, 1.0);\n" \
++	"}\n"
++
++#define GLSL_SOFTWARE_FADE_EQUATION \
++	"float darkness = R_DoomLightingEquation(final_lighting);\n" \
++	"if (fade_start > 0.0 || fade_end < 31.0) {\n" \
++		"float fs = fade_start / 31.0;\n" \
++		"float fe = fade_end / 31.0;\n" \
++		"float fd = fe - fs;\n" \
++		"darkness = clamp((darkness - fs) * (1.0 / fd), 0.0, 1.0);\n" \
++	"}\n" \
++	"float colorBrightness = sqrt((final_color.r * final_color.r) + (final_color.g * final_color.g) + (final_color.b * final_color.b));\n" \
++	"float fogBrightness = sqrt((fade_color.r * fade_color.r) + (fade_color.g * fade_color.g) + (fade_color.b * fade_color.b));\n" \
++	"float colorIntensity = 0.0;\n" \
++	"if (colorBrightness < fogBrightness) {\n" \
++		"colorIntensity = 1.0 - min(final_color.r, min(final_color.g, final_color.b));\n" \
++		"colorIntensity = abs(colorIntensity - (1.0 - max(fade_color.r, max(fade_color.g, fade_color.b))));\n" \
++	"} else {\n" \
++		"colorIntensity = max(final_color.r, max(final_color.g, final_color.b));\n" \
++		"colorIntensity = abs(colorIntensity - min(fade_color.r, min(fade_color.g, fade_color.b)));\n" \
++	"}\n" \
++	"colorIntensity *= darkness;\n" \
++	"colorIntensity *= fade_color.a * 10.0;\n" \
++	"if (abs(final_color.r - fade_color.r) <= colorIntensity) {\n" \
++		"final_color.r = fade_color.r;\n" \
++	"} else if (final_color.r < fade_color.r) {\n" \
++		"final_color.r += colorIntensity;\n" \
++	"} else {\n" \
++		"final_color.r -= colorIntensity;\n" \
++	"}\n" \
++	"if (abs(final_color.g - fade_color.g) <= colorIntensity) {\n" \
++		"final_color.g = fade_color.g;\n" \
++	"} else if (final_color.g < fade_color.g) {\n" \
++		"final_color.g += colorIntensity;\n" \
++	"} else {\n" \
++		"final_color.g -= colorIntensity;\n" \
++	"}\n" \
++	"if (abs(final_color.b - fade_color.b) <= colorIntensity) {\n" \
++		"final_color.b = fade_color.b;\n" \
++	"} else if (final_color.b < fade_color.b) {\n" \
++		"final_color.b += colorIntensity;\n" \
++	"} else {\n" \
++		"final_color.b -= colorIntensity;\n" \
++	"}\n"
++
++// ================
++//  Vertex shaders
++// ================
++
++//
++// Generic vertex shader
++//
++
++#define GLSL_DEFAULT_VERTEX_SHADER \
++	"void main()\n" \
++	"{\n" \
++		"gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;\n" \
++		"gl_FrontColor = gl_Color;\n" \
++		"gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n" \
++		"gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;\n" \
++	"}\0"
++
++// reinterpretation of sprite lighting for models
++// it's a combination of how it works for normal sprites & papersprites
++#define GLSL_MODEL_LIGHTING_VERTEX_SHADER \
++	"uniform float lighting;\n" \
++	"uniform vec3 light_dir;\n" \
++	"uniform float light_contrast;\n" \
++	"uniform float light_backlight;\n" \
++	"void main()\n" \
++	"{\n" \
++		"gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;\n" \
++		"float light = lighting;\n" \
++		"if (length(light_dir) > 0.000001) {\n" \
++			"mat4 m4 = gl_ProjectionMatrix * gl_ModelViewMatrix;\n" \
++			"mat3 m3 = mat3( m4[0].xyz, m4[1].xyz, m4[2].xyz );\n" \
++			"float extralight = -dot(normalize(gl_Normal * m3), normalize(light_dir));\n" \
++			"extralight *= light_contrast - light_backlight;\n" \
++			"extralight *= lighting / 255.0;\n" \
++			"light += extralight * 2.5;\n" \
++		"}\n" \
++		"light = clamp(light / 255.0, 0.0, 1.0);\n" \
++		"gl_FrontColor = vec4(light, light, light, 1.0);\n" \
++		"gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n" \
++		"gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;\n" \
++	"}\0"
++
++// ==================
++//  Fragment shaders
++// ==================
++
++//
++// Generic fragment shader
++//
++
++#define GLSL_DEFAULT_FRAGMENT_SHADER \
++	"uniform sampler2D tex;\n" \
++	"uniform vec4 poly_color;\n" \
++	"void main(void) {\n" \
++		"gl_FragColor = texture2D(tex, gl_TexCoord[0].st) * poly_color;\n" \
++	"}\0"
++
++//
++// Software fragment shader
++//
++
++#define GLSL_SOFTWARE_FRAGMENT_SHADER \
++	"uniform sampler2D tex;\n" \
++	"uniform sampler2D brightmap;\n" \
++	"uniform vec4 poly_color;\n" \
++	"uniform vec4 tint_color;\n" \
++	"uniform vec4 fade_color;\n" \
++	"uniform float lighting;\n" \
++	"uniform float fade_start;\n" \
++	"uniform float fade_end;\n" \
++	GLSL_DOOM_COLORMAP \
++	GLSL_DOOM_LIGHT_EQUATION \
++	"void main(void) {\n" \
++		"vec4 texel = texture2D(tex, gl_TexCoord[0].st);\n" \
++		"vec4 base_color = texel * poly_color;\n" \
++		"vec4 final_color = base_color;\n" \
++		"float brightmap_mix = floor(texture2D(brightmap, gl_TexCoord[0].st).r);\n" \
++		"float light_gain = (255.0 - lighting) * brightmap_mix;\n" \
++		"float final_lighting = lighting + light_gain;\n" \
++		GLSL_SOFTWARE_TINT_EQUATION \
++		GLSL_SOFTWARE_FADE_EQUATION \
++		"final_color.a = texel.a * poly_color.a;\n" \
++		"gl_FragColor = final_color;\n" \
++	"}\0"
++
++// same as above but multiplies results with the lighting value from the
++// accompanying vertex shader (stored in gl_Color)
++#define GLSL_SOFTWARE_MODEL_LIGHTING_FRAGMENT_SHADER \
++	"uniform sampler2D tex;\n" \
++	"uniform sampler2D brightmap;\n" \
++	"uniform vec4 poly_color;\n" \
++	"uniform vec4 tint_color;\n" \
++	"uniform vec4 fade_color;\n" \
++	"uniform float fade_start;\n" \
++	"uniform float fade_end;\n" \
++	GLSL_DOOM_COLORMAP \
++	GLSL_DOOM_LIGHT_EQUATION \
++	"void main(void) {\n" \
++		"vec4 texel = texture2D(tex, gl_TexCoord[0].st);\n" \
++		"vec4 base_color = texel * poly_color;\n" \
++		"vec4 final_color = base_color;\n" \
++		"float final_lighting = gl_Color.r * 255.0;\n" \
++		"float brightmap_mix = floor(texture2D(brightmap, gl_TexCoord[0].st).r);\n" \
++		"float light_gain = (255.0 - final_lighting) * brightmap_mix;\n" \
++		"final_lighting += light_gain;\n" \
++		GLSL_SOFTWARE_TINT_EQUATION \
++		GLSL_SOFTWARE_FADE_EQUATION \
++		"final_color.a = texel.a * poly_color.a;\n" \
++		"gl_FragColor = final_color;\n" \
++	"}\0"
++
++//
++// Water surface shader
++//
++// Mostly guesstimated, rather than the rest being built off Software science.
++// Still needs to distort things underneath/around the water...
++//
++
++#define GLSL_WATER_FRAGMENT_SHADER \
++	"uniform sampler2D tex;\n" \
++	"uniform sampler2D brightmap;\n" \
++	"uniform vec4 poly_color;\n" \
++	"uniform vec4 tint_color;\n" \
++	"uniform vec4 fade_color;\n" \
++	"uniform float lighting;\n" \
++	"uniform float fade_start;\n" \
++	"uniform float fade_end;\n" \
++	"uniform float leveltime;\n" \
++	"const float freq = 0.025;\n" \
++	"const float amp = 0.025;\n" \
++	"const float speed = 2.0;\n" \
++	"const float pi = 3.14159;\n" \
++	GLSL_DOOM_COLORMAP \
++	GLSL_DOOM_LIGHT_EQUATION \
++	"void main(void) {\n" \
++		"float z = (gl_FragCoord.z / gl_FragCoord.w) / 2.0;\n" \
++		"float a = -pi * (z * freq) + (leveltime * speed);\n" \
++		"float sdistort = sin(a) * amp;\n" \
++		"float cdistort = cos(a) * amp;\n" \
++		"vec4 texel = texture2D(tex, vec2(gl_TexCoord[0].s - sdistort, gl_TexCoord[0].t - cdistort));\n" \
++		"vec4 base_color = texel * poly_color;\n" \
++		"vec4 final_color = base_color;\n" \
++		"float brightmap_mix = floor(texture2D(brightmap, gl_TexCoord[0].st).r);\n" \
++		"float light_gain = (255.0 - lighting) * brightmap_mix;\n" \
++		"float final_lighting = lighting + light_gain;\n" \
++		GLSL_SOFTWARE_TINT_EQUATION \
++		GLSL_SOFTWARE_FADE_EQUATION \
++		"final_color.a = texel.a * poly_color.a;\n" \
++		"gl_FragColor = final_color;\n" \
++	"}\0"
++
++//
++// Fog block shader
++//
++// Alpha of the planes themselves are still slightly off -- see HWR_FogBlockAlpha
++//
++
++#define GLSL_FOG_FRAGMENT_SHADER \
++	"uniform vec4 tint_color;\n" \
++	"uniform vec4 fade_color;\n" \
++	"uniform float lighting;\n" \
++	"uniform float fade_start;\n" \
++	"uniform float fade_end;\n" \
++	GLSL_DOOM_COLORMAP \
++	GLSL_DOOM_LIGHT_EQUATION \
++	"void main(void) {\n" \
++		"vec4 base_color = gl_Color;\n" \
++		"vec4 final_color = base_color;\n" \
++		"float brightmap_mix = 0.0;\n" \
++		"float light_gain = 0.0;\n" \
++		"float final_lighting = lighting + light_gain;\n" \
++		GLSL_SOFTWARE_TINT_EQUATION \
++		GLSL_SOFTWARE_FADE_EQUATION \
++		"gl_FragColor = final_color;\n" \
++	"}\0"
++
++// Sprite clipping makes me want to McFucking Die
++
++#define GLSL_SPRITECLIP_HACK_VERTEX_SHADER \
++	"void main(void) {\n" \
++		"gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;\n" \
++		"gl_FrontColor = gl_Color;\n" \
++		"gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n" \
++		"gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;\n" \
++		"gl_Position.z -= 80.0 / gl_Position.z;\n" \
++	"}\0"
++
++//
++// Sky fragment shader
++// Modulates poly_color with gl_Color
++//
++#define GLSL_SKY_FRAGMENT_SHADER \
++	"uniform sampler2D tex;\n" \
++	"uniform vec4 poly_color;\n" \
++	"void main(void) {\n" \
++		"gl_FragColor = texture2D(tex, gl_TexCoord[0].st) * gl_Color * poly_color;\n" \
++	"}\0"
++
++// ================
++//  Shader sources
++// ================
++
++static struct {
++	const char *vertex;
++	const char *fragment;
++} const gl_shadersources[] = {
++	// Default shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_DEFAULT_FRAGMENT_SHADER},
++
++	// Floor shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
++
++	// Wall shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
++
++	// Sprite shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
++
++	// Sprite clipping hack shader (for pulling things out of the floor)
++	{GLSL_SPRITECLIP_HACK_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
++
++	// Model shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
++
++	// Model shader + diffuse lighting from above
++	{GLSL_MODEL_LIGHTING_VERTEX_SHADER, GLSL_SOFTWARE_MODEL_LIGHTING_FRAGMENT_SHADER},
++
++	// Water shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_WATER_FRAGMENT_SHADER},
++
++	// Fog shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_FOG_FRAGMENT_SHADER},
++
++	// Sky shader
++	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SKY_FRAGMENT_SHADER},
++
++	{NULL, NULL},
++};
++
++#endif
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
 index b5e8fca5a..98c533833 100644
 --- a/src/hardware/hw_main.c
@@ -5291,12 +5640,372 @@ index dbfa84aa1..c44c84893 100644
  
  #define PLAYERMODELPREFIX "PLAYER"
  
+diff --git a/src/hardware/r_d3d11/custom_shader.cpp b/src/hardware/r_d3d11/custom_shader.cpp
+new file mode 100644
+index 000000000..7472a89ff
+--- /dev/null
++++ b/src/hardware/r_d3d11/custom_shader.cpp
+@@ -0,0 +1,275 @@
++// GPL-2.0; runtime translation of Legacy GL add-on GLSL.
++#include "custom_shader.h"
++#include <algorithm>
++#include <cctype>
++#include <map>
++#include <memory>
++#include <stdexcept>
++#include <vector>
++#include <glslang/Public/ShaderLang.h>
++#include <glslang/Public/ResourceLimits.h>
++#include <SPIRV/GlslangToSpv.h>
++#include <spirv_hlsl.hpp>
++
++namespace {
++struct Token { size_t begin,end; std::string text; };
++// Lex tokens rather than editing strings/comments or matching substrings in
++// identifiers. Preserve source lines so compiler diagnostics name the add-on.
++std::vector<Token> Tokens(const std::string &s) {
++    std::vector<Token> t;
++    for(size_t i=0;i<s.size();) {
++        unsigned char c=s[i];
++        if(std::isspace(c)) { ++i; continue; }
++        if(c=='/' && i+1<s.size() && s[i+1]=='/') {
++            i=s.find('\n',i+2); if(i==std::string::npos) break; continue;
++        }
++        if(c=='/' && i+1<s.size() && s[i+1]=='*') {
++            size_t end=s.find("*/",i+2); if(end==std::string::npos) throw std::runtime_error("unterminated shader comment");
++            i=end+2; continue;
++        }
++        size_t a=i++;
++        if(std::isalnum(c) || c=='_') while(i<s.size() && (std::isalnum((unsigned char)s[i]) || s[i]=='_')) ++i;
++        t.push_back({a,i,s.substr(a,i-a)});
++    }
++    return t;
++}
++
++std::string Adapt(const std::string &source, bool fragment, int layout) {
++    if(source.size()>1024*1024) throw std::runtime_error("shader source exceeds 1 MB");
++    const auto tokens=Tokens(source);
++    const std::map<std::string,std::string> known={
++        {"poly_color","vec4"},{"tint_color","vec4"},{"fade_color","vec4"},
++        {"lighting","float"},{"fade_start","float"},{"fade_end","float"},
++        {"light_dir","vec3"},{"light_contrast","float"},{"light_backlight","float"},{"leveltime","float"}};
++    std::string body=source;
++    std::vector<std::pair<Token,std::string>> edits;
++    for(size_t i=0;i<tokens.size();++i) {
++        const auto &t=tokens[i];
++        if(t.text=="#" && i+1<tokens.size() && tokens[i+1].text=="version") {
++            size_t end=source.find('\n',t.begin); if(end==std::string::npos) end=source.size();
++            edits.push_back({{t.begin,end,{}},""});
++            while(i+1<tokens.size() && tokens[i+1].begin<end) ++i;
++        } else if(t.text=="varying") {
++            edits.push_back({t,fragment?"in":"out"});
++        } else if(t.text=="attribute") {
++            edits.push_back({t,"in"});
++        } else if(t.text=="uniform" && i+3<tokens.size()) {
++            size_t end=i+1; while(end<tokens.size() && tokens[end].text!=";") ++end;
++            if(end==tokens.size()) throw std::runtime_error("unterminated uniform declaration");
++            size_t typeIndex=i+1;
++            while(typeIndex<end && (tokens[typeIndex].text=="highp" || tokens[typeIndex].text=="mediump" || tokens[typeIndex].text=="lowp")) ++typeIndex;
++            if(typeIndex+1>=end) throw std::runtime_error("invalid uniform declaration");
++            const std::string type=tokens[typeIndex].text;
++            std::string declarations;
++            // Split comma-separated declarators only at the top level. Commas in
++            // vector constructors and array initializers belong to that variable.
++            size_t first=typeIndex+1;
++            int nesting=0;
++            for(size_t j=first;j<=end;++j) {
++                const auto &part=tokens[j];
++                if(part.text=="(" || part.text=="[") ++nesting;
++                if(part.text==")" || part.text=="]") --nesting;
++                if(j!=end && !(part.text=="," && nesting==0)) continue;
++                if(j==first) throw std::runtime_error("invalid uniform declarator");
++                const std::string name=tokens[first].text;
++                const std::string declarator=source.substr(tokens[first].begin,tokens[j-1].end-tokens[first].begin);
++                auto k=known.find(name);
++                if(k!=known.end()) {
++                    if(type!=k->second || (j>first+1 && tokens[first+1].text!="="))
++                        throw std::runtime_error("wrong type for engine uniform "+name);
++                } else if(type=="sampler2D") {
++                    const int binding=name=="brightmap"?1:0;
++                    declarations+="layout(set=1,binding="+std::to_string(binding)+") uniform sampler2D "+declarator+"; ";
++                } else {
++                    bool initializer=false;
++                    for(size_t n=first+1;n<j;++n) if(tokens[n].text=="=") initializer=true;
++                    if(!initializer && j!=first+1)
++                        throw std::runtime_error("uninitialized custom uniform arrays require explicit GLSL initializers");
++                    declarations+="const "+type+" "+declarator+(initializer?"; ":" = "+type+"(0); ");
++                }
++                first=j+1;
++            }
++            const std::string original=source.substr(t.begin,tokens[end].end-t.begin);
++            declarations.append(std::count(original.begin(),original.end(),'\n'),'\n');
++            edits.push_back({{t.begin,tokens[end].end,{}},declarations});
++            i=end;
++        }
++    }
++    for(auto it=edits.rbegin();it!=edits.rend();++it) body.replace(it->first.begin,it->first.end-it->first.begin,it->second);
++    std::string pre=R"(#version 450
++layout(std140,set=0,binding=0) uniform DrawConstants {
++ mat4 rr_projection; mat4 rr_modelview;
++ vec4 poly_color; vec4 tint_color; vec4 fade_color; vec4 rr_color;
++ vec3 light_dir; float rr_lightdir_pad; vec4 rr_fflight;
++ float lighting; float fade_start; float fade_end; float light_contrast;
++ float light_backlight; float leveltime; float rr_alpha_ref; int rr_alpha_func;
++ int rr_tex_mode; int rr_palette; ivec2 rr_pad;
++ vec4 rr_clip_plane; float rr_fullscreen_depth; float rr_portal_pad0; float rr_portal_pad1; float rr_portal_pad2;
++};
++layout(std140,set=0,binding=4) uniform CustomView { vec4 rr_view; };
++#define gl_ProjectionMatrix rr_projection
++#define gl_ModelViewMatrix rr_modelview
++#define gl_ModelViewProjectionMatrix (rr_projection * rr_modelview)
++#define gl_NormalMatrix transpose(inverse(mat3(rr_modelview)))
++#define gl_ModelViewMatrixInverse inverse(rr_modelview)
++#define gl_ProjectionMatrixInverse inverse(rr_projection)
++#define gl_ModelViewProjectionMatrixInverse inverse(rr_projection*rr_modelview)
++#define gl_ModelViewMatrixTranspose transpose(rr_modelview)
++#define gl_ProjectionMatrixTranspose transpose(rr_projection)
++#define gl_ModelViewProjectionMatrixTranspose transpose(rr_projection*rr_modelview)
++#define gl_ModelViewMatrixInverseTranspose transpose(inverse(rr_modelview))
++#define gl_ProjectionMatrixInverseTranspose transpose(inverse(rr_projection))
++const mat4 rr_texture_matrix[2]=mat4[2](mat4(1.0),mat4(1.0));
++#define gl_TextureMatrix rr_texture_matrix
++#define texture2D texture
++#define texture2DProj textureProj
++#define textureCube texture
++#define main rr_user_main
++)";
++    if(fragment) pre+=R"(
++layout(location=0) in vec4 rr_texcoord[2];
++layout(location=2) in vec4 rr_frontcolor;
++layout(location=0) out vec4 rr_result;
++vec4 rr_fragcoord;
++#define gl_TexCoord rr_texcoord
++#define gl_Color rr_frontcolor
++#define gl_FragColor rr_result
++#define gl_FragCoord rr_fragcoord
++)";
++    else {
++        pre+=R"(
++layout(location=0) in vec3 rr_position;
++layout(location=1) in vec2 rr_uv;
++layout(location=0) out vec4 rr_texcoord[2];
++layout(location=2) out vec4 rr_frontcolor;
++vec4 rr_clipvertex;
++#define gl_Vertex vec4(rr_position,1.0)
++#define gl_MultiTexCoord0 vec4(rr_uv,0.0,1.0)
++#define gl_MultiTexCoord1 vec4(rr_uv,0.0,1.0)
++#define gl_TexCoord rr_texcoord
++#define gl_FrontColor rr_frontcolor
++#define gl_ClipVertex rr_clipvertex
++)";
++        pre+=layout==1 ? "layout(location=3) in vec4 rr_vertexcolor;\n#define gl_Color rr_vertexcolor\n" : "#define gl_Color rr_color\n";
++        pre+=layout==2 ? "layout(location=2) in vec3 rr_normal;\n#define gl_Normal rr_normal\n" : "#define gl_Normal vec3(0.0,0.0,1.0)\n";
++    }
++    pre+="\n#line 1\n"+body+"\n#undef main\n";
++    if(fragment) pre+=R"(
++#undef gl_FragCoord
++void main() {
++ rr_fragcoord=vec4(gl_FragCoord.x,rr_view.x-gl_FragCoord.y,gl_FragCoord.z,gl_FragCoord.w);
++ rr_user_main();
++ if(rr_alpha_func==1 && !(rr_result.a>rr_alpha_ref)) discard;
++ if(rr_alpha_func==2 && rr_result.a==rr_alpha_ref) discard;
++}
++)";
++    else pre+=R"(
++void main() {
++ rr_texcoord[0]=vec4(rr_uv,0.0,1.0); rr_texcoord[1]=rr_texcoord[0];
++ rr_frontcolor=gl_Color; rr_clipvertex=rr_modelview*gl_Vertex;
++ rr_user_main();
++ gl_ClipDistance[0]=dot(rr_clipvertex,rr_clip_plane);
++ gl_Position.z=0.5*(gl_Position.z+gl_Position.w);
++}
++)";
++    return pre;
++}
++
++unsigned InterfaceSlots(spirv_cross::CompilerHLSL &compiler, spirv_cross::TypeID id) {
++    const auto &type=compiler.get_type(id);
++    unsigned count=type.columns;
++    if(type.basetype==spirv_cross::SPIRType::Struct) {
++        count=0; for(auto member:type.member_types) count+=InterfaceSlots(compiler,member);
++    }
++    for(size_t i=0;i<type.array.size();++i) {
++        unsigned length=type.array_size_literal[i]?type.array[i]:compiler.get_constant(type.array[i]).scalar();
++        if(length==0 || length>32) throw std::runtime_error("varying array is too large for Shader Model 4");
++        count*=length;
++    }
++    if(count==0 || count>32) throw std::runtime_error("varying is too large for Shader Model 4");
++    return count;
++}
++
++std::string HLSL(spirv_cross::CompilerHLSL &compiler, bool fragment) {
++    auto hlsl=compiler.get_hlsl_options(); hlsl.shader_model=40;
++    compiler.set_hlsl_options(hlsl);
++    if(!fragment) {
++        compiler.add_vertex_attribute_remap({0,"POSITION"});
++        compiler.add_vertex_attribute_remap({1,"TEXCOORD0"});
++        compiler.add_vertex_attribute_remap({2,"NORMAL"});
++        compiler.add_vertex_attribute_remap({3,"COLOR0"});
++    }
++    const auto stage=fragment?spv::ExecutionModelFragment:spv::ExecutionModelVertex;
++    for(unsigned binding : {0u,4u}) {
++        spirv_cross::HLSLResourceBinding map;
++        map.stage=stage; map.desc_set=0; map.binding=binding; map.cbv.register_binding=binding;
++        compiler.add_hlsl_resource_binding(map);
++    }
++    for(unsigned binding : {0u,1u}) {
++        spirv_cross::HLSLResourceBinding map;
++        map.stage=stage; map.desc_set=1; map.binding=binding;
++        map.srv.register_binding=map.sampler.register_binding=binding;
++        compiler.add_hlsl_resource_binding(map);
++    }
++    return compiler.compile();
++}
++}
++
++bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
++    int layout, LegacyShaderHLSL &output, std::string &error) {
++    output={}; error.clear();
++    try {
++        if(layout<0 || layout>2) throw std::runtime_error("invalid vertex layout");
++        // The renderer compiles on its main thread; initialize once per process.
++        static const bool initialized=glslang::InitializeProcess();
++        if(!initialized) throw std::runtime_error("glslang initialization failed");
++        std::string vs=Adapt(vertex,false,layout), ps=Adapt(fragment,true,layout);
++        glslang::TShader v(EShLangVertex), p(EShLangFragment);
++        for(auto pair : {std::make_pair(&v,&vs),std::make_pair(&p,&ps)}) {
++            const char *text=pair.second->c_str(); pair.first->setStrings(&text,1);
++            pair.first->setEnvInput(glslang::EShSourceGlsl,pair.first->getStage(),glslang::EShClientVulkan,450);
++            pair.first->setEnvClient(glslang::EShClientVulkan,glslang::EShTargetVulkan_1_0);
++            pair.first->setEnvTarget(glslang::EShTargetSpv,glslang::EShTargetSpv_1_0);
++            pair.first->setAutoMapLocations(true);
++            if(!pair.first->parse(GetDefaultResources(),450,false,(EShMessages)(EShMsgSpvRules|EShMsgVulkanRules)))
++                throw std::runtime_error(pair.first->getInfoLog());
++        }
++        glslang::TProgram program; program.addShader(&v); program.addShader(&p);
++        if(!program.link((EShMessages)(EShMsgSpvRules|EShMsgVulkanRules)) || !program.mapIO())
++            throw std::runtime_error(program.getInfoLog());
++        LegacyShaderHLSL result;
++        std::vector<unsigned> vertexIR,fragmentIR;
++        glslang::SpvOptions options; options.disableOptimizer=true;
++        glslang::GlslangToSpv(*program.getIntermediate(EShLangVertex),vertexIR,&options);
++        glslang::GlslangToSpv(*program.getIntermediate(EShLangFragment),fragmentIR,&options);
++        spirv_cross::CompilerHLSL vertexCompiler(std::move(vertexIR)), fragmentCompiler(std::move(fragmentIR));
++        // glslang's automatic Vulkan locations can collide with the reserved GL
++        // compatibility interface and differ when stage declaration order differs.
++        // Assign a single linked interface by name, counting arrays/matrices, and
++        // keep extra vertex outputs from shifting the fragment's inputs.
++        std::map<std::string,unsigned> slots,locations;
++        auto gather=[&](spirv_cross::CompilerHLSL &compiler,bool fragmentStage) {
++            auto resources=compiler.get_shader_resources();
++            for(const auto &r: fragmentStage?resources.stage_inputs:resources.stage_outputs) {
++                if(r.name=="rr_texcoord" || r.name=="rr_frontcolor") continue;
++                unsigned size=InterfaceSlots(compiler,r.type_id);
++                auto old=slots.find(r.name);
++                if(old!=slots.end() && old->second!=size) throw std::runtime_error("incompatible varying "+r.name);
++                slots[r.name]=size;
++            }
++        };
++        gather(vertexCompiler,false); gather(fragmentCompiler,true);
++        unsigned location=3; locations["rr_texcoord"]=0; locations["rr_frontcolor"]=2;
++        for(const auto &slot:slots) { locations[slot.first]=location; location+=slot.second; }
++        auto assign=[&](spirv_cross::CompilerHLSL &compiler,bool fragmentStage) {
++            auto resources=compiler.get_shader_resources();
++            for(const auto &r: fragmentStage?resources.stage_inputs:resources.stage_outputs)
++                compiler.set_decoration(r.id,spv::DecorationLocation,locations.at(r.name));
++        };
++        assign(vertexCompiler,false); assign(fragmentCompiler,true);
++        result.vertex=HLSL(vertexCompiler,false);
++        result.fragment=HLSL(fragmentCompiler,true);
++        output=std::move(result);
++        return true;
++    } catch(const std::exception &e) { error=e.what(); return false; }
++}
+diff --git a/src/hardware/r_d3d11/custom_shader.h b/src/hardware/r_d3d11/custom_shader.h
+new file mode 100644
+index 000000000..2c54e994f
+--- /dev/null
++++ b/src/hardware/r_d3d11/custom_shader.h
+@@ -0,0 +1,9 @@
++// GPL-2.0; runtime translation of Legacy GL add-on GLSL.
++#ifndef RR_CUSTOM_SHADER_H
++#define RR_CUSTOM_SHADER_H
++#include <string>
++struct LegacyShaderHLSL { std::string vertex, fragment; };
++// layout: 0 polygon, 1 sky, 2 model (the driver's vertex buffer layouts).
++bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
++    int layout, LegacyShaderHLSL &output, std::string &error);
++#endif
+diff --git a/src/hardware/r_d3d11/custom_shaders.cmake b/src/hardware/r_d3d11/custom_shaders.cmake
+new file mode 100644
+index 000000000..31f8d89cb
+--- /dev/null
++++ b/src/hardware/r_d3d11/custom_shaders.cmake
+@@ -0,0 +1,58 @@
++# Pinned source dependencies for UWP's runtime Legacy GL shader translation.
++include(FetchContent)
++set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
++set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
++set(ENABLE_RTTI ON CACHE BOOL "" FORCE)
++set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
++set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
++set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
++set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
++set(SKIP_GLSLANG_INSTALL ON CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_HLSL ON CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_GLSL ON CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "" FORCE)
++set(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
++FetchContent_Declare(rr_glslang
++    GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
++    GIT_TAG 1062752a891c95b2bfeed9e356562d88f9df84ac)
++FetchContent_Declare(rr_spirv_cross
++    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
++    GIT_TAG 2275d0efc4f2fa46851035d9d3c67c105bc8b99e)
++FetchContent_MakeAvailable(rr_glslang rr_spirv_cross)
++# The launcher is configured separately and links these engine-build archives.
++foreach(shader_library glslang MachineIndependent GenericCodeGen OSDependent SPIRV
++        glslang-default-resource-limits spirv-cross-core spirv-cross-glsl spirv-cross-hlsl)
++    if(TARGET ${shader_library})
++        set_target_properties(${shader_library} PROPERTIES
++            ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/legacy-shader-libs")
++    endif()
++endforeach()
++
++# Ship the upstream license texts and concrete copyright notices in the app.
++# SPIRV-Cross offers Apache-2.0 OR MIT; this GPL-2.0 build uses the MIT option.
++function(shader_notices name source)
++    file(GLOB_RECURSE notice_sources "${source}/glslang/*.cpp" "${source}/glslang/*.h"
++        "${source}/SPIRV/*.cpp" "${source}/SPIRV/*.h")
++    file(GLOB top_sources "${source}/*.cpp" "${source}/*.hpp" "${source}/*.h")
++    list(APPEND notice_sources ${top_sources})
++    set(copyrights "")
++    foreach(input IN LISTS notice_sources)
++        file(STRINGS "${input}" lines REGEX "[Cc]opyright")
++        list(APPEND copyrights ${lines})
++    endforeach()
++    list(REMOVE_DUPLICATES copyrights)
++    list(JOIN copyrights "\n" notices)
++    file(WRITE "${CMAKE_BINARY_DIR}/legacy-shader-licenses/${name}.txt" "${notices}\n\n")
++endfunction()
++shader_notices(glslang "${rr_glslang_SOURCE_DIR}")
++file(READ "${rr_glslang_SOURCE_DIR}/LICENSE.txt" glslang_license)
++file(APPEND "${CMAKE_BINARY_DIR}/legacy-shader-licenses/glslang.txt" "${glslang_license}")
++shader_notices(SPIRV-Cross "${rr_spirv_cross_SOURCE_DIR}")
++file(READ "${rr_spirv_cross_SOURCE_DIR}/LICENSES/MIT.txt" cross_license)
++file(READ "${rr_spirv_cross_SOURCE_DIR}/LICENSES/LicenseRef-KhronosFreeUse.txt" khronos_license)
++file(APPEND "${CMAKE_BINARY_DIR}/legacy-shader-licenses/SPIRV-Cross.txt"
++    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..ad8fd191b
+index 000000000..de89796b1
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,5997 @@
+@@ -0,0 +1,6132 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -5326,6 +6035,7 @@ index 000000000..ad8fd191b
 +#include <d3d11_1.h>
 +#endif
 +#include <dxgi1_4.h>
++#include <d3dcompiler.h>
 +#include <wrl/client.h>
 +
 +#include <algorithm>
@@ -5364,6 +6074,8 @@ index 000000000..ad8fd191b
 +#include "../hw_md2.h"
 +#endif
 +#include "r_d3d11.h"
++#include "custom_shader.h"
++#include "../hw_glsl.h"
 +
 +// doomdef.h's
 +#undef min
@@ -6209,9 +6921,32 @@ index 000000000..ad8fd191b
 +float g_shaderLightX = 0.0f, g_shaderLightY = 0.0f, g_shaderLightZ = 0.0f;
 +INT32 g_shaderLightContrast = 0, g_shaderLightBacklight = 0;
 +
++struct CustomProgram
++{
++	ComPtr<ID3D11VertexShader> vertex;
++	ComPtr<ID3D11PixelShader> pixel;
++	ComPtr<ID3D11InputLayout> layout;
++};
++struct CustomShader
++{
++	std::string vertex, fragment;
++	CustomProgram programs[NUMLAYOUTS];
++	bool dirty = false, valid = false;
++};
++CustomShader g_customShaders[NUMBASESHADERS];
++ComPtr<ID3D11Buffer> g_customViewConstants;
++
++const CustomProgram *CustomDrawProgram(Layout layout)
++{
++	if (g_postImage || g_allowShaders != HWD_SHADEROPTION_ON || g_program < 0 || g_program >= NUMBASESHADERS)
++		return nullptr;
++	const CustomShader &shader = g_customShaders[g_program];
++	return shader.valid ? &shader.programs[layout] : nullptr;
++}
++
 +bool ProgramExists(int type)
 +{
-+	// Custom shaders aren't supported, so only the base shaders have programs
++	// Add-on programs replace a base type; invalid replacements use the built-in shader.
 +	return type >= 0 && type < NUMBASESHADERS;
 +}
 +
@@ -6715,7 +7450,18 @@ index 000000000..ad8fd191b
 +		ps = PS_POSTIMAGE;
 +	}
 +
-+	ID3D11InputLayout *inputLayout = g_layouts[layout].Get();
++	const CustomProgram *custom = CustomDrawProgram(layout);
++	ID3D11VertexShader *vertexShader = custom ? custom->vertex.Get() : g_vertexShaders[vs].Get();
++	ID3D11PixelShader *pixelShader = custom ? custom->pixel.Get() : g_pixelShaders[ps].Get();
++	ID3D11InputLayout *inputLayout = custom ? custom->layout.Get() : g_layouts[layout].Get();
++	if (custom && g_customViewConstants)
++	{
++		const float view[4] = {(float)g_rtHeight, 0, 0, 0};
++		g_context->UpdateSubresource(g_customViewConstants.Get(), 0, nullptr, view, 0, 0);
++		ID3D11Buffer *buffer = g_customViewConstants.Get();
++		g_context->VSSetConstantBuffers(4, 1, &buffer);
++		g_context->PSSetConstantBuffers(4, 1, &buffer);
++	}
 +	if (g_bound.layout != inputLayout)
 +	{
 +		g_context->IASetInputLayout(inputLayout);
@@ -6728,17 +7474,17 @@ index 000000000..ad8fd191b
 +		g_bound.topology = topology;
 +	}
 +
-+	if (g_bound.vs != g_vertexShaders[vs].Get())
++	if (g_bound.vs != vertexShader)
 +	{
-+		g_context->VSSetShader(g_vertexShaders[vs].Get(), nullptr, 0);
-+		g_bound.vs = g_vertexShaders[vs].Get();
++		g_context->VSSetShader(vertexShader, nullptr, 0);
++		g_bound.vs = vertexShader;
 +		g_stats.shaderChanges++;
 +	}
 +
-+	if (g_bound.ps != g_pixelShaders[ps].Get())
++	if (g_bound.ps != pixelShader)
 +	{
-+		g_context->PSSetShader(g_pixelShaders[ps].Get(), nullptr, 0);
-+		g_bound.ps = g_pixelShaders[ps].Get();
++		g_context->PSSetShader(pixelShader, nullptr, 0);
++		g_bound.ps = pixelShader;
 +		g_stats.shaderChanges++;
 +	}
 +
@@ -9740,7 +10486,8 @@ index 000000000..ad8fd191b
 +		|| blend == PF_Subtractive || blend == PF_ReverseSubtract
 +		|| blend == PF_Multiplicative || blend == PF_Environment;
 +	g_waterRefraction = (PolyFlags & PF_Ripple) && g_program == SHADER_WATER
-+		&& refractingBlend && !cv_reducevfx.value && CaptureWaterScene(pSurf, PolyFlags, vertices, count);
++		&& refractingBlend && !cv_reducevfx.value && !CustomDrawProgram(LAYOUT_POLY)
++		&& CaptureWaterScene(pSurf, PolyFlags, vertices, count);
 +#endif
 +
 +}
@@ -10828,15 +11575,96 @@ index 000000000..ad8fd191b
 +	g_texDownloaded = g_finalScreenTexture;
 +}
 +
++static bool CompileCustomStage(const std::string &hlsl, const char *profile, ComPtr<ID3DBlob> &code)
++{
++	ComPtr<ID3DBlob> errors;
++	const HRESULT result = D3DCompile(hlsl.data(), hlsl.size(), "Legacy GL add-on", nullptr, nullptr,
++		"main", profile, D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
++	if (errors)
++		Log("custom %s: %.*s", profile, (int)std::min<size_t>(errors->GetBufferSize(), 8192), (const char *)errors->GetBufferPointer());
++	return !Failed(result, "D3DCompile (custom shader)");
++}
++
++static bool CreateCustomProgram(const LegacyShaderHLSL &hlsl, Layout kind, CustomProgram &program)
++{
++	ComPtr<ID3DBlob> vertex, pixel;
++	if (!CompileCustomStage(hlsl.vertex, "vs_4_0", vertex) || !CompileCustomStage(hlsl.fragment, "ps_4_0", pixel))
++		return false;
++	if (Failed(g_device->CreateVertexShader(vertex->GetBufferPointer(), vertex->GetBufferSize(), nullptr, &program.vertex), "CreateVertexShader (custom)")
++		|| Failed(g_device->CreatePixelShader(pixel->GetBufferPointer(), pixel->GetBufferSize(), nullptr, &program.pixel), "CreatePixelShader (custom)"))
++		return false;
++	const D3D11_INPUT_ELEMENT_DESC poly[] =
++	{
++		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(FOutVector, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(FOutVector, s), D3D11_INPUT_PER_VERTEX_DATA, 0},
++	};
++	const D3D11_INPUT_ELEMENT_DESC sky[] =
++	{
++		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(gl_skyvertex_t, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(gl_skyvertex_t, u), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, offsetof(gl_skyvertex_t, r), D3D11_INPUT_PER_VERTEX_DATA, 0},
++	};
++	const D3D11_INPUT_ELEMENT_DESC model[] =
++	{
++		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ModelVertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(ModelVertex, nx), D3D11_INPUT_PER_VERTEX_DATA, 0},
++		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(ModelVertex, s), D3D11_INPUT_PER_VERTEX_DATA, 0},
++	};
++	const D3D11_INPUT_ELEMENT_DESC *elements = kind == LAYOUT_SKY ? sky : kind == LAYOUT_MODEL ? model : poly;
++	const UINT count = kind == LAYOUT_SKY ? ARRAYSIZE(sky) : kind == LAYOUT_MODEL ? ARRAYSIZE(model) : ARRAYSIZE(poly);
++	return !Failed(g_device->CreateInputLayout(elements, count, vertex->GetBufferPointer(), vertex->GetBufferSize(), &program.layout), "CreateInputLayout (custom)");
++}
++
 +boolean D3D_CompileShaders(void)
 +{
-+	// Compiled at build time
-+	Log("CompileShaders: the shaders are built in (custom shaders aren't supported)");
++	// A bad add-on must not disable the built-in shaders or palette rendering.
++	if (!g_device) return true;
++	if (!g_customViewConstants)
++	{
++		D3D11_BUFFER_DESC desc = {};
++		desc.ByteWidth = 16; desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++		if (Failed(g_device->CreateBuffer(&desc, nullptr, &g_customViewConstants), "CreateBuffer (custom view)"))
++			return true;
++	}
++	for (int type = 1; type < NUMBASESHADERS; type++)
++	{
++		CustomShader &shader = g_customShaders[type];
++		if (!shader.dirty) continue;
++		shader.dirty = false; shader.valid = false;
++		for (CustomProgram &program : shader.programs) program = {};
++		if (shader.vertex.empty() && shader.fragment.empty()) continue;
++		const std::string vertex = shader.vertex.empty() ? gl_shadersources[type].vertex : shader.vertex;
++		const std::string fragment = shader.fragment.empty() ? gl_shadersources[type].fragment : shader.fragment;
++		CustomProgram programs[NUMLAYOUTS];
++		bool valid = true;
++		for (int layout = 0; layout < NUMLAYOUTS; layout++)
++		{
++			LegacyShaderHLSL output; std::string error;
++			if (!TranslateLegacyShader(vertex, fragment, layout, output, error))
++			{
++				Log("custom shader %d: %s; keeping the built-in shader", type, error.c_str());
++				valid = false; break;
++			}
++			if (!CreateCustomProgram(output, (Layout)layout, programs[layout])) { valid = false; break; }
++		}
++		if (valid)
++		{
++			for (int layout = 0; layout < NUMLAYOUTS; layout++) shader.programs[layout] = std::move(programs[layout]);
++			shader.valid = true;
++			Log("custom shader %d compiled for polygon, sky and model layouts", type);
++		}
++	}
++	g_shaderChanged = true;
++	g_bound.vs = nullptr; g_bound.ps = nullptr; g_bound.layout = nullptr;
 +	return true;
 +}
 +
 +void D3D_CleanShaders(void)
 +{
++	for (CustomShader &shader : g_customShaders) shader = {};
++	g_customViewConstants.Reset();
++	g_shaderChanged = true;
++	g_bound.vs = nullptr; g_bound.ps = nullptr; g_bound.layout = nullptr;
 +}
 +
 +// r_opengl.c's SetShader
@@ -10858,7 +11686,9 @@ index 000000000..ad8fd191b
 +	if (g_allowShaders != HWD_SHADEROPTION_OFF)
 +	{
 +		// If using model lighting, set the appropriate shader.
-+		if (type == SHADER_MODEL && g_modelLighting)
++		if (type == SHADER_MODEL && g_modelLighting
++			&& !(g_allowShaders == HWD_SHADEROPTION_ON && g_customShaders[SHADER_MODEL].valid
++				&& !g_customShaders[SHADER_MODEL_LIGHTING].valid))
 +			type = SHADER_MODEL_LIGHTING;
 +
 +		if (g_shaderCurrent < 0 || type != g_shaderType)
@@ -10869,7 +11699,7 @@ index 000000000..ad8fd191b
 +		}
 +
 +		if (!ProgramExists(type))
-+			LOG_ONCE("SetShader: no shader %d (custom shaders aren't supported; logged once)", type);
++			LOG_ONCE("SetShader: invalid shader type %d (logged once)", type);
 +
 +		g_shadersEnabled = ProgramExists(type);
 +		return;
@@ -10916,9 +11746,23 @@ index 000000000..ad8fd191b
 +
 +void D3D_LoadCustomShader(int number, char *code, size_t size, boolean isfragment)
 +{
-+	(void)code;
-+	Log("ignoring custom %s shader %d (%u bytes): this driver only has the built-in shaders",
-+		isfragment ? "fragment" : "vertex", number, (unsigned)size);
++	if (number <= SHADER_DEFAULT || number >= NUMBASESHADERS || !code || size > 1024*1024)
++	{
++		Log("invalid custom shader %d (%u bytes); keeping the built-in shader", number, (unsigned)size);
++		return;
++	}
++	std::string source(code, size);
++	while (!source.empty() && source.back() == 0) source.pop_back();
++	CustomShader &shader = g_customShaders[number];
++	(isfragment ? shader.fragment : shader.vertex) = source;
++	shader.dirty = true;
++	// Billboard sprites use the clipping variant of the sprite shader.
++	if (number == SHADER_SPRITE)
++	{
++		CustomShader &clip = g_customShaders[SHADER_SPRITECLIPHACK];
++		(isfragment ? clip.fragment : clip.vertex) = std::move(source);
++		clip.dirty = true;
++	}
 +}
 +
 +#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&D3D_##name)}
@@ -11935,6 +12779,325 @@ index 000000000..791b1b43f
 +{
 +	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
+diff --git a/src/hardware/r_opengl/r_opengl.c b/src/hardware/r_opengl/r_opengl.c
+index 900bae98d..c01e80ac7 100644
+--- a/src/hardware/r_opengl/r_opengl.c
++++ b/src/hardware/r_opengl/r_opengl.c
+@@ -638,313 +638,7 @@ static void Shader_SetUniforms(FSurfaceInfo *Surface, GLRGBAFloat *poly, GLRGBAF
+ 
+ static GLRGBAFloat shader_defaultcolor = {1.0f, 1.0f, 1.0f, 1.0f};
+ 
+-#define GLSL_DOOM_COLORMAP \
+-	"float R_DoomColormap(float light, float z)\n" \
+-	"{\n" \
+-		"float lightnum = clamp(light / 17.0, 0.0, 15.0);\n" \
+-		"float lightz = clamp(z / 16.0, 0.0, 127.0);\n" \
+-		"float startmap = (15.0 - lightnum) * 4.0;\n" \
+-		"float scale = 160.0 / (lightz + 1.0);\n" \
+-		"return startmap - scale * 0.5;\n" \
+-	"}\n"
+-
+-#define GLSL_DOOM_LIGHT_EQUATION \
+-	"float R_DoomLightingEquation(float light)\n" \
+-	"{\n" \
+-		"float z = gl_FragCoord.z / gl_FragCoord.w;\n" \
+-		"float colormap = floor(R_DoomColormap(light, z)) + 0.5;\n" \
+-		"return clamp(colormap, 0.0, 31.0) / 32.0;\n" \
+-	"}\n"
+-
+-#define GLSL_SOFTWARE_TINT_EQUATION \
+-	"if (mix(tint_color.a, 0.0, brightmap_mix) > 0.0) {\n" \
+-		"float color_bright = sqrt((base_color.r * base_color.r) + (base_color.g * base_color.g) + (base_color.b * base_color.b));\n" \
+-		"float strength = sqrt(9.0 * mix(tint_color.a, 0.0, brightmap_mix));\n" \
+-		"final_color.r = clamp((color_bright * (tint_color.r * strength)) + (base_color.r * (1.0 - strength)), 0.0, 1.0);\n" \
+-		"final_color.g = clamp((color_bright * (tint_color.g * strength)) + (base_color.g * (1.0 - strength)), 0.0, 1.0);\n" \
+-		"final_color.b = clamp((color_bright * (tint_color.b * strength)) + (base_color.b * (1.0 - strength)), 0.0, 1.0);\n" \
+-	"}\n"
+-
+-#define GLSL_SOFTWARE_FADE_EQUATION \
+-	"float darkness = R_DoomLightingEquation(final_lighting);\n" \
+-	"if (fade_start > 0.0 || fade_end < 31.0) {\n" \
+-		"float fs = fade_start / 31.0;\n" \
+-		"float fe = fade_end / 31.0;\n" \
+-		"float fd = fe - fs;\n" \
+-		"darkness = clamp((darkness - fs) * (1.0 / fd), 0.0, 1.0);\n" \
+-	"}\n" \
+-	"float colorBrightness = sqrt((final_color.r * final_color.r) + (final_color.g * final_color.g) + (final_color.b * final_color.b));\n" \
+-	"float fogBrightness = sqrt((fade_color.r * fade_color.r) + (fade_color.g * fade_color.g) + (fade_color.b * fade_color.b));\n" \
+-	"float colorIntensity = 0.0;\n" \
+-	"if (colorBrightness < fogBrightness) {\n" \
+-		"colorIntensity = 1.0 - min(final_color.r, min(final_color.g, final_color.b));\n" \
+-		"colorIntensity = abs(colorIntensity - (1.0 - max(fade_color.r, max(fade_color.g, fade_color.b))));\n" \
+-	"} else {\n" \
+-		"colorIntensity = max(final_color.r, max(final_color.g, final_color.b));\n" \
+-		"colorIntensity = abs(colorIntensity - min(fade_color.r, min(fade_color.g, fade_color.b)));\n" \
+-	"}\n" \
+-	"colorIntensity *= darkness;\n" \
+-	"colorIntensity *= fade_color.a * 10.0;\n" \
+-	"if (abs(final_color.r - fade_color.r) <= colorIntensity) {\n" \
+-		"final_color.r = fade_color.r;\n" \
+-	"} else if (final_color.r < fade_color.r) {\n" \
+-		"final_color.r += colorIntensity;\n" \
+-	"} else {\n" \
+-		"final_color.r -= colorIntensity;\n" \
+-	"}\n" \
+-	"if (abs(final_color.g - fade_color.g) <= colorIntensity) {\n" \
+-		"final_color.g = fade_color.g;\n" \
+-	"} else if (final_color.g < fade_color.g) {\n" \
+-		"final_color.g += colorIntensity;\n" \
+-	"} else {\n" \
+-		"final_color.g -= colorIntensity;\n" \
+-	"}\n" \
+-	"if (abs(final_color.b - fade_color.b) <= colorIntensity) {\n" \
+-		"final_color.b = fade_color.b;\n" \
+-	"} else if (final_color.b < fade_color.b) {\n" \
+-		"final_color.b += colorIntensity;\n" \
+-	"} else {\n" \
+-		"final_color.b -= colorIntensity;\n" \
+-	"}\n"
+-
+-// ================
+-//  Vertex shaders
+-// ================
+-
+-//
+-// Generic vertex shader
+-//
+-
+-#define GLSL_DEFAULT_VERTEX_SHADER \
+-	"void main()\n" \
+-	"{\n" \
+-		"gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;\n" \
+-		"gl_FrontColor = gl_Color;\n" \
+-		"gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n" \
+-		"gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;\n" \
+-	"}\0"
+-
+-// reinterpretation of sprite lighting for models
+-// it's a combination of how it works for normal sprites & papersprites
+-#define GLSL_MODEL_LIGHTING_VERTEX_SHADER \
+-	"uniform float lighting;\n" \
+-	"uniform vec3 light_dir;\n" \
+-	"uniform float light_contrast;\n" \
+-	"uniform float light_backlight;\n" \
+-	"void main()\n" \
+-	"{\n" \
+-		"gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;\n" \
+-		"float light = lighting;\n" \
+-		"if (length(light_dir) > 0.000001) {\n" \
+-			"mat4 m4 = gl_ProjectionMatrix * gl_ModelViewMatrix;\n" \
+-			"mat3 m3 = mat3( m4[0].xyz, m4[1].xyz, m4[2].xyz );\n" \
+-			"float extralight = -dot(normalize(gl_Normal * m3), normalize(light_dir));\n" \
+-			"extralight *= light_contrast - light_backlight;\n" \
+-			"extralight *= lighting / 255.0;\n" \
+-			"light += extralight * 2.5;\n" \
+-		"}\n" \
+-		"light = clamp(light / 255.0, 0.0, 1.0);\n" \
+-		"gl_FrontColor = vec4(light, light, light, 1.0);\n" \
+-		"gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n" \
+-		"gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;\n" \
+-	"}\0"
+-
+-// ==================
+-//  Fragment shaders
+-// ==================
+-
+-//
+-// Generic fragment shader
+-//
+-
+-#define GLSL_DEFAULT_FRAGMENT_SHADER \
+-	"uniform sampler2D tex;\n" \
+-	"uniform vec4 poly_color;\n" \
+-	"void main(void) {\n" \
+-		"gl_FragColor = texture2D(tex, gl_TexCoord[0].st) * poly_color;\n" \
+-	"}\0"
+-
+-//
+-// Software fragment shader
+-//
+-
+-#define GLSL_SOFTWARE_FRAGMENT_SHADER \
+-	"uniform sampler2D tex;\n" \
+-	"uniform sampler2D brightmap;\n" \
+-	"uniform vec4 poly_color;\n" \
+-	"uniform vec4 tint_color;\n" \
+-	"uniform vec4 fade_color;\n" \
+-	"uniform float lighting;\n" \
+-	"uniform float fade_start;\n" \
+-	"uniform float fade_end;\n" \
+-	GLSL_DOOM_COLORMAP \
+-	GLSL_DOOM_LIGHT_EQUATION \
+-	"void main(void) {\n" \
+-		"vec4 texel = texture2D(tex, gl_TexCoord[0].st);\n" \
+-		"vec4 base_color = texel * poly_color;\n" \
+-		"vec4 final_color = base_color;\n" \
+-		"float brightmap_mix = floor(texture2D(brightmap, gl_TexCoord[0].st).r);\n" \
+-		"float light_gain = (255.0 - lighting) * brightmap_mix;\n" \
+-		"float final_lighting = lighting + light_gain;\n" \
+-		GLSL_SOFTWARE_TINT_EQUATION \
+-		GLSL_SOFTWARE_FADE_EQUATION \
+-		"final_color.a = texel.a * poly_color.a;\n" \
+-		"gl_FragColor = final_color;\n" \
+-	"}\0"
+-
+-// same as above but multiplies results with the lighting value from the
+-// accompanying vertex shader (stored in gl_Color)
+-#define GLSL_SOFTWARE_MODEL_LIGHTING_FRAGMENT_SHADER \
+-	"uniform sampler2D tex;\n" \
+-	"uniform sampler2D brightmap;\n" \
+-	"uniform vec4 poly_color;\n" \
+-	"uniform vec4 tint_color;\n" \
+-	"uniform vec4 fade_color;\n" \
+-	"uniform float fade_start;\n" \
+-	"uniform float fade_end;\n" \
+-	GLSL_DOOM_COLORMAP \
+-	GLSL_DOOM_LIGHT_EQUATION \
+-	"void main(void) {\n" \
+-		"vec4 texel = texture2D(tex, gl_TexCoord[0].st);\n" \
+-		"vec4 base_color = texel * poly_color;\n" \
+-		"vec4 final_color = base_color;\n" \
+-		"float final_lighting = gl_Color.r * 255.0;\n" \
+-		"float brightmap_mix = floor(texture2D(brightmap, gl_TexCoord[0].st).r);\n" \
+-		"float light_gain = (255.0 - final_lighting) * brightmap_mix;\n" \
+-		"final_lighting += light_gain;\n" \
+-		GLSL_SOFTWARE_TINT_EQUATION \
+-		GLSL_SOFTWARE_FADE_EQUATION \
+-		"final_color.a = texel.a * poly_color.a;\n" \
+-		"gl_FragColor = final_color;\n" \
+-	"}\0"
+-
+-//
+-// Water surface shader
+-//
+-// Mostly guesstimated, rather than the rest being built off Software science.
+-// Still needs to distort things underneath/around the water...
+-//
+-
+-#define GLSL_WATER_FRAGMENT_SHADER \
+-	"uniform sampler2D tex;\n" \
+-	"uniform sampler2D brightmap;\n" \
+-	"uniform vec4 poly_color;\n" \
+-	"uniform vec4 tint_color;\n" \
+-	"uniform vec4 fade_color;\n" \
+-	"uniform float lighting;\n" \
+-	"uniform float fade_start;\n" \
+-	"uniform float fade_end;\n" \
+-	"uniform float leveltime;\n" \
+-	"const float freq = 0.025;\n" \
+-	"const float amp = 0.025;\n" \
+-	"const float speed = 2.0;\n" \
+-	"const float pi = 3.14159;\n" \
+-	GLSL_DOOM_COLORMAP \
+-	GLSL_DOOM_LIGHT_EQUATION \
+-	"void main(void) {\n" \
+-		"float z = (gl_FragCoord.z / gl_FragCoord.w) / 2.0;\n" \
+-		"float a = -pi * (z * freq) + (leveltime * speed);\n" \
+-		"float sdistort = sin(a) * amp;\n" \
+-		"float cdistort = cos(a) * amp;\n" \
+-		"vec4 texel = texture2D(tex, vec2(gl_TexCoord[0].s - sdistort, gl_TexCoord[0].t - cdistort));\n" \
+-		"vec4 base_color = texel * poly_color;\n" \
+-		"vec4 final_color = base_color;\n" \
+-		"float brightmap_mix = floor(texture2D(brightmap, gl_TexCoord[0].st).r);\n" \
+-		"float light_gain = (255.0 - lighting) * brightmap_mix;\n" \
+-		"float final_lighting = lighting + light_gain;\n" \
+-		GLSL_SOFTWARE_TINT_EQUATION \
+-		GLSL_SOFTWARE_FADE_EQUATION \
+-		"final_color.a = texel.a * poly_color.a;\n" \
+-		"gl_FragColor = final_color;\n" \
+-	"}\0"
+-
+-//
+-// Fog block shader
+-//
+-// Alpha of the planes themselves are still slightly off -- see HWR_FogBlockAlpha
+-//
+-
+-#define GLSL_FOG_FRAGMENT_SHADER \
+-	"uniform vec4 tint_color;\n" \
+-	"uniform vec4 fade_color;\n" \
+-	"uniform float lighting;\n" \
+-	"uniform float fade_start;\n" \
+-	"uniform float fade_end;\n" \
+-	GLSL_DOOM_COLORMAP \
+-	GLSL_DOOM_LIGHT_EQUATION \
+-	"void main(void) {\n" \
+-		"vec4 base_color = gl_Color;\n" \
+-		"vec4 final_color = base_color;\n" \
+-		"float brightmap_mix = 0.0;\n" \
+-		"float light_gain = 0.0;\n" \
+-		"float final_lighting = lighting + light_gain;\n" \
+-		GLSL_SOFTWARE_TINT_EQUATION \
+-		GLSL_SOFTWARE_FADE_EQUATION \
+-		"gl_FragColor = final_color;\n" \
+-	"}\0"
+-
+-// Sprite clipping makes me want to McFucking Die
+-
+-#define GLSL_SPRITECLIP_HACK_VERTEX_SHADER \
+-	"void main(void) {\n" \
+-		"gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex;\n" \
+-		"gl_FrontColor = gl_Color;\n" \
+-		"gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n" \
+-		"gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;\n" \
+-		"gl_Position.z -= 80.0 / gl_Position.z;\n" \
+-	"}\0"
+-
+-//
+-// Sky fragment shader
+-// Modulates poly_color with gl_Color
+-//
+-#define GLSL_SKY_FRAGMENT_SHADER \
+-	"uniform sampler2D tex;\n" \
+-	"uniform vec4 poly_color;\n" \
+-	"void main(void) {\n" \
+-		"gl_FragColor = texture2D(tex, gl_TexCoord[0].st) * gl_Color * poly_color;\n" \
+-	"}\0"
+-
+-// ================
+-//  Shader sources
+-// ================
+-
+-static struct {
+-	const char *vertex;
+-	const char *fragment;
+-} const gl_shadersources[] = {
+-	// Default shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_DEFAULT_FRAGMENT_SHADER},
+-
+-	// Floor shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
+-
+-	// Wall shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
+-
+-	// Sprite shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
+-
+-	// Sprite clipping hack shader (for pulling things out of the floor)
+-	{GLSL_SPRITECLIP_HACK_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
+-
+-	// Model shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SOFTWARE_FRAGMENT_SHADER},
+-
+-	// Model shader + diffuse lighting from above
+-	{GLSL_MODEL_LIGHTING_VERTEX_SHADER, GLSL_SOFTWARE_MODEL_LIGHTING_FRAGMENT_SHADER},
+-
+-	// Water shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_WATER_FRAGMENT_SHADER},
+-
+-	// Fog shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_FOG_FRAGMENT_SHADER},
+-
+-	// Sky shader
+-	{GLSL_DEFAULT_VERTEX_SHADER, GLSL_SKY_FRAGMENT_SHADER},
+-
+-	{NULL, NULL},
+-};
++#include "../hw_glsl.h"
+ 
+ #endif	// GL_SHADERS
+ 
 diff --git a/src/http-mserv.c b/src/http-mserv.c
 index 4f9f9cb39..6854fc5e7 100644
 --- a/src/http-mserv.c

@@ -37,6 +37,7 @@ jobs:
         with:
           name: regression-results
           path: |
+            build/regression/translated-shaders/*.hlsl
             build/regression/results.xml
             build/regression/Testing/Temporary/LastTest.log
             build/regression/Testing/Temporary/LastTestsFailed.log
@@ -85,6 +86,23 @@ jobs:
             }
           }
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: regression-results
+          path: regression-results
+
+      - name: Compile translated add-on shader fixtures
+        shell: pwsh
+        run: |
+          $fxc = (Get-Command fxc -ErrorAction Stop).Source
+          $fixtures = @(Get-ChildItem regression-results -Recurse -Filter *.hlsl)
+          if ($fixtures.Count -ne 72) { throw "Expected 72 translated shader stages; found $($fixtures.Count)" }
+          foreach ($fixture in $fixtures) {
+            $profile = if ($fixture.Name.EndsWith('.vert.hlsl')) { 'vs_4_0' } else { 'ps_4_0' }
+            & $fxc /nologo /O3 /T $profile /E main /Fo "$env:TEMP/rr-shader-test.cso" $fixture.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Direct3D SM4 water shader regressions (WARP)
         shell: pwsh
         run: |
@@ -117,6 +135,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           Get-ChildItem build\AppPackages -Recurse -Include *.msix, *.appx | Copy-Item -Destination out
+
+          $package = @(Get-ChildItem out -Filter 'ringracers-uwp*.msix')
+          if ($package.Count -ne 1) { throw "Expected one Ring Racers MSIX" }
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($package[0].FullName)
+          try {
+            foreach ($notice in @('Licenses/glslang.txt', 'Licenses/SPIRV-Cross.txt')) {
+              $entry = $archive.GetEntry($notice)
+              if ($null -eq $entry -or $entry.Length -lt 1000) { throw "Package is missing $notice" }
+            }
+            if ($null -eq $archive.GetEntry('AppxSignature.p7x')) { throw "Package is unsigned" }
+          } finally { $archive.Dispose() }
+
 
       - uses: actions/upload-artifact@v7
         with:

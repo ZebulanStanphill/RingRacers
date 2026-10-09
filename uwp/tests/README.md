@@ -3,7 +3,7 @@
 These tests run on Linux, macOS, or WSL without game assets, an Xbox, SDL,
 Direct3D, or vcpkg. Requirements: Python 3.9+, Git, CMake 3.24+, and `clang++`
 with its AddressSanitizer/UndefinedBehaviorSanitizer runtimes. Ubuntu's Clang and
-Apple's Command Line Tools work. Native MSVC/clang-cl is not supported by this
+Apple's Command Line Tools work. Configuration fetches pinned glslang and SPIRV-Cross sources and needs network access on the first run. Native MSVC/clang-cl is not supported by this
 harness; the existing Windows CI job still builds and packages the UWP app.
 
 ## Running
@@ -55,6 +55,19 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   load resets, tics across the unlogged gap, camera/presentation snapshots, missing
   player objects, unpresented frames, and that tracing
   leaves the player's object unchanged. Compile/run hardware and software variants.
+- **Add-on shader translation and dispatch:** compile the production GLSL adapter,
+  glslang parser/linker and SPIRV-Cross emitter. Translate 36 shader/layout pairs
+  with reordered varyings, uniforms/initializers, matrices and fragment coordinates;
+  reject invalid interfaces, malformed/oversized sources and invalid layouts,
+  then verify compiler recovery. Execute production driver loading/compilation and
+  shader selection with GPU creation stubs: missing-stage defaults, dirty caching,
+  atomic translation/GPU failures, Ignore custom shaders, sprite clipping variants,
+  custom model lighting, normal/custom water captures and postprocessing priority.
+  Windows CI compiles all 72 stages with SM4 `fxc`, then runs the production shader
+  and input-layout factory on WARP: 36,864 pixels verify polygon/sky/model data,
+  driver constants, UVs, GL fragment coordinates, alpha tests and portal clipping.
+  Add-on visuals and load cost on Xbox remain untested; existing water and wall
+  confirmations do not validate custom shaders.
 - **Wall light slices:** execute production UWP wall splitting and clipping with
   real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
   capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the
