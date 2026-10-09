@@ -49,22 +49,18 @@ Every push first runs the native regression tests on Linux, then builds the app 
 
 These are in the latest build but haven't yet been confirmed by a human to actually work:
 
-- **Legacy GL: water boundaries inside other water volumes** now follow Software's visibility rule, preventing extra ripple surfaces from distorting scenery again. The new Water Palace regression checks both faces against Software. This revision needs Xbox visual validation; the user confirmed that the background cutoff and sky position are fixed.
-- **VibeRant D3D11: invisible walls** now use a zero color-write mask while preserving depth. A regression reproduces the state change that could paint sky-blocking walls brown. The state regression is fixed, but the latest Xbox recording still shows brown walls with Better transparency ordering both on and off. Their cause remains unresolved.
-- **VibeRant D3D11: water-surface refraction** shares one scene capture across coplanar water pieces. The user reports that the latest ripple effect is fixed; brown walls persist after the invisible-state fix above and remain under investigation. The shader also now uses Direct3D's actual pixel depth: the earlier inverted depth made distant ripples too strong. Windows CI executes the real SM4 shaders through WARP as well as the native tests. Shared captures now copy bounded regions and expand them without recapturing earlier water. The Grand Prix run exposed excessive full-viewport copy cost; the next profile logs water copies and bytes separately. The revised GPU cost needs Xbox retesting.
+- **VibeRant D3D11: remaining water coverage and GPU performance checks.** The user confirmed working water effects and the brown-wall fix on Water Palace in build 94. Other overlapping-water-volume cases and a controlled GPU performance comparison remain untested. Native tests cover hidden water boundaries, bounded shared captures and actual Direct3D depth attenuation; Windows CI also executes the real SM4 shaders through WARP.
 - **VibeRant D3D11: heat distortion and every split-screen visual check** remain untested on Xbox. The user reported improved single-view underwater intensity. Native regression tests cover all layouts; a second controller is needed to confirm view isolation, mixed underwater/above-water cameras, heat, and the HUD on the device.
 - **Legacy GL: skybox views leave out precipitation and things marked to hide from skyboxes** (`RF_HIDEINSKYBOX`, such as Battle overtime's barrier markers), as the Software renderer does. Rain and snow used to fall inside the distant scenery too.
 - **If Legacy GL runs out of video memory, it clears its texture cache.** This may cause a brief hitch instead of slowing to a crawl.
 
-## Brown-wall diagnostic build
+## Hardware water rendering
 
-The `diagnostics/hw-brown-surfaces` branch adds bounded surface logging for investigating the brown walls. Its latest package also adds a **Batching** switch under **Options → Video → Advanced**, in the **VibeRant D3D11 Options** section directly below **Better transparency ordering**. Change it with Left/Right on the controller. It starts On and resets to On on the next launch. Build 90 and current master do not have this menu entry; use a later package from this diagnostic branch.
+**VibeRant D3D11's water-surface ripples enhance the Software renderer's effect:** viewed from above, they refract visible submerged track geometry as well as the background. In the user's Water Palace comparison, Software's ripple distortion affected only the background. This enhancement and the removal of the large brown walls were confirmed on Xbox One X in build 94. The walls came from inverted lighting slices of a sloped wall; each slice is now clipped to the original wall. [Implementation and regression coverage](CHANGES.md#graphics).
 
-1. On Water Palace with VibeRant D3D11 enabled, stop the kart where the walls appear. Leave gameplay unpaused for at least five seconds with Batching On.
-2. Open Options → Video → Advanced and set Batching Off. Return to gameplay at the same spot and leave it unpaused for another five seconds.
-3. Note whether the walls disappear and save `latest-log.txt` before another launch. You can set Batching back to On after the comparison.
+The **Batching** switch is under **Options → Video → Advanced**, in the **VibeRant D3D11 Options** section directly below **Better transparency ordering**. Change it with Left/Right on the controller. It starts On and resets to On on the next launch.
 
-The `UWP sky geometry:` and `UWP sky surface:` lines identify candidate map surfaces and the active settings. The added switch exposes the existing `gr_batching` setting; it does not fix the walls. [Diagnostic details and limits](CHANGES.md#diagnostics).
+For future visual investigations, bounded surface logging and the opt-in `gr_surfaceprobe` command remain available. Pixel history requires Batching off and a single hardware-rendered level view; its capture can stall that frame. [Diagnostic instructions and limits](CHANGES.md#diagnostics).
 
 ## Notes
 

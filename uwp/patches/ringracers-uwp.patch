@@ -1,4 +1,4 @@
-From 5aa8248c619deb8758356ddcbaefaad2a34e3712 Mon Sep 17 00:00:00 2001
+From a563a9a01fdb40466a3e9eac945ffa00a837acf0 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -226,6 +226,9 @@ RingRacers-dev, rebased onto v2.4.
 - Refract scenery through translucent ripple surfaces using Software's sine table,
   signed pixel offsets and distance attenuation; bound scene copies to the face
   and clamp sampling to the active viewport. Composite each blend mode once.
+  Above-water ripples also refract submerged track geometry, an enhancement
+  over Software's background-only effect in the user's Water Palace comparison,
+  confirmed on Xbox One X with build 94.
 
 - Honor Software's sky patch header offsets in both sky-dome hemispheres and
   the flat fallback, including Water Palace's 16-pixel vertical offset; convert
@@ -273,7 +276,8 @@ RingRacers-dev, rebased onto v2.4.
   per view, capped at 16 floors, 16 walls and four occluders, with one bounded
   log write per surface. Exclude skybox/recursive portal passes and preserve
   rendering, traversal and capture behavior. These are submitted surfaces,
-  not proven visible pixels; the reported brown-wall cause remains unresolved.
+  not proven visible pixels; the later pixel probe identified the faulty
+  Water Palace wall light slice.
 
 - Expose the existing gr_batching On/Off setting in UWP's Advanced Video
   menu below Better transparency ordering, allowing controller-only tests.
@@ -289,13 +293,16 @@ RingRacers-dev, rebased onto v2.4.
   geometry and driver state. Keep resources/copies dormant unless requested,
   release them on completion/failure and cap samples/reports. Reject batching,
   split-screen, invalid coordinates and non-level/non-hardware requests.
-  This diagnoses the unresolved brown walls without altering render state.
+  This identified the brown-wall geometry fault without altering render state.
 
 - Clip UWP wall light bands to the original sloped wall, splitting at
   boundary crossings rather than emitting inverted or expanded quads.
   Preserve wall texture mapping, lighting, solid cutouts and queued modes;
   handle zero-height endpoints with bounded stack storage. This fixes the
-  WTPTU1 geometry fault identified by Water Palace's Xbox pixel capture.
+  WTPTU1 geometry fault identified by Water Palace's Xbox pixel capture;
+  the user confirmed the wall fix and working water rendering in build 94.
+  All split-screen visual checks and a controlled performance comparison
+  remain untested.
 
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
