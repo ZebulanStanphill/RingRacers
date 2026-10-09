@@ -1,4 +1,4 @@
-From 7a140138db6d69289882307b6e0b4ac91f63afd1 Mon Sep 17 00:00:00 2001
+From b60af8619cbb7fadac2d23a9c9bbf1278f89ef89 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -156,15 +156,21 @@ RingRacers-dev, rebased onto v2.4.
   Each nested call now uses a table for its depth, and erases only the
   states it recorded
 - Read game data and save files from E:\ringracers
-- Ask at launch whether to check the main asset files, since that reads
-  all of them from the USB drive, or to quit (also B, which used to act
-  like A). Skipping is the default: it uses the expected MD5s instead of
-  hashing the files, and doesn't read every zip entry's local header to
-  check the layout and find where its data starts; that's found the first
-  time the entry is read instead
-- Hash only the names of the music and sound files, even when the check
-  runs. They have no expected MD5, and theirs only detects duplicate
-  loads, so reading all ~450 MB took ~25 s and couldn't detect anything
+- Load the main asset files using their expected MD5s instead of hashing
+  them, without reading every zip entry's local header to check the
+  layout and find where its data starts (that's found the first time the
+  entry is read instead), since reading them all from the USB drive is
+  slow. A below-normal-priority thread then verifies the files with an
+  expected MD5 using 1 MB reads while startup continues. The loading
+  screen shows that B skips it; the launcher reads the gamepad through
+  Windows.Gaming.Input so B works between redraws. Startup waits for it,
+  redrawing the loading screen, before D_CheckNetGame; a mismatch gives
+  upstream's error at the next loading step or after that wait. Log each
+  file's time and read speed, the outcome, and the wait. This replaces a
+  prompt at every launch
+- Hash only the names of the music and sound files. They have no
+  expected MD5, and theirs only detects duplicate loads, so reading all
+  ~450 MB took ~25 s and couldn't detect anything
 - Use the libuwp display size and refresh rate instead of SDL's
 - Force WASAPI audio
 - Write the log to E:\ringracers\latest-log.txt, since the working
@@ -336,15 +342,17 @@ Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
 Model: gpt-6.1-sol
+Agent: Claude (Haiku)
+Model: claude-haiku-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
  src/CMakeLists.txt                        |   44 +-
- src/console.c                             |   18 +
+ src/console.c                             |   28 +
  src/core/thread_pool.cpp                  |   19 +
  src/cvars.cpp                             |    5 +
  src/d_clisrv.c                            |   49 +
- src/d_main.cpp                            |  354 +-
+ src/d_main.cpp                            |  351 +-
  src/f_finale.c                            |    6 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
@@ -382,6 +390,8 @@ Model: gpt-6.1-sol
  src/m_fixed.h                             |   11 +
  src/m_perfstats.c                         |  244 +
  src/m_perfstats.h                         |   11 +
+ src/md5.c                                 |   19 +-
+ src/md5.h                                 |   31 +-
  src/menus/options-1.c                     |   34 +
  src/menus/options-video-advanced.c        |   44 +-
  src/p_lights.c                            |    9 +
@@ -407,7 +417,7 @@ Model: gpt-6.1-sol
  src/sdl/CMakeLists.txt                    |    5 +
  src/sdl/hwsym_sdl.c                       |    7 +
  src/sdl/i_main.cpp                        |   11 +-
- src/sdl/i_system.cpp                      |  132 +-
+ src/sdl/i_system.cpp                      |   99 +-
  src/sdl/i_uwpprofile.cpp                  |  863 +++
  src/sdl/i_uwptrace.h                      |   25 +
  src/sdl/i_video.cpp                       |   98 +-
@@ -416,10 +426,10 @@ Model: gpt-6.1-sol
  src/sdl/rhi_gl2_platform.cpp              |    9 +
  src/st_stuff.c                            |   10 +-
  src/v_video.cpp                           |   22 +
- src/w_wad.cpp                             |  115 +
- src/w_wad.h                               |   10 +
+ src/w_wad.cpp                             |  305 +
+ src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 82 files changed, 13577 insertions(+), 1057 deletions(-)
+ 84 files changed, 13758 insertions(+), 1091 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -615,10 +625,30 @@ index 9eb0bcb..46543dc 100644
  
  # Setup clang-tidy
 diff --git a/src/console.c b/src/console.c
-index 1e7585f..fc9c5fb 100644
+index 1e7585f..90620e1 100644
 --- a/src/console.c
 +++ b/src/console.c
-@@ -1948,7 +1948,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+@@ -34,6 +34,9 @@
+ #include "d_main.h"
+ #include "k_menu.h"
+ #include "filesrch.h"
++#ifdef _UWP
++#include "w_wad.h"
++#endif
+ #include "m_misc.h"
+ 
+ #ifdef HWRENDER
+@@ -1938,6 +1941,9 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
+ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+ {
+ 	const con_loadprogress_t expectedStep = con_startup_loadprogress + 1;
++#ifdef _UWP
++	W_UWPPollAssetCheck();
++#endif
+ 
+ 	if (newStep != expectedStep)
+ 	{
+@@ -1948,7 +1954,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
  	con_startup_loadprogress = newStep;
  
  	if (con_startup_loadprogress <= LOADED_ALLDONE)
@@ -644,6 +674,17 @@ index 1e7585f..fc9c5fb 100644
  
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
+@@ -1981,6 +2005,10 @@ void CON_DrawLoadBar(void)
+ 
+ 	if (con_startup_loadprogress <= LOADED_ALLDONE)
+ 	{
++#ifdef _UWP
++		if (W_UWPAssetCheckRunning())
++			V_DrawString(4, BASEVIDHEIGHT - (barheight + 16 + 4), V_FORCEUPPERCASE, "Checking game files - press B to skip");
++#endif
+ 		V_DrawString(4, BASEVIDHEIGHT - (barheight + 8 + 4), V_FORCEUPPERCASE, CON_LoadingStrings[con_startup_loadprogress]);
+ 	}
+ 
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
 index 8a434ba..0e3c54d 100644
 --- a/src/core/thread_pool.cpp
@@ -796,7 +837,7 @@ index 1166b3c..8c31e92 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0..685e7ea 100644
+index 19fcfe0..9d3567a 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -33,8 +33,14 @@
@@ -1259,24 +1300,17 @@ index 19fcfe0..685e7ea 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1757,6 +2085,16 @@ void D_SRB2Main(void)
- 	// Make backups of some SOCcable tables.
- 	P_BackupTables();
- 
-+#ifdef _UWP
-+	{
-+		const precise_t promptstart = I_GetPreciseTime();
-+
-+		w_skipassetcheck = I_UWPAskSkipAssetCheck();
-+		I_OutputMsg("UWP: %s the asset check (prompt took %.1f s)\n", w_skipassetcheck ? "skipping" : "running",
-+			(double)(I_GetPreciseTime() - promptstart) / I_GetPrecisePrecision());
-+	}
-+#endif
-+
+@@ -1760,6 +2088,9 @@ void D_SRB2Main(void)
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
-@@ -1774,7 +2112,19 @@ void D_SRB2Main(void)
++#ifdef _UWP
++	W_UWPStartAssetCheck();
++#endif
+ 	mainwads = num_startupiwads - musicwads;
+ 	D_CleanFile(startupiwads, num_startupiwads);
+ 	num_startupiwads = 0;
+@@ -1774,7 +2105,19 @@ void D_SRB2Main(void)
  	//
  	// search for mainwad maps
  	//
@@ -1296,7 +1330,18 @@ index 19fcfe0..685e7ea 100644
  	basenummapheaders = nummapheaders;
  	basenumkartcupheaders = numkartcupheaders;
  
-@@ -2323,6 +2673,8 @@ const char *D_Home(void)
+@@ -2014,6 +2357,10 @@ void D_SRB2Main(void)
+ 		}
+ 	}
+ 
++#ifdef _UWP
++	// Finish verification before networking can start a game.
++	W_UWPFinishAssetCheck();
++#endif
+ 	// init all NETWORK
+ 	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
+ 	if (D_CheckNetGame())
+@@ -2323,6 +2670,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -13700,7 +13745,7 @@ index 3fd6666..3cfcb18 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e..3d1986b 100644
+index 56d507e..3c59103 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
 @@ -313,8 +313,74 @@ boolean I_HasOpenURL(void);
@@ -13708,15 +13753,15 @@ index 56d507e..3d1986b 100644
  void I_OpenURL(const char *data);
  
 +#ifdef _UWP
-+// [UWP]: Asks at launch whether to skip checking the main asset files (see w_skipassetcheck). Returns true to skip.
-+boolean I_UWPAskSkipAssetCheck(void);
-+
 +// [UWP]: Time I_OutputMsg has spent writing messages to the log file and debugger, to see how much logging slows startup
 +extern precise_t i_uwplogtime;
 +
 +// [UWP]: Implemented by the launcher using MemoryManager. Returns 0 on success,
 +// otherwise an HRESULT. Reports the actual process budget and whether this is Xbox.
 +int I_UWPGetMemoryBudget(UINT64 *limit, UINT64 *usage, int *isXbox);
++
++// [UWP]: Poll the gamepads directly, including while startup is busy on the main thread.
++int I_UWPIsSkipButtonDown(void);
 +
 +// [UWP]: Logs the process budget, which distinguishes Xbox App/Game resources.
 +// GlobalMemoryStatusEx reports physical memory, not this budget.
@@ -14447,6 +14492,105 @@ index f92b1d8..4e4f82a 100644
  #ifdef __cplusplus
  } // extern "C"
  #endif
+diff --git a/src/md5.c b/src/md5.c
+index 62ea87e..d582c17 100644
+--- a/src/md5.c
++++ b/src/md5.c
+@@ -49,22 +49,9 @@
+    64-byte boundary.  (RFC 1321, 3.1: Step 1)  */
+ static const unsigned char fillbuf[64] = { 0x80, 0 /*, 0, 0, ...  */ };
+ 
+-/* Structure to save state of computation between the single steps.  */
+-struct md5_ctx
+-{
+-  md5_uint32 A;
+-  md5_uint32 B;
+-  md5_uint32 C;
+-  md5_uint32 D;
+-
+-  md5_uint32 total[2];
+-  md5_uint32 buflen;
+-  char buffer[128];
+-};
+-
+ /* Initialize structure containing state of computation.
+    (RFC 1321, 3.3: Step 3)  */
+-static void md5_init_ctx (struct md5_ctx *ctx)
++void md5_init_ctx (struct md5_ctx *ctx)
+ {
+   ctx->A = 0x67452301;
+   ctx->B = 0xefcdab89;
+@@ -257,7 +244,7 @@ static void md5_process_block (const void *buffer, size_t len, struct md5_ctx *c
+ }
+ 
+ 
+-static void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
++void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
+ {
+   /* When we already have some bits in our internal buffer concatenate
+      both inputs first.  */
+@@ -304,7 +291,7 @@ static void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *c
+ 
+    IMPORTANT: On some systems it is required that RESBUF is correctly
+    aligned for a 32 bits value.  */
+-static void *md5_finish_ctx (struct md5_ctx *ctx, void *resbuf)
++void *md5_finish_ctx (struct md5_ctx *ctx, void *resbuf)
+ {
+   /* Take yet unprocessed bytes into account.  */
+   md5_uint32 bytes = ctx->buflen;
+diff --git a/src/md5.h b/src/md5.h
+index 13fc341..c0f95f0 100644
+--- a/src/md5.h
++++ b/src/md5.h
+@@ -82,18 +82,23 @@ extern "C" {
+  * The following three functions are build up the low level used in
+  * the functions `md5_stream' and `md5_buffer'.
+  */
+-#if 0
++/* Structure to save state of computation between the single steps.  */
++struct md5_ctx
++{
++  md5_uint32 A;
++  md5_uint32 B;
++  md5_uint32 C;
++  md5_uint32 D;
++
++  md5_uint32 total[2];
++  md5_uint32 buflen;
++  char buffer[128];
++};
++
+ /* Initialize structure containing state of computation.
+    (RFC 1321, 3.3: Step 3)  */
+ extern void md5_init_ctx __P ((struct md5_ctx *ctx));
+ 
+-/* Starting with the result of former calls of this function (or the
+-   initialization function update the context for the next LEN bytes
+-   starting at BUFFER.
+-   It is necessary that LEN is a multiple of 64!!! */
+-extern void md5_process_block __P ((const void *buffer, size_t len,
+-                                   struct md5_ctx *ctx));
+-
+ /* Starting with the result of former calls of this function (or the
+    initialization function update the context for the next LEN bytes
+    starting at BUFFER.
+@@ -111,16 +116,6 @@ extern void md5_process_bytes __P ((const void *buffer, size_t len,
+ extern void *md5_finish_ctx __P ((struct md5_ctx *ctx, void *resbuf));
+ 
+ 
+-/* Put result from CTX in first 16 bytes following RESBUF.  The result is
+-   always in little endian byte order, so that a byte-wise output yields
+-   to the wanted ASCII representation of the message digest.
+-
+-   IMPORTANT: On some systems it is required that RESBUF is correctly
+-   aligned for a 32 bits value.  */
+-extern void *md5_read_ctx __P ((const struct md5_ctx *ctx, void *resbuf));
+-
+-#endif
+-
+ /* Compute MD5 message digest for bytes read from STREAM.  The
+    resulting message digest number will be written into the 16 bytes
+    beginning at RESBLOCK.  */
 diff --git a/src/menus/options-1.c b/src/menus/options-1.c
 index 41bc817..ccb3958 100644
 --- a/src/menus/options-1.c
@@ -17186,7 +17330,7 @@ index f2fa2fc..73f659d 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493..03eded3 100644
+index 827f493..633c62f 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -17199,7 +17343,7 @@ index 827f493..03eded3 100644
  #define USE_DBGHELP
  #include <DbgHelp.h>
  #endif
-@@ -287,6 +288,98 @@ static void write_backtrace(INT32 signal)
+@@ -287,6 +288,65 @@ static void write_backtrace(INT32 signal)
  #undef CRASHLOG_STDERR_WRITE
  #endif // UNIXBACKTRACE
  
@@ -17247,39 +17391,6 @@ index 827f493..03eded3 100644
 +
 +precise_t i_uwplogtime = 0;
 +
-+boolean I_UWPAskSkipAssetCheck(void)
-+{
-+	// B picks the escape-key default, so make that Quit rather than the same as A
-+	const SDL_MessageBoxButtonData buttons[] = {
-+		{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Skip check"},
-+		{0, 0, "Check files"},
-+		{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"},
-+	};
-+	SDL_MessageBoxData data = {};
-+	int button = 0;
-+
-+	data.flags = SDL_MESSAGEBOX_INFORMATION;
-+	data.title = "Dr. Robotnik's Ring Racers";
-+	data.message =
-+		"Check the game files in E:\\ringracers before loading?\n\n"
-+		"Checking reads every file in full, which can take a while from a USB drive. "
-+		"Skipping loads faster, but won't catch damaged or outdated files.";
-+	data.numbuttons = (int)SDL_arraysize(buttons);
-+	data.buttons = buttons;
-+
-+	if (SDL_ShowMessageBox(&data, &button) < 0)
-+		return false;
-+
-+	if (button == 2)
-+	{
-+		// Nothing has been loaded or saved yet, so there's nothing to shut down
-+		I_OutputMsg("UWP: quitting from the file-check prompt\n");
-+		exit(0);
-+	}
-+
-+	return button == 1;
-+}
-+
 +void I_UWPLogMemoryLimit(void)
 +{
 +	UINT64 limit = 0, usage = 0;
@@ -17298,7 +17409,7 @@ index 827f493..03eded3 100644
  static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
  {
  	static char finalmessage[2048];
-@@ -295,6 +388,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
+@@ -295,6 +355,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
  	if (M_CheckParm("-dedicated"))
  		return;
  
@@ -17328,7 +17439,7 @@ index 827f493..03eded3 100644
  	snprintf(
  		finalmessage,
  		sizeof(finalmessage),
-@@ -1071,6 +1187,10 @@ void I_OutputMsg(const char *fmt, ...)
+@@ -1071,6 +1154,10 @@ void I_OutputMsg(const char *fmt, ...)
  	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
  #endif
  
@@ -17339,7 +17450,7 @@ index 827f493..03eded3 100644
  #if defined (_WIN32) && defined (_MSC_VER)
  	OutputDebugStringA(txt);
  #endif
-@@ -1086,6 +1206,10 @@ void I_OutputMsg(const char *fmt, ...)
+@@ -1086,6 +1173,10 @@ void I_OutputMsg(const char *fmt, ...)
  	}
  #endif
  
@@ -17350,7 +17461,7 @@ index 827f493..03eded3 100644
  #if defined (_WIN32)
  #ifdef DEBUGFILE
  	if (debugfile != stderr)
-@@ -2083,6 +2207,7 @@ static void Shittycopyerror(const char *name)
+@@ -2083,6 +2174,7 @@ static void Shittycopyerror(const char *name)
  
  static void Shittylogcopy(void)
  {
@@ -17358,7 +17469,7 @@ index 827f493..03eded3 100644
  	char buf[8192];
  	FILE *fp;
  	size_t r;
-@@ -2110,6 +2235,7 @@ static void Shittylogcopy(void)
+@@ -2110,6 +2202,7 @@ static void Shittylogcopy(void)
  	{
  		Shittycopyerror(logfilename);
  	}
@@ -17366,7 +17477,7 @@ index 827f493..03eded3 100644
  }
  #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
  
-@@ -2374,6 +2500,10 @@ static const char *locateWad(void)
+@@ -2374,6 +2467,10 @@ static const char *locateWad(void)
  	const char *envstr;
  	const char *WadPath;
  
@@ -18653,17 +18764,28 @@ index 481a70d..e024206 100644
  	if (rendermode == render_opengl)
  	{
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
-index 3c68b13..955a9b2 100644
+index 3c68b13..6771b11 100644
 --- a/src/w_wad.cpp
 +++ b/src/w_wad.cpp
-@@ -114,6 +114,14 @@ static UINT16 lumpnumcacheindex = 0;
+@@ -43,6 +43,12 @@
+ 
+ #include <algorithm>
+ #include <cstddef>
++#ifdef _UWP
++#include <atomic>
++#include <chrono>
++#include <windows.h>
++#include "console.h"
++#endif
+ 
+ #include "doomdef.h"
+ #include "doomstat.h"
+@@ -114,6 +120,12 @@ static UINT16 lumpnumcacheindex = 0;
  UINT16 numwadfiles = 0; // number of active wadfiles
  wadfile_t *wadfiles[MAX_WADFILES]; // 0 to numwadfiles-1 are valid
  
 +#ifdef _UWP
-+boolean w_skipassetcheck = false;
-+
-+// [UWP]: Set while W_InitFile checks and reads the directory of a main file with the asset check skipped, so that
++// [UWP]: Set while W_InitFile checks and reads the directory of a main file verified in the background, so that
 +// W_VerifyPK3 and ResGetLumpsZip don't read every zip entry's local header, which reads most of the file
 +static boolean w_uwptrustlayout = false;
 +#endif
@@ -18671,7 +18793,197 @@ index 3c68b13..955a9b2 100644
  static FILE *g_shaderspk3file;
  static UINT16 g_shaderspk3numlumps;
  static lumpinfo_t *g_shaderspk3lumps;
-@@ -473,6 +481,9 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
+@@ -122,6 +134,189 @@ static lumpinfo_t *g_shaderspk3lumps;
+ static void PrintMD5String(const UINT8 *md5, char *buf);
+ #endif
+ 
++#ifdef _UWP
++// Only the main thread queues files, before starting the worker. The worker owns
++// all result fields until the release store of its final state; the main thread
++// reads them only after an acquire load. No zone allocations or engine logging
++// occur on the worker. Static storage has no exit-time destructors.
++enum uwpcheckstate_t { UWPCHECK_IDLE, UWPCHECK_RUNNING, UWPCHECK_VERIFIED, UWPCHECK_SKIPPED, UWPCHECK_FAILED };
++struct uwpcheckfile_t
++{
++	char filename[MAX_WADPATH];
++	UINT8 expected[MD5_LEN];
++	double seconds;
++	size_t bytes;
++};
++static uwpcheckfile_t uwpcheckfiles[32];
++static size_t uwpcheckcount, uwpcheckverified, uwpcheckfailedfile;
++static double uwpcheckseconds;
++static char uwpcheckerror[128], uwpcheckfound[2*MD5_LEN+1], uwpcheckwanted[2*MD5_LEN+1];
++static std::atomic<int> uwpcheckstate { UWPCHECK_IDLE };
++static std::atomic<bool> uwpcheckcancel { false };
++static boolean uwpcheckreported;
++
++static void W_UWPQueueAssetCheck(const char *filename, const UINT8 *expected)
++{
++	if (uwpcheckstate.load(std::memory_order_relaxed) != UWPCHECK_IDLE
++		|| uwpcheckcount == sizeof(uwpcheckfiles)/sizeof(uwpcheckfiles[0])
++		|| strlen(filename) >= MAX_WADPATH)
++		I_Error("UWP: Cannot queue asset check for %s\n", filename);
++	uwpcheckfile_t &file = uwpcheckfiles[uwpcheckcount++];
++	strcpy(file.filename, filename);
++	memcpy(file.expected, expected, MD5_LEN);
++}
++
++static double W_UWPCheckElapsed(std::chrono::steady_clock::time_point start)
++{
++	return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
++}
++
++static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
++{
++	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
++	const auto start = std::chrono::steady_clock::now();
++	const size_t chunksize = 1024*1024;
++	void *buffer = malloc(chunksize);
++	int outcome = UWPCHECK_VERIFIED;
++	if (!buffer)
++	{
++		strcpy(uwpcheckerror, "Cannot allocate file-check buffer");
++		outcome = UWPCHECK_FAILED;
++	}
++	for (size_t i = 0; buffer && i < uwpcheckcount; i++)
++	{
++		uwpcheckfailedfile = i;
++		uwpcheckfile_t &file = uwpcheckfiles[i];
++		const auto filestart = std::chrono::steady_clock::now();
++		FILE *handle = NULL;
++		md5_ctx ctx;
++		alignas(md5_uint32) UINT8 digest[MD5_LEN];
++		md5_init_ctx(&ctx);
++		if (uwpcheckcancel.load(std::memory_order_relaxed) || I_UWPIsSkipButtonDown())
++			outcome = UWPCHECK_SKIPPED;
++		else if (!(handle = fopen(file.filename, "rb")))
++		{
++			snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot open file (errno %d)", errno);
++			outcome = UWPCHECK_FAILED;
++		}
++		else
++		{
++			setvbuf(handle, NULL, _IONBF, 0);
++			for (;;)
++			{
++				if (uwpcheckcancel.load(std::memory_order_relaxed) || I_UWPIsSkipButtonDown())
++				{
++					outcome = UWPCHECK_SKIPPED;
++					break;
++				}
++				const size_t bytes = fread(buffer, 1, chunksize, handle);
++				file.bytes += bytes;
++				md5_process_bytes(buffer, bytes, &ctx);
++				if (ferror(handle))
++				{
++					snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot read file (errno %d)", errno);
++					outcome = UWPCHECK_FAILED;
++					break;
++				}
++				if (feof(handle))
++					break;
++			}
++			fclose(handle);
++		}
++		file.seconds = W_UWPCheckElapsed(filestart);
++		if (outcome != UWPCHECK_VERIFIED)
++			break;
++		md5_finish_ctx(&ctx, digest);
++		if (memcmp(digest, file.expected, MD5_LEN))
++		{
++			PrintMD5String(digest, uwpcheckfound);
++			PrintMD5String(file.expected, uwpcheckwanted);
++			outcome = UWPCHECK_FAILED;
++			break;
++		}
++		uwpcheckverified++;
++	}
++	free(buffer);
++	uwpcheckseconds = W_UWPCheckElapsed(start);
++	uwpcheckstate.store(outcome, std::memory_order_release);
++	return 0;
++}
++
++void W_UWPStartAssetCheck(void)
++{
++	if (uwpcheckstate.load(std::memory_order_relaxed) != UWPCHECK_IDLE)
++		return;
++	uwpcheckstate.store(UWPCHECK_RUNNING, std::memory_order_release);
++	HANDLE thread = CreateThread(NULL, 0, W_UWPAssetCheckWorker, NULL, 0, NULL);
++	if (thread)
++		CloseHandle(thread); // Detached: the worker uses only static POD state and its own file/buffer.
++	else
++	{
++		snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot start file-check thread (error %lu)", GetLastError());
++		uwpcheckstate.store(UWPCHECK_FAILED, std::memory_order_release);
++	}
++}
++
++boolean W_UWPAssetCheckRunning(void)
++{
++	return uwpcheckstate.load(std::memory_order_acquire) == UWPCHECK_RUNNING;
++}
++
++void W_UWPPollAssetCheck(void)
++{
++	const int state = uwpcheckstate.load(std::memory_order_acquire);
++	if (state == UWPCHECK_IDLE || state == UWPCHECK_RUNNING || uwpcheckreported)
++		return;
++	uwpcheckreported = true;
++	for (size_t i = 0; i < uwpcheckcount; i++)
++	{
++		const uwpcheckfile_t &file = uwpcheckfiles[i];
++		if (file.seconds > 0)
++			I_OutputMsg("UWP: asset check %s: %.2f s, %.1f MB/s\n", file.filename, file.seconds,
++				file.bytes / (1024.0*1024.0) / file.seconds);
++	}
++	if (state == UWPCHECK_VERIFIED)
++		I_OutputMsg("UWP: asset check verified all %u files in %.2f s\n", (unsigned)uwpcheckcount, uwpcheckseconds);
++	else if (state == UWPCHECK_SKIPPED)
++		I_OutputMsg("UWP: asset check skipped by the user after %.2f s, %u of %u verified\n",
++			uwpcheckseconds, (unsigned)uwpcheckverified, (unsigned)uwpcheckcount);
++	else
++	{
++		uwpcheckcancel.store(true, std::memory_order_relaxed);
++		I_OutputMsg("UWP: asset check failed after %.2f s, %u of %u verified\n",
++			uwpcheckseconds, (unsigned)uwpcheckverified, (unsigned)uwpcheckcount);
++		const char *filename = uwpcheckcount ? uwpcheckfiles[uwpcheckfailedfile].filename : "(no file)";
++#ifdef DEVELOP
++		if (uwpcheckerror[0])
++			CONS_Printf("Cannot verify game file %s: %s\n", filename, uwpcheckerror);
++		else
++			CONS_Printf("File %s does not match expected md5\n", filename);
++#else
++		if (uwpcheckerror[0])
++			I_Error("Cannot verify game file %s: %s\n", filename, uwpcheckerror);
++		else
++			I_Error(M_GetText("File is old, is corrupt or has been modified: %s (found md5: %s, wanted: %s)\n"),
++				filename, uwpcheckfound, uwpcheckwanted);
++#endif
++	}
++}
++
++void W_UWPFinishAssetCheck(void)
++{
++	const auto start = std::chrono::steady_clock::now();
++	while (W_UWPAssetCheckRunning())
++	{
++		CON_DrawLoadBar();
++		I_OsPolling();
++		I_UpdateNoBlit();
++		I_FinishUpdate();
++		I_Sleep(10);
++	}
++	I_OutputMsg("UWP: waited %.2f s for asset check\n", W_UWPCheckElapsed(start));
++	W_UWPPollAssetCheck();
++}
++#endif
++
+ // W_Shutdown
+ // Closes all of the WAD files before quitting
+ // If not done on a Mac then open wad files
+@@ -473,6 +668,9 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
  
  		memset(lump_p->name, 0x00, 9);
  		strncpy(lump_p->name, fileinfo->name, 8);
@@ -18681,7 +18993,7 @@ index 3c68b13..955a9b2 100644
  
  		if (WADNAMECHECK(fileinfo->name))
  		{
-@@ -715,6 +726,9 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
+@@ -715,6 +913,9 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
  		lump_p->position = LONG(zentry->offset); // NOT ACCURATE YET: we still need to read the local entry to find our true position
  		lump_p->disksize = LONG(zentry->compsize);
  		lump_p->size = LONG(zentry->size);
@@ -18691,7 +19003,7 @@ index 3c68b13..955a9b2 100644
  
  		fullname = static_cast<char*>(malloc(SHORT(zentry->namelen) + 1));
  		strlcpy(fullname, (char*)(zentry + 1), SHORT(zentry->namelen) + 1);
-@@ -764,6 +778,14 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
+@@ -764,6 +965,14 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
  	}
  
  	// Adjust lump position values properly
@@ -18706,7 +19018,7 @@ index 3c68b13..955a9b2 100644
  	for (i = 0, lump_p = lumpinfo; i < numlumps; i++, lump_p++)
  	{
  		// skip and ignore comments/extra fields
-@@ -819,6 +841,10 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -819,6 +1028,10 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  #endif
  	UINT8 md5sum[16];
  	int important;
@@ -18717,14 +19029,14 @@ index 3c68b13..955a9b2 100644
  
  	if (!(refreshdirmenu & REFRESHDIR_ADDFILE))
  		refreshdirmenu = REFRESHDIR_NORMAL|REFRESHDIR_ADDFILE; // clean out cons_alerts that happened earlier
-@@ -848,7 +874,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -848,7 +1061,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	if ((handle = W_OpenWadFile(&filename, (mainfile ? NULL : "addons"), true)) == NULL)
  		return W_InitFileError(filename, startup);
  
 +#ifdef _UWP
-+	const boolean uwpskipcheck = mainfile && w_skipassetcheck;
++	const boolean uwptrusted = mainfile;
 +
-+	w_uwptrustlayout = uwpskipcheck;
++	w_uwptrustlayout = uwptrusted;
 +#endif
  	important = W_VerifyNMUSlumps(filename, handle, startup);
 +#ifdef _UWP
@@ -18733,40 +19045,43 @@ index 3c68b13..955a9b2 100644
  
  	if (important == -1)
  	{
-@@ -864,6 +898,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -864,6 +1085,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	// Let's not add a wad file if the MD5 matches
  	// an MD5 of an already added WAD file!
  	//
 +#ifdef _UWP
 +	// [UWP]: The music and sound files are the only main files without an expected MD5, and theirs is only compared
 +	// with other files' to tell if they're already loaded (they're never sent to netgames or recorded in replays), so
-+	// hashing the file name will do, even when the asset check runs: reading all ~450 MB of them from a USB drive took
-+	// ~25 s and couldn't detect anything. When the check is skipped, files with an expected MD5 use it below.
++	// hashing the file name will do: reading all ~450 MB of them from a USB drive took ~25 s and couldn't detect
++	// anything. Main files with an expected MD5 use it below and are verified separately in the background.
 +	if (mainfile && !md5expected)
 +		md5_buffer(filename, strlen(filename), md5sum);
-+	else if (!uwpskipcheck)
++	else if (!uwptrusted)
 +#endif
  	W_MakeFileMD5(filename, md5sum);
  
  	if (md5expected)
-@@ -891,6 +934,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -891,6 +1121,14 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  			else realmd5[ix>>1] = (UINT8)(n<<4);
  		}
  
 +#ifdef _UWP
-+		if (uwpskipcheck)
++		if (uwptrusted)
++		{
 +			memcpy(md5sum, realmd5, MD5_LEN);
++			W_UWPQueueAssetCheck(filename, realmd5);
++		}
 +#endif
 +
  		if (memcmp(realmd5, md5sum, 16) != 0)
  		{
  			char actualmd5text[2*MD5_LEN+1];
-@@ -942,7 +990,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -942,7 +1180,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  		lumpinfo = ResGetLumpsStandalone(handle, &numlumps, "LUA_INIT");
  		break;
  	case RET_PK3:
 +#ifdef _UWP
-+		w_uwptrustlayout = uwpskipcheck;
++		w_uwptrustlayout = uwptrusted;
 +#endif
  		lumpinfo = ResGetLumpsZip(handle, &numlumps);
 +#ifdef _UWP
@@ -18775,7 +19090,7 @@ index 3c68b13..955a9b2 100644
  		break;
  	case RET_WAD:
  		lumpinfo = ResGetLumpsWad(handle, &numlumps, filename);
-@@ -1050,6 +1104,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -1050,6 +1294,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	DEH_UpdateMaxFreeslots();
  
  	W_InvalidateLumpnumCache();
@@ -18789,7 +19104,7 @@ index 3c68b13..955a9b2 100644
  	return wadfile->numlumps;
  }
  
-@@ -1799,6 +1860,44 @@ void zerr(int ret)
+@@ -1799,6 +2050,44 @@ void zerr(int ret)
  }
  #endif
  
@@ -18834,7 +19149,7 @@ index 3c68b13..955a9b2 100644
  /** Reads bytes from the head of a lump.
    * Note: If the lump is compressed, the whole thing has to be read anyway.
    *
-@@ -1832,6 +1931,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
+@@ -1832,6 +2121,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
  	// We setup the desired file handle to read the lump data.
  	l = wadfiles[wad]->lumpinfo + lump;
  	handle = wadfiles[wad]->handle;
@@ -18846,7 +19161,7 @@ index 3c68b13..955a9b2 100644
  	fseek(handle, (long)(l->position + offset), SEEK_SET);
  
  	// But let's not copy it yet. We support different compression formats on lumps, so we need to take that into account.
-@@ -2427,6 +2531,12 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
+@@ -2427,6 +2721,12 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
  		data_size +=
  			sizeof *zentry + SHORT(zentry->namelen) + SHORT(zentry->xtralen) + SHORT(zentry->commlen);
  
@@ -18859,7 +19174,7 @@ index 3c68b13..955a9b2 100644
  		if (fseek(fp, LONG(zentry->offset), SEEK_SET) != 0)
  			return true;
  
-@@ -2437,6 +2547,11 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
+@@ -2437,6 +2737,11 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
  			sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen) + LONG(zlentry.compsize);
  	}
  
@@ -18872,7 +19187,7 @@ index 3c68b13..955a9b2 100644
  	{
  		const char * error = "ZIP file has holes (%ld extra bytes)\n";
 diff --git a/src/w_wad.h b/src/w_wad.h
-index 7024826..4c6f717 100644
+index 7024826..bc391e6 100644
 --- a/src/w_wad.h
 +++ b/src/w_wad.h
 @@ -75,6 +75,9 @@ struct lumpinfo_t
@@ -18880,20 +19195,21 @@ index 7024826..4c6f717 100644
  	size_t size;            // real (uncompressed) size
  	compmethod compression; // lump compression method
 +#ifdef _UWP
-+	boolean uwplocalheader; // [UWP]: position is still that of the zip entry's local header (see w_skipassetcheck)
++	boolean uwplocalheader; // [UWP]: position is still that of the zip entry's local header; data position is resolved on first use
 +#endif
  };
  
  // =========================================================================
-@@ -142,6 +145,13 @@ struct wadfile_t
+@@ -142,6 +145,14 @@ struct wadfile_t
  extern UINT16 numwadfiles;
  extern wadfile_t *wadfiles[MAX_WADFILES];
  
 +#ifdef _UWP
-+// [UWP]: Don't read all of the main asset files at startup, which is slow from a USB drive: use the expected MD5s of
-+// files that have one instead of hashing them, and don't read every zip entry's local header to check the layout and
-+// find where its data starts (that's found when the entry is first read instead). Set from the prompt at launch.
-+extern boolean w_skipassetcheck;
++// [UWP]: Main files use expected MD5s and lazy zip local headers while a background worker verifies them.
++void W_UWPStartAssetCheck(void);
++boolean W_UWPAssetCheckRunning(void);
++void W_UWPPollAssetCheck(void);
++void W_UWPFinishAssetCheck(void);
 +#endif
 +
  // =========================================================================

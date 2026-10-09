@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <roapi.h>
 #include <windows.system.h>
+#include <windows.gaming.input.h>
 #include <wrl/client.h>
 #include <wrl/wrappers/corewrappers.h>
 #include "SDL2/SDL.h"
@@ -37,6 +38,41 @@ extern "C" int I_UWPGetMemoryBudget(std::uint64_t* limit, std::uint64_t* usage, 
 		*usage = used;
 	}
 	return FAILED(result) ? static_cast<int>(result) : 0;
+}
+
+// Polled by the engine's file-check worker, so B works while the main thread is loading. Windows.Gaming.Input
+// lists gamepads only some time after its factory is first created, so the worker joins the multithreaded
+// apartment once and keeps the factory until the process exits; only that thread calls this.
+extern "C" int I_UWPIsSkipButtonDown(void)
+{
+	static ABI::Windows::Gaming::Input::IGamepadStatics* statics = nullptr;
+	if (!statics)
+	{
+		const HRESULT initialize = RoInitialize(RO_INIT_MULTITHREADED);
+		if (FAILED(initialize) && initialize != RPC_E_CHANGED_MODE)
+			return 0;
+		if (FAILED(RoGetActivationFactory(
+				Microsoft::WRL::Wrappers::HStringReference(RuntimeClass_Windows_Gaming_Input_Gamepad).Get(),
+				IID_PPV_ARGS(&statics))))
+		{
+			statics = nullptr;
+			return 0;
+		}
+	}
+
+	Microsoft::WRL::ComPtr<ABI::Windows::Foundation::Collections::IVectorView<ABI::Windows::Gaming::Input::Gamepad*>> gamepads;
+	unsigned int count = 0;
+	if (FAILED(statics->get_Gamepads(&gamepads)) || FAILED(gamepads->get_Size(&count)))
+		return 0;
+	for (unsigned int i = 0; i < count; i++)
+	{
+		Microsoft::WRL::ComPtr<ABI::Windows::Gaming::Input::IGamepad> gamepad;
+		ABI::Windows::Gaming::Input::GamepadReading reading = {};
+		if (SUCCEEDED(gamepads->GetAt(i, &gamepad)) && SUCCEEDED(gamepad->GetCurrentReading(&reading))
+			&& (reading.Buttons & ABI::Windows::Gaming::Input::GamepadButtons_B))
+			return 1;
+	}
+	return 0;
 }
 
 static int bootstrap(int argc, char** argv)

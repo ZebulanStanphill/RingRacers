@@ -97,10 +97,8 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
 
 - **Data folder.** Game data, config, and saves are read from and written to `E:\ringracers`. The `-home` parameter and the `RINGRACERSWADDIR` variable are ignored. The save folder is created before the game checks that the config is writable.
 - **Log location.** The log is written to `E:\ringracers\latest-log.txt`, since the working directory is the read-only package folder.
-- **File-check prompt.** At launch, the game asks whether to check its files, skip the check (the default, so A skips), or quit (also B). When the check is skipped:
-  - files with an expected MD5 use it instead of being hashed
-  - zip entries' local headers aren't read until each entry is first loaded
-- **Faster file check** *(untested)*. The music and sound files hash their names instead of their contents, even when the check runs. They have no expected MD5, so the check couldn't detect anything in them; their hash only detects the same file being loaded twice, and they're never sent to netgames or recorded in replays. Reading all ~450 MB of them took ~25 s of the check's ~32 s on the Xbox.
+- **Background file check** *(untested)*. There's no prompt. The main files load using their expected MD5s, and zip entries' local headers aren't read until each entry is first loaded. Those with an expected MD5 are then checked in the background at below-normal priority, reading 1 MB at a time, while startup continues. While it runs, the loading screen says B skips it (the gamepad is read directly, so B works between screen updates). If it hasn't finished when startup reaches the network setup, the game waits on the loading screen. A mismatch shows the usual error at the next loading step or after that wait. The log records each file's time and read speed, the outcome, and the wait.
+- **Faster file check** *(untested)*. The music and sound files hash their names instead of their contents. They have no expected MD5, so the check couldn't detect anything in them; their hash only detects the same file being loaded twice, and they're never sent to netgames or recorded in replays. Reading all ~450 MB of them took ~25 s of the check's ~32 s on the Xbox.
 
 ## Performance
 
