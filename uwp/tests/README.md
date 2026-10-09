@@ -117,6 +117,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   both production dispatchers with their pre-feature implementations fails the
   front-object draw-order assertion in both variants. Dependency stubs record
   draws and blend a shared CPU pixel; they do not render complete game scenes.
+- **Fog boundaries and captures:** compare 24,960 production shader row selections with the actual Software zlight/scalelight tables and 16,384 palette-remap samples. Exercise full/split viewport bounds, eye-plane crossings, entirely behind-camera/offscreen faces, retained captures, resize/texture/view/buffer failures, resource accounting, t8/b3 bindings and light/darkness constants. Shared blend tests verify complete fog/water composites retain color masks and restore ordinary blending. Custom dispatch tests check fog overrides, Ignore custom shaders and capture failure; wall-slice tests reject directional light adjustment on fog. Windows WARP executes the production SM4 fog shader for all light levels, wall/plane rows, varying depth, full/half-width viewports, palette lookup and smooth tint/fade. An injected reciprocal-depth shader must fail the same pixel oracle. Complete fog volumes, portal/stencil interactions, overlapping volume visuals, Xbox performance and every split-screen visual check still need device testing.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 

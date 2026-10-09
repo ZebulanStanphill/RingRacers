@@ -27,10 +27,12 @@ struct Draw {
 static std::vector<Draw> draws;
 static seg_t segment{};
 static seg_t *gl_curline=&segment;
-static FUINT HWR_CalcWallLight(FUINT light,seg_t *seg) { assert(seg==gl_curline);return light; }
+static int wallLightCalls=0;
+static FUINT HWR_CalcWallLight(FUINT light,seg_t *seg) { assert(seg==gl_curline);++wallLightCalls;return light; }
 static void Submit(FOutVector *v,FSurfaceInfo *surf,FBITFIELD flags,INT32 light,
     extracolormap_t *color,bool queued,bool fog,INT32 texture=-1,INT32 base=-1) {
     Draw d{};std::copy(v,v+4,d.v.begin());d.flags=flags;d.light=light;
+    if(fog)assert(wallLightCalls==0);
     d.color=color;d.alpha=surf->PolyColor.s.alpha;d.queued=queued;d.fog=fog;
     d.texture=texture;d.base=base;draws.push_back(d);
     // A real draw may modify lighting; the next slice must restore alpha.
@@ -118,7 +120,7 @@ static extracolormap_t colors[2]{};
 static extracolormap_t *colorPtrs[2]={&colors[0],&colors[1]};
 static int cases;
 static void Run(Wall w,float boundary0,float boundary1,FBITFIELD flags=PF_Masked,bool noShade=false) {
-    draws.clear();FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+    draws.clear();wallLightCalls=0;FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
     lightlist_t lights[2]{};sector_t sector{};sector.lightlevel=224;
     sector.numlights=2;sector.lightlist=lights;
     pslope_t slope{};slope.o.x=FLOAT_TO_FIXED(w[0].x);slope.o.y=FLOAT_TO_FIXED(w[0].z);

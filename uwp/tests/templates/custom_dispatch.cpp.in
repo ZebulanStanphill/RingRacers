@@ -38,7 +38,7 @@ Context *g_context=&context;
 unsigned g_rtHeight=720;
 @@ENUMS@@
 hwdshaderoption_t g_allowShaders=HWD_SHADEROPTION_ON;
-bool g_postImage=false,g_waterRefraction=false,g_modelLighting=false,g_shadersEnabled=false,g_shaderChanged=false;
+bool g_fogRemap=false,g_postImage=false,g_waterRefraction=false,g_modelLighting=false,g_shadersEnabled=false,g_shaderChanged=false;
 int g_program=-1,g_shaderCurrent=-1,g_shaderType=0;
 consvar_t cv_reducevfx{};
 struct {ID3D11VertexShader *vs=nullptr;ID3D11PixelShader *ps=nullptr;ID3D11InputLayout *layout=nullptr;} g_bound;
@@ -68,7 +68,9 @@ Selection Select(Layout layout,bool wipe=false) {
 @@DISPATCH@@
     return {vertexShader,pixelShader,inputLayout};
 }
-static int captures=0;
+static int captures=0,fogCaptures=0;
+static bool fogCaptureOK=true;
+bool CaptureFogScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT){++fogCaptures;return fogCaptureOK;}
 bool CaptureWaterScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT){++captures;return true;}
 void ArmWater(FBITFIELD PolyFlags) {
     FSurfaceInfo surface{};FSurfaceInfo *pSurf=&surface;
@@ -129,6 +131,18 @@ int main() {
     assert(g_waterRefraction&&captures==2);
     assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
     g_allowShaders=HWD_SHADEROPTION_ON;
+    // Fog remapping and custom fog own their output independently of water.
+    g_program=SHADER_FOG;ArmWater(PF_Fog);
+    assert(g_fogRemap&&!g_waterRefraction&&fogCaptures==1);
+    assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_FOGREMAP].Get());
+    Load(SHADER_FOG,"custom fog");assert(D3D_CompileShaders());ArmWater(PF_Fog);
+    assert(!g_fogRemap&&fogCaptures==1);
+    assert(Select(LAYOUT_POLY).p==g_customShaders[SHADER_FOG].programs[LAYOUT_POLY].pixel.Get());
+    g_allowShaders=HWD_SHADEROPTION_NOCUSTOM;ArmWater(PF_Fog);
+    assert(g_fogRemap&&fogCaptures==2);
+    fogCaptureOK=false;ArmWater(PF_Fog);
+    assert(!g_fogRemap&&Select(LAYOUT_POLY).p==g_pixelShaders[PS_FOG].Get());
+    fogCaptureOK=true;g_allowShaders=HWD_SHADEROPTION_ON;
     // Water/heat postprocessing must win over any previously selected custom slot.
     g_postImage=true;
     for(int type=1;type<NUMBASESHADERS;++type) {

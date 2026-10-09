@@ -103,7 +103,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-      - name: Direct3D SM4 water shader regressions (WARP)
+      - name: Direct3D SM4 renderer regressions (WARP)
         shell: pwsh
         run: |
           python tests/prepare-source.py build/shader-regression-source

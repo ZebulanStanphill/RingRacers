@@ -62,6 +62,27 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    fog = Source(engine / "src/hardware/r_d3d11/shaders.hlsl")
+    renderer = Source(engine / "src/r_main.cpp")
+    fog_shader = fog.function("PSFogRemap").replace(" : SV_Target", "")
+    fog_shader = fog_shader.replace("int3(", "makeint3(").replace("float4(", "make4(")
+    fog_shader = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog_shader)
+    render(templates / "fog.cpp.in", {
+        "FOG_SHADER": fog_shader,
+        "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
+        "FOG_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("FogColormap")),
+        "SOFTWARE_Z": renderer.function("R_InitLightTables"),
+        "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
+        "BOUNDS": driver.function("FogCaptureBounds"),
+    }, output / "fog.cpp")
+
+    render(templates / "fog_capture.cpp.in", {
+        "MULTIPLY": driver.function("Multiply"),
+        "GLOBALS": driver.section("ComPtr<ID3D11Texture2D> g_fogScene;", "// Conservative projected bounds."),
+        "BOUNDS": driver.function("FogCaptureBounds"),
+        "CAPTURE": driver.function("CaptureFogScene"),
+        "INDEXED": driver.function("D3D_DrawIndexedTriangles"),
+    }, output / "fog_capture.cpp")
     render(templates / "custom_dispatch.cpp.in", {
         "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),
         "CUSTOM_STATE": driver.section("struct CustomProgram\n{", "// r_opengl.c's Shader_SetUniforms"),
@@ -70,7 +91,7 @@ def generate(engine, output):
         "LOAD": driver.function("D3D_LoadCustomShader"),
         "SET_SHADER": driver.function("D3D_SetShader"),
         "DISPATCH": driver.section("\tVSKind vs;\n\tPSKind ps;", "\n\tif (g_bound.layout != inputLayout)"),
-        "WATER": driver.section("\tconst FBITFIELD blend = PolyFlags &", "\n#endif"),
+        "WATER": driver.section("\tconst FBITFIELD blend = PolyFlags &", "\n#else"),
     }, output / "custom_dispatch.cpp")
     render(templates / "custom_d3d11.cpp.in", {
         "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),

@@ -38,7 +38,7 @@ struct { bool blend=true; UINT8 blendSrc=BF_ONE,blendDst=BF_ZERO,blendEquation=B
     bool alphaTest=true,polygonOffset=false,depthAlways=false,depthMask=true; } g_gl;
 FBITFIELD g_currentPolyFlags=0;
 void SetRepeatT(bool) {} void SetRepeatS(bool) {} void SetNoTexture(int) {}
-bool g_waterRefraction;
+bool g_waterRefraction, g_fogRemap;
 @@TO_BLEND@@
 @@BLEND_STATE@@
 @@SET_BLEND_MODE@@
@@ -46,18 +46,18 @@ bool g_waterRefraction;
 int main() {
     g_gl.blend=true; g_gl.blendSrc=BF_SRC_ALPHA; g_gl.blendDst=BF_SRC_COLOR;
     g_gl.blendEquation=BE_ADD;
-    for(UINT8 mask : {0,7}) {
+    for(bool fog : {false,true}) for(UINT8 mask : {0,7}) {
         g_gl.colorWriteMask=mask;
-        g_waterRefraction=false;
+        g_waterRefraction=g_fogRemap=false;
         auto ordinary=GetBlendState()->desc.RenderTarget[0];
         assert(ordinary.BlendEnable && ordinary.DestBlend==D3D11_BLEND_SRC_COLOR);
-        g_waterRefraction=true;
+        g_fogRemap=fog; g_waterRefraction=!fog;
         auto remap=GetBlendState()->desc.RenderTarget[0];
         assert(!remap.BlendEnable && remap.RenderTargetWriteMask==mask);
         // Leaving the remap must restore the ordinary transparent blend state,
         // including after the cached override was used repeatedly.
         assert(!GetBlendState()->desc.RenderTarget[0].BlendEnable);
-        g_waterRefraction=false;
+        g_waterRefraction=g_fogRemap=false;
         assert(GetBlendState()->desc.RenderTarget[0].BlendEnable);
         assert(GetBlendState()->desc.RenderTarget[0].RenderTargetWriteMask==mask);
     }

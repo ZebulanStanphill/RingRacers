@@ -11,6 +11,15 @@ if ($LASTEXITCODE -ne 0) { throw "Production Direct3D water shader regression fa
 & $Exe $Engine --negative-control
 if ($LASTEXITCODE -ne 0) { throw "Old reciprocal-depth shader was not rejected" }
 
+# Validate the actual fog composite on SM4, including its rasterizer depth.
+$Fog = Join-Path $Output "fog-d3d11.exe"
+& cl.exe /nologo /std:c++17 /O2 /EHsc /W3 /WX "/I$Engine\src" "/Fe:$Fog" "/Fo:$Output\fog-d3d11.obj" (Join-Path $PSScriptRoot "fog-d3d11.cpp") /link d3d11.lib d3dcompiler.lib dxguid.lib
+if ($LASTEXITCODE -ne 0) { throw "Direct3D fog test compilation failed" }
+& $Fog $Engine
+if ($LASTEXITCODE -ne 0) { throw "Production Direct3D fog shader regression failed" }
+& $Fog $Engine --negative-control
+if ($LASTEXITCODE -ne 0) { throw "Reciprocal-depth fog shader was not rejected" }
+
 # Generate the probe from the production driver; only the surrounding engine
 # state is supplied by the harness. GPU copies/readback use real Direct3D.
 python (Join-Path $PSScriptRoot "generate.py") --engine $Engine --output "$Output\generated"

@@ -1,0 +1,125 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <climits>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <vector>
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
+using UINT=unsigned; using UINT64=uint64_t;
+struct Mat4 {float m[16];};
+const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
+@@MULTIPLY@@
+Mat4 g_projection=identity; std::vector<Mat4> g_modelview={identity};
+struct D3D11_BOX {UINT left,top,front,right,bottom,back;};
+struct D3D11_TEXTURE2D_DESC {UINT Width,Height,MipLevels=1,ArraySize=1,Format=1,BindFlags=0,MiscFlags=0;};
+struct D3D11_BUFFER_DESC {UINT ByteWidth,Usage,BindFlags;};
+enum {D3D11_BIND_SHADER_RESOURCE=1,D3D11_BIND_CONSTANT_BUFFER=2,D3D11_USAGE_DEFAULT=3};
+struct ID3D11Texture2D {D3D11_TEXTURE2D_DESC desc; void GetDesc(D3D11_TEXTURE2D_DESC *p){*p=desc;}};
+struct ID3D11ShaderResourceView {ID3D11Texture2D *t;};
+struct ID3D11Buffer {};
+template<class T> struct ComPtr {
+    T *p=nullptr; T* Get(){return p;} T** operator&(){return &p;}
+    T* operator->(){return p;} explicit operator bool()const{return p;} void Reset(){p=nullptr;}
+};
+struct Device {
+    std::vector<std::unique_ptr<ID3D11Texture2D>> textures;
+    std::vector<std::unique_ptr<ID3D11ShaderResourceView>> views;
+    std::vector<std::unique_ptr<ID3D11Buffer>> buffers;
+    int fail=0;
+    int CreateTexture2D(const D3D11_TEXTURE2D_DESC *d,const void *,ID3D11Texture2D **p){
+        if(fail==1)return 1; textures.emplace_back(new ID3D11Texture2D{*d});*p=textures.back().get();return 0;
+    }
+    int CreateShaderResourceView(ID3D11Texture2D *t,const void *,ID3D11ShaderResourceView **p){
+        if(fail==2)return 1; views.emplace_back(new ID3D11ShaderResourceView{t});*p=views.back().get();return 0;
+    }
+    int CreateBuffer(const D3D11_BUFFER_DESC *d,const void *,ID3D11Buffer **p){
+        assert(d->ByteWidth==16);if(fail==3)return 1;buffers.emplace_back(new ID3D11Buffer);*p=buffers.back().get();return 0;
+    }
+} device;
+Device *g_device=&device;
+struct Context {
+    int draws=0;
+    void DrawIndexed(UINT count,UINT,UINT){assert(count==6);++draws;}
+    ID3D11ShaderResourceView *bound=nullptr;
+    std::vector<D3D11_BOX> copies; int plane,light;float ratio;
+    void PSSetShaderResources(UINT slot,UINT count,ID3D11ShaderResourceView **p){assert(slot==8&&count==1);bound=*p;}
+    void PSSetConstantBuffers(UINT slot,UINT count,ID3D11Buffer **p){assert(slot==3&&count==1&&*p);}
+    void UpdateSubresource(ID3D11Buffer *,UINT,const void *,const void *p,UINT,UINT){
+        memcpy(&plane,p,4);memcpy(&light,(const char*)p+4,4);memcpy(&ratio,(const char*)p+8,4);
+    }
+    void CopySubresourceRegion(ID3D11Texture2D *dst,UINT,UINT x,UINT y,UINT,
+        ID3D11Texture2D *src,UINT,const D3D11_BOX *box){
+        assert(!bound&&dst!=src);assert(box->front==0&&box->back==1);
+        assert(x==box->left&&y==box->top&&box->right<=src->desc.Width&&box->bottom<=src->desc.Height);
+        copies.push_back(*box);
+    }
+} context;
+Context *g_context=&context;
+struct {int viewport[4];} g_gl;
+UINT g_rtHeight=96,g_screenWidth=128;
+UINT64 g_textureBytes=0;
+struct {int texturesCreated=0,screens=0,drawTime=0,batches=0,vertices=0,indices=0;} g_stats;
+ComPtr<ID3D11Texture2D> g_rt;
+bool drawable=true;
+bool CanDraw(){return drawable;}
+bool Failed(int code,const char *){return code!=0;}
+int R_AdjustLightLevel(int light){return std::max(0,light-2);}
+@@GLOBALS@@
+@@BOUNDS@@
+@@CAPTURE@@
+struct CpuTimer {explicit CpuTimer(int &) {}};
+struct Ring {ComPtr<ID3D11Buffer> buffer;} g_vertexRing,g_indexRing;
+enum {LAYOUT_POLY,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,DXGI_FORMAT_R32_UINT};
+UINT RingWrite(Ring &,const void *,UINT,UINT){return 0;}
+void BindVertexBuffer(ID3D11Buffer *,UINT){} void BindIndexBuffer(ID3D11Buffer *,int){}
+void ApplyState(int,int){} void CaptureSurfaceProbe(const char *,FOutVector *,UINT){}
+int preparations=0;UINT preparedVertices=0;
+void PreparePolygon(FSurfaceInfo *surface,FBITFIELD flags,const FOutVector *vertices,UINT count){
+    ++preparations;preparedVertices=count;assert(CaptureFogScene(surface,flags,vertices,count));
+}
+@@INDEXED@@
+int main(){
+    D3D11_TEXTURE2D_DESC d{};d.Width=128;d.Height=96;
+    assert(!device.CreateTexture2D(&d,nullptr,&g_rt));
+    FOutVector vertices[]={{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
+    FSurfaceInfo surface{};surface.LightInfo.light_level=240;
+    for(int vx:{0,64})for(int vy:{0,48}){
+        g_gl.viewport[0]=vx;g_gl.viewport[1]=vy;g_gl.viewport[2]=64;g_gl.viewport[3]=48;
+        for(auto flags:{FBITFIELD(PF_Fog),FBITFIELD(PF_Fog|PF_FogPlane)}){
+            assert(CaptureFogScene(&surface,flags,vertices,4));
+            auto b=context.copies.back();assert(b.left==UINT(vx+16)&&b.right==UINT(vx+48));
+            assert(b.top==UINT(96-vy-48+12)&&b.bottom==UINT(96-vy-12));
+            assert(context.plane==bool(flags&PF_FogPlane)&&context.light==28&&context.ratio==.5f);
+            assert(context.bound==g_fogSceneSrv.Get());
+        }
+    }
+    assert(device.textures.size()==2&&device.buffers.size()==1&&g_textureBytes==128*96*4&&g_stats.screens==8);
+    // Each face captures the current scene; no water grouping/snapshot state is reused.
+    assert(CaptureFogScene(&surface,PF_Fog,vertices,4)&&context.copies.size()==9);
+    auto allocations=device.textures.size(),copies=context.copies.size();
+    drawable=false;assert(!CaptureFogScene(&surface,PF_Fog,vertices,4));drawable=true;
+    assert(!CaptureFogScene(nullptr,PF_Fog,vertices,4));assert(!CaptureFogScene(&surface,PF_Fog,nullptr,4));
+    assert(!CaptureFogScene(&surface,PF_Fog,vertices,0));
+    g_projection.m[15]=-1;assert(!CaptureFogScene(&surface,PF_Fog,vertices,4));g_projection=identity;
+    for(auto &v:vertices)v.x+=10;assert(!CaptureFogScene(&surface,PF_Fog,vertices,4));for(auto &v:vertices)v.x-=10;
+    assert(device.textures.size()==allocations&&context.copies.size()==copies);
+    // Resize/format changes recreate the capture; failures retain the shader fallback.
+    for(int failure:{1,2,3}){
+        d.Width+=2;d.Format+=1;g_rt->desc=d;g_fogConstants.Reset();device.fail=failure;
+        assert(!CaptureFogScene(&surface,PF_Fog,vertices,4));
+        device.fail=0;assert(CaptureFogScene(&surface,PF_Fog,vertices,4));
+        assert(g_textureBytes==UINT64(d.Width)*d.Height*4&&context.bound->t==g_fogScene.Get());
+    }
+    // Batched faces prepare/capture once using max index, not index count.
+    UINT32 indices[]={0,1,2,0,2,3};copies=context.copies.size();
+    D3D_DrawIndexedTriangles(&surface,vertices,6,PF_Fog,indices);
+    assert(preparations==1&&preparedVertices==4&&context.copies.size()==copies+1&&context.draws==1);
+    drawable=false;D3D_DrawIndexedTriangles(&surface,vertices,6,PF_Fog,indices);drawable=true;
+    D3D_DrawIndexedTriangles(&surface,vertices,0,PF_Fog,indices);
+    assert(preparations==1&&context.draws==1);
+    puts("Fog capture: bounded per-face snapshots, split viewports, resource reuse/recreation, darkness and failure recovery passed");
+}

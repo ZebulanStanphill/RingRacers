@@ -1,4 +1,4 @@
-From 8f63d52f2536b9555788958389574b09ef5aef26 Mon Sep 17 00:00:00 2001
+From 3ad10ac6af13c0cd6a8e1c6ff7d02899b07f333f Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -69,7 +69,16 @@ RingRacers-dev, rebased onto v2.4.
   colored/outward/overlapping fog and water on their old paths; avoid
   per-polygon FOF searches and framebuffer copies. This renderer-only,
   ungated subset fixes the title fade without claiming exact Software
-  boundary-distance remapping or full fog-volume parity
+  boundary-distance remapping or full fog-volume parity on that path
+- Remap D3D11 fog at wall/plane boundaries with Shaders on, using the
+  captured scene and control-sector colormap, Software's integer distance
+  rows, per-view darkness and split scaling. Retain smooth tint/fade,
+  read-only depth, portal clipping and the old Shaders Off approximation.
+  Use bounded per-face copies into a retained render-size texture; skip
+  clipped faces, recreate on resize, and fall back on allocation failure.
+  Preserve custom fog shader overrides, independent water capture state,
+  blend restoration and unadjusted fog light through clipped wall slices.
+  Prepare indexed draws once so each fog face makes only one capture
 - Port SRB2's palette rendering to Legacy GL (gr_paletterendering, on by
   default, in Legacy GL's options): textures are made in the palette
   lump's colors, shaders turn texels back into palette indices with a
@@ -337,21 +346,21 @@ Model: gpt-6.1-sol
  src/hardware/hw_cache.c                   |  310 +-
  src/hardware/hw_clip.c                    |   15 +
  src/hardware/hw_clip.h                    |    5 +
- src/hardware/hw_defs.h                    |    8 +-
+ src/hardware/hw_defs.h                    |    9 +-
  src/hardware/hw_draw.c                    |   57 +-
  src/hardware/hw_drv.h                     |   13 +
  src/hardware/hw_glob.h                    |    9 +
  src/hardware/hw_glsl.h                    |  321 ++
- src/hardware/hw_main.c                    | 1703 +++++-
+ src/hardware/hw_main.c                    | 1728 +++++-
  src/hardware/hw_main.h                    |   18 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
  src/hardware/r_d3d11/custom_shader.cpp    |  275 +
  src/hardware/r_d3d11/custom_shader.h      |    9 +
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
- src/hardware/r_d3d11/r_d3d11.cpp          | 6132 +++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp          | 6252 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   66 +
- src/hardware/r_d3d11/shaders.hlsl         |  563 ++
+ src/hardware/r_d3d11/shaders.hlsl         |  610 ++
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
  src/hwr2/patch_atlas.cpp                  |    8 +
@@ -384,7 +393,7 @@ Model: gpt-6.1-sol
  src/r_textures.h                          |   10 +
  src/r_things.cpp                          |  158 +-
  src/r_things.h                            |    5 +
- src/rhi/gl2/gl2_rhi.cpp                   |  618 ++-
+ src/rhi/gl2/gl2_rhi.cpp                   |  618 +-
  src/rhi/gl2/gl2_rhi.hpp                   |   36 +
  src/screen.c                              |    4 +-
  src/sdl/CMakeLists.txt                    |    5 +
@@ -402,7 +411,7 @@ Model: gpt-6.1-sol
  src/w_wad.cpp                             |  117 +
  src/w_wad.h                               |   10 +
  src/z_zone.cpp                            |    5 +
- 82 files changed, 13316 insertions(+), 1050 deletions(-)
+ 82 files changed, 13502 insertions(+), 1057 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -414,7 +423,7 @@ Model: gpt-6.1-sol
  create mode 100644 src/sdl/i_uwptrace.h
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fc82385dd..8b691cc0d 100644
+index fc82385..8b691cc 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1,4 +1,5 @@
@@ -467,7 +476,7 @@ index fc82385dd..8b691cc0d 100644
  		string(REGEX REPLACE "[\\\/\^\$]" "_" SAFE_REVISION "${SRB2_GIT_REVISION}")
  		list(APPEND EXE_NAME_PARTS ${SAFE_REVISION})
 diff --git a/CMakePresets.json b/CMakePresets.json
-index a52a087bd..b96f55aa1 100644
+index a52a087..b96f55a 100644
 --- a/CMakePresets.json
 +++ b/CMakePresets.json
 @@ -79,6 +79,13 @@
@@ -509,7 +518,7 @@ index a52a087bd..b96f55aa1 100644
  			"name": "ninja-x64_osx_vcpkg-debug",
  			"configurePreset": "ninja-x64_osx_vcpkg-debug"
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 9eb0bcbf1..46543dc45 100644
+index 9eb0bcb..46543dc 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -1,6 +1,6 @@
@@ -598,7 +607,7 @@ index 9eb0bcbf1..46543dc45 100644
  
  # Setup clang-tidy
 diff --git a/src/console.c b/src/console.c
-index 1e7585fbc..fc9c5fb3c 100644
+index 1e7585f..fc9c5fb 100644
 --- a/src/console.c
 +++ b/src/console.c
 @@ -1948,7 +1948,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
@@ -628,7 +637,7 @@ index 1e7585fbc..fc9c5fb3c 100644
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
-index 8a434ba63..0e3c54d64 100644
+index 8a434ba..0e3c54d 100644
 --- a/src/core/thread_pool.cpp
 +++ b/src/core/thread_pool.cpp
 @@ -24,6 +24,11 @@
@@ -672,7 +681,7 @@ index 8a434ba63..0e3c54d64 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33d5..b79d18926 100644
+index d589b33..b79d189 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
 @@ -1478,6 +1478,11 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
@@ -688,7 +697,7 @@ index d589b33d5..b79d18926 100644
  #ifdef ALAM_LIGHTING
  		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
 diff --git a/src/d_clisrv.c b/src/d_clisrv.c
-index 1166b3c99..8c31e9299 100644
+index 1166b3c..8c31e92 100644
 --- a/src/d_clisrv.c
 +++ b/src/d_clisrv.c
 @@ -3126,6 +3126,12 @@ static void Got_KickCmd(const UINT8 **p, INT32 playernum)
@@ -779,7 +788,7 @@ index 1166b3c99..8c31e9299 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0a7..685e7ea90 100644
+index 19fcfe0..685e7ea 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -33,8 +33,14 @@
@@ -1289,7 +1298,7 @@ index 19fcfe0a7..685e7ea90 100644
  
  	if (M_CheckParm("-home") && M_IsNextParm())
 diff --git a/src/f_finale.c b/src/f_finale.c
-index bacb041ce..1b1c6b12c 100644
+index bacb041..1b1c6b1 100644
 --- a/src/f_finale.c
 +++ b/src/f_finale.c
 @@ -13,6 +13,9 @@
@@ -1313,7 +1322,7 @@ index bacb041ce..1b1c6b12c 100644
  
  	// Draw that sky!
 diff --git a/src/f_wipe.cpp b/src/f_wipe.cpp
-index 2b7d95d41..8dff0c313 100644
+index 2b7d95d..8dff0c3 100644
 --- a/src/f_wipe.cpp
 +++ b/src/f_wipe.cpp
 @@ -14,6 +14,9 @@
@@ -1394,7 +1403,7 @@ index 2b7d95d41..8dff0c313 100644
  
  	if (fcolor)
 diff --git a/src/g_game.c b/src/g_game.c
-index ce69d80c0..9db72cf64 100644
+index ce69d80..9db72cf 100644
 --- a/src/g_game.c
 +++ b/src/g_game.c
 @@ -13,6 +13,9 @@
@@ -1492,7 +1501,7 @@ index ce69d80c0..9db72cf64 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f280c..9e5183004 100644
+index a0a0f28..16e71b7 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,40 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1514,7 +1523,7 @@ index a0a0f280c..9e5183004 100644
 +	file(MAKE_DIRECTORY "${d3d11_shader_dir}")
 +
 +	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
-+		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
 +		string(SUBSTRING "${entry}" 0 2 stage)
 +		string(TOLOWER "${stage}" stage)
 +		set(header "${d3d11_shader_dir}/${entry}.h")
@@ -1537,7 +1546,7 @@ index a0a0f280c..9e5183004 100644
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
 +endif()
 diff --git a/src/hardware/hw_batching.c b/src/hardware/hw_batching.c
-index 9c0e2f6e9..58bd38e24 100644
+index 9c0e2f6..58bd38e 100644
 --- a/src/hardware/hw_batching.c
 +++ b/src/hardware/hw_batching.c
 @@ -206,8 +206,13 @@ static int comparePolygons(const void *p1, const void *p2)
@@ -1574,7 +1583,7 @@ index 9c0e2f6e9..58bd38e24 100644
  					changeState = true;
  					changeSurfaceInfo = true;
 diff --git a/src/hardware/hw_bsp.c b/src/hardware/hw_bsp.c
-index 0b036ead0..80fbf275b 100644
+index 0b036ea..80fbf27 100644
 --- a/src/hardware/hw_bsp.c
 +++ b/src/hardware/hw_bsp.c
 @@ -15,6 +15,9 @@
@@ -1753,7 +1762,7 @@ index 0b036ead0..80fbf275b 100644
  	i = SolveTProblem();
  	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
-index aee197ab5..a1824e758 100644
+index aee197a..a1824e7 100644
 --- a/src/hardware/hw_cache.c
 +++ b/src/hardware/hw_cache.c
 @@ -18,6 +18,9 @@
@@ -2206,7 +2215,7 @@ index aee197ab5..a1824e758 100644
  
  			dest++;
 diff --git a/src/hardware/hw_clip.c b/src/hardware/hw_clip.c
-index 3ea21c16a..fe21623ea 100644
+index 3ea21c1..fe21623 100644
 --- a/src/hardware/hw_clip.c
 +++ b/src/hardware/hw_clip.c
 @@ -320,6 +320,21 @@ void gld_clipper_Clear(void)
@@ -2232,7 +2241,7 @@ index 3ea21c16a..fe21623ea 100644
  
  angle_t gld_FrustumAngle(angle_t tiltangle)
 diff --git a/src/hardware/hw_clip.h b/src/hardware/hw_clip.h
-index 1942f426b..71bda4724 100644
+index 1942f42..71bda47 100644
 --- a/src/hardware/hw_clip.h
 +++ b/src/hardware/hw_clip.h
 @@ -34,6 +34,11 @@ extern "C" {
@@ -2248,7 +2257,7 @@ index 1942f426b..71bda4724 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  void gld_FrustrumSetup(void);
 diff --git a/src/hardware/hw_defs.h b/src/hardware/hw_defs.h
-index 1ce225f19..71c197750 100644
+index 1ce225f..4442d73 100644
 --- a/src/hardware/hw_defs.h
 +++ b/src/hardware/hw_defs.h
 @@ -21,6 +21,9 @@ extern "C" {
@@ -2261,16 +2270,17 @@ index 1ce225f19..71c197750 100644
  #define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
  
  // ==========================================================================
-@@ -243,7 +246,7 @@ enum EPolyFlags
+@@ -243,7 +246,8 @@ enum EPolyFlags
  	PF_RemoveYWrap      = 0x00010000,   // Forces clamp texture on Y
  	PF_ForceWrapX       = 0x00020000,   // Forces repeat texture on X
  	PF_ForceWrapY       = 0x00040000,   // Forces repeat texture on Y
 -	PF_Ripple           = 0x00100000,   // Water ripple effect. The current backend doesn't use it for anything.
 +	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
++	PF_FogPlane         = 0x00400000,   // Fog uses Software plane-distance lighting
  	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles
  };
  
-@@ -291,6 +294,7 @@ struct FSurfaceInfo
+@@ -291,6 +295,7 @@ struct FSurfaceInfo
  	RGBA_t			TintColor;
  	RGBA_t			FadeColor;
  	FLightInfo		LightInfo;
@@ -2278,7 +2288,7 @@ index 1ce225f19..71c197750 100644
  };
  typedef struct FSurfaceInfo FSurfaceInfo;
  
-@@ -304,6 +308,8 @@ enum hwdsetspecialstate
+@@ -304,6 +309,8 @@ enum hwdsetspecialstate
  	HWD_SET_SHADERS,
  	HWD_SET_TEXTUREFILTERMODE,
  	HWD_SET_TEXTUREANISOTROPICMODE,
@@ -2288,7 +2298,7 @@ index 1ce225f19..71c197750 100644
  	HWD_NUMSTATE
  };
 diff --git a/src/hardware/hw_draw.c b/src/hardware/hw_draw.c
-index d4ba78614..09e9939c1 100644
+index d4ba786..09e9939 100644
 --- a/src/hardware/hw_draw.c
 +++ b/src/hardware/hw_draw.c
 @@ -16,11 +16,18 @@
@@ -2431,7 +2441,7 @@ index d4ba78614..09e9939c1 100644
  	HWD.pfnDrawPolygon(&Surf, v, 4,
  		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
 diff --git a/src/hardware/hw_drv.h b/src/hardware/hw_drv.h
-index c4396c8e5..4ace846ad 100644
+index c4396c8..4ace846 100644
 --- a/src/hardware/hw_drv.h
 +++ b/src/hardware/hw_drv.h
 @@ -78,6 +78,13 @@ EXPORT void HWRAPI(UnSetShader) (void);
@@ -2462,7 +2472,7 @@ index c4396c8e5..4ace846ad 100644
  
  extern struct hwdriver_s hwdriver;
 diff --git a/src/hardware/hw_glob.h b/src/hardware/hw_glob.h
-index 07dfb7a16..6df0269ce 100644
+index 07dfb7a..6df0269 100644
 --- a/src/hardware/hw_glob.h
 +++ b/src/hardware/hw_glob.h
 @@ -142,6 +142,15 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
@@ -2483,7 +2493,7 @@ index 07dfb7a16..6df0269ce 100644
  // hw_draw.c
 diff --git a/src/hardware/hw_glsl.h b/src/hardware/hw_glsl.h
 new file mode 100644
-index 000000000..c025b5a08
+index 0000000..c025b5a
 --- /dev/null
 +++ b/src/hardware/hw_glsl.h
 @@ -0,0 +1,321 @@
@@ -2809,7 +2819,7 @@ index 000000000..c025b5a08
 +
 +#endif
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca5a..98c533833 100644
+index b5e8fca..836200b 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -12,8 +12,13 @@
@@ -3085,7 +3095,7 @@ index b5e8fca5a..98c533833 100644
  boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
  {
  	if (R_ThingIsFullBright(thing))
-@@ -261,13 +490,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
+@@ -261,13 +490,78 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
  	}
  }
  
@@ -3106,6 +3116,11 @@ index b5e8fca5a..98c533833 100644
 +{
 +	ffloor_t *rover;
 +	sector_t *control = NULL;
++#ifdef _UWP
++	// Shader fog remaps at its actual boundaries, including camera exit faces.
++	if (HWR_UseShader())
++		return NULL;
++#endif
 +	const UINT32 required = FOF_EXISTS|FOF_RENDERALL|FOF_FOG|FOF_INVERTPLANES
 +		|FOF_INVERTSIDES|FOF_DOUBLESHADOW;
 +
@@ -3160,7 +3175,7 @@ index b5e8fca5a..98c533833 100644
  
  	// Crappy backup coloring if you can't do shaders
  	if (!HWR_UseShader())
-@@ -309,6 +598,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -309,6 +603,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	// Clamp the light level, since it can sometimes go out of the 0-255 range from animations
  	light_level = min(max(light_level, 0), 255);
  
@@ -3175,7 +3190,7 @@ index b5e8fca5a..98c533833 100644
  	Surface->PolyColor.rgba = poly_color.rgba;
  	Surface->TintColor.rgba = tint_color.rgba;
  	Surface->FadeColor.rgba = fade_color.rgba;
-@@ -318,6 +615,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
+@@ -318,9 +620,12 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
  	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
  
  	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
@@ -3184,8 +3199,12 @@ index b5e8fca5a..98c533833 100644
 +	Surface->LightTableId = palette ? HWR_GetLightTableID(colormap) : 0;
  }
  
- UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
-@@ -386,6 +686,107 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t
+-UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
++UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap)
+ {
+ 	RGBA_t realcolor, surfcolor;
+ 	INT32 alpha;
+@@ -386,6 +691,107 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t
  
  #ifdef DOPLANES
  
@@ -3293,7 +3312,30 @@ index b5e8fca5a..98c533833 100644
  // -----------------+
  // HWR_RenderPlane  : Render a floor or ceiling convex polygon
  // -----------------+
-@@ -586,6 +987,15 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+@@ -563,7 +969,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+ 	for (i = 0, v3d = planeVerts; i < nrPlaneVerts; i++,v3d++,pv++)
+ 		SETUP3DVERT(v3d, pv->x, pv->y);
+ 
+-	lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL));
++	if (!(PolyFlags & PF_Fog))
++		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL));
+ 	HWR_Lighting(&Surf, lightlevel, planecolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
+ 
+ 	if (PolyFlags & PF_EnvironmentTrans)
+@@ -577,7 +984,12 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+ 	if (HWR_UseShader())
+ 	{
+ 		if (PolyFlags & PF_Fog)
++		{
+ 			shader = SHADER_FOG;
++#ifdef _UWP
++			PolyFlags |= PF_FogPlane;
++#endif
++		}
+ 		else if (PolyFlags & PF_Ripple)
+ 			shader = SHADER_WATER;
+ 		else
+@@ -586,6 +998,15 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
  		PolyFlags |= PF_ColorMapped;
  	}
  
@@ -3309,7 +3351,7 @@ index b5e8fca5a..98c533833 100644
  	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
  
  	if (subsector)
-@@ -604,7 +1014,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+@@ -604,7 +1025,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
  
  		for (i = 0; i < subsector->numlines; i++, line++)
  		{
@@ -3318,7 +3360,7 @@ index b5e8fca5a..98c533833 100644
  			{
  				P_ClosestPointOnLine(viewx, viewy, line->linedef, &v);
  				dist = FIXED_TO_FLOAT(R_PointToDist(v.x, v.y));
-@@ -655,6 +1065,9 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+@@ -655,6 +1076,9 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
  					horizonpts[4].y = gl_viewz;
  
  					// Draw
@@ -3328,7 +3370,7 @@ index b5e8fca5a..98c533833 100644
  					HWR_ProcessPolygon(&Surf, horizonpts, 6, PolyFlags, shader, true);
  				}
  			}
-@@ -811,6 +1224,29 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
+@@ -811,6 +1235,29 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
  		blendmode |= PF_ColorMapped;
  	}
  
@@ -3358,7 +3400,7 @@ index b5e8fca5a..98c533833 100644
  	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode|PF_Modulated|PF_Occlude, shader, false);
  }
  
-@@ -821,18 +1257,95 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
+@@ -821,18 +1268,95 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
  //
  // HWR_SplitWall
  //
@@ -3424,7 +3466,7 @@ index b5e8fca5a..98c533833 100644
 +		}
 +		surf->PolyColor.s.alpha = alpha;
 +		if (flags & PF_Fog)
-+			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
++			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, lightnum, colormap);
 +		else if (flags & PF_EnvironmentTrans)
 +			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
 +		else
@@ -3456,7 +3498,7 @@ index b5e8fca5a..98c533833 100644
  	float endheight = 0.0f, endbheight = 0.0f;
  
  	// compiler complains when P_GetSlopeZAt is used in FLOAT_TO_FIXED directly
-@@ -847,20 +1360,34 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+@@ -847,20 +1371,34 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
  	INT32 solid, i;
  	lightlist_t *  list = sector->lightlist;
  	const UINT8 alpha = Surf->PolyColor.s.alpha;
@@ -3493,7 +3535,7 @@ index b5e8fca5a..98c533833 100644
  
  	for (i = 0; i < sector->numlights; i++)
  	{
-@@ -937,16 +1464,23 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+@@ -937,16 +1475,23 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
  		//Found a break;
  		bot = bheight;
  
@@ -3517,7 +3559,13 @@ index b5e8fca5a..98c533833 100644
  		wallVerts[3].t = pegt + ((realtop - top) * pegmul);
  		wallVerts[2].t = endpegt + ((endrealtop - endtop) * endpegmul);
  		wallVerts[0].t = pegt + ((realtop - bot) * pegmul);
-@@ -964,6 +1498,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+@@ -959,11 +1504,12 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+ 		wallVerts[1].y = endbot;
+ 
+ 		if (polyflags & PF_Fog)
+-			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
++			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, lightnum, colormap);
+ 		else if (polyflags & PF_EnvironmentTrans)
  			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
  		else
  			HWR_ProjectWall(wallVerts, Surf, polyflags, HWR_CalcWallLight(lightnum, gl_curline), colormap);
@@ -3525,7 +3573,7 @@ index b5e8fca5a..98c533833 100644
  
  		top = bot;
  		endtop = endbot;
-@@ -976,6 +1511,9 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+@@ -976,6 +1522,9 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
  
  	Surf->PolyColor.s.alpha = alpha;
  
@@ -3535,7 +3583,13 @@ index b5e8fca5a..98c533833 100644
  	wallVerts[3].t = pegt + ((realtop - top) * pegmul);
  	wallVerts[2].t = endpegt + ((endrealtop - endtop) * endpegmul);
  	wallVerts[0].t = pegt + ((realtop - bot) * pegmul);
-@@ -993,6 +1531,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+@@ -988,11 +1537,12 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
+ 	wallVerts[1].y = endbot;
+ 
+ 	if (polyflags & PF_Fog)
+-		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
++		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, lightnum, colormap);
+ 	else if (polyflags & PF_EnvironmentTrans)
  		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
  	else
  		HWR_ProjectWall(wallVerts, Surf, polyflags, HWR_CalcWallLight(lightnum, gl_curline), colormap);
@@ -3543,7 +3597,7 @@ index b5e8fca5a..98c533833 100644
  }
  
  // HWR_DrawSkyWall
-@@ -1666,6 +2205,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1666,6 +2216,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -3552,7 +3606,16 @@ index b5e8fca5a..98c533833 100644
  				if (!(rover->fofflags & FOF_ALLSIDES) && rover->fofflags & FOF_INVERTSIDES)
  					continue;
  
-@@ -1828,6 +2369,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+@@ -1774,7 +2326,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+ 
+ 					blendmode = PF_Fog|PF_NoTexture;
+ 
+-					lightnum = HWR_CalcWallLight(rover->master->frontsector->lightlevel, gl_curline);
++					lightnum = rover->master->frontsector->lightlevel;
+ 					colormap = rover->master->frontsector->extra_colormap;
+ 
+ 					Surf.PolyColor.s.alpha = HWR_FogBlockAlpha(rover->master->frontsector->lightlevel, rover->master->frontsector->extra_colormap);
+@@ -1828,6 +2380,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
  
  				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
  					continue;
@@ -3561,7 +3624,16 @@ index b5e8fca5a..98c533833 100644
  				if (!(rover->fofflags & FOF_ALLSIDES || rover->fofflags & FOF_INVERTSIDES))
  					continue;
  
-@@ -2038,6 +2581,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
+@@ -1903,7 +2457,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
+ 
+ 					blendmode = PF_Fog|PF_NoTexture;
+ 
+-					lightnum = HWR_CalcWallLight(rover->master->frontsector->lightlevel, gl_curline);
++					lightnum = rover->master->frontsector->lightlevel;
+ 					colormap = rover->master->frontsector->extra_colormap;
+ 
+ 					Surf.PolyColor.s.alpha = HWR_FogBlockAlpha(rover->master->frontsector->lightlevel, rover->master->frontsector->extra_colormap);
+@@ -2038,6 +2592,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
  static void HWR_AddLine(seg_t * line)
  {
  	angle_t angle1, angle2;
@@ -3571,7 +3643,7 @@ index b5e8fca5a..98c533833 100644
  
  	// SoM: Backsector needs to be run through R_FakeFlat
  	static sector_t tempsec;
-@@ -2053,6 +2599,15 @@ static void HWR_AddLine(seg_t * line)
+@@ -2053,6 +2610,15 @@ static void HWR_AddLine(seg_t * line)
  	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
  	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
  
@@ -3587,7 +3659,7 @@ index b5e8fca5a..98c533833 100644
  	// OPTIMIZE: quickly reject orthogonal back sides.
  	angle1 = R_PointToAngle64(v1x, v1y);
  	angle2 = R_PointToAngle64(v2x, v2y);
-@@ -2068,13 +2623,35 @@ static void HWR_AddLine(seg_t * line)
+@@ -2068,13 +2634,35 @@ static void HWR_AddLine(seg_t * line)
  		return;
  	}
  
@@ -3624,7 +3696,7 @@ index b5e8fca5a..98c533833 100644
  	}
  	else
  	{
-@@ -2095,13 +2672,19 @@ static void HWR_AddLine(seg_t * line)
+@@ -2095,13 +2683,19 @@ static void HWR_AddLine(seg_t * line)
  					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
  				return; // line is empty, don't even bother
  			// treat like wide open window instead
@@ -3646,7 +3718,7 @@ index b5e8fca5a..98c533833 100644
  			checkforemptylines = false;
  		}
  		// Reject empty lines used for triggers and special events.
-@@ -2112,7 +2695,10 @@ static void HWR_AddLine(seg_t * line)
+@@ -2112,7 +2706,10 @@ static void HWR_AddLine(seg_t * line)
  			return;
  	}
  
@@ -3658,7 +3730,7 @@ index b5e8fca5a..98c533833 100644
  	return;
  }
  
-@@ -2369,7 +2955,10 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling,
+@@ -2369,7 +2966,10 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling,
  
  	if (HWR_UseShader())
  	{
@@ -3670,7 +3742,7 @@ index b5e8fca5a..98c533833 100644
  		blendmode |= PF_ColorMapped;
  	}
  
-@@ -2445,7 +3034,24 @@ static void HWR_AddPolyObjectPlanes(void)
+@@ -2445,7 +3045,24 @@ static void HWR_AddPolyObjectPlanes(void)
  
  static FBITFIELD HWR_RippleBlend(sector_t *sector, ffloor_t *rover, boolean ceiling)
  {
@@ -3696,7 +3768,7 @@ index b5e8fca5a..98c533833 100644
  }
  
  // -----------------+
-@@ -2500,6 +3106,18 @@ static void HWR_Subsector(size_t num)
+@@ -2500,6 +3117,18 @@ static void HWR_Subsector(size_t num)
  		line = NULL;
  	}
  
@@ -3715,7 +3787,7 @@ index b5e8fca5a..98c533833 100644
  	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
  	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
  								&ceilinglightlevel, false);
-@@ -2632,10 +3250,13 @@ static void HWR_Subsector(size_t num)
+@@ -2632,10 +3261,13 @@ static void HWR_Subsector(size_t num)
  
  			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
  				continue;
@@ -3730,7 +3802,7 @@ index b5e8fca5a..98c533833 100644
  			    centerHeight >= locFloorHeight &&
  			    ((dup_viewz < cullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
  			     (dup_viewz > cullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
-@@ -2683,7 +3304,8 @@ static void HWR_Subsector(size_t num)
+@@ -2683,7 +3315,8 @@ static void HWR_Subsector(size_t num)
  			cullHeight   = P_GetFFloorTopZAt(rover, viewx, viewy);
  			centerHeight = P_GetFFloorTopZAt(rover, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
  
@@ -3740,7 +3812,7 @@ index b5e8fca5a..98c533833 100644
  			    centerHeight <= locCeilingHeight &&
  			    ((dup_viewz > cullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
  			     (dup_viewz < cullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
-@@ -2879,10 +3501,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
+@@ -2879,10 +3512,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
  	hwbbox = bsp->bbox[side];
  
  	// Recursively divide front space.
@@ -3760,7 +3832,7 @@ index b5e8fca5a..98c533833 100644
  	{
  		// BP: big hack for a test in lighning ref : 1249753487AB
  		hwbbox = bsp->bbox[side^1];
-@@ -3046,6 +3675,8 @@ UINT32 linkdrawcount = 0;
+@@ -3046,6 +3686,8 @@ UINT32 linkdrawcount = 0;
  // add the necessary data to the list for delayed z-buffer drawing
  static void HWR_LinkDrawHackAdd(FOutVector *verts, gl_vissprite_t *spr)
  {
@@ -3769,7 +3841,7 @@ index b5e8fca5a..98c533833 100644
  	if (linkdrawcount < MAXVISSPRITES)
  	{
  		memcpy(linkdrawlist[linkdrawcount].verts, verts, sizeof(FOutVector) * 4);
-@@ -3656,7 +4287,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3656,7 +4298,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -3778,7 +3850,7 @@ index b5e8fca5a..98c533833 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -3666,47 +4297,11 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3666,47 +4308,11 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  //                  : (monsters, bonuses, weapons, lights, ...)
  // Returns          :
  // -----------------+
@@ -3830,7 +3902,7 @@ index b5e8fca5a..98c533833 100644
  	if (splat)
  	{
  		F2DCoord verts[4];
-@@ -3718,15 +4313,11 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+@@ -3718,15 +4324,11 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
  		float xscale, yscale;
  		float xoffset, yoffset;
  		float leftoffset, topoffset;
@@ -3847,7 +3919,7 @@ index b5e8fca5a..98c533833 100644
  		if (spr->rotateflags & SRF_3D || renderflags & RF_NOSPLATBILLBOARD)
  			angle = spr->angle;
  		else
-@@ -3828,30 +4419,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+@@ -3828,30 +4430,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
  		wallVerts[1].z = wallVerts[2].z = spr->z2;
  	}
  
@@ -3878,7 +3950,7 @@ index b5e8fca5a..98c533833 100644
  	if (!splat)
  	{
  		// if it has a dispoffset, push it a little towards the camera
-@@ -3865,22 +4432,92 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+@@ -3865,22 +4443,92 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
  		}
  
  		// Let dispoffset work first since this adjust each vertex
@@ -3896,10 +3968,11 @@ index b5e8fca5a..98c533833 100644
 -		INT32 lightlevel = 0;
 -		boolean lightset = HWR_OverrideObjectLightLevel(spr->mobj, &lightlevel);
 -		extracolormap_t *colormap = NULL;
-+}
- 
+-
 -		if (!R_ThingIsFullBright(spr->mobj) && !(spr->mobj->renderflags & RF_NOCOLORMAPS))
 -			colormap = sector->extra_colormap;
++}
++
 +static void HWR_DrawSprite(gl_vissprite_t *spr)
 +{
 +	FOutVector wallVerts[4];
@@ -3984,7 +4057,7 @@ index b5e8fca5a..98c533833 100644
  
  		if (splat && sector->numlights)
  		{
-@@ -4379,25 +5016,313 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
+@@ -4379,25 +5027,313 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
  	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
  }
  
@@ -4310,7 +4383,7 @@ index b5e8fca5a..98c533833 100644
  
  	ps_hw_nodesorttime = I_GetPreciseTime();
  
-@@ -4428,7 +5353,7 @@ static void HWR_CreateDrawNodes(void)
+@@ -4428,7 +5364,7 @@ static void HWR_CreateDrawNodes(void)
  
  	// an additional pass is needed to correct the order of consecutive planes in the list.
  	// for each consecutive run of planes in the list, sort that run based on plane height and view height.
@@ -4319,7 +4392,7 @@ index b5e8fca5a..98c533833 100644
  	{
  		// locate run start
  		if (sortnode[sortindex[run_start]].plane)
-@@ -4454,6 +5379,8 @@ static void HWR_CreateDrawNodes(void)
+@@ -4454,6 +5390,8 @@ static void HWR_CreateDrawNodes(void)
  		}
  	}
  
@@ -4328,7 +4401,7 @@ index b5e8fca5a..98c533833 100644
  	ps_hw_nodesorttime = I_GetPreciseTime() - ps_hw_nodesorttime;
  
  	ps_hw_nodedrawtime = I_GetPreciseTime();
-@@ -4461,9 +5388,16 @@ static void HWR_CreateDrawNodes(void)
+@@ -4461,9 +5399,16 @@ static void HWR_CreateDrawNodes(void)
  	// Okay! Let's draw it all! Woo!
  	HWD.pfnSetTransform(&atransform);
  	HWD.pfnSetShader(SHADER_DEFAULT);
@@ -4345,7 +4418,7 @@ index b5e8fca5a..98c533833 100644
  		if (sortnode[sortindex[i]].plane)
  		{
  			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
-@@ -4491,7 +5425,17 @@ static void HWR_CreateDrawNodes(void)
+@@ -4491,7 +5436,17 @@ static void HWR_CreateDrawNodes(void)
  			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
  				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
  		}
@@ -4363,7 +4436,7 @@ index b5e8fca5a..98c533833 100644
  
  	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
  
-@@ -4502,6 +5446,8 @@ static void HWR_CreateDrawNodes(void)
+@@ -4502,6 +5457,8 @@ static void HWR_CreateDrawNodes(void)
  	// No mem leaks, please.
  	Z_Free(sortnode);
  	Z_Free(sortindex);
@@ -4372,7 +4445,7 @@ index b5e8fca5a..98c533833 100644
  }
  
  // --------------------------------------------------------------------------
-@@ -4509,88 +5455,111 @@ static void HWR_CreateDrawNodes(void)
+@@ -4509,88 +5466,111 @@ static void HWR_CreateDrawNodes(void)
  // --------------------------------------------------------------------------
  
  // added the stransform so they can be switched as drawing happenes so MD2s and sprites are sorted correctly with each other
@@ -4544,7 +4617,7 @@ index b5e8fca5a..98c533833 100644
  }
  
  // --------------------------------------------------------------------------
-@@ -4621,6 +5590,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +5601,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -4557,7 +4630,7 @@ index b5e8fca5a..98c533833 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5628,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5639,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -4570,7 +4643,7 @@ index b5e8fca5a..98c533833 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5713,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4732,6 +5724,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -4582,7 +4655,7 @@ index b5e8fca5a..98c533833 100644
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +6219,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +6230,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -4594,7 +4667,7 @@ index b5e8fca5a..98c533833 100644
  	{
  		return;
  	}
-@@ -5396,6 +6386,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
+@@ -5396,6 +6397,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
  
  static gl_sky_t gl_sky;
  
@@ -4608,7 +4681,7 @@ index b5e8fca5a..98c533833 100644
  static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, signed char yflip, float delta, boolean foglayer)
  {
  	const float radians = (float)(M_PIl / 180.0f);
-@@ -5426,6 +6423,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
+@@ -5426,6 +6434,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
  			vbo->v = (r / (float)sky->rows) + 0.5f;
  		else
  			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
@@ -4616,7 +4689,7 @@ index b5e8fca5a..98c533833 100644
  	}
  
  	if (r != 4)
-@@ -5662,6 +6660,11 @@ static void HWR_DrawSkyBackground(player_t *player)
+@@ -5662,6 +6671,11 @@ static void HWR_DrawSkyBackground(player_t *player)
  			v[0].t = v[1].t -= ((float) angle / angleturn);
  		}
  
@@ -4628,7 +4701,7 @@ index b5e8fca5a..98c533833 100644
  		HWD.pfnUnSetShader();
  		HWD.pfnDrawPolygon(NULL, v, 4, 0);
  	}
-@@ -5791,21 +6794,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6805,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -4685,7 +4758,7 @@ index b5e8fca5a..98c533833 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6884,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6895,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -4721,7 +4794,7 @@ index b5e8fca5a..98c533833 100644
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6921,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6932,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -4732,7 +4805,7 @@ index b5e8fca5a..98c533833 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5952,17 +7004,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5952,17 +7015,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		ps_hw_nodedrawtime = 0;
  	}
  
@@ -4899,7 +4972,7 @@ index b5e8fca5a..98c533833 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +7173,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +7184,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -4909,7 +4982,7 @@ index b5e8fca5a..98c533833 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +7197,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +7208,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -4919,7 +4992,7 @@ index b5e8fca5a..98c533833 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6017,6 +7222,10 @@ void HWR_RenderPlayerView(void)
+@@ -6017,6 +7233,10 @@ void HWR_RenderPlayerView(void)
  		HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_BACKLIGHT, maplighting.backlight);
  	}
  
@@ -4930,7 +5003,7 @@ index b5e8fca5a..98c533833 100644
  	if (viewssnum == 0) // Only do it if it's the first screen being rendered
  		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
  
-@@ -6027,17 +7236,55 @@ void HWR_RenderPlayerView(void)
+@@ -6027,17 +7247,55 @@ void HWR_RenderPlayerView(void)
  
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SetupFrame(viewssnum);
@@ -4986,7 +5059,7 @@ index b5e8fca5a..98c533833 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6081,6 +7328,49 @@ void CV_glanisotropic_OnChange(void)
+@@ -6081,6 +7339,49 @@ void CV_glanisotropic_OnChange(void)
  		HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
  }
  
@@ -5036,7 +5109,7 @@ index b5e8fca5a..98c533833 100644
  //added by Hurdler: console varibale that are saved
  void HWR_AddCommands(void)
  {
-@@ -6094,6 +7384,9 @@ void HWR_AddSessionCommands(void)
+@@ -6094,6 +7395,9 @@ void HWR_AddSessionCommands(void)
  {
  	if (gl_sessioncommandsadded)
  		return;
@@ -5046,7 +5119,7 @@ index b5e8fca5a..98c533833 100644
  	// Kept in case we ever need this again.
  	gl_sessioncommandsadded = true;
  }
-@@ -6138,6 +7431,8 @@ void HWR_Switch(void)
+@@ -6138,6 +7442,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -5055,7 +5128,7 @@ index b5e8fca5a..98c533833 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6241,6 +7536,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
+@@ -6241,6 +7547,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
  		blendmode |= PF_Fog;
  
  	blendmode |= PF_Modulated;	// No PF_Occlude means overlapping (incorrect) transparency
@@ -5065,7 +5138,7 @@ index b5e8fca5a..98c533833 100644
  	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode, shader, false);
  }
  
-@@ -6257,7 +7555,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +7566,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -5075,7 +5148,7 @@ index b5e8fca5a..98c533833 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +7565,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +7576,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -5085,7 +5158,7 @@ index b5e8fca5a..98c533833 100644
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +7586,23 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +7597,23 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
@@ -5111,7 +5184,7 @@ index b5e8fca5a..98c533833 100644
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +7628,26 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +7639,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.
@@ -5141,7 +5214,7 @@ index b5e8fca5a..98c533833 100644
  		// Capture the screen again for screen waving on the intermission
  		if(gamestate != GS_INTERMISSION)
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b40947..4d9ab9fbd 100644
+index 652b409..4d9ab9f 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,10 @@ extern "C" {
@@ -5198,7 +5271,7 @@ index 652b40947..4d9ab9fbd 100644
  extern precise_t ps_hw_nodesorttime;
  extern precise_t ps_hw_nodedrawtime;
 diff --git a/src/hardware/hw_md2.c b/src/hardware/hw_md2.c
-index 81a7d9a49..7f5f1f658 100644
+index 81a7d9a..7f5f1f6 100644
 --- a/src/hardware/hw_md2.c
 +++ b/src/hardware/hw_md2.c
 @@ -29,6 +29,7 @@
@@ -5626,7 +5699,7 @@ index 81a7d9a49..7f5f1f658 100644
  
  		if (spr->mobj->frame & FF_ANIMATE)
 diff --git a/src/hardware/hw_md2.h b/src/hardware/hw_md2.h
-index dbfa84aa1..c44c84893 100644
+index dbfa84a..c44c848 100644
 --- a/src/hardware/hw_md2.h
 +++ b/src/hardware/hw_md2.h
 @@ -48,6 +48,10 @@ void HWR_InitModels(void);
@@ -5642,7 +5715,7 @@ index dbfa84aa1..c44c84893 100644
  
 diff --git a/src/hardware/r_d3d11/custom_shader.cpp b/src/hardware/r_d3d11/custom_shader.cpp
 new file mode 100644
-index 000000000..7472a89ff
+index 0000000..7472a89
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shader.cpp
 @@ -0,0 +1,275 @@
@@ -5923,7 +5996,7 @@ index 000000000..7472a89ff
 +}
 diff --git a/src/hardware/r_d3d11/custom_shader.h b/src/hardware/r_d3d11/custom_shader.h
 new file mode 100644
-index 000000000..2c54e994f
+index 0000000..2c54e99
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shader.h
 @@ -0,0 +1,9 @@
@@ -5938,7 +6011,7 @@ index 000000000..2c54e994f
 +#endif
 diff --git a/src/hardware/r_d3d11/custom_shaders.cmake b/src/hardware/r_d3d11/custom_shaders.cmake
 new file mode 100644
-index 000000000..31f8d89cb
+index 0000000..31f8d89
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shaders.cmake
 @@ -0,0 +1,58 @@
@@ -6002,10 +6075,10 @@ index 000000000..31f8d89cb
 +    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 000000000..de89796b1
+index 0000000..6d9d977
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,6132 @@
+@@ -0,0 +1,6252 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -6061,6 +6134,7 @@ index 000000000..de89796b1
 +#include "../../r_fps.h"
 +#include "../../d_netcmd.h"
 +#include "../../tables.h"
++#include "../../r_main.h"
 +#endif
 +#include "../../f_finale.h"
 +#include "../../i_system.h"
@@ -6099,6 +6173,7 @@ index 000000000..de89796b1
 +#include "PSWater.h"
 +#include "PSWaterRefraction.h"
 +#include "PSFog.h"
++#include "PSFogRemap.h"
 +#include "PSSky.h"
 +#include "PSWipe.h"
 +#include "PSWipeFull.h"
@@ -6620,7 +6695,7 @@ index 000000000..de89796b1
 +// ==========================================================================
 +
 +enum VSKind { VS_POLY, VS_POLYCLIP, VS_SKY, VS_MODEL, VS_MODELLIGHT, VS_WIPE, VS_FULLSCREEN, VS_POSTIMAGE, NUMVS };
-+enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_WATERREFRACTION, PS_FOG, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, PS_FADEMAP, PS_POSTIMAGE, NUMPS };
++enum PSKind { PS_FIXED, PS_DEFAULT, PS_SOFTWARE, PS_MODELLIGHT, PS_WATER, PS_WATERREFRACTION, PS_FOG, PS_FOGREMAP, PS_SKY, PS_WIPE, PS_WIPEFULL, PS_PALETTEPOST, PS_FADEMAP, PS_POSTIMAGE, NUMPS };
 +enum Layout { LAYOUT_POLY, LAYOUT_SKY, LAYOUT_MODEL, NUMLAYOUTS };
 +
 +struct ShaderCode
@@ -6651,6 +6726,7 @@ index 000000000..de89796b1
 +	{g_PSWater, sizeof g_PSWater, "PSWater"},
 +	{g_PSWaterRefraction, sizeof g_PSWaterRefraction, "PSWaterRefraction"},
 +	{g_PSFog, sizeof g_PSFog, "PSFog"},
++	{g_PSFogRemap, sizeof g_PSFogRemap, "PSFogRemap"},
 +	{g_PSSky, sizeof g_PSSky, "PSSky"},
 +	{g_PSWipe, sizeof g_PSWipe, "PSWipe"},
 +	{g_PSWipeFull, sizeof g_PSWipeFull, "PSWipeFull"},
@@ -6915,6 +6991,7 @@ index 000000000..de89796b1
 +bool g_shaderChanged = false; // gl_shaderstate.changed
 +bool g_postImage = false;
 +bool g_waterRefraction = false;
++bool g_fogRemap = false;
 +int g_program = -1; // the program glUseProgram last set, as its type, or -1 for none
 +
 +INT32 g_shaderLeveltime = 0;
@@ -7035,7 +7112,7 @@ index 000000000..de89796b1
 +	UINT32 key = 0;
 +
 +	// GL_ONE, GL_ZERO, GL_FUNC_ADD is the same as not blending
-+	if (g_gl.blend && !g_waterRefraction && !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
++	if (g_gl.blend && !g_waterRefraction && !g_fogRemap && !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
 +		key = 1 | (g_gl.blendSrc << 1) | (g_gl.blendDst << 4) | (g_gl.blendEquation << 7);
 +
 +#ifdef _UWP
@@ -7426,7 +7503,7 @@ index 000000000..de89796b1
 +			case SHADER_DEFAULT: ps = PS_DEFAULT; break;
 +			case SHADER_MODEL_LIGHTING: ps = PS_MODELLIGHT; break;
 +			case SHADER_WATER: ps = g_waterRefraction ? PS_WATERREFRACTION : PS_WATER; break;
-+			case SHADER_FOG: ps = PS_FOG; break;
++			case SHADER_FOG: ps = g_fogRemap ? PS_FOGREMAP : PS_FOG; break;
 +			case SHADER_SKY: ps = PS_SKY; break;
 +			default: ps = PS_SOFTWARE; break; // floors, walls, sprites, models
 +		}
@@ -7882,6 +7959,7 @@ index 000000000..de89796b1
 +	// change while both draws are Invisible, so they cannot enforce this mask.
 +	g_gl.colorWriteMask = (PolyFlags & PF_Invisible) ? 0 : 7;
 +#endif
++	g_fogRemap = false;
 +	const FBITFIELD Xor = g_currentPolyFlags ^ PolyFlags;
 +
 +	if (Xor & (PF_Blending|PF_RemoveYWrap|PF_ForceWrapX|PF_ForceWrapY|PF_Occlude|PF_NoTexture|PF_Modulated|PF_NoDepthTest|PF_Decal|PF_Invisible))
@@ -10432,6 +10510,105 @@ index 000000000..de89796b1
 +#endif
 +
 +// r_opengl.c's PreparePolygon
++#ifdef _UWP
++ComPtr<ID3D11Texture2D> g_fogScene;
++ComPtr<ID3D11ShaderResourceView> g_fogSceneSrv;
++ComPtr<ID3D11Buffer> g_fogConstants;
++
++// Conservative projected bounds. Near-plane crossings need the full viewport;
++// normal faces copy only pixels they could cover, avoiding whole-frame copies.
++static void FogCaptureBounds(const FOutVector *vertices, UINT count, const Mat4 &matrix,
++	const int viewport[4], UINT height, D3D11_BOX &box)
++{
++	const float left = (float)viewport[0], top = (float)height - viewport[1] - viewport[3];
++	float x0 = left + viewport[2], y0 = top + viewport[3], x1 = left, y1 = top;
++	UINT inFront = 0;
++	for (UINT i = 0; i < count; i++)
++		inFront += matrix.m[3]*vertices[i].x + matrix.m[7]*vertices[i].y
++			+ matrix.m[11]*vertices[i].z + matrix.m[15] > 0.0001f;
++	if (!inFront)
++	{
++		box = {0, 0, 0, 0, 0, 1};
++		return;
++	}
++	for (UINT i = 0; i < count; i++)
++	{
++		const FOutVector &v = vertices[i];
++		const float w = matrix.m[3]*v.x + matrix.m[7]*v.y + matrix.m[11]*v.z + matrix.m[15];
++		if (!(w > 0.0001f))
++		{
++			x0 = left; y0 = top; x1 = left + viewport[2]; y1 = top + viewport[3];
++			break;
++		}
++		const float x = matrix.m[0]*v.x + matrix.m[4]*v.y + matrix.m[8]*v.z + matrix.m[12];
++		const float y = matrix.m[1]*v.x + matrix.m[5]*v.y + matrix.m[9]*v.z + matrix.m[13];
++		const float px = left + (x/w + 1)*0.5f*viewport[2];
++		const float py = top + (1 - y/w)*0.5f*viewport[3];
++		x0 = std::min(x0, px); y0 = std::min(y0, py);
++		x1 = std::max(x1, px); y1 = std::max(y1, py);
++	}
++	box.left = (UINT)std::clamp(floorf(x0), left, left + viewport[2]);
++	box.top = (UINT)std::clamp(floorf(y0), top, top + viewport[3]);
++	box.right = (UINT)std::clamp(ceilf(x1), left, left + viewport[2]);
++	box.bottom = (UINT)std::clamp(ceilf(y1), top, top + viewport[3]);
++	box.front = 0; box.back = 1;
++}
++
++static bool CaptureFogScene(FSurfaceInfo *surface, FBITFIELD flags,
++	const FOutVector *vertices, UINT count)
++{
++	if (!CanDraw() || !surface || !g_rt || !vertices || !count)
++		return false;
++	D3D11_BOX box;
++	FogCaptureBounds(vertices, count, Multiply(g_projection, g_modelview.back()), g_gl.viewport, g_rtHeight, box);
++	if (box.right <= box.left || box.bottom <= box.top) return false;
++	D3D11_TEXTURE2D_DESC desc;
++	g_rt->GetDesc(&desc);
++	D3D11_TEXTURE2D_DESC old = {};
++	if (g_fogScene) g_fogScene->GetDesc(&old);
++	if (!g_fogScene || old.Width != desc.Width || old.Height != desc.Height || old.Format != desc.Format)
++	{
++		ID3D11ShaderResourceView *none = nullptr;
++		g_context->PSSetShaderResources(8, 1, &none);
++		if (g_fogScene) g_textureBytes -= (UINT64)old.Width * old.Height * 4;
++		g_fogSceneSrv.Reset(); g_fogScene.Reset();
++		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++		desc.MiscFlags = 0;
++		if (Failed(g_device->CreateTexture2D(&desc, nullptr, &g_fogScene), "CreateTexture2D (fog scene)")
++			|| Failed(g_device->CreateShaderResourceView(g_fogScene.Get(), nullptr, &g_fogSceneSrv), "CreateShaderResourceView (fog scene)"))
++		{
++			g_fogSceneSrv.Reset(); g_fogScene.Reset();
++			return false;
++		}
++		g_textureBytes += (UINT64)desc.Width * desc.Height * 4;
++		g_stats.texturesCreated++;
++	}
++	if (!g_fogConstants)
++	{
++		D3D11_BUFFER_DESC buffer = {};
++		buffer.ByteWidth = 16;
++		buffer.Usage = D3D11_USAGE_DEFAULT;
++		buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
++		if (Failed(g_device->CreateBuffer(&buffer, nullptr, &g_fogConstants), "CreateBuffer (fog constants)"))
++			return false;
++	}
++	struct FogConstants { INT32 plane, lightnum; float viewRatio; INT32 pad; };
++	const FogConstants constants = {(flags & PF_FogPlane) ? 1 : 0,
++		R_AdjustLightLevel(std::clamp((INT32)surface->LightInfo.light_level >> 3, 0, 31)),
++		(float)g_gl.viewport[2] / g_screenWidth, 0};
++	g_context->UpdateSubresource(g_fogConstants.Get(), 0, nullptr, &constants, 0, 0);
++	ID3D11Buffer *buffer = g_fogConstants.Get();
++	g_context->PSSetConstantBuffers(3, 1, &buffer);
++	ID3D11ShaderResourceView *none = nullptr;
++	g_context->PSSetShaderResources(8, 1, &none);
++	g_context->CopySubresourceRegion(g_fogScene.Get(), 0, box.left, box.top, 0, g_rt.Get(), 0, &box);
++	ID3D11ShaderResourceView *srv = g_fogSceneSrv.Get();
++	g_context->PSSetShaderResources(8, 1, &srv);
++	g_stats.screens++;
++	return true;
++}
++#endif
++
 +void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *vertices, UINT count)
 +{
 +	static float poly[4] = {0, 0, 0, 0};
@@ -10488,6 +10665,10 @@ index 000000000..de89796b1
 +	g_waterRefraction = (PolyFlags & PF_Ripple) && g_program == SHADER_WATER
 +		&& refractingBlend && !cv_reducevfx.value && !CustomDrawProgram(LAYOUT_POLY)
 +		&& CaptureWaterScene(pSurf, PolyFlags, vertices, count);
++	g_fogRemap = (PolyFlags & PF_Fog) && g_program == SHADER_FOG
++		&& !CustomDrawProgram(LAYOUT_POLY) && CaptureFogScene(pSurf, PolyFlags, vertices, count);
++#else
++	(void)vertices; (void)count;
 +#endif
 +
 +}
@@ -10525,7 +10706,6 @@ index 000000000..de89796b1
 +	for (FUINT i = 0; i < iNumPts; i++)
 +		vertexCount = std::max(vertexCount, IndexArray[i] + 1);
 +	PreparePolygon(pSurf, PolyFlags, pOutVerts, vertexCount);
-+
 +	const UINT stride = sizeof(FOutVector);
 +	const UINT vertexOffset = RingWrite(g_vertexRing, pOutVerts, vertexCount * stride, stride);
 +	const UINT indexOffset = RingWrite(g_indexRing, IndexArray, (UINT)(iNumPts * sizeof(UINT32)), sizeof(UINT32));
@@ -11235,6 +11415,17 @@ index 000000000..de89796b1
 +	g_waterSineSrv.Reset(); g_waterSine.Reset();
 +	g_waterRefraction = false;
 +
++	if (g_fogScene)
++	{
++		D3D11_TEXTURE2D_DESC desc;
++		g_fogScene->GetDesc(&desc);
++		g_textureBytes -= (UINT64)desc.Width * desc.Height * 4;
++		g_stats.texturesDeleted++;
++	}
++	if (g_context) g_context->PSSetShaderResources(8, 1, &none);
++	g_fogSceneSrv.Reset(); g_fogScene.Reset();
++	g_fogConstants.Reset();
++	g_fogRemap = false;
 +	if (g_fadeScreen)
 +	{
 +		D3D11_TEXTURE2D_DESC desc;
@@ -11674,6 +11865,7 @@ index 000000000..de89796b1
 +#ifdef _UWP
 +	if (type == SHADER_WATER && cv_reducevfx.value) type = SHADER_FLOOR;
 +#endif
++	g_fogRemap = false;
 +	if (type == SHADER_NONE)
 +	{
 +		g_shaderCurrent = -1;
@@ -11711,6 +11903,7 @@ index 000000000..de89796b1
 +void D3D_UnSetShader(void)
 +{
 +	g_waterRefraction = false;
++	g_fogRemap = false;
 +	g_shaderCurrent = -1;
 +	g_shaderType = 0;
 +	g_program = -1;
@@ -12140,7 +12333,7 @@ index 000000000..de89796b1
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 000000000..bb2921c5a
+index 0000000..bb2921c
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
 @@ -0,0 +1,66 @@
@@ -12212,10 +12405,10 @@ index 000000000..bb2921c5a
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 000000000..791b1b43f
+index 0000000..cc847cd
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,563 @@
+@@ -0,0 +1,610 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -12292,6 +12485,17 @@ index 000000000..791b1b43f
 +	int u_fade_map_row;
 +	int3 u_fade_map_pad;
 +};
++
++#ifdef _UWP
++Texture2D t_fog_scene : register(t8);
++cbuffer FogConstants : register(b3)
++{
++	int u_fog_plane;
++	int u_fog_lightnum;
++	float u_fog_view_ratio;
++	int u_fog_pad;
++};
++#endif
 +
 +struct VSOut
 +{
@@ -12685,6 +12889,42 @@ index 000000000..791b1b43f
 +	return AlphaTest(final_color);
 +}
 +
++// Software's integer distance/scale tables, rather than the smooth shader's
++// approximation. A fog boundary remaps the scene once at its own distance.
++float FogColormap(float distance, int lightnum, int plane, float viewRatio)
++{
++	int start = (31 - clamp(lightnum, 0, 31)) * 2;
++	int attenuation;
++	if (plane)
++	{
++		int index = min((int)floor(max(distance, 0.0) / 16.0), 127);
++		attenuation = (int)floor(160.0 / (index + 1)) / 2;
++	}
++	else
++	{
++		int index = min((int)floor(5120.0 * viewRatio / max(distance, 0.0001)), 47);
++		attenuation = (int)floor(index / viewRatio) / 2;
++	}
++	return clamp(start - attenuation, 0, 31);
++}
++
++float4 PSFogRemap(VSOut i) : SV_Target
++{
++#ifdef _UWP
++	float4 scene = t_fog_scene.Load(int3(i.pos.xy, 0));
++	if (u_palette)
++	{
++		int row = (int)FogColormap(i.pos.w, u_fog_lightnum, u_fog_plane, u_fog_view_ratio);
++		return float4(t_lighttable.Load(int3(PaletteIndex(scene.rgb), row, 0)).rgb, 1.0);
++	}
++	// Smooth rendering retains its tint/fade equation, now applied to the scene.
++	float4 color = SoftwareFade(SoftwareTint(scene, 0.0), u_lighting, i.fragz);
++	return float4(color.rgb, 1.0);
++#else
++	return PSFog(i);
++#endif
++}
++
 +// GLSL_SKY_FRAGMENT_SHADER
 +float4 PSSky(VSOut i) : SV_Target
 +{
@@ -12780,7 +13020,7 @@ index 000000000..791b1b43f
 +	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
 diff --git a/src/hardware/r_opengl/r_opengl.c b/src/hardware/r_opengl/r_opengl.c
-index 900bae98d..c01e80ac7 100644
+index 900bae9..c01e80a 100644
 --- a/src/hardware/r_opengl/r_opengl.c
 +++ b/src/hardware/r_opengl/r_opengl.c
 @@ -638,313 +638,7 @@ static void Shader_SetUniforms(FSurfaceInfo *Surface, GLRGBAFloat *poly, GLRGBAF
@@ -13099,7 +13339,7 @@ index 900bae98d..c01e80ac7 100644
  #endif	// GL_SHADERS
  
 diff --git a/src/http-mserv.c b/src/http-mserv.c
-index 4f9f9cb39..6854fc5e7 100644
+index 4f9f9cb..6854fc5 100644
 --- a/src/http-mserv.c
 +++ b/src/http-mserv.c
 @@ -185,11 +185,13 @@ HMS_connect (const char *format, ...)
@@ -13117,7 +13357,7 @@ index 4f9f9cb39..6854fc5e7 100644
  	if (M_CheckParm("-bindaddr") && M_IsNextParm())
  	{
 diff --git a/src/hwr2/patch_atlas.cpp b/src/hwr2/patch_atlas.cpp
-index 395b28601..76227a569 100644
+index 395b286..76227a5 100644
 --- a/src/hwr2/patch_atlas.cpp
 +++ b/src/hwr2/patch_atlas.cpp
 @@ -14,6 +14,11 @@
@@ -13143,7 +13383,7 @@ index 395b28601..76227a569 100644
  	{
  		rhi.destroy_texture(atlas.texture());
 diff --git a/src/hwr2/resource_management.cpp b/src/hwr2/resource_management.cpp
-index 0ac7d7358..d3b9b920c 100644
+index 0ac7d73..d3b9b92 100644
 --- a/src/hwr2/resource_management.cpp
 +++ b/src/hwr2/resource_management.cpp
 @@ -10,6 +10,8 @@
@@ -13312,7 +13552,7 @@ index 0ac7d7358..d3b9b920c 100644
  
  FlatTextureManager::FlatTextureManager() = default;
 diff --git a/src/hwr2/resource_management.hpp b/src/hwr2/resource_management.hpp
-index 3fd6666cf..3cfcb18f1 100644
+index 3fd6666..3cfcb18 100644
 --- a/src/hwr2/resource_management.hpp
 +++ b/src/hwr2/resource_management.hpp
 @@ -11,6 +11,8 @@
@@ -13375,7 +13615,7 @@ index 3fd6666cf..3cfcb18f1 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e90..3d1986b0e 100644
+index 56d507e..3d1986b 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
 @@ -313,8 +313,74 @@ boolean I_HasOpenURL(void);
@@ -13454,7 +13694,7 @@ index 56d507e90..3d1986b0e 100644
 +
  #endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
-index f52f9298e..ff724f09e 100644
+index f52f929..ff724f0 100644
 --- a/src/i_video_common.cpp
 +++ b/src/i_video_common.cpp
 @@ -33,6 +33,12 @@
@@ -13612,7 +13852,7 @@ index f52f9298e..ff724f09e 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750abb..c2d4447ef 100644
+index d52750a..c2d4447 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
 @@ -420,15 +420,23 @@ typedef enum
@@ -13642,7 +13882,7 @@ index d52750abb..c2d4447ef 100644
  	vaopt_perspective,
  	vaopt_legacygl_end,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
-index 812c7f80e..56eba74cb 100644
+index 812c7f8..56eba74 100644
 --- a/src/k_menufunc.c
 +++ b/src/k_menufunc.c
 @@ -203,8 +203,14 @@ static void M_ChangeCvar(INT32 choice)
@@ -13661,7 +13901,7 @@ index 812c7f80e..56eba74cb 100644
  			"ARE YOU SURE?",
  			M_ChangeCvarResponse,
 diff --git a/src/lua_script.c b/src/lua_script.c
-index 51cef5129..8581c102e 100644
+index 51cef51..8581c10 100644
 --- a/src/lua_script.c
 +++ b/src/lua_script.c
 @@ -42,6 +42,126 @@
@@ -13820,7 +14060,7 @@ index 51cef5129..8581c102e 100644
  	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
  	I_Assert(lua_istable(gL, -1));
 diff --git a/src/m_fixed.h b/src/m_fixed.h
-index de4b0f252..420d0290d 100644
+index de4b0f2..420d029 100644
 --- a/src/m_fixed.h
 +++ b/src/m_fixed.h
 @@ -171,6 +171,17 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FloatToFixed(float f)
@@ -13842,7 +14082,7 @@ index de4b0f252..420d0290d 100644
  	#define __USE_C_FIXEDMUL__
  	#define __USE_C_FIXEDDIV__
 diff --git a/src/m_perfstats.c b/src/m_perfstats.c
-index 705b60eab..bcf741eab 100644
+index 705b60e..bcf741e 100644
 --- a/src/m_perfstats.c
 +++ b/src/m_perfstats.c
 @@ -25,6 +25,14 @@
@@ -14101,7 +14341,7 @@ index 705b60eab..bcf741eab 100644
 +}
 +#endif
 diff --git a/src/m_perfstats.h b/src/m_perfstats.h
-index f92b1d8e0..4e4f82a8f 100644
+index f92b1d8..4e4f82a 100644
 --- a/src/m_perfstats.h
 +++ b/src/m_perfstats.h
 @@ -70,6 +70,17 @@ void PS_ResetBotInfo(void);
@@ -14123,7 +14363,7 @@ index f92b1d8e0..4e4f82a8f 100644
  } // extern "C"
  #endif
 diff --git a/src/menus/options-1.c b/src/menus/options-1.c
-index 41bc817aa..ccb395820 100644
+index 41bc817..ccb3958 100644
 --- a/src/menus/options-1.c
 +++ b/src/menus/options-1.c
 @@ -73,6 +73,11 @@ menu_t OPTIONS_MainDef = {
@@ -14197,7 +14437,7 @@ index 41bc817aa..ccb395820 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae04..700ae9665 100644
+index c2e40ae..700ae96 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -14290,7 +14530,7 @@ index c2e40ae04..700ae9665 100644
  		NULL, {.cvar = &cv_glspritebillboarding}, 0, 0},
  
 diff --git a/src/p_lights.c b/src/p_lights.c
-index fe167838a..7d2074376 100644
+index fe16783..7d20743 100644
 --- a/src/p_lights.c
 +++ b/src/p_lights.c
 @@ -14,6 +14,9 @@
@@ -14321,7 +14561,7 @@ index fe167838a..7d2074376 100644
 +#endif
  }
 diff --git a/src/p_mobj.c b/src/p_mobj.c
-index 305a75e0e..9da767720 100644
+index 305a75e..9da7677 100644
 --- a/src/p_mobj.c
 +++ b/src/p_mobj.c
 @@ -216,6 +216,40 @@ static void P_CyclePlayerMobjState(mobj_t *mobj)
@@ -14533,7 +14773,7 @@ index 305a75e0e..9da767720 100644
  void P_FreePrecipMobj(precipmobj_t *mobj)
  {
 diff --git a/src/p_mobj.h b/src/p_mobj.h
-index 02f46b56f..f6f4e46a4 100644
+index 02f46b5..f6f4e46 100644
 --- a/src/p_mobj.h
 +++ b/src/p_mobj.h
 @@ -454,6 +454,9 @@ struct mobj_t
@@ -14563,7 +14803,7 @@ index 02f46b56f..f6f4e46a4 100644
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce77..8441380d9 100644
+index e5208ce..8441380 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
 @@ -17,6 +17,9 @@
@@ -14662,7 +14902,7 @@ index e5208ce77..8441380d9 100644
  	levelloading = false;
  
 diff --git a/src/p_tick.h b/src/p_tick.h
-index b735d9b1d..5d78a91b7 100644
+index b735d9b..5d78a91 100644
 --- a/src/p_tick.h
 +++ b/src/p_tick.h
 @@ -16,6 +16,9 @@
@@ -14695,7 +14935,7 @@ index b735d9b1d..5d78a91b7 100644
  #define P_SetTarget P_SetTarget2
  #endif
 diff --git a/src/r_draw.h b/src/r_draw.h
-index b3b71e176..ed1dbf759 100644
+index b3b71e1..ed1dbf7 100644
 --- a/src/r_draw.h
 +++ b/src/r_draw.h
 @@ -71,7 +71,7 @@ extern lumpnum_t viewborderlump[8];
@@ -14758,7 +14998,7 @@ index b3b71e176..ed1dbf759 100644
  void R_DrawTiltedSpan_Flat(drawspandata_t* ds);
  
 diff --git a/src/r_draw_column.cpp b/src/r_draw_column.cpp
-index c867aa6ff..6885a6087 100644
+index c867aa6..6885a60 100644
 --- a/src/r_draw_column.cpp
 +++ b/src/r_draw_column.cpp
 @@ -32,7 +32,7 @@ enum DrawColumnType
@@ -14843,7 +15083,7 @@ index c867aa6ff..6885a6087 100644
  	ZoneScoped;
  
 diff --git a/src/r_fps.cpp b/src/r_fps.cpp
-index 08750043b..d38fe5405 100644
+index 0875004..d38fe54 100644
 --- a/src/r_fps.cpp
 +++ b/src/r_fps.cpp
 @@ -608,6 +608,7 @@ static std::vector<mobj_t*> interpolated_mobjs;
@@ -14891,7 +15131,7 @@ index 08750043b..d38fe5405 100644
  
  void R_InitMobjInterpolators(void)
 diff --git a/src/r_main.cpp b/src/r_main.cpp
-index 639f74437..a7863d9fa 100644
+index 639f744..a7863d9 100644
 --- a/src/r_main.cpp
 +++ b/src/r_main.cpp
 @@ -17,6 +17,9 @@
@@ -15206,7 +15446,7 @@ index 639f74437..a7863d9fa 100644
  
  void R_SkyboxFrame(int s)
 diff --git a/src/r_main.h b/src/r_main.h
-index f17ef9551..42643d3d3 100644
+index f17ef95..42643d3 100644
 --- a/src/r_main.h
 +++ b/src/r_main.h
 @@ -89,6 +89,14 @@ fixed_t R_ScaleFromGlobalAngle(angle_t visangle);
@@ -15225,7 +15465,7 @@ index f17ef9551..42643d3d3 100644
  
  void R_GetRenderBlockMapDimensions(fixed_t drawdist, INT32 *xl, INT32 *xh, INT32 *yl, INT32 *yh);
 diff --git a/src/r_plane.cpp b/src/r_plane.cpp
-index 36f9b6b03..52d0309b7 100644
+index 36f9b6b..52d0309 100644
 --- a/src/r_plane.cpp
 +++ b/src/r_plane.cpp
 @@ -341,6 +341,17 @@ static visplane_t *new_visplane(unsigned hash)
@@ -15276,7 +15516,7 @@ index 36f9b6b03..52d0309b7 100644
  	INT32 x;
  	drawcolumndata_t dc {0};
 diff --git a/src/r_segs.cpp b/src/r_segs.cpp
-index 6dd45359a..0fd2c0d1a 100644
+index 6dd4535..0fd2c0d 100644
 --- a/src/r_segs.cpp
 +++ b/src/r_segs.cpp
 @@ -1389,13 +1389,15 @@ static void R_DrawWallColumn(drawcolumndata_t* dc, INT32 yl, INT32 yh, fixed_t m
@@ -15311,7 +15551,7 @@ index 6dd45359a..0fd2c0d1a 100644
  	if (numffloors)
  	{
 diff --git a/src/r_sky.c b/src/r_sky.c
-index d66d0e3e5..67604448c 100644
+index d66d0e3..6760444 100644
 --- a/src/r_sky.c
 +++ b/src/r_sky.c
 @@ -76,8 +76,8 @@ void R_SetupSkyDraw(void)
@@ -15326,7 +15566,7 @@ index d66d0e3e5..67604448c 100644
  
  	R_SetSkyScale();
 diff --git a/src/r_textures.cpp b/src/r_textures.cpp
-index 57ca9303c..22874a984 100644
+index 57ca930..22874a9 100644
 --- a/src/r_textures.cpp
 +++ b/src/r_textures.cpp
 @@ -817,12 +817,14 @@ UINT8 *R_GenerateTextureBrightmap(size_t texnum)
@@ -15345,7 +15585,7 @@ index 57ca9303c..22874a984 100644
  //
  // R_GetTextureBrightmap
 diff --git a/src/r_textures.h b/src/r_textures.h
-index 4f0447989..147e7e623 100644
+index 4f04479..147e7e6 100644
 --- a/src/r_textures.h
 +++ b/src/r_textures.h
 @@ -89,7 +89,17 @@ void R_FlushTextureCache(void);
@@ -15367,7 +15607,7 @@ index 4f0447989..147e7e623 100644
  boolean R_TextureHasBrightmap(INT32 texnum);
  boolean R_TextureCanRemap(INT32 texnum);
 diff --git a/src/r_things.cpp b/src/r_things.cpp
-index 7e608da9c..b0aaca104 100644
+index 7e608da..b0aaca1 100644
 --- a/src/r_things.cpp
 +++ b/src/r_things.cpp
 @@ -650,6 +650,18 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
@@ -15684,7 +15924,7 @@ index 7e608da9c..b0aaca104 100644
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b09..41754ced9 100644
+index bf1e28b..41754ce 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
 @@ -266,6 +266,11 @@ struct drawnode_t
@@ -15700,7 +15940,7 @@ index bf1e28b09..41754ced9 100644
  
  void R_InitDrawNodes(void);
 diff --git a/src/rhi/gl2/gl2_rhi.cpp b/src/rhi/gl2/gl2_rhi.cpp
-index cf35eebb5..6b9f25841 100644
+index cf35eeb..6b9f258 100644
 --- a/src/rhi/gl2/gl2_rhi.cpp
 +++ b/src/rhi/gl2/gl2_rhi.cpp
 @@ -10,6 +10,7 @@
@@ -16673,7 +16913,7 @@ index cf35eebb5..6b9f25841 100644
  	GL_ASSERT;
  }
 diff --git a/src/rhi/gl2/gl2_rhi.hpp b/src/rhi/gl2/gl2_rhi.hpp
-index f8b62987b..fbc382258 100644
+index f8b6298..fbc3822 100644
 --- a/src/rhi/gl2/gl2_rhi.hpp
 +++ b/src/rhi/gl2/gl2_rhi.hpp
 @@ -11,6 +11,7 @@
@@ -16751,7 +16991,7 @@ index f8b62987b..fbc382258 100644
  	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);
  	virtual ~Gl2Rhi();
 diff --git a/src/screen.c b/src/screen.c
-index 67b8f13fb..3db17c55f 100644
+index 67b8f13..3db17c5 100644
 --- a/src/screen.c
 +++ b/src/screen.c
 @@ -58,7 +58,9 @@ UINT8 setrenderneeded = 0;
@@ -16766,7 +17006,7 @@ index 67b8f13fb..3db17c55f 100644
  #endif
  	{0, NULL}
 diff --git a/src/sdl/CMakeLists.txt b/src/sdl/CMakeLists.txt
-index d6f32a67c..537495d51 100644
+index d6f32a6..537495d 100644
 --- a/src/sdl/CMakeLists.txt
 +++ b/src/sdl/CMakeLists.txt
 @@ -58,10 +58,15 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
@@ -16786,7 +17026,7 @@ index d6f32a67c..537495d51 100644
  if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)
  	target_link_libraries(SRB2SDL2 PRIVATE m rt)
 diff --git a/src/sdl/hwsym_sdl.c b/src/sdl/hwsym_sdl.c
-index a801c73e9..ac98ad3b4 100644
+index a801c73..ac98ad3 100644
 --- a/src/sdl/hwsym_sdl.c
 +++ b/src/sdl/hwsym_sdl.c
 @@ -41,6 +41,9 @@
@@ -16811,7 +17051,7 @@ index a801c73e9..ac98ad3b4 100644
  	if (0 == strcmp("SetPalette", funcName))
  		funcPointer = FUNCPTRCAST(&OglSdlSetPalette);
 diff --git a/src/sdl/i_main.cpp b/src/sdl/i_main.cpp
-index f2fa2fce9..73f659db8 100644
+index f2fa2fc..73f659d 100644
 --- a/src/sdl/i_main.cpp
 +++ b/src/sdl/i_main.cpp
 @@ -42,6 +42,10 @@
@@ -16861,7 +17101,7 @@ index f2fa2fce9..73f659db8 100644
  {
  	return main(__argc, __argv);
 diff --git a/src/sdl/i_system.cpp b/src/sdl/i_system.cpp
-index 827f493b1..03eded313 100644
+index 827f493..03eded3 100644
 --- a/src/sdl/i_system.cpp
 +++ b/src/sdl/i_system.cpp
 @@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
@@ -17054,7 +17294,7 @@ index 827f493b1..03eded313 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 000000000..24cc8f49c
+index 0000000..24cc8f4
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
 @@ -0,0 +1,863 @@
@@ -17923,7 +18163,7 @@ index 000000000..24cc8f49c
 +}
 diff --git a/src/sdl/i_uwptrace.h b/src/sdl/i_uwptrace.h
 new file mode 100644
-index 000000000..b41da89ab
+index 0000000..b41da89
 --- /dev/null
 +++ b/src/sdl/i_uwptrace.h
 @@ -0,0 +1,25 @@
@@ -17953,7 +18193,7 @@ index 000000000..b41da89ab
 +#endif
 +#endif
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c3f..6feb76f06 100644
+index 7fa8e0c..6feb76f 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
 @@ -29,6 +29,12 @@
@@ -18146,7 +18386,7 @@ index 7fa8e0c3f..6feb76f06 100644
  	}
  
 diff --git a/src/sdl/mixer_sound.c b/src/sdl/mixer_sound.c
-index b6b9e72f9..40105963c 100644
+index b6b9e72..4010596 100644
 --- a/src/sdl/mixer_sound.c
 +++ b/src/sdl/mixer_sound.c
 @@ -191,7 +191,9 @@ void I_StartupSound(void)
@@ -18161,7 +18401,7 @@ index b6b9e72f9..40105963c 100644
  	// SDL 2.0.6+ defaults to the latter and it screws up our sound effects
  	SDL_setenv("SDL_AUDIODRIVER", "directsound", 1);
 diff --git a/src/sdl/ogl_sdl.c b/src/sdl/ogl_sdl.c
-index 17eb1b8b3..113476a1b 100644
+index 17eb1b8..113476a 100644
 --- a/src/sdl/ogl_sdl.c
 +++ b/src/sdl/ogl_sdl.c
 @@ -15,6 +15,10 @@
@@ -18188,7 +18428,7 @@ index 17eb1b8b3..113476a1b 100644
  	HWR_MakeScreenFinalTexture();
  	HWR_DrawScreenFinalTexture(sdlw, sdlh);
 diff --git a/src/sdl/rhi_gl2_platform.cpp b/src/sdl/rhi_gl2_platform.cpp
-index f3f10fe90..c85cbe0b4 100644
+index f3f10fe..c85cbe0 100644
 --- a/src/sdl/rhi_gl2_platform.cpp
 +++ b/src/sdl/rhi_gl2_platform.cpp
 @@ -23,6 +23,10 @@
@@ -18215,7 +18455,7 @@ index f3f10fe90..c85cbe0b4 100644
  	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
  }
 diff --git a/src/st_stuff.c b/src/st_stuff.c
-index 6f67d6a8f..0a95580e2 100644
+index 6f67d6a..0a95580 100644
 --- a/src/st_stuff.c
 +++ b/src/st_stuff.c
 @@ -129,7 +129,7 @@ void ST_doPaletteStuff(void)
@@ -18250,7 +18490,7 @@ index 6f67d6a8f..0a95580e2 100644
  		V_SetPalette(0);
  
 diff --git a/src/v_video.cpp b/src/v_video.cpp
-index 481a70d5f..e0242069b 100644
+index 481a70d..e024206 100644
 --- a/src/v_video.cpp
 +++ b/src/v_video.cpp
 @@ -20,6 +20,9 @@
@@ -18328,7 +18568,7 @@ index 481a70d5f..e0242069b 100644
  	if (rendermode == render_opengl)
  	{
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
-index 3c68b1378..2444f431c 100644
+index 3c68b13..2444f43 100644
 --- a/src/w_wad.cpp
 +++ b/src/w_wad.cpp
 @@ -114,6 +114,14 @@ static UINT16 lumpnumcacheindex = 0;
@@ -18549,7 +18789,7 @@ index 3c68b1378..2444f431c 100644
  	{
  		const char * error = "ZIP file has holes (%ld extra bytes)\n";
 diff --git a/src/w_wad.h b/src/w_wad.h
-index 7024826dc..4c6f71772 100644
+index 7024826..4c6f717 100644
 --- a/src/w_wad.h
 +++ b/src/w_wad.h
 @@ -75,6 +75,9 @@ struct lumpinfo_t
@@ -18577,7 +18817,7 @@ index 7024826dc..4c6f71772 100644
  
  void W_Shutdown(void);
 diff --git a/src/z_zone.cpp b/src/z_zone.cpp
-index b5f73450b..521623929 100644
+index b5f7345..5216239 100644
 --- a/src/z_zone.cpp
 +++ b/src/z_zone.cpp
 @@ -111,6 +111,11 @@ void Z_Init(void)
