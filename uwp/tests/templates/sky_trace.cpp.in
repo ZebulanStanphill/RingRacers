@@ -1,0 +1,130 @@
+#include <cassert>
+#include <algorithm>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "r_main.h"
+#include "r_textures.h"
+#include "hardware/hw_defs.h"
+#include "p_setup.h"
+INT16 gamemap=119;
+tic_t leveltime=1;
+size_t validcount=0;
+UINT8 viewssnum=0;
+angle_t viewangle=ANGLE_90,viewroll=0,gl_aimingangle=0;
+float gl_viewx=-8848,gl_viewy=-18176,gl_viewz=122;
+boolean gl_skyboxview=false;
+int hwr_portallevel=0;
+INT32 skyflatnum=1,numtextures=4;
+sector_t mapSectors[3]={},fakeFlat={};
+sector_t *sectors=mapSectors,*gl_frontsector=&mapSectors[0];
+subsector_t *subsectors;
+line_t mapLines[2]={},*lines=mapLines;
+seg_t seg={};seg_t *gl_curline=&seg;
+side_t side={};side_t *gl_sidedef=&side;
+texture_t tex[4]={};texture_t *texturePointers[4]={&tex[0],&tex[1],&tex[2],&tex[3]};
+texture_t **textures=texturePointers;
+consvar_t cv_glbatching{};
+INT32 displayplayers[MAXSPLITSCREENPLAYERS]={};
+player_t players[MAXPLAYERS]={};
+fixed_t R_FOV(int) {return 90*FRACUNIT;}
+boolean shader=true;
+boolean HWR_UseShader() {return shader;}
+std::string logText;
+size_t logCalls=0;
+using std::min;
+void I_OutputMsg(const char *fmt,...) {
+    logCalls++;
+    char buf[2048];va_list args;va_start(args,fmt);
+    vsnprintf(buf,sizeof buf,fmt,args);va_end(args);logText+=buf;
+}
+@@TRACE@@
+void PlaneTrace(subsector_t *subsector,boolean isceiling,sector_t *FOFsector,
+    levelflat_t *levelflat,FOutVector *planeVerts,int nrPlaneVerts,FBITFIELD PolyFlags) {
+@@PLANE_DISPATCH@@
+}
+void WallTrace(FOutVector *wallVerts,FBITFIELD blendmode) {
+@@WALL_DISPATCH@@
+}
+size_t Count(const char *needle) {
+    size_t n=0,pos=0;while((pos=logText.find(needle,pos))!=std::string::npos){n++;pos++;}return n;
+}
+int main() {
+    cv_glbatching.value=1;
+    mapSectors[0].floorheight=mapSectors[0].ceilingheight=-800*FRACUNIT;
+    mapSectors[0].ceilingpic=skyflatnum;
+    mapSectors[1].floorheight=mapSectors[1].ceilingheight=-394*FRACUNIT;
+    // Water Palace's closed sky sectors and placeholder lower wall. Fake-flat
+    // render copies must report the original sector IDs, never subtract a
+    // stack-allocated copy from the map's sector array.
+    fakeFlat=mapSectors[0];fakeFlat.ceilingheight=-700*FRACUNIT;gl_frontsector=&fakeFlat;
+    seg.frontsector=&mapSectors[0];seg.backsector=&mapSectors[1];seg.linedef=&mapLines[1];
+    memcpy(tex[1].name,"GFZROCK",8);side.bottomtexture=1;
+    FOutVector wall[4]={};wall[0].x=wall[3].x=-9440;
+    wall[1].x=wall[2].x=-9440;wall[0].z=wall[3].z=-15680;
+    wall[1].z=wall[2].z=-14112;wall[0].y=wall[1].y=-800;
+    wall[2].y=wall[3].y=-394;
+    auto savedWall=std::vector<FOutVector>(wall,wall+4);
+    WallTrace(wall,PF_Masked);
+    assert(Count("UWP sky geometry:")==1 && Count("UWP sky surface:")==1);
+    assert(logText.find("kind=wall source=1 front=0 back=1")!=std::string::npos);
+    assert(logText.find("heights=(-800.0,-700.0) texture=GFZROCK")!=std::string::npos);
+    assert(logText.find("batching=1 shaders=1")!=std::string::npos);
+    assert(!memcmp(wall,savedWall.data(),sizeof wall));
+    // Frame zero is valid, repeated frame counts are bounded independently by
+    // type, and later frames in the same five-second period do not keep logging.
+    for(int i=0;i<1000;i++)WallTrace(wall,PF_Masked);
+    assert(Count("kind=wall")==16 && Count("UWP sky geometry:")==1);
+    for(int i=0;i<1000;i++)WallTrace(wall,PF_Invisible|PF_NoTexture);
+    assert(Count("kind=occluder")==4);
+    assert(logCalls==21); // One header plus one write per surface.
+    size_t before=logText.size();validcount++;WallTrace(wall,PF_Masked);
+    assert(logText.size()==before);
+    // An independent budget and header for each view, including counts beyond
+    // 32 bits. Skip skybox and recursive portal passes without consuming budget.
+    viewssnum=1;validcount=size_t(1)<<33;gl_skyboxview=true;WallTrace(wall,PF_Masked);
+    gl_skyboxview=false;hwr_portallevel=1;WallTrace(wall,PF_Masked);
+    assert(logText.size()==before);hwr_portallevel=0;
+    shader=false;cv_glbatching.value=0;WallTrace(wall,PF_Masked);
+    assert(Count("UWP sky geometry:")==2 && Count("kind=wall")==17);
+    before=logText.size();validcount++;WallTrace(wall,PF_Masked);
+    assert(logText.size()==before);
+    // Only regular ~015 floor submissions are candidates; no calls mutate the
+    // geometry. Empty inputs, ceiling/FOF faces and ordinary flats are skipped.
+    subsector_t subArray[1]={};subsectors=subArray;
+    subArray[0].sector=&mapSectors[0];levelflat_t flat={};memcpy(flat.name,"~015",5);
+    FOutVector plane[10]={};for(int i=0;i<10;i++){plane[i].x=float(i);plane[i].y=-800;}
+    HWR_TraceSkyGeometry(0,0,&mapSectors[0],nullptr,"~015",nullptr,1,0);
+    HWR_TraceSkyGeometry(0,0,&mapSectors[0],nullptr,"~015",plane,0,0);
+    leveltime=5*TICRATE;viewssnum=0;validcount=2;
+    PlaneTrace(&subArray[0],true,nullptr,&flat,plane,10,0);
+    PlaneTrace(&subArray[0],false,&mapSectors[1],&flat,plane,10,0);
+    assert(Count("kind=floor")==0);
+    PlaneTrace(&subArray[0],false,nullptr,&flat,plane,10,PF_Occlude);
+    assert(Count("kind=floor")==1 && logText.find("v7=")!=std::string::npos);
+    assert(logText.find("v8=")==std::string::npos);
+    for(int i=0;i<1000;i++)PlaneTrace(&subArray[0],false,nullptr,&flat,plane,10,0);
+    assert(Count("kind=floor")==16);
+    memcpy(flat.name,"GENWAT05",9);before=logText.size();
+    PlaneTrace(&subArray[0],false,nullptr,&flat,plane,10,0);
+    assert(logText.size()==before);
+    // A new period, a different map, and restarting the same map at tic zero
+    // each reopen sampling. Non-placeholder wall lines submit no trace.
+    leveltime=10*TICRATE;WallTrace(wall,PF_Masked);assert(Count("kind=wall")==18);
+    gamemap++;WallTrace(wall,PF_Masked);assert(Count("kind=wall")==19);
+    leveltime=0;WallTrace(wall,PF_Masked);assert(Count("kind=wall")==20);
+    leveltime=15*TICRATE;side.bottomtexture=0;before=logText.size();WallTrace(wall,PF_Masked);
+    assert(logText.size()==before);
+    assert(!memcmp(wall,savedWall.data(),sizeof wall));
+    // Even unusually large values cannot overrun the bounded row buffer.
+    leveltime=20*TICRATE;side.bottomtexture=1;
+    for(auto &v:wall)v.x=v.y=v.z=v.s=v.t=3.4e38f;
+    WallTrace(wall,PF_Masked);
+    assert(logText.back()=='\n');
+    assert(logCalls==Count("UWP sky geometry:")+Count("UWP sky surface:"));
+    puts("Sky geometry diagnostics retain real IDs/fake-flat heights, cover dispatch, and bound logging without changing geometry");
+}

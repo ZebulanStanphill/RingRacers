@@ -1,0 +1,198 @@
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "p_local.h"
+#include "p_slopes.h"
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
+#define min std::min
+#define max std::max
+#define M_Memcpy std::memcpy
+
+struct Draw {
+    std::array<FOutVector,4> v;
+    FBITFIELD flags;
+    INT32 light, texture, base;
+    extracolormap_t *color;
+    UINT8 alpha;
+    bool queued, fog;
+};
+static std::vector<Draw> draws;
+static seg_t segment{};
+static seg_t *gl_curline=&segment;
+static FUINT HWR_CalcWallLight(FUINT light,seg_t *seg) { assert(seg==gl_curline);return light; }
+static void Submit(FOutVector *v,FSurfaceInfo *surf,FBITFIELD flags,INT32 light,
+    extracolormap_t *color,bool queued,bool fog,INT32 texture=-1,INT32 base=-1) {
+    Draw d{};std::copy(v,v+4,d.v.begin());d.flags=flags;d.light=light;
+    d.color=color;d.alpha=surf->PolyColor.s.alpha;d.queued=queued;d.fog=fog;
+    d.texture=texture;d.base=base;draws.push_back(d);
+    // A real draw may modify lighting; the next slice must restore alpha.
+    surf->PolyColor.s.alpha=0;
+}
+static void HWR_ProjectWall(FOutVector *v,FSurfaceInfo *s,FBITFIELD f,INT32 l,extracolormap_t *c) {
+    Submit(v,s,f,l,c,false,false);
+}
+static void HWR_AddTransparentWall(FOutVector *v,FSurfaceInfo *s,INT32 t,INT32 b,
+    FBITFIELD f,boolean fog,INT32 l,extracolormap_t *c) { Submit(v,s,f,l,c,true,fog,t,b); }
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SLOPE_HEIGHT@@
+@@LIGHT_HEIGHT@@
+@@FOF_BOTTOM@@
+@@CLIP_SLICE@@
+@@SPLIT_WALL@@
+
+using Wall=std::array<FOutVector,4>;
+static double Mix(double a,double b,double f) { return a+(b-a)*f; }
+static Wall MakeWall(float bottom0,float bottom1,float top0,float top1) {
+    Wall w{};
+    w[0].x=w[3].x=0;w[1].x=w[2].x=1024;
+    w[0].z=w[3].z=20;w[1].z=w[2].z=20;
+    w[0].y=bottom0;w[1].y=bottom1;w[2].y=top1;w[3].y=top0;
+    w[0].s=w[3].s=-.5f;w[1].s=w[2].s=7.9961f;
+    w[3].t=.125f;w[2].t=.25f;
+    w[0].t=w[3].t+(top0-bottom0)/1024;
+    w[1].t=w[2].t+(top1-bottom1)/1024;
+    return w;
+}
+static double Fraction(const Wall &w,const FOutVector &v) {
+    const double dx=w[1].x-w[0].x,dz=w[1].z-w[0].z;
+    return ((v.x-w[0].x)*dx+(v.z-w[0].z)*dz)/(dx*dx+dz*dz);
+}
+static void CheckVertices(const Wall &w,FBITFIELD flags) {
+    for(const Draw &d:draws) {
+        assert(d.flags==flags && d.alpha==77);
+        assert(d.queued==bool(flags&(PF_Fog|PF_EnvironmentTrans)));
+        assert(d.fog==bool(flags&PF_Fog));
+        if(d.queued)assert(d.texture==43 && d.base==44);
+        for(int i=0;i<4;++i) {
+            const auto &v=d.v[i];const double f=Fraction(w,v);
+            const double top=Mix(w[3].y,w[2].y,f),bottom=Mix(w[0].y,w[1].y,f);
+            assert(std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z));
+            assert(std::isfinite(v.s) && std::isfinite(v.t));
+            assert(f>=-1e-5 && f<=1+1e-5);
+            assert(v.y>=bottom-.002 && v.y<=top+.002);
+            assert(std::abs(v.s-Mix(w[0].s,w[1].s,f))<.00001);
+            const double t=Mix(w[3].t,w[2].t,f)+(top-v.y)/1024;
+            assert(std::abs(v.t-t)<.00001);
+        }
+        assert(d.v[3].y>=d.v[0].y && d.v[2].y>=d.v[1].y);
+    }
+}
+// Sample actual emitted polygons, checking exact area coverage and lighting.
+// Test points are offset from boundaries so sharing an edge is not double coverage.
+static void CheckCoverage(const Wall &w,double boundary0,double boundary1,
+    INT32 lightAbove=224,INT32 lightBelow=128,double holeTop=-1e20,double holeBottom=-1e20) {
+    for(int column=0;column<159;++column) {
+        const double f=(column+.371)/159;
+        const double top=Mix(w[3].y,w[2].y,f),bottom=Mix(w[0].y,w[1].y,f);
+        for(int row=-3;row<44;++row) {
+            const double y=Mix(bottom,top,(row+.217)/41);
+            int hits=0;
+            for(const Draw &d:draws) {
+                const double a=Fraction(w,d.v[0]),b=Fraction(w,d.v[1]);
+                if(f<=a || f>=b)continue;
+                const double local=(f-a)/(b-a);
+                const double hi=Mix(d.v[3].y,d.v[2].y,local),lo=Mix(d.v[0].y,d.v[1].y,local);
+                if(y>lo && y<hi) {
+                    ++hits;
+                    assert(d.light==(y>Mix(boundary0,boundary1,f)?lightAbove:lightBelow));
+                }
+            }
+            const bool inWall=y>bottom && y<top;
+            const bool inHole=y>holeBottom && y<holeTop;
+            assert(hits==int(inWall && !inHole));
+        }
+    }
+}
+static INT16 levels[2]={224,128};
+static extracolormap_t colors[2]{};
+static extracolormap_t *colorPtrs[2]={&colors[0],&colors[1]};
+static int cases;
+static void Run(Wall w,float boundary0,float boundary1,FBITFIELD flags=PF_Masked,bool noShade=false) {
+    draws.clear();FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+    lightlist_t lights[2]{};sector_t sector{};sector.lightlevel=224;
+    sector.numlights=2;sector.lightlist=lights;
+    pslope_t slope{};slope.o.x=FLOAT_TO_FIXED(w[0].x);slope.o.y=FLOAT_TO_FIXED(w[0].z);
+    slope.o.z=FLOAT_TO_FIXED(boundary0);
+    const float length=std::hypot(w[1].x-w[0].x,w[1].z-w[0].z);
+    // Use the real fixed-point slope evaluation at both endpoints.
+    slope.d.x=FLOAT_TO_FIXED((w[1].x-w[0].x)/length);
+    slope.d.y=FLOAT_TO_FIXED((w[1].z-w[0].z)/length);
+    slope.zdelta=FLOAT_TO_FIXED((boundary1-boundary0)/length);
+    lights[0].height=3000*FRACUNIT;lights[1].height=FLOAT_TO_FIXED(boundary0);
+    lights[1].slope=boundary0==boundary1?nullptr:&slope;
+    for(int i=0;i<2;++i) { lights[i].lightlevel=&levels[i];lights[i].extra_colormap=&colorPtrs[i]; }
+    lights[1].flags=FOF_SWIMMABLE|FOF_EXTRA|FOF_CUTEXTRA|(noShade?FOF_NOSHADE:0);
+    const Wall original=w;
+    HWR_SplitWall(&sector,w.data(),43,44,&surf,FOF_CUTLEVEL,nullptr,flags);
+    CheckVertices(original,flags);
+    // Use the actual fixed-point plane heights to avoid testing rounding instead of clipping.
+    const double b0=FIXED_TO_FLOAT(P_GetLightZAt(&lights[1],FLOAT_TO_FIXED(w[0].x),FLOAT_TO_FIXED(w[0].z)));
+    const double b1=FIXED_TO_FLOAT(P_GetLightZAt(&lights[1],FLOAT_TO_FIXED(w[1].x),FLOAT_TO_FIXED(w[1].z)));
+    CheckCoverage(original,b0,b1,224,noShade?224:128);
+    for(const Draw &d:draws)assert(d.color==(d.light==224?colorPtrs[0]:colorPtrs[1]));
+    ++cases;
+}
+int main() {
+    // Build 93's second Xbox pixel capture, Water Palace line 1 / WTPTU1.
+    // Original 18-unit tier crosses the water light plane at -52. The old
+    // splitter emitted left bottom=-52, top=-614, then an expanded lower band.
+    Wall palace=MakeWall(-632,-52.01f,-614,-34.01f);
+    palace[0].x=palace[3].x=-8736;palace[1].x=palace[2].x=-8736;
+    palace[0].z=palace[3].z=-16448;palace[1].z=palace[2].z=-17536;
+    palace[3].t=palace[2].t=0;
+    palace[0].t=palace[1].t=18.0f/1024;
+    Run(palace,-52,-52);
+    Run(MakeWall(-682,-682,-634,-634),-52,-52); // first capture: ordinary fence, retained
+    for(FBITFIELD f:{PF_Masked,PF_EnvironmentTrans,PF_Fog}) {
+        Run(MakeWall(-632,-52,-614,-34),-52,-52,f);
+        Run(MakeWall(-52,-632,-34,-614),-52,-52,f);
+        Run(MakeWall(-20,-20,20,20),0,0,f);
+        Run(MakeWall(-20,-20,20,20),30,30,f); // entirely below boundary
+        Run(MakeWall(-20,-20,20,20),-30,-30,f); // entirely above boundary
+        Run(MakeWall(-20,-20,20,20),-40,40,f); // light plane crosses both edges
+        Run(MakeWall(-20,20,20,40),30,-30,f);
+        Run(MakeWall(-20,-40,20,-20),-30,30,f);
+        Run(MakeWall(0,0,0,20),0,0,f); // zero-height left endpoint
+        Run(MakeWall(0,0,20,0),10,10,f); // zero-height right endpoint
+        Run(MakeWall(-20,50,20,40),0,0,f); // original tier closes inside the span
+        Run(MakeWall(0,0,0,0),0,0,f); // no geometry, no division by zero
+        Run(MakeWall(-20,-20,20,20),0,0,f,true);
+    }
+    // Seeded sloped walls/boundaries: independent polygon coverage oracle.
+    unsigned seed=0x57a11;
+    auto next=[&]() { seed=1664525u*seed+1013904223u;return float(int((seed>>16)%201)-100); };
+    for(int i=0;i<100;++i) {
+        const float b0=next(),b1=next(),h0=1+std::abs(next()),h1=1+std::abs(next());
+        const float l0=next(),l1=next();
+        Run(MakeWall(b0,b1,b0+h0,b1+h1),l0,l1);
+    }
+    // Solid FOF excludes its interior while retaining the actual wall above/below.
+    for(INT32 cut:{INT32(FOF_CUTLEVEL),INT32(FOF_EXTRA|FOF_SWIMMABLE),INT32(FOF_EXTRA|FOF_FOG)}) {
+        Wall w=MakeWall(-20,-20,20,20),original=w;draws.clear();
+        FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+        fixed_t bottom=-10*FRACUNIT;pslope_t *noSlope=nullptr;
+        ffloor_t solid{};solid.bottomheight=&bottom;solid.b_slope=&noSlope;
+        lightlist_t lights[3]{};sector_t sector{};sector.lightlevel=224;
+        sector.numlights=3;sector.lightlist=lights;
+        lights[0].height=100*FRACUNIT;lights[1].height=10*FRACUNIT;
+        lights[2].height=-10*FRACUNIT;
+        lights[1].flags=(cut==INT32(FOF_CUTLEVEL)?FOF_CUTSOLIDS:FOF_CUTEXTRA|FOF_EXTRA|FOF_SWIMMABLE);
+        lights[1].caster=&solid;
+        for(int i=0;i<3;++i) { lights[i].lightlevel=&levels[0];lights[i].extra_colormap=&colorPtrs[0]; }
+        HWR_SplitWall(&sector,w.data(),43,44,&surf,cut,nullptr,PF_Masked);
+        CheckVertices(original,PF_Masked);
+        const bool cuts=cut!=INT32(FOF_EXTRA|FOF_FOG);
+        CheckCoverage(original,0,0,224,224,cuts?10:-1e20,cuts?-10:-1e20);++cases;
+    }
+    printf("%d wall light fixtures: clipped geometry, texture UVs, exact coverage, lighting, solid holes and queued modes\n",cases);
+}

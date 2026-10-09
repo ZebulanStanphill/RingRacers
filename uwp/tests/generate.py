@@ -62,6 +62,33 @@ def generate(engine, output):
 
     driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
+    slopes = Source(engine / "src/p_slopes.c")
+    render(templates / "wall_light.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),
+        "LIGHT_HEIGHT": slopes.function("P_GetLightZAt"),
+        "FOF_BOTTOM": slopes.function("P_GetFFloorBottomZAt"),
+        "CLIP_SLICE": hardware.function("HWR_DrawWallLightSlice"),
+        "SPLIT_WALL": hardware.function("HWR_SplitWall"),
+    }, output / "wall_light.cpp")
+    render(templates / "surface_probe.cpp.in", {
+        "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
+        "COMMAND": hardware.function("HWR_SurfaceProbe_f"),
+        "REQUEST": driver.function("D3D11_RequestSurfaceProbe"),
+        "SOURCE": driver.function("D3D11_SurfaceProbeSource"),
+        "TEXTURE": driver.function("D3D11_SurfaceProbeTexture"),
+    }, output / "surface_probe.cpp")
+    render(templates / "surface_probe_d3d11.cpp.in", {
+        "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
+        "REQUEST": driver.function("D3D11_RequestSurfaceProbe"),
+        "SOURCE": driver.function("D3D11_SurfaceProbeSource"),
+        "TEXTURE": driver.function("D3D11_SurfaceProbeTexture"),
+    }, output / "surface_probe_d3d11.cpp")
+    render(templates / "sky_trace.cpp.in", {
+        "TRACE": hardware.function("HWR_TraceSkyGeometry"),
+        "PLANE_DISPATCH": hardware.section("\tif (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, \"~015\"))", "\n#endif"),
+        "WALL_DISPATCH": hardware.section("\tif (gl_curline && !gl_curline->polyseg)", "\n#endif"),
+    }, output / "sky_trace.cpp")
     render(templates / "distortion.cpp.in", {
         "VERTEX": driver.function("PostImageVertex"),
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
