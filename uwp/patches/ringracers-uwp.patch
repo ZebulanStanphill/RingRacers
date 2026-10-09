@@ -1,4 +1,4 @@
-From 7e39e232037e4ba45b17323190848fc447ac434e Mon Sep 17 00:00:00 2001
+From 7a140138db6d69289882307b6e0b4ac91f63afd1 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -158,11 +158,13 @@ RingRacers-dev, rebased onto v2.4.
 - Read game data and save files from E:\ringracers
 - Ask at launch whether to check the main asset files, since that reads
   all of them from the USB drive, or to quit (also B, which used to act
-  like A). Skipping uses the expected MD5s instead and is the default
-  of hashing the files, hashes only the names of the music and sound
-  files (which have no expected MD5), and doesn't read every zip entry's
-  local header to check the layout and find where its data starts; that's
-  found the first time the entry is read instead
+  like A). Skipping is the default: it uses the expected MD5s instead of
+  hashing the files, and doesn't read every zip entry's local header to
+  check the layout and find where its data starts; that's found the first
+  time the entry is read instead
+- Hash only the names of the music and sound files, even when the check
+  runs. They have no expected MD5, and theirs only detects duplicate
+  loads, so reading all ~450 MB took ~25 s and couldn't detect anything
 - Use the libuwp display size and refresh rate instead of SDL's
 - Force WASAPI audio
 - Write the log to E:\ringracers\latest-log.txt, since the working
@@ -414,10 +416,10 @@ Model: gpt-6.1-sol
  src/sdl/rhi_gl2_platform.cpp              |    9 +
  src/st_stuff.c                            |   10 +-
  src/v_video.cpp                           |   22 +
- src/w_wad.cpp                             |  117 +
+ src/w_wad.cpp                             |  115 +
  src/w_wad.h                               |   10 +
  src/z_zone.cpp                            |    5 +
- 82 files changed, 13579 insertions(+), 1057 deletions(-)
+ 82 files changed, 13577 insertions(+), 1057 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -16007,7 +16009,7 @@ index 7e608da..b0aaca1 100644
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b..41754ce 100644
+index bf1e28b0..41754ce 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
 @@ -266,6 +266,11 @@ struct drawnode_t
@@ -18651,7 +18653,7 @@ index 481a70d..e024206 100644
  	if (rendermode == render_opengl)
  	{
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
-index 3c68b13..2444f43 100644
+index 3c68b13..955a9b2 100644
 --- a/src/w_wad.cpp
 +++ b/src/w_wad.cpp
 @@ -114,6 +114,14 @@ static UINT16 lumpnumcacheindex = 0;
@@ -18731,25 +18733,23 @@ index 3c68b13..2444f43 100644
  
  	if (important == -1)
  	{
-@@ -864,6 +898,17 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -864,6 +898,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	// Let's not add a wad file if the MD5 matches
  	// an MD5 of an already added WAD file!
  	//
 +#ifdef _UWP
-+	if (uwpskipcheck)
-+	{
-+		// [UWP]: Files with an expected MD5 use it below. The music and sound files have none, and theirs is only
-+		// compared with other files' to tell if they're already loaded (they're never sent to netgames or recorded in
-+		// replays), so hashing the file name will do.
-+		if (!md5expected)
-+			md5_buffer(filename, strlen(filename), md5sum);
-+	}
-+	else
++	// [UWP]: The music and sound files are the only main files without an expected MD5, and theirs is only compared
++	// with other files' to tell if they're already loaded (they're never sent to netgames or recorded in replays), so
++	// hashing the file name will do, even when the asset check runs: reading all ~450 MB of them from a USB drive took
++	// ~25 s and couldn't detect anything. When the check is skipped, files with an expected MD5 use it below.
++	if (mainfile && !md5expected)
++		md5_buffer(filename, strlen(filename), md5sum);
++	else if (!uwpskipcheck)
 +#endif
  	W_MakeFileMD5(filename, md5sum);
  
  	if (md5expected)
-@@ -891,6 +936,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -891,6 +934,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  			else realmd5[ix>>1] = (UINT8)(n<<4);
  		}
  
@@ -18761,7 +18761,7 @@ index 3c68b13..2444f43 100644
  		if (memcmp(realmd5, md5sum, 16) != 0)
  		{
  			char actualmd5text[2*MD5_LEN+1];
-@@ -942,7 +992,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -942,7 +990,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  		lumpinfo = ResGetLumpsStandalone(handle, &numlumps, "LUA_INIT");
  		break;
  	case RET_PK3:
@@ -18775,7 +18775,7 @@ index 3c68b13..2444f43 100644
  		break;
  	case RET_WAD:
  		lumpinfo = ResGetLumpsWad(handle, &numlumps, filename);
-@@ -1050,6 +1106,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
+@@ -1050,6 +1104,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
  	DEH_UpdateMaxFreeslots();
  
  	W_InvalidateLumpnumCache();
@@ -18789,7 +18789,7 @@ index 3c68b13..2444f43 100644
  	return wadfile->numlumps;
  }
  
-@@ -1799,6 +1862,44 @@ void zerr(int ret)
+@@ -1799,6 +1860,44 @@ void zerr(int ret)
  }
  #endif
  
@@ -18834,7 +18834,7 @@ index 3c68b13..2444f43 100644
  /** Reads bytes from the head of a lump.
    * Note: If the lump is compressed, the whole thing has to be read anyway.
    *
-@@ -1832,6 +1933,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
+@@ -1832,6 +1931,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
  	// We setup the desired file handle to read the lump data.
  	l = wadfiles[wad]->lumpinfo + lump;
  	handle = wadfiles[wad]->handle;
@@ -18846,7 +18846,7 @@ index 3c68b13..2444f43 100644
  	fseek(handle, (long)(l->position + offset), SEEK_SET);
  
  	// But let's not copy it yet. We support different compression formats on lumps, so we need to take that into account.
-@@ -2427,6 +2533,12 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
+@@ -2427,6 +2531,12 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
  		data_size +=
  			sizeof *zentry + SHORT(zentry->namelen) + SHORT(zentry->xtralen) + SHORT(zentry->commlen);
  
@@ -18859,7 +18859,7 @@ index 3c68b13..2444f43 100644
  		if (fseek(fp, LONG(zentry->offset), SEEK_SET) != 0)
  			return true;
  
-@@ -2437,6 +2549,11 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
+@@ -2437,6 +2547,11 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
  			sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen) + LONG(zlentry.compsize);
  	}
  
