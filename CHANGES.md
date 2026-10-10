@@ -40,6 +40,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
 
 ## Graphics
 
+- **Legacy GL fill transparency** *(untested on Xbox)*. Solid-color fills now respect explicit translucency and HUD fade flags on every patched hardware-renderer platform. The spectator Watching underline fades away with the HUD at the finish grade instead of leaving a black bar across the rank icon. Opaque fullscreen fills keep their clear shortcut; translucent fullscreen fills blend over the whole video surface. Native sanitizer checks compare Software and Legacy GL visibility, alpha, snapping and fullscreen coverage, including the fully faded underline.
 - **Hardware video options spacing**. Remove the blank menu rows before **Texture Quality** and **Sprite Billboarding**, keeping the VibeRant D3D11 options more compact. The corresponding menu indices stay aligned. Applies to every patched hardware-renderer platform.
 - **OpenGL ES through ANGLE.** The game renders with OpenGL ES 2 on ANGLE, which runs on Direct3D 11, instead of desktop OpenGL through Mesa's Direct3D 12 driver as in worleydl's port. The current path does not require Shader Model 6. Xbox One UWP's D3D11 feature level is 10.1, while D3D12 in Game mode exposes higher shader models; the deferred renderer roadmap below describes that distinction. To support the ANGLE path, the GL2 RHI backend:
   - creates OpenGL ES 2 contexts

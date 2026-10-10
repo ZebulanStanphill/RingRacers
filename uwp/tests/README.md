@@ -108,6 +108,17 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fades, reverse masks, Encore wiggle, all 32 mask values and 200 base rows, screen
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
+- **Fill transparency:** execute production `V_DrawFill`, HUD alpha resolution,
+  coordinate snapping and `HWR_DrawFill` in UWP and desktop variants. Each compares
+  2,968 Software/Legacy GL cases across explicit alpha levels, all three HUD alpha
+  flavors, HUD settings/fades, slide overrides and split-view layouts. The actual
+  fully faded Watching underline must submit no quad. Check partial alpha and
+  blend flags, opaque geometry/colors, no-scale rectangles, opaque fullscreen
+  clears and translucent fullscreen coverage at 320×200, 1280×720 and 853×480;
+  six direct hardware calls with fully transparent/unsupported alpha levels must
+  return safely. Replacing either fill implementation with the pre-fix version
+  fails the parity checks. Recording stubs stop at the Software quad and hardware
+  polygon/clear boundaries; Xbox visuals and GPU blending remain untested.
 - **Raw picture formats:** production conversion and cache-loading functions. Check all five source modes, palette destination widths, grayscale/RGB alpha, downscaling and upscaling, row padding, malformed headers/modes/dimensions/pixel lengths, and trailing bytes. The RGB24 case fails with the pre-feature implementation.
 - **Polyobject ripples:** run the production `HWR_RenderPolyObjectPlane`,
   `HWR_RippleBlend`, shader availability check, and shared `R_IsRipplePlane`

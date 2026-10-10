@@ -1,4 +1,4 @@
-From 7caef8f26f1d6a3699c43bd61578d947d5438cf9 Mon Sep 17 00:00:00 2001
+From 530df509f4f9e3e9152d26b1e625cab6a28ad1c8 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -341,6 +341,11 @@ RingRacers-dev, rebased onto v2.4.
 - Apply SPRTINFO sprite brightmaps in Legacy GL, with ordinary lighting for
   roll-rotated sprites and mismatched dimensions.
 
+- Respect explicit and HUD fill transparency in Legacy GL. Resolve HUD alpha
+  before hardware dispatch, omit invisible fills and blend partial opacity,
+  so the Watching underline fades out before the finish grade. Keep opaque
+  fullscreen clears and cover the full video surface for translucent fills.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -352,6 +357,15 @@ Agent: Claude Code
 Model: claude-opus-5-5
 Agent: Claude Code
 Model: claude-sonnet-5-5
+
+Agent: Codex (Sol, parent)
+Model: gpt-6.1-sol
+Agent: Codex (Sol, fill implementation)
+Model: gpt-6.1-sol
+Agent: Claude (Haiku, HUD research)
+Model: claude-haiku-5-5
+Agent: Claude (Opus, HUD design)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -372,7 +386,7 @@ Model: claude-sonnet-5-5
  src/hardware/hw_clip.c                    |   15 +
  src/hardware/hw_clip.h                    |    5 +
  src/hardware/hw_defs.h                    |    9 +-
- src/hardware/hw_draw.c                    |   57 +-
+ src/hardware/hw_draw.c                    |  116 +-
  src/hardware/hw_drv.h                     |   13 +
  src/hardware/hw_glob.h                    |   11 +
  src/hardware/hw_glsl.h                    |  321 ++
@@ -435,11 +449,11 @@ Model: claude-sonnet-5-5
  src/sdl/ogl_sdl.c                         |    8 +
  src/sdl/rhi_gl2_platform.cpp              |    9 +
  src/st_stuff.c                            |   10 +-
- src/v_video.cpp                           |   22 +
+ src/v_video.cpp                           |   33 +-
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 86 files changed, 13987 insertions(+), 1101 deletions(-)
+ 86 files changed, 14032 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -2525,7 +2539,7 @@ index 1ce225f..4442d73 100644
  	HWD_NUMSTATE
  };
 diff --git a/src/hardware/hw_draw.c b/src/hardware/hw_draw.c
-index d4ba786..09e9939 100644
+index d4ba786..0ff567f 100644
 --- a/src/hardware/hw_draw.c
 +++ b/src/hardware/hw_draw.c
 @@ -16,11 +16,18 @@
@@ -2649,24 +2663,99 @@ index d4ba786..09e9939 100644
  
  	HWD.pfnDrawPolygon(&Surf, v, 4,
  		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
-@@ -1159,7 +1202,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+@@ -1140,6 +1183,8 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+ {
+ 	FOutVector v[4];
+ 	FSurfaceInfo Surf;
++	const UINT32 alphalevel = (color & V_ALPHAMASK) >> V_ALPHASHIFT;
++	FBITFIELD flags = PF_Modulated|PF_NoTexture|PF_NoDepthTest;
+ 	float fx, fy, fw, fh;
+ 
+ //  3--2
+@@ -1147,6 +1192,9 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+ //  |/ |
+ //  0--1
+ 
++	if (alphalevel >= 10)
++		return;
++
+ 	fx = (float)x;
+ 	fy = (float)y;
+ 	fw = (float)w;
+@@ -1159,26 +1207,35 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  
  		if (x == 0 && y == 0 && w == BASEVIDWIDTH && h == BASEVIDHEIGHT)
  		{
 -			RGBA_t rgbaColour = V_GetColor(color);
-+			RGBA_t rgbaColour = HWR_GetColor(color);
- 			FRGBAFloat clearColour;
- 			clearColour.red = (float)rgbaColour.s.red / 255;
- 			clearColour.green = (float)rgbaColour.s.green / 255;
-@@ -1218,7 +1261,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
+-			FRGBAFloat clearColour;
+-			clearColour.red = (float)rgbaColour.s.red / 255;
+-			clearColour.green = (float)rgbaColour.s.green / 255;
+-			clearColour.blue = (float)rgbaColour.s.blue / 255;
+-			clearColour.alpha = 1;
+-			HWD.pfnClearBuffer(true, false, &clearColour);
+-			return;
+-		}
+-
+-		fx *= dupx;
+-		fy *= dupy;
+-		fw *= dupx;
+-		fh *= dupy;
++			if (alphalevel == 0)
++			{
++				RGBA_t rgbaColour = HWR_GetColor(color);
++				FRGBAFloat clearColour;
++				clearColour.red = (float)rgbaColour.s.red / 255;
++				clearColour.green = (float)rgbaColour.s.green / 255;
++				clearColour.blue = (float)rgbaColour.s.blue / 255;
++				clearColour.alpha = 1;
++				HWD.pfnClearBuffer(true, false, &clearColour);
++				return;
++			}
+ 
+-		intx = (INT32)fx;
+-		inty = (INT32)fy;
+-		V_AdjustXYWithSnap(&intx, &inty, color, dupx, dupy);
+-		fx = (float)intx;
+-		fy = (float)inty;
++			// Translucent fullscreen fills blend over the entire video surface.
++			fw = (float)vid.width;
++			fh = (float)vid.height;
++		}
++		else
++		{
++			fx *= dupx;
++			fy *= dupy;
++			fw *= dupx;
++			fh *= dupy;
++
++			intx = (INT32)fx;
++			inty = (INT32)fy;
++			V_AdjustXYWithSnap(&intx, &inty, color, dupx, dupy);
++			fx = (float)intx;
++			fy = (float)inty;
++		}
+ 	}
+ 
+ 	if (fx >= vid.width || fy >= vid.height)
+@@ -1218,10 +1275,15 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  	v[0].t = v[1].t = 0.0f;
  	v[2].t = v[3].t = 1.0f;
  
 -	Surf.PolyColor = V_GetColor(color);
 +	Surf.PolyColor = HWR_GetColor(color);
  
- 	HWD.pfnDrawPolygon(&Surf, v, 4,
- 		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
+-	HWD.pfnDrawPolygon(&Surf, v, 4,
+-		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
++	if (alphalevel != 0)
++	{
++		Surf.PolyColor.s.alpha = softwaretranstogl[10-alphalevel];
++		flags |= PF_Translucent;
++	}
++
++	HWD.pfnDrawPolygon(&Surf, v, 4, flags);
+ }
+ 
+ #ifdef HAVE_PNG
 diff --git a/src/hardware/hw_drv.h b/src/hardware/hw_drv.h
 index c4396c8..4ace846 100644
 --- a/src/hardware/hw_drv.h
@@ -19118,7 +19207,7 @@ index 6f67d6a..0a95580 100644
  		V_SetPalette(0);
  
 diff --git a/src/v_video.cpp b/src/v_video.cpp
-index 481a70d..e024206 100644
+index 481a70d..8f467f4 100644
 --- a/src/v_video.cpp
 +++ b/src/v_video.cpp
 @@ -20,6 +20,9 @@
@@ -19151,7 +19240,32 @@ index 481a70d..e024206 100644
  	LoadPalette(pal);
  	V_SetPalette(0);
  }
-@@ -1521,6 +1530,9 @@ void V_DrawVhsEffect(boolean rewind)
+@@ -1016,18 +1025,19 @@ void V_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c)
+ 	if (rendermode == render_none)
+ 		return;
+ 
++	UINT32 alphalevel;
++	if ((alphalevel = V_GetAlphaLevel(c)) >= 10)
++		return;
++
+ #ifdef HWRENDER
+ 	if (rendermode == render_opengl)
+ 	{
+-		HWR_DrawFill(x, y, w, h, c);
++		// Resolve HUD fade flags before passing an explicit alpha level.
++		HWR_DrawFill(x, y, w, h, (c & ~V_ALPHAMASK) | (alphalevel << V_ALPHASHIFT));
+ 		return;
+ 	}
+ #endif
+ 
+-	UINT32 alphalevel;
+-	if ((alphalevel = V_GetAlphaLevel(c)) >= 10)
+-		return;
+-
+ 	if (!(c & V_NOSCALESTART))
+ 	{
+ 		INT32 dupx = vid.dupx, dupy = vid.dupy;
+@@ -1521,6 +1531,9 @@ void V_DrawVhsEffect(boolean rewind)
  //
  void V_DrawFadeScreen(UINT16 color, UINT8 strength)
  {
@@ -19161,7 +19275,7 @@ index 481a70d..e024206 100644
  #ifdef HWRENDER
  	if (rendermode == render_opengl)
  	{
-@@ -1599,9 +1611,15 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
+@@ -1599,9 +1612,15 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
  //
  void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
  {
@@ -19177,7 +19291,7 @@ index 481a70d..e024206 100644
  		HWR_DrawCustomFadeScreen(
  			(strcmp(lump, "FADEMAP1") != 0
  				? 31
-@@ -1609,6 +1627,7 @@ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
+@@ -1609,6 +1628,7 @@ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
  			),
  			strength
  		);
@@ -19185,7 +19299,7 @@ index 481a70d..e024206 100644
  		return;
  	}
  #endif
-@@ -1663,6 +1682,9 @@ void V_DrawFadeConsBack(INT32 plines)
+@@ -1663,6 +1683,9 @@ void V_DrawFadeConsBack(INT32 plines)
  //
  void V_EncoreInvertScreen(void)
  {

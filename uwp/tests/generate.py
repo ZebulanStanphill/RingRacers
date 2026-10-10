@@ -66,6 +66,19 @@ def generate(engine, output):
         "FRAME_GATING": main.section("\tUWPTraceBeginFrame();", "\n#endif"),
     }, output / "trace.cpp")
 
+    video = Source(engine / "src/v_video.cpp")
+    draw = Source(engine / "src/hardware/hw_draw.c")
+    render(templates / "fills.cpp.in", {
+        "HUD_ALPHA_TABLES": video.section("static UINT8 hudplusalpha[11]", "static const UINT8 *v_colormap"),
+        "GL_ALPHA_TABLE": draw.section("static UINT8 softwaretranstogl[11]", "static UINT8 softwaretranstogl_hi"),
+        "HUD_TRANSLUCENCY": video.function("V_GetHUDTranslucency"),
+        "SNAP": video.function("V_AdjustXYWithSnap"),
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "ALPHA_LEVEL": video.function("V_GetAlphaLevel"),
+        "HARDWARE_FILL": draw.function("HWR_DrawFill"),
+        "FILL": video.function("V_DrawFill"),
+    }, output / "fills.cpp")
+
     cache = Source(engine / "src/hardware/hw_cache.c")
     render(templates / "pictures.cpp.in", {
         "PICTURE_TABLES": cache.section("// Source pixels and GPU pixels", "static void HWR_DrawPicInCache"),
