@@ -91,6 +91,8 @@ endif()
 set(BinLibs
 	${LegacyShaderLibs}
 	d3dcompiler.lib
+	d3d12.lib
+	dxgi.lib
 	${RR_DIR}/src/ringracers.lib
 
 	${RR_DIR}/src/acs/vm/ACSVM/acsvm.lib

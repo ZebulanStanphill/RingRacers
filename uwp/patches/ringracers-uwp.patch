@@ -1,4 +1,4 @@
-From 530df509f4f9e3e9152d26b1e625cab6a28ad1c8 Mon Sep 17 00:00:00 2001
+From ee9eaa6bff963b49d5d2b590d1f9d68ae2bddd9c Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -441,7 +441,7 @@ Model: claude-opus-5-5
  src/sdl/hwsym_sdl.c                       |    7 +
  src/sdl/i_main.cpp                        |   11 +-
  src/sdl/i_system.cpp                      |   99 +-
- src/sdl/i_uwpd3d12.cpp                    |  114 +
+ src/sdl/i_uwpd3d12.cpp                    |  112 +
  src/sdl/i_uwpprofile.cpp                  |  863 +++
  src/sdl/i_uwptrace.h                      |   25 +
  src/sdl/i_video.cpp                       |   98 +-
@@ -453,7 +453,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 86 files changed, 14032 insertions(+), 1126 deletions(-)
+ 86 files changed, 14030 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -17891,10 +17891,10 @@ index 827f493..633c62f 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpd3d12.cpp b/src/sdl/i_uwpd3d12.cpp
 new file mode 100644
-index 0000000..4b16935
+index 0000000..e13c786
 --- /dev/null
 +++ b/src/sdl/i_uwpd3d12.cpp
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,112 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -17925,39 +17925,21 @@ index 0000000..4b16935
 +namespace
 +{
 +
-+typedef HRESULT(WINAPI *PFNCREATEDXGIFACTORY1)(REFIID, void **);
-+typedef HRESULT(WINAPI *PFND3D12CREATEDEVICE)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
++// The Basic Render Driver, a software adapter
++constexpr UINT kMicrosoftVendor = 0x1414;
++constexpr UINT kBasicRenderDevice = 0x8C;
 +
-+// Logs why Direct3D 12 can't be used; returns whether a hardware adapter can create a feature level 11_0 device
++// Logs each adapter; returns whether a hardware adapter can create a feature level 11_0 device and a queue
 +bool HasD3D12Hardware()
 +{
-+	// UWP apps load system DLLs with LoadPackagedLibrary
-+	HMODULE dxgi = LoadPackagedLibrary(L"dxgi.dll", 0);
-+	HMODULE d3d12 = LoadPackagedLibrary(L"d3d12.dll", 0);
-+	if (!dxgi || !d3d12)
-+	{
-+		I_OutputMsg("UWP: Direct3D 12 unavailable: cannot load %s (error %lu)\n", dxgi ? "d3d12.dll" : "dxgi.dll",
-+			GetLastError());
-+		return false;
-+	}
-+
-+	const auto createFactory = reinterpret_cast<PFNCREATEDXGIFACTORY1>(GetProcAddress(dxgi, "CreateDXGIFactory1"));
-+	const auto createDevice = reinterpret_cast<PFND3D12CREATEDEVICE>(GetProcAddress(d3d12, "D3D12CreateDevice"));
-+	if (!createFactory || !createDevice)
-+	{
-+		I_OutputMsg("UWP: Direct3D 12 unavailable: %s is missing\n", createFactory ? "D3D12CreateDevice" : "CreateDXGIFactory1");
-+		return false;
-+	}
-+
 +	ComPtr<IDXGIFactory1> factory;
-+	HRESULT hr = createFactory(IID_PPV_ARGS(&factory));
++	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
 +	if (FAILED(hr))
 +	{
 +		I_OutputMsg("UWP: Direct3D 12 unavailable: CreateDXGIFactory1 failed (HRESULT 0x%08x)\n", (unsigned)hr);
 +		return false;
 +	}
 +
-+	bool supported = false;
 +	ComPtr<IDXGIAdapter1> adapter;
 +	for (UINT index = 0; factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; index++, adapter.Reset())
 +	{
@@ -17967,24 +17949,38 @@ index 0000000..4b16935
 +
 +		char name[128];
 +		WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof name, nullptr, nullptr);
++		I_OutputMsg("UWP: Direct3D 12 check: adapter %u %s (vendor 0x%04X, device 0x%04X, flags 0x%X)\n", index, name,
++			desc.VendorId, desc.DeviceId, desc.Flags);
 +
-+		// A software adapter (WARP) isn't the console's GPU
-+		if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
++		// The Xbox GPU also reports Microsoft's vendor ID, so only the software flag and Basic Render's device ID count
++		if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
++			|| (desc.VendorId == kMicrosoftVendor && desc.DeviceId == kBasicRenderDevice))
++			continue;
++
++		ComPtr<ID3D12Device> device;
++		hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
++		if (FAILED(hr))
 +		{
-+			I_OutputMsg("UWP: Direct3D 12: skipping software adapter %s\n", name);
++			I_OutputMsg("UWP: Direct3D 12 check: D3D12CreateDevice failed (HRESULT 0x%08x)\n", (unsigned)hr);
 +			continue;
 +		}
 +
-+		hr = createDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr);
-+		I_OutputMsg("UWP: Direct3D 12: adapter %s %s feature level 11_0 (HRESULT 0x%08x)\n", name,
-+			SUCCEEDED(hr) ? "supports" : "does not support", (unsigned)hr);
-+		if (SUCCEEDED(hr))
-+			supported = true;
++		D3D12_COMMAND_QUEUE_DESC queueDesc = {};
++		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
++		ComPtr<ID3D12CommandQueue> queue;
++		hr = device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&queue));
++		if (FAILED(hr))
++		{
++			I_OutputMsg("UWP: Direct3D 12 check: CreateCommandQueue failed (HRESULT 0x%08x)\n", (unsigned)hr);
++			continue;
++		}
++
++		I_OutputMsg("UWP: Direct3D 12 check: supported\n");
++		return true;
 +	}
 +
-+	if (!supported)
-+		I_OutputMsg("UWP: Direct3D 12 unavailable: no hardware adapter supports it\n");
-+	return supported;
++	I_OutputMsg("UWP: Direct3D 12 unavailable: no hardware adapter supports it\n");
++	return false;
 +}
 +
 +} // namespace
@@ -17998,16 +17994,18 @@ index 0000000..4b16935
 +		"Dr. Robotnik's Ring Racers " VERSIONSTRING,
 +		"The game is running as an app, which has no access to the full GPU.\n"
 +		"\n"
-+		"In Dev Home, set the app type to Game:\n"
-+		"1. Under Games and Apps, highlight Ring Racers.\n"
-+		"2. Press the View button.\n"
-+		"3. Choose View details.\n"
-+		"4. Change App type from App to Game.\n"
++		"In Dev Home, set the app type to \"Game\":\n"
++		"1. Under \"Games and Apps\", highlight \"Ring Racers\".\n"
++		"2. Press the \"View\" button.\n"
++		"3. Choose \"View details\".\n"
++		"4. Change \"App type\" from \"App\" to \"Game\".\n"
 +		"\n"
 +		"Then start the game again.", NULL);
 +
-+	// Nothing is set up this early, so skip the shutdown work
-+	exit(1);
++	// Nothing is set up this early. exit() would run static destructors and atexit handlers that abort, so flush
++	// the log and leave without them
++	fflush(NULL);
++	_Exit(1);
 +}
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
