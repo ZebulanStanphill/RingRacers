@@ -1,4 +1,4 @@
-From f8d766e277f3d05c0d33cd7a84c87643227215dc Mon Sep 17 00:00:00 2001
+From ae11be808f865c94dbf9fe8e5016ccf8af69ce0e Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -390,6 +390,22 @@ Model: claude-haiku-5-5
 
 Agent: Claude Code (Opus, D3D12 core and present)
 Model: claude-opus-5-5
+
+- [UWP]: Draw without textures in VibeRant's Direct3D 12 driver: the GL
+  state emulation, matrices and uniforms from the D3D11 driver, the root
+  signature with null descriptors and zeroed constants, a pipeline state
+  cache keyed like D3D11's blend/depth/raster states, fence-tracked
+  vertex/index/constant upload rings, and polygon, indexed-triangle and
+  line draws. A worker thread creates the 36 built-in shader pairings at
+  startup so their compiles are off the main thread; it replaces the PSO
+  probe. The diagnostic hue is off.
+
+Agent: Codex (Sol, D3D12 untextured drawing)
+Model: gpt-6.1-sol
+Agent: Claude (Haiku, D3D12 drawing documentation)
+Model: claude-haiku-5-5
+Agent: Claude Code (Opus, D3D12 drawing review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -424,15 +440,21 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/r_d3d11.cpp          | 6402 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
+ src/hardware/r_d3d12/allocators.h         |   69 +
  src/hardware/r_d3d12/d3d12_core.cpp       |  811 +++
  src/hardware/r_d3d12/d3d12_core.h         |  134 +
- src/hardware/r_d3d12/d3d12_interop.cpp    |  562 ++
+ src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
+ src/hardware/r_d3d12/d3d12_pipeline.cpp   |  173 +
+ src/hardware/r_d3d12/d3d12_pipeline.h     |   58 +
  src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
  src/hardware/r_d3d12/d3d12_present.h      |   50 +
- src/hardware/r_d3d12/d3d12_pso_probe.cpp  |  216 +
- src/hardware/r_d3d12/d3d12_pso_probe.h    |   26 +
- src/hardware/r_d3d12/r_d3d12.cpp          |  737 +++
+ src/hardware/r_d3d12/d3d12_prewarm.cpp    |  212 +
+ src/hardware/r_d3d12/d3d12_prewarm.h      |   17 +
+ src/hardware/r_d3d12/d3d12_upload.cpp     |  112 +
+ src/hardware/r_d3d12/d3d12_upload.h       |   54 +
+ src/hardware/r_d3d12/pipeline_key.h       |   51 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 1936 +++++++
  src/hardware/r_d3d12/r_d3d12.h            |   50 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -487,7 +509,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 96 files changed, 18541 insertions(+), 1126 deletions(-)
+ 102 files changed, 20240 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -495,14 +517,20 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
+ create mode 100644 src/hardware/r_d3d12/allocators.h
  create mode 100644 src/hardware/r_d3d12/d3d12_core.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_core.h
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.cpp
+ create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.h
  create mode 100644 src/hardware/r_d3d12/d3d12_present.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_present.h
- create mode 100644 src/hardware/r_d3d12/d3d12_pso_probe.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_pso_probe.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_prewarm.cpp
+ create mode 100644 src/hardware/r_d3d12/d3d12_prewarm.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_upload.cpp
+ create mode 100644 src/hardware/r_d3d12/d3d12_upload.h
+ create mode 100644 src/hardware/r_d3d12/pipeline_key.h
  create mode 100644 src/hardware/r_d3d12/r_d3d12.cpp
  create mode 100644 src/hardware/r_d3d12/r_d3d12.h
  create mode 100644 src/sdl/i_uwpd3d12.cpp
@@ -1763,7 +1791,7 @@ index ce69d80..9db72cf 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f28..051044f 100644
+index a0a0f28..ee3672b 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,72 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1834,8 +1862,8 @@ index a0a0f28..051044f 100644
 +	add_custom_target(SRB2D3D11Shaders DEPENDS ${d3d11_shader_headers})
 +	add_dependencies(SRB2SDL2 SRB2D3D11Shaders)
 +	include(r_d3d11/custom_shaders.cmake)
-+	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp r_d3d12/d3d12_interop.cpp r_d3d12/d3d12_pso_probe.cpp
-+		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_present.cpp r_d3d12/r_d3d12.cpp)
++	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp r_d3d12/d3d12_interop.cpp r_d3d12/d3d12_pipeline.cpp r_d3d12/d3d12_prewarm.cpp
++		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_upload.cpp r_d3d12/d3d12_present.cpp r_d3d12/r_d3d12.cpp)
 +	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl d3dcompiler)
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}" "${CMAKE_CURRENT_BINARY_DIR}")
 +endif()
@@ -13777,6 +13805,81 @@ index 0000000..0921d27
 +{
 +	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
+diff --git a/src/hardware/r_d3d12/allocators.h b/src/hardware/r_d3d12/allocators.h
+new file mode 100644
+index 0000000..116cccd
+--- /dev/null
++++ b/src/hardware/r_d3d12/allocators.h
+@@ -0,0 +1,69 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#ifndef RR_D3D12_ALLOCATORS_H
++#define RR_D3D12_ALLOCATORS_H
++#include <cstddef>
++#include <cstdint>
++#include <deque>
++
++namespace rr_d3d12
++{
++// GPU-independent bookkeeping. Failed plans leave the head unchanged. Ranges are tagged
++// at allocation time with the fence of the list that will consume them.
++class RingAllocator
++{
++public:
++	struct Plan { size_t offset = 0; uint64_t blockingFence = 0; bool wrapped = false, valid = false; };
++	void Reset(size_t capacity) { capacity_ = capacity; head_ = 0; spans_.clear(); }
++	void Collect(uint64_t completed)
++	{
++		while (!spans_.empty() && spans_.front().fence <= completed) spans_.pop_front();
++	}
++	Plan Prepare(size_t bytes, size_t alignment) const
++	{
++		Plan result;
++		if (!bytes || !alignment || bytes > capacity_) return result;
++		const size_t padding = (alignment - head_ % alignment) % alignment;
++		result.wrapped = padding > capacity_ - head_ || bytes > capacity_ - head_ - padding;
++		result.offset = result.wrapped ? 0 : head_ + padding;
++		result.valid = true;
++		const size_t end = result.offset + bytes;
++		for (const auto &span : spans_)
++			if (result.offset < span.end && span.begin < end && span.fence > result.blockingFence)
++				result.blockingFence = span.fence;
++		return result;
++	}
++	void Commit(const Plan &plan, size_t bytes, uint64_t fence)
++	{
++		// After a wrap, a merged span would cover the whole ring and block the rest of this submission on itself
++		if (plan.wrapped)
++			spans_.push_back({plan.offset, plan.offset + bytes, fence});
++		else
++			Touch(plan.offset, bytes, fence);
++		head_ = plan.offset + bytes;
++	}
++	void Touch(size_t offset, size_t bytes, uint64_t fence)
++	{
++		// One conservative range per submission keeps overlap searches proportional to
++		// frames in flight, rather than draw count. Fence values arrive in queue order.
++		if (!spans_.empty() && spans_.back().fence == fence)
++		{
++			auto &span = spans_.back();
++			if (offset < span.begin) span.begin = offset;
++			if (offset + bytes > span.end) span.end = offset + bytes;
++		}
++		else spans_.push_back({offset, offset + bytes, fence});
++	}
++	size_t Capacity() const { return capacity_; }
++	size_t Head() const { return head_; }
++private:
++	struct Span { size_t begin, end; uint64_t fence; };
++	size_t capacity_ = 0, head_ = 0;
++	std::deque<Span> spans_;
++};
++}
++#endif
 diff --git a/src/hardware/r_d3d12/d3d12_core.cpp b/src/hardware/r_d3d12/d3d12_core.cpp
 new file mode 100644
 index 0000000..60c52ae
@@ -14736,17 +14839,16 @@ index 0000000..e287592
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_interop.cpp b/src/hardware/r_d3d12/d3d12_interop.cpp
 new file mode 100644
-index 0000000..f922620
+index 0000000..b27bb6b
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_interop.cpp
-@@ -0,0 +1,562 @@
+@@ -0,0 +1,558 @@
 +// DR. ROBOTNIK'S RING RACERS
 +// This program is free software distributed under the terms of the GNU GPL v2.
 +// See the 'LICENSE' file for more details.
 +/// \brief [UWP]: Diagnostic D3D12/ANGLE sharing probe; no renderer selection or presentation changes.
 +
 +#include "d3d12_interop.h"
-+#include "d3d12_pso_probe.h"
 +#include <d3d11_4.h>
 +#include <d3d12.h>
 +#include <dxgi1_4.h>
@@ -15195,7 +15297,6 @@ index 0000000..f922620
 +{
 +	const ULONGLONG start = GetTickCount64();
 +	InteropProbe result;
-+	PsoProbe psos;
 +	// One exit path guarantees the elapsed line even if device creation fails.
 +	auto run = [&]()
 +	{
@@ -15227,8 +15328,6 @@ index 0000000..f922620
 +			return;
 +		result.device = true;
 +		Caps(*state, egl, desc);
-+		// [UWP]: Run even when queue creation or any sharing path later fails.
-+		psos = D3D12Pso_Probe(state->device.Get(), egl);
 +		D3D12_COMMAND_QUEUE_DESC queue = {};
 +		queue.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 +		if (!CheckObject(egl, "device", "CreateCommandQueue", state->device->CreateCommandQueue(&queue, IID_PPV_ARGS(&state->queue)), state->queue)
@@ -15294,9 +15393,9 @@ index 0000000..f922620
 +		}
 +	};
 +	run();
-+	Log(egl, "result: device %s, share A %s, share B %s, share C %s, gpu wait %s, gpu signal %s, PSOs %u/%u ok",
++	Log(egl, "result: device %s, share A %s, share B %s, share C %s, gpu wait %s, gpu signal %s",
 +		result.device ? "yes" : "no", result.share[0] ? "ok" : "failed", result.share[1] ? "ok" : "failed",
-+		result.share[2] ? "ok" : "failed", result.gpuWait ? "ok" : "unavailable", result.gpuSignal ? "ok" : "unavailable", psos.ok, psos.total);
++		result.share[2] ? "ok" : "failed", result.gpuWait ? "ok" : "unavailable", result.gpuSignal ? "ok" : "unavailable");
 +	Log(egl, "took %llu ms", (unsigned long long)(GetTickCount64() - start));
 +	return result;
 +}
@@ -15355,6 +15454,249 @@ index 0000000..b3436f7
 +
 +InteropProbe D3D12Interop_Probe(ID3D11Device *angle, const EglApi &egl, EGLConfig config);
 +
++} // namespace rr_d3d12
++#endif
+diff --git a/src/hardware/r_d3d12/d3d12_pipeline.cpp b/src/hardware/r_d3d12/d3d12_pipeline.cpp
+new file mode 100644
+index 0000000..c44989b
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_pipeline.cpp
+@@ -0,0 +1,173 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#include "d3d12_pipeline.h"
++#include <climits>
++// [UWP]: Keep these separate from the SM4 headers with the same array names.
++#include "r_d3d12_shaders/VSPoly.h"
++#include "r_d3d12_shaders/VSPolyClip.h"
++#include "r_d3d12_shaders/VSSky.h"
++#include "r_d3d12_shaders/VSModel.h"
++#include "r_d3d12_shaders/VSModelLight.h"
++#include "r_d3d12_shaders/VSWipe.h"
++#include "r_d3d12_shaders/VSFullscreen.h"
++#include "r_d3d12_shaders/VSPostImage.h"
++#include "r_d3d12_shaders/PSFixed.h"
++#include "r_d3d12_shaders/PSDefault.h"
++#include "r_d3d12_shaders/PSSoftware.h"
++#include "r_d3d12_shaders/PSSoftwareModelLight.h"
++#include "r_d3d12_shaders/PSWater.h"
++#include "r_d3d12_shaders/PSWaterRefraction.h"
++#include "r_d3d12_shaders/PSFog.h"
++#include "r_d3d12_shaders/PSFogRemap.h"
++#include "r_d3d12_shaders/PSSky.h"
++#include "r_d3d12_shaders/PSWipe.h"
++#include "r_d3d12_shaders/PSWipeFull.h"
++#include "r_d3d12_shaders/PSPalettePostprocess.h"
++#include "r_d3d12_shaders/PSFadeMap.h"
++#include "r_d3d12_shaders/PSPostImage.h"
++
++namespace rr_d3d12
++{
++namespace
++{
++// [UWP]: Match CreateDeviceObjects in r_d3d11.cpp and hw_defs.h's packed float vertices.
++const D3D12_INPUT_ELEMENT_DESC kPoly[] = {
++	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++};
++const D3D12_INPUT_ELEMENT_DESC kSky[] = {
++	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++};
++const D3D12_INPUT_ELEMENT_DESC kModel[] = {
++	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++};
++const D3D12_INPUT_LAYOUT_DESC kLayouts[] = {
++	{kPoly, ARRAYSIZE(kPoly)},
++	{kSky, ARRAYSIZE(kSky)},
++	{kModel, ARRAYSIZE(kModel)},
++	{nullptr, 0},
++};
++const D3D12_SHADER_BYTECODE kVs[] = {
++	{g_VSPoly, sizeof g_VSPoly},
++	{g_VSPolyClip, sizeof g_VSPolyClip},
++	{g_VSSky, sizeof g_VSSky},
++	{g_VSModel, sizeof g_VSModel},
++	{g_VSModelLight, sizeof g_VSModelLight},
++	{g_VSWipe, sizeof g_VSWipe},
++	{g_VSFullscreen, sizeof g_VSFullscreen},
++	{g_VSPostImage, sizeof g_VSPostImage},
++};
++const char *kVsNames[] = {"VSPoly",		  "VSPolyClip", "VSSky",		"VSModel",
++						  "VSModelLight", "VSWipe",		"VSFullscreen", "VSPostImage"};
++const D3D12_SHADER_BYTECODE kPs[] = {
++	{g_PSFixed, sizeof g_PSFixed},		 {g_PSDefault, sizeof g_PSDefault},
++	{g_PSSoftware, sizeof g_PSSoftware}, {g_PSSoftwareModelLight, sizeof g_PSSoftwareModelLight},
++	{g_PSWater, sizeof g_PSWater},		 {g_PSWaterRefraction, sizeof g_PSWaterRefraction},
++	{g_PSFog, sizeof g_PSFog},			 {g_PSFogRemap, sizeof g_PSFogRemap},
++	{g_PSSky, sizeof g_PSSky},			 {g_PSWipe, sizeof g_PSWipe},
++	{g_PSWipeFull, sizeof g_PSWipeFull}, {g_PSPalettePostprocess, sizeof g_PSPalettePostprocess},
++	{g_PSFadeMap, sizeof g_PSFadeMap},	 {g_PSPostImage, sizeof g_PSPostImage},
++};
++const char *kPsNames[] = {"PSFixed",	"PSDefault",
++						  "PSSoftware", "PSSoftwareModelLight",
++						  "PSWater",	"PSWaterRefraction",
++						  "PSFog",		"PSFogRemap",
++						  "PSSky",		"PSWipe",
++						  "PSWipeFull", "PSPalettePostprocess",
++						  "PSFadeMap",	"PSPostImage"};
++static_assert(ARRAYSIZE(kVs) == NUMVS, "Every built-in vertex shader needs bytecode");
++static_assert(ARRAYSIZE(kPs) == NUMPS, "Every built-in pixel shader needs bytecode");
++static_assert(ARRAYSIZE(kVsNames) == NUMVS, "Every vertex shader needs a name");
++static_assert(ARRAYSIZE(kPsNames) == NUMPS, "Every pixel shader needs a name");
++static_assert(ARRAYSIZE(kLayouts) == LAYOUT_NONE + 1, "Every layout needs a descriptor");
++
++D3D12_BLEND Blend(unsigned f)
++{
++	const D3D12_BLEND values[] = {D3D12_BLEND_ZERO,			 D3D12_BLEND_ONE,		D3D12_BLEND_SRC_ALPHA,
++								  D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_SRC_COLOR, D3D12_BLEND_DEST_COLOR,
++								  D3D12_BLEND_INV_DEST_COLOR};
++	return f < 7 ? values[f] : D3D12_BLEND_ONE;
++}
++} // namespace
++const char *ShaderName(VSKind k)
++{
++	return unsigned(k) < NUMVS ? kVsNames[k] : "custom VS";
++}
++const char *ShaderName(PSKind k)
++{
++	return unsigned(k) < NUMPS ? kPsNames[k] : "custom PS";
++}
++D3D12_BLEND_DESC MakeBlendDesc(std::uint16_t key)
++{
++	D3D12_BLEND_DESC d = {};
++	auto &t = d.RenderTarget[0];
++	const bool opaque = (key & 0x8000) != 0;
++	t.BlendEnable = !opaque && (key & 1023) != 0;
++	t.SrcBlend = (opaque || !(key & 1023)) ? D3D12_BLEND_ONE : Blend((key >> 1) & 7);
++	t.DestBlend = opaque ? D3D12_BLEND_ZERO : Blend((key >> 4) & 7);
++	unsigned eq = (key >> 7) & 7;
++	t.BlendOp = eq == 1 ? D3D12_BLEND_OP_SUBTRACT : eq == 2 ? D3D12_BLEND_OP_REV_SUBTRACT : D3D12_BLEND_OP_ADD;
++	t.SrcBlendAlpha = D3D12_BLEND_ONE;
++	t.DestBlendAlpha = D3D12_BLEND_ZERO;
++	t.BlendOpAlpha = D3D12_BLEND_OP_ADD;
++	t.LogicOp = D3D12_LOGIC_OP_NOOP;
++	t.RenderTargetWriteMask = opaque ? D3D12_COLOR_WRITE_ENABLE_ALL : (key >> 10) & 15;
++	return d;
++}
++D3D12_DEPTH_STENCIL_DESC MakeDepthDesc(std::uint64_t key)
++{
++	D3D12_DEPTH_STENCIL_DESC d = {};
++	d.DepthEnable = (key & 1) != 0;
++	d.DepthWriteMask = (key & 4) ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
++	d.DepthFunc = (key & 2) ? D3D12_COMPARISON_FUNC_ALWAYS : D3D12_COMPARISON_FUNC_LESS_EQUAL;
++	d.StencilEnable = (key & 8) != 0;
++	d.StencilReadMask = (key >> 20) & 255;
++	d.StencilWriteMask = (key >> 28) & 255;
++	d.FrontFace.StencilFunc = static_cast<D3D12_COMPARISON_FUNC>((key >> 4) & 15);
++	d.FrontFace.StencilFailOp = static_cast<D3D12_STENCIL_OP>((key >> 8) & 15);
++	d.FrontFace.StencilDepthFailOp = static_cast<D3D12_STENCIL_OP>((key >> 12) & 15);
++	d.FrontFace.StencilPassOp = static_cast<D3D12_STENCIL_OP>((key >> 16) & 15);
++	d.BackFace = d.FrontFace;
++	return d;
++}
++D3D12_RASTERIZER_DESC MakeRasterDesc(std::uint8_t key)
++{
++	D3D12_RASTERIZER_DESC d = {};
++	d.FillMode = D3D12_FILL_MODE_SOLID;
++	d.CullMode = (key & 3) == 2 ? D3D12_CULL_MODE_FRONT : (key & 3) == 1 ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
++	d.FrontCounterClockwise = TRUE;
++	d.DepthBias = (key & 4) ? -1 : 0;
++	d.SlopeScaledDepthBias = (key & 4) ? -1.0f : 0.0f;
++	d.DepthClipEnable = TRUE;
++	return d;
++}
++D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, const PipelineKey &k)
++{
++	D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
++	d.pRootSignature = root;
++	if (k.vs < NUMVS)
++		d.VS = kVs[k.vs];
++	if (k.ps < NUMPS)
++		d.PS = kPs[k.ps];
++	if (k.layout <= LAYOUT_NONE)
++		d.InputLayout = kLayouts[k.layout];
++	d.BlendState = MakeBlendDesc(k.blend);
++	d.DepthStencilState = MakeDepthDesc(k.depth);
++	d.RasterizerState = MakeRasterDesc(k.raster);
++	d.SampleMask = UINT_MAX;
++	d.PrimitiveTopologyType = static_cast<D3D12_PRIMITIVE_TOPOLOGY_TYPE>(k.topologyType);
++	d.NumRenderTargets = 1;
++	d.RTVFormats[0] = static_cast<DXGI_FORMAT>(k.rtFormat);
++	d.DSVFormat = static_cast<DXGI_FORMAT>(k.dsvFormat);
++	d.SampleDesc.Count = 1;
++	return d;
++}
++} // namespace rr_d3d12
+diff --git a/src/hardware/r_d3d12/d3d12_pipeline.h b/src/hardware/r_d3d12/d3d12_pipeline.h
+new file mode 100644
+index 0000000..1de98e1
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_pipeline.h
+@@ -0,0 +1,58 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#ifndef RR_D3D12_PIPELINE_H
++#define RR_D3D12_PIPELINE_H
++#include "d3d12_core.h"
++#include "pipeline_key.h"
++namespace rr_d3d12
++{
++enum VSKind
++{
++	VS_POLY,
++	VS_POLYCLIP,
++	VS_SKY,
++	VS_MODEL,
++	VS_MODELLIGHT,
++	VS_WIPE,
++	VS_FULLSCREEN,
++	VS_POSTIMAGE,
++	NUMVS
++};
++enum PSKind
++{
++	PS_FIXED,
++	PS_DEFAULT,
++	PS_SOFTWARE,
++	PS_MODELLIGHT,
++	PS_WATER,
++	PS_WATERREFRACTION,
++	PS_FOG,
++	PS_FOGREMAP,
++	PS_SKY,
++	PS_WIPE,
++	PS_WIPEFULL,
++	PS_PALETTEPOST,
++	PS_FADEMAP,
++	PS_POSTIMAGE,
++	NUMPS
++};
++enum Layout
++{
++	LAYOUT_POLY,
++	LAYOUT_SKY,
++	LAYOUT_MODEL,
++	NUMLAYOUTS,
++	LAYOUT_NONE = NUMLAYOUTS
++};
++D3D12_BLEND_DESC MakeBlendDesc(std::uint16_t key);
++D3D12_DEPTH_STENCIL_DESC MakeDepthDesc(std::uint64_t key);
++D3D12_RASTERIZER_DESC MakeRasterDesc(std::uint8_t key);
++D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, const PipelineKey &key);
++const char *ShaderName(VSKind kind);
++const char *ShaderName(PSKind kind);
 +} // namespace rr_d3d12
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_present.cpp b/src/hardware/r_d3d12/d3d12_present.cpp
@@ -17033,266 +17375,488 @@ index 0000000..c8467ce
 +
 +} // namespace rr_d3d12
 +#endif
-diff --git a/src/hardware/r_d3d12/d3d12_pso_probe.cpp b/src/hardware/r_d3d12/d3d12_pso_probe.cpp
+diff --git a/src/hardware/r_d3d12/d3d12_prewarm.cpp b/src/hardware/r_d3d12/d3d12_prewarm.cpp
 new file mode 100644
-index 0000000..be50e95
+index 0000000..8bc0e8b
 --- /dev/null
-+++ b/src/hardware/r_d3d12/d3d12_pso_probe.cpp
-@@ -0,0 +1,216 @@
++++ b/src/hardware/r_d3d12/d3d12_prewarm.cpp
+@@ -0,0 +1,212 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
 +// terms of the GNU General Public License, version 2.
 +// See the 'LICENSE' file for more details.
 +//-----------------------------------------------------------------------------
-+/// \file  d3d12_pso_probe.cpp
-+/// \brief [UWP]: Times creating the Direct3D 12 root signature and built-in PSOs, without changing the D3D11
-+///        renderer
-+
-+#include "d3d12_pso_probe.h"
-+#include <wrl/client.h>
-+#include <climits>
-+#include <cstdarg>
++#include "d3d12_prewarm.h"
++#include "d3d12_pipeline.h"
++#include <thread>
++#include <atomic>
++#include <vector>
 +#include <cstdio>
-+
-+// [UWP]: Keep these separate from the SM4 headers with the same array names.
-+#include "r_d3d12_shaders/VSPoly.h"
-+#include "r_d3d12_shaders/VSPolyClip.h"
-+#include "r_d3d12_shaders/VSSky.h"
-+#include "r_d3d12_shaders/VSModel.h"
-+#include "r_d3d12_shaders/VSModelLight.h"
-+#include "r_d3d12_shaders/VSWipe.h"
-+#include "r_d3d12_shaders/VSFullscreen.h"
-+#include "r_d3d12_shaders/VSPostImage.h"
-+#include "r_d3d12_shaders/PSFixed.h"
-+#include "r_d3d12_shaders/PSDefault.h"
-+#include "r_d3d12_shaders/PSSoftware.h"
-+#include "r_d3d12_shaders/PSSoftwareModelLight.h"
-+#include "r_d3d12_shaders/PSWater.h"
-+#include "r_d3d12_shaders/PSWaterRefraction.h"
-+#include "r_d3d12_shaders/PSFog.h"
-+#include "r_d3d12_shaders/PSFogRemap.h"
-+#include "r_d3d12_shaders/PSSky.h"
-+#include "r_d3d12_shaders/PSWipe.h"
-+#include "r_d3d12_shaders/PSWipeFull.h"
-+#include "r_d3d12_shaders/PSPalettePostprocess.h"
-+#include "r_d3d12_shaders/PSFadeMap.h"
-+#include "r_d3d12_shaders/PSPostImage.h"
-+#include "r_d3d12_shaders/RootSignature.h"
-+
 +namespace rr_d3d12
 +{
 +namespace
 +{
-+using Microsoft::WRL::ComPtr;
-+
-+void Log(const EglApi &egl, const char *format, ...)
++std::thread worker;
++std::atomic<bool> stop{false}, done{true};
++bool logged = true;
++struct Entry
 +{
-+	char message[1024];
-+	va_list args;
-+	va_start(args, format);
-+	vsnprintf(message, sizeof message, format, args);
-+	va_end(args);
-+	if (egl.LogMessage)
-+		egl.LogMessage(message);
-+}
-+
-+// [UWP]: Match CreateDeviceObjects in r_d3d11.cpp and hw_defs.h's packed float vertices.
-+const D3D12_INPUT_ELEMENT_DESC kPoly[] =
-+{
-+	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	HRESULT hr = S_OK;
++	double ms = 0;
++	bool attempted = false;
 +};
-+const D3D12_INPUT_ELEMENT_DESC kSky[] =
++struct Result
 +{
-+	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+	{"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+};
-+const D3D12_INPUT_ELEMENT_DESC kModel[] =
++	unsigned ok = 0, failures = 0;
++	double total = 0, worst = 0, wall = 0;
++	unsigned worstIndex = 0;
++	Entry entries[36];
++	bool threadStartFailed = false, workerException = false, invalidArguments = false;
++} result;
++std::vector<ComPtr<ID3D12PipelineState>> retained;
++struct Combo
 +{
-+	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+	{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-+};
-+const D3D12_INPUT_LAYOUT_DESC kLayouts[] =
-+{
-+	{kPoly, ARRAYSIZE(kPoly)}, {kSky, ARRAYSIZE(kSky)}, {kModel, ARRAYSIZE(kModel)}, {nullptr, 0},
-+};
-+enum Layout { POLY, SKY, MODEL, FULLSCREEN };
-+struct Pipeline
-+{
-+	D3D12_SHADER_BYTECODE vs, ps;
-+	const char *name;
++	VSKind vs;
++	PSKind ps;
 +	Layout layout;
 +	DXGI_FORMAT depth;
 +};
-+#define RR_PSO(vs, ps, layout, depth) {{g_##vs, sizeof g_##vs}, {g_##ps, sizeof g_##ps}, #vs "+" #ps, layout, depth}
-+
-+// [UWP]: Exhaust ApplyState's built-in selector, including uncommon layout/program
-+// combinations; sprite clipping selects only PSSoftware. Custom programs are excluded.
-+const Pipeline kPipelines[] =
-+{
-+	RR_PSO(VSPoly, PSDefault, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSDefault, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSDefault, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSSoftware, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSSoftware, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSSoftware, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSSoftwareModelLight, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSSoftwareModelLight, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModelLight, PSSoftwareModelLight, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSWater, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSWater, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSWater, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSWaterRefraction, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSWaterRefraction, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSWaterRefraction, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSFog, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSFog, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSFog, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSFogRemap, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSFogRemap, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSFogRemap, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSSky, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSSky, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSSky, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPolyClip, PSSoftware, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPoly, PSFixed, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSFixed, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSFixed, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSWipe, PSWipe, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSSky, PSWipe, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSModel, PSWipe, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSPostImage, PSPostImage, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSFullscreen, PSWipeFull, FULLSCREEN, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSFullscreen, PSPalettePostprocess, FULLSCREEN, DXGI_FORMAT_UNKNOWN),
-+	RR_PSO(VSFullscreen, PSFadeMap, FULLSCREEN, DXGI_FORMAT_D24_UNORM_S8_UINT),
-+	RR_PSO(VSFullscreen, PSFixed, FULLSCREEN, DXGI_FORMAT_D24_UNORM_S8_UINT),
++const Combo combos[] = {
++	{VS_POLY, PS_FIXED, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_SOFTWARE, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLYCLIP, PS_SOFTWARE, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_SKY, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_SOFTWARE, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODELLIGHT, PS_MODELLIGHT, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_FULLSCREEN, PS_PALETTEPOST, LAYOUT_NONE, DXGI_FORMAT_UNKNOWN},
++	{VS_WIPE, PS_WIPE, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_FULLSCREEN, PS_WIPEFULL, LAYOUT_NONE, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_FULLSCREEN, PS_FADEMAP, LAYOUT_NONE, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POSTIMAGE, PS_POSTIMAGE, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_DEFAULT, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_DEFAULT, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_DEFAULT, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_SOFTWARE, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_MODELLIGHT, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_MODELLIGHT, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_WATER, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_WATER, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_WATER, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_WATERREFRACTION, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_WATERREFRACTION, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_WATERREFRACTION, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_FOG, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_FOG, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_FOG, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_FOGREMAP, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_FOGREMAP, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_FOGREMAP, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_POLY, PS_SKY, LAYOUT_POLY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_SKY, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_FIXED, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_FIXED, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_SKY, PS_WIPE, LAYOUT_SKY, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_MODEL, PS_WIPE, LAYOUT_MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT},
++	{VS_FULLSCREEN, PS_FIXED, LAYOUT_NONE, DXGI_FORMAT_D24_UNORM_S8_UINT},
 +};
-+#undef RR_PSO
++static_assert(ARRAYSIZE(combos) == 36, "Prewarm must cover all original probe combinations");
 +
-+// [UWP]: QPC measures only each creation call, excluding log writes.
-+double Milliseconds(LARGE_INTEGER begin, LARGE_INTEGER end, LARGE_INTEGER frequency)
++double Ms(LARGE_INTEGER a, LARGE_INTEGER b, LARGE_INTEGER f)
 +{
-+	return frequency.QuadPart > 0 ? (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart : 0.0;
++	return f.QuadPart > 0 ? (b.QuadPart - a.QuadPart) * 1000.0 / f.QuadPart : 0;
 +}
-+} // namespace
-+
-+PsoProbe D3D12Pso_Probe(ID3D12Device *device, const EglApi &egl)
++struct WorkerLifetime
 +{
-+	PsoProbe result;
-+	result.total = ARRAYSIZE(kPipelines);
-+	LARGE_INTEGER frequency = {}, begin = {}, end = {};
-+	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
-+		Log(egl, "PSO timing: QueryPerformanceFrequency unavailable");
-+	ComPtr<ID3D12RootSignature> root;
-+	QueryPerformanceCounter(&begin);
-+	HRESULT hr = device ? device->CreateRootSignature(0, g_RootSignature, sizeof g_RootSignature,
-+		IID_PPV_ARGS(&root)) : E_POINTER;
-+	QueryPerformanceCounter(&end);
-+	if (SUCCEEDED(hr) && !root)
-+		hr = E_POINTER;
-+	Log(egl, "CreateRootSignature 0x%08X %.1f ms", (unsigned)hr, Milliseconds(begin, end, frequency));
-+	if (FAILED(hr))
++	~WorkerLifetime()
 +	{
-+		Log(egl, "root signature failed 0x%08X", (unsigned)hr);
-+		return result;
++		Prewarm_Stop();
 +	}
-+
-+	D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
-+	desc.pRootSignature = root.Get();
-+	desc.SampleMask = UINT_MAX;
-+	desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-+	desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
-+	desc.RasterizerState.DepthClipEnable = TRUE;
-+	desc.DepthStencilState.DepthEnable = FALSE;
-+	desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-+	desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-+	desc.DepthStencilState.StencilReadMask = desc.DepthStencilState.StencilWriteMask = 0xFF;
-+	desc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
-+	desc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
-+	desc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
-+	desc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-+	desc.DepthStencilState.BackFace = desc.DepthStencilState.FrontFace;
-+	auto &blend = desc.BlendState.RenderTarget[0];
-+	blend.SrcBlend = blend.SrcBlendAlpha = D3D12_BLEND_ONE;
-+	blend.DestBlend = blend.DestBlendAlpha = D3D12_BLEND_ZERO;
-+	blend.BlendOp = blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
-+	blend.LogicOp = D3D12_LOGIC_OP_NOOP;
-+	blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-+	desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-+	desc.NumRenderTargets = 1;
-+	desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-+	desc.SampleDesc.Count = 1;
-+	double total = 0.0, worst = -1.0;
-+	const char *worstName = "none";
-+	for (const auto &pipeline : kPipelines)
++} lifetime;
++} // namespace
++void Prewarm_Stop()
++{
++	stop.store(true, std::memory_order_relaxed);
++	if (worker.joinable())
++		worker.join();
++	retained.clear();
++}
++bool Prewarm_Done()
++{
++	return done.load(std::memory_order_acquire);
++}
++void Prewarm_Start(ID3D12Device *device, ID3D12RootSignature *root)
++{
++	Prewarm_Stop();
++	result = {};
++	logged = false;
++	if (!device || !root)
 +	{
-+		desc.VS = pipeline.vs;
-+		desc.PS = pipeline.ps;
-+		desc.InputLayout = kLayouts[pipeline.layout];
-+		desc.DSVFormat = pipeline.depth;
-+		ComPtr<ID3D12PipelineState> pso;
-+		QueryPerformanceCounter(&begin);
-+		hr = device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso));
-+		QueryPerformanceCounter(&end);
-+		if (SUCCEEDED(hr) && !pso)
-+			hr = E_POINTER;
-+		const double elapsed = Milliseconds(begin, end, frequency);
-+		total += elapsed;
-+		if (elapsed > worst)
-+		{
-+			worst = elapsed;
-+			worstName = pipeline.name;
-+		}
-+		if (SUCCEEDED(hr))
-+			result.ok++;
-+		Log(egl, "PSO %s 0x%08X %.1f ms", pipeline.name, (unsigned)hr, elapsed);
++		result.invalidArguments = true;
++		done.store(true, std::memory_order_release);
++		return;
 +	}
-+	Log(egl, "root signature ok; 22 shaders, %u PSOs, total %.1f ms, worst %.1f ms (%s)",
-+		result.total, total, worst, worstName);
-+	return result;
++	stop.store(false, std::memory_order_relaxed);
++	done.store(false, std::memory_order_release);
++	ComPtr<ID3D12Device> heldDevice = device;
++	ComPtr<ID3D12RootSignature> heldRoot = root;
++	LARGE_INTEGER frequency = {}, wallBegin = {};
++	QueryPerformanceFrequency(&frequency);
++	QueryPerformanceCounter(&wallBegin);
++	try
++	{
++		worker = std::thread(
++			[heldDevice, heldRoot, frequency, wallBegin]()
++			{
++				LARGE_INTEGER wallEnd = {};
++				try
++				{
++					retained.reserve(ARRAYSIZE(combos));
++					for (unsigned i = 0; i < ARRAYSIZE(combos) && !stop.load(std::memory_order_relaxed); ++i)
++					{
++						const auto &c = combos[i];
++						PipelineKey key;
++						key.vs = c.vs;
++						key.ps = c.ps;
++						key.layout = c.layout;
++						key.dsvFormat = c.depth;
++						key.blend = 0x8000;
++						key.depth = 2ULL | (8ULL << 4) | (1ULL << 8) | (1ULL << 12) | (1ULL << 16) | (255ULL << 20) |
++									(255ULL << 28);
++						auto desc = BuildPipelineDesc(heldRoot.Get(), key);
++						// Original probe default differs from GL emulation only in winding, which is immaterial without
++						// culling.
++						desc.RasterizerState.FrontCounterClockwise = FALSE;
++						LARGE_INTEGER begin = {}, end = {};
++						ComPtr<ID3D12PipelineState> pso;
++						QueryPerformanceCounter(&begin);
++						HRESULT hr = heldDevice->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso));
++						QueryPerformanceCounter(&end);
++						if (SUCCEEDED(hr) && !pso)
++							hr = E_POINTER;
++						const double ms = Ms(begin, end, frequency);
++						result.total += ms;
++						result.entries[i] = {hr, ms, true};
++						if (ms > result.worst)
++						{
++							result.worst = ms;
++							result.worstIndex = i;
++						}
++						if (SUCCEEDED(hr) && pso)
++						{
++							wchar_t name[128];
++							swprintf(name, ARRAYSIZE(name), L"D3D12 prewarm PSO %u", i + 1);
++							pso->SetName(name);
++							retained.push_back(pso);
++							++result.ok;
++						}
++						else
++							++result.failures;
++					}
++				}
++				catch (...)
++				{
++					result.workerException = true;
++				}
++				QueryPerformanceCounter(&wallEnd);
++				result.wall = Ms(wallBegin, wallEnd, frequency);
++				done.store(true, std::memory_order_release);
++			});
++	}
++	catch (...)
++	{
++		result.threadStartFailed = true;
++		done.store(true, std::memory_order_release);
++		Core_Log("prewarm: worker thread could not be started");
++		logged = true;
++	}
++}
++void Prewarm_LogDone()
++{
++	if (logged || !Prewarm_Done())
++		return;
++	logged = true;
++	const auto &worst = combos[result.worstIndex];
++	Core_Log("prewarmed %u/36 pipelines on a worker thread in %.1f ms (worst %.1f ms, %s+%s)", result.ok, result.total,
++			 result.worst, ShaderName(worst.vs), ShaderName(worst.ps));
++	Core_Log("prewarm: wall time %.1f ms, failures %u", result.wall, result.failures);
++	for (unsigned i = 0; i < ARRAYSIZE(combos); ++i)
++	{
++		const auto &entry = result.entries[i];
++		if (entry.attempted && FAILED(entry.hr))
++			Core_Log("prewarm: %s+%s failed 0x%08X %.1f ms", ShaderName(combos[i].vs), ShaderName(combos[i].ps),
++					 unsigned(entry.hr), entry.ms);
++	}
++	if (result.workerException)
++		Core_Log("prewarm: worker stopped after an exception");
++	if (result.invalidArguments)
++		Core_Log("prewarm: device or root signature unavailable");
 +}
 +} // namespace rr_d3d12
-diff --git a/src/hardware/r_d3d12/d3d12_pso_probe.h b/src/hardware/r_d3d12/d3d12_pso_probe.h
+diff --git a/src/hardware/r_d3d12/d3d12_prewarm.h b/src/hardware/r_d3d12/d3d12_prewarm.h
 new file mode 100644
-index 0000000..c0afb85
+index 0000000..d58584f
 --- /dev/null
-+++ b/src/hardware/r_d3d12/d3d12_pso_probe.h
-@@ -0,0 +1,26 @@
++++ b/src/hardware/r_d3d12/d3d12_prewarm.h
+@@ -0,0 +1,17 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
 +// terms of the GNU General Public License, version 2.
 +// See the 'LICENSE' file for more details.
 +//-----------------------------------------------------------------------------
-+/// \file  d3d12_pso_probe.h
-+/// \brief [UWP]: Direct3D 12 PSO timing probe, run from the interop probe (d3d12_interop.cpp)
-+
-+#ifndef RR_D3D12_PSO_PROBE_H
-+#define RR_D3D12_PSO_PROBE_H
-+
-+#include "d3d12_interop.h"
-+#include <d3d12.h>
-+
++#ifndef RR_D3D12_PREWARM_H
++#define RR_D3D12_PREWARM_H
++#include "d3d12_core.h"
 +namespace rr_d3d12
 +{
-+struct PsoProbe
++void Prewarm_Start(ID3D12Device *device, ID3D12RootSignature *root);
++void Prewarm_Stop();
++bool Prewarm_Done();
++void Prewarm_LogDone(); // main thread only; logs once after worker completes
++} // namespace rr_d3d12
++#endif
+diff --git a/src/hardware/r_d3d12/d3d12_upload.cpp b/src/hardware/r_d3d12/d3d12_upload.cpp
+new file mode 100644
+index 0000000..656a360
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_upload.cpp
+@@ -0,0 +1,112 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#include "d3d12_upload.h"
++#include <limits>
++namespace rr_d3d12
 +{
-+	unsigned ok = 0, total = 0;
++bool UploadRing::Create(size_t capacity)
++{
++	if (!capacity || !Core_Device()) return false;
++	D3D12_HEAP_PROPERTIES heap = {};
++	heap.Type = D3D12_HEAP_TYPE_UPLOAD;
++	D3D12_RESOURCE_DESC desc = {};
++	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++	desc.Width = capacity;
++	desc.Height = 1;
++	desc.DepthOrArraySize = 1;
++	desc.MipLevels = 1;
++	desc.SampleDesc.Count = 1;
++	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++	ComPtr<ID3D12Resource> replacement;
++	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE,
++			&desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&replacement)), "upload ring resource")) return false;
++	replacement->SetName(name_.c_str());
++	void *mapped = nullptr;
++	const D3D12_RANGE noRead = {0, 0};
++	if (Core_Failed(replacement->Map(0, &noRead, &mapped), "upload ring map")) return false;
++	// Keep old storage mapped until its last GPU use retires; destroying the resource unmaps it.
++	Core_Retire(resource_);
++	resource_ = replacement;
++	mapped_ = static_cast<unsigned char *>(mapped);
++	allocator_.Reset(capacity);
++	++generation_;
++	return true;
++}
++bool UploadRing::Init(size_t size, const wchar_t *name)
++{
++	Shutdown();
++	name_ = name ? name : L"upload ring";
++	stats_ = {};
++	frameBytes_ = 0;
++	return Create(size);
++}
++void UploadRing::Shutdown()
++{
++	Core_Retire(resource_);
++	mapped_ = nullptr;
++	allocator_.Reset(0);
++	++generation_;
++	frameBytes_ = 0;
++}
++UploadAllocation UploadRing::Alloc(size_t size, size_t alignment)
++{
++	if (!mapped_ || !size || !alignment || Core_DeviceRemoved()) return {};
++	if (size > Capacity())
++	{
++		size_t capacity = Capacity();
++		while (capacity < size)
++		{
++			if (capacity > std::numeric_limits<size_t>::max() / 2) { capacity = size; break; }
++			capacity *= 2;
++		}
++		if (!Create(capacity)) return {};
++		++stats_.grows;
++		std::string label;
++		for (const wchar_t ch : name_) label += ch >= 32 && ch <= 126 ? static_cast<char>(ch) : '?';
++		Core_Log("growing the %s to %llu bytes", label.c_str(), static_cast<unsigned long long>(capacity));
++	}
++	allocator_.Collect(Core_CompletedFence());
++	auto plan = allocator_.Prepare(size, alignment);
++	if (!plan.valid) return {};
++	if (plan.blockingFence)
++	{
++		// A current-list range cannot be waited on before its submission signals it.
++		if (plan.blockingFence >= Core_PendingFence())
++		{
++			if (!Core_Submit("ring")) return {};
++		}
++		double ms = 0;
++		++stats_.stalls;
++		const bool done = Core_Wait(plan.blockingFence, 500, "upload ring", &ms);
++		stats_.stallMs += ms;
++		if (!done) return {};
++		allocator_.Collect(Core_CompletedFence());
++		plan = allocator_.Prepare(size, alignment);
++		if (!plan.valid || plan.blockingFence) return {};
++	}
++	const size_t padding = plan.wrapped ? 0 : plan.offset - allocator_.Head();
++	allocator_.Commit(plan, size, Core_PendingFence());
++	if (plan.wrapped) { ++stats_.wraps; ++generation_; }
++	frameBytes_ += size + padding;
++	if (frameBytes_ > stats_.peakBytes) stats_.peakBytes = frameBytes_;
++	return {mapped_ + plan.offset, resource_->GetGPUVirtualAddress() + plan.offset, plan.offset, generation_};
++}
++bool UploadRing::Touch(const UploadAllocation &allocation, size_t size)
++{
++	if (!allocation || allocation.generation != generation_ || !size ||
++		allocation.offset > Capacity() || size > Capacity() - allocation.offset || Core_DeviceRemoved()) return false;
++	// The most recent consumer determines retirement, including cached constant reuses.
++	allocator_.Touch(allocation.offset, size, Core_PendingFence());
++	return true;
++}
++RingStats UploadRing::TakeStats()
++{
++	const RingStats result = stats_;
++	stats_ = {};
++	return result;
++}
++}
+diff --git a/src/hardware/r_d3d12/d3d12_upload.h b/src/hardware/r_d3d12/d3d12_upload.h
+new file mode 100644
+index 0000000..4171b1c
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_upload.h
+@@ -0,0 +1,54 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#ifndef RR_D3D12_UPLOAD_H
++#define RR_D3D12_UPLOAD_H
++#include "d3d12_core.h"
++#include "allocators.h"
++#include <string>
++namespace rr_d3d12
++{
++struct UploadAllocation
++{
++	void *cpu = nullptr;
++	D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
++	size_t offset = 0;
++	uint64_t generation = 0;
++	explicit operator bool() const { return cpu != nullptr; }
 +};
-+
-+// [UWP]: Creates diagnostic objects only; never records or submits a draw.
-+PsoProbe D3D12Pso_Probe(ID3D12Device *device, const EglApi &egl);
++struct RingStats
++{
++	size_t peakBytes = 0;
++	unsigned wraps = 0, stalls = 0, grows = 0;
++	double stallMs = 0;
++};
++class UploadRing
++{
++public:
++	bool Init(size_t size, const wchar_t *name);
++	UploadAllocation Alloc(size_t size, size_t alignment);
++	// Call after all allocations for a draw: another ring may have submitted the list.
++	// False means the allocation was invalidated by a wrap/grow and must be allocated again.
++	bool Touch(const UploadAllocation &allocation, size_t size);
++	void Shutdown();
++	ID3D12Resource *Resource() const { return resource_.Get(); }
++	size_t Capacity() const { return allocator_.Capacity(); }
++	// Cached allocations must be discarded on generation changes; Touch retags each reuse.
++	uint64_t Generation() const { return generation_; }
++	void EndFrame() { frameBytes_ = 0; }
++	RingStats TakeStats();
++private:
++	bool Create(size_t capacity);
++	ComPtr<ID3D12Resource> resource_;
++	unsigned char *mapped_ = nullptr;
++	RingAllocator allocator_;
++	std::wstring name_;
++	uint64_t generation_ = 0;
++	size_t frameBytes_ = 0;
++	RingStats stats_;
++};
++}
++#endif
+diff --git a/src/hardware/r_d3d12/pipeline_key.h b/src/hardware/r_d3d12/pipeline_key.h
+new file mode 100644
+index 0000000..736f77d
+--- /dev/null
++++ b/src/hardware/r_d3d12/pipeline_key.h
+@@ -0,0 +1,51 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#ifndef RR_PIPELINE_KEY_H
++#define RR_PIPELINE_KEY_H
++#include <cstdint>
++#include <cstddef>
++#include <initializer_list>
++namespace rr_d3d12
++{
++struct PipelineKey
++{
++	std::uint16_t vs = 0, ps = 0;
++	std::uint8_t layout = 0, topologyType = 3, rtFormat = 28, dsvFormat = 45;
++	std::uint16_t blend = 0;
++	std::uint8_t raster = 0;
++	std::uint64_t depth = 0;
++	bool operator==(const PipelineKey &b) const
++	{
++		return vs == b.vs && ps == b.ps && layout == b.layout && topologyType == b.topologyType &&
++			   rtFormat == b.rtFormat && dsvFormat == b.dsvFormat && blend == b.blend && raster == b.raster &&
++			   depth == b.depth;
++	}
++	bool operator!=(const PipelineKey &b) const
++	{
++		return !(*this == b);
++	}
++};
++struct PipelineKeyHash
++{
++	std::size_t operator()(const PipelineKey &k) const
++	{
++		std::uint64_t h = 14695981039346656037ULL;
++		for (auto v : {std::uint64_t(k.vs), std::uint64_t(k.ps), std::uint64_t(k.layout), std::uint64_t(k.topologyType),
++					   std::uint64_t(k.rtFormat), std::uint64_t(k.dsvFormat), std::uint64_t(k.blend),
++					   std::uint64_t(k.raster), k.depth})
++		{
++			for (int i = 0; i < 8; i++)
++			{
++				h ^= (v >> (i * 8)) & 255;
++				h *= 1099511628211ULL;
++			}
++		}
++		return static_cast<std::size_t>(h);
++	}
++};
 +} // namespace rr_d3d12
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..2e86197
+index 0000000..6ae8d90
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,737 @@
+@@ -0,0 +1,1936 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -17305,17 +17869,22 @@ index 0000000..2e86197
 +/// \file r_d3d12.cpp
 +/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented through ANGLE
 +///
-+/// The Direct3D 12 fork of r_d3d11.cpp, which its functions are ported from one by one. So far it has the device
-+/// (d3d12_core.cpp), the screen's render target and depth buffer, clearing, and presenting through ANGLE
-+/// (d3d12_present.cpp). The other driver functions only count their calls and return what draws nothing.
-+///
-+/// Until draws are ported, a hue that advances every frame tints the screen's clear color, and each frame starts
-+/// cleared to it, so a frame shown out of order or a stale presentation texture shows up as a jump or a flash.
++/// GL-state emulation and untextured polygon/line draws ported from r_d3d11.cpp, using fence-retired
++/// upload rings and cached pipeline states. Textures and advanced passes arrive in later steps.
++/// The S1 diagnostic hue is retained, disabled, for future presentation diagnostics.
 +
 +#include "d3d12_core.h"
 +#include "d3d12_present.h"
++#include "d3d12_pipeline.h"
++#include "d3d12_prewarm.h"
++#include "d3d12_upload.h"
++#include "r_d3d12_shaders/RootSignature.h"
 +
 +#include <cmath>
++#include <cfloat>
++#include <algorithm>
++#include <vector>
++#include <unordered_map>
 +#include <cstdarg>
 +#include <cstdio>
 +#include <cstring>
@@ -17329,6 +17898,8 @@ index 0000000..2e86197
 +#include "../../screen.h"
 +#include "../hw_drv.h"
 +#include "../hw_main.h"
++#include "../hw_glob.h"
++#include "../../m_fixed.h"
 +#include "r_d3d12.h"
 +
 +// doomdef.h's
@@ -17357,6 +17928,7 @@ index 0000000..2e86197
 +{
 +	int frames;
 +	int clears;
++	UINT64 draws, vertices, indices, constantUpdates, psoChanges, rootSets, tableSets;
 +	// Not drawn yet: calls by driver function
 +	int lines, polygons, batches, skies, models;
 +	int textureSets, textureUpdates, textureDeletes, flushes;
@@ -17372,8 +17944,8 @@ index 0000000..2e86197
 +	return t * 1000.0 / I_GetPrecisePrecision();
 +}
 +
-+// Diagnostic for until draws are ported (see the file's comment)
-+constexpr bool kDiagnosticHue = true;
++// S1 presentation diagnostic, retained for S10.
++constexpr bool kDiagnosticHue = false;
 +UINT64 g_hueFrame = 0;
 +
 +bool g_deviceLost = false;
@@ -17381,9 +17953,484 @@ index 0000000..2e86197
 +bool g_vsync = false, g_vsyncSet = false;
 +
 +INT32 g_screenWidth = 0, g_screenHeight = 0; // r_opengl.c's screen_width and screen_height
-+float g_clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-+FBITFIELD g_currentPolyFlags = 0;
++
 +UINT32 g_lightTableIds = 0;
++
++// Column-major, like OpenGL's
++struct Mat4
++{
++	float m[16];
++};
++
++constexpr Mat4 kIdentity = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
++
++Mat4 Multiply(const Mat4 &a, const Mat4 &b)
++{
++	Mat4 r;
++
++	for (int column = 0; column < 4; column++)
++	{
++		for (int row = 0; row < 4; row++)
++		{
++			r.m[column*4 + row] =
++				a.m[0*4 + row] * b.m[column*4 + 0] +
++				a.m[1*4 + row] * b.m[column*4 + 1] +
++				a.m[2*4 + row] * b.m[column*4 + 2] +
++				a.m[3*4 + row] * b.m[column*4 + 3];
++		}
++	}
++	return r;
++}
++
++// OpenGL's matrix stacks, of which Legacy GL uses the modelview's
++enum { MODE_MODELVIEW, MODE_PROJECTION };
++std::vector<Mat4> g_modelview(1, kIdentity);
++Mat4 g_projection = kIdentity;
++int g_matrixMode = MODE_MODELVIEW;
++
++Mat4 &CurrentMatrix()
++{
++	return g_matrixMode == MODE_PROJECTION ? g_projection : g_modelview.back();
++}
++
++void MatLoadIdentity()
++{
++	CurrentMatrix() = kIdentity;
++}
++
++void MatMultiply(const float *m)
++{
++	Mat4 b;
++	memcpy(b.m, m, sizeof b.m);
++	CurrentMatrix() = Multiply(CurrentMatrix(), b);
++}
++
++void MatScale(float x, float y, float z)
++{
++	Mat4 &m = CurrentMatrix();
++
++	for (int i = 0; i < 4; i++)
++	{
++		m.m[0*4 + i] *= x;
++		m.m[1*4 + i] *= y;
++		m.m[2*4 + i] *= z;
++	}
++}
++
++void MatTranslate(float x, float y, float z)
++{
++	Mat4 &m = CurrentMatrix();
++
++	for (int i = 0; i < 4; i++)
++		m.m[3*4 + i] += m.m[0*4 + i] * x + m.m[1*4 + i] * y + m.m[2*4 + i] * z;
++}
++
++// glRotatef
++void MatRotate(float angle, float x, float y, float z)
++{
++	const float mag = sqrtf(x*x + y*y + z*z);
++	Mat4 r = kIdentity;
++
++	if (mag <= 1.0e-4f)
++		return;
++
++	x /= mag;
++	y /= mag;
++	z /= mag;
++
++	const float radians = angle * (float)(M_PI / 180.0);
++	const float s = sinf(radians);
++	const float c = cosf(radians);
++	const float one_c = 1.0f - c;
++
++#define R(row, column) r.m[(column)*4 + (row)]
++	R(0, 0) = (one_c * x * x) + c;
++	R(0, 1) = (one_c * x * y) - z * s;
++	R(0, 2) = (one_c * z * x) + y * s;
++	R(1, 0) = (one_c * x * y) + z * s;
++	R(1, 1) = (one_c * y * y) + c;
++	R(1, 2) = (one_c * y * z) - x * s;
++	R(2, 0) = (one_c * z * x) - y * s;
++	R(2, 1) = (one_c * y * z) + x * s;
++	R(2, 2) = (one_c * z * z) + c;
++#undef R
++
++	CurrentMatrix() = Multiply(CurrentMatrix(), r);
++}
++
++[[maybe_unused]] void MatPush()
++{
++	if (g_matrixMode == MODE_MODELVIEW)
++		g_modelview.push_back(g_modelview.back());
++}
++
++[[maybe_unused]] void MatPop()
++{
++	if (g_matrixMode == MODE_MODELVIEW && g_modelview.size() > 1)
++		g_modelview.pop_back();
++}
++
++constexpr float kFarClippingPlane = 32768.0f;
++float g_nearClippingPlane = NZCLIP_PLANE;
++const float g_fov = 90.0f;
++
++// r_opengl.c's GLPerspective
++void Perspective(float fovy, float aspect)
++{
++	float m[16] =
++	{
++		1.0f, 0.0f, 0.0f, 0.0f,
++		0.0f, 1.0f, 0.0f, 0.0f,
++		0.0f, 0.0f, 1.0f, -1.0f,
++		0.0f, 0.0f, 0.0f, 0.0f,
++	};
++	const float zNear = g_nearClippingPlane;
++	const float zFar = kFarClippingPlane;
++	const float radians = (float)(fovy / 2.0f * M_PI / 180.0f);
++	const float sine = (float)sin(radians);
++	const float deltaZ = zFar - zNear;
++
++	if ((fabsf(deltaZ) < 1.0E-36f) || sine == 0.0f || aspect == 0.0f)
++		return;
++
++	const float cotangent = cosf(radians) / sine;
++	m[0] = cotangent / aspect;
++	m[5] = cotangent;
++	m[10] = -(zFar + zNear) / deltaZ;
++	m[14] = -2.0f * zNear * zFar / deltaZ;
++	MatMultiply(m);
++}
++
++// ==========================================================================
++//                                                               OPENGL STATE
++// ==========================================================================
++
++enum BlendFactor : UINT8 { BF_ZERO, BF_ONE, BF_SRC_ALPHA, BF_ONE_MINUS_SRC_ALPHA, BF_SRC_COLOR, BF_DST_COLOR, BF_ONE_MINUS_DST_COLOR };
++enum BlendEquation : UINT8 { BE_ADD, BE_SUBTRACT, BE_REVERSE_SUBTRACT };
++enum AlphaFunc { AF_ALWAYS = 0, AF_GREATER = 1, AF_NOTEQUAL = 2 };
++enum TexEnv { TE_MODULATE, TE_REPLACE };
++
++// What r_opengl.c would have set
++struct GLState
++{
++	UINT8 blendSrc = BF_ONE, blendDst = BF_ZERO, blendEquation = BE_ADD;
++	bool blend = false;
++	int alphaFunc = AF_ALWAYS;
++	float alphaRef = 0.0f;
++	bool alphaTest = false;
++	bool polygonOffset = false;
++	bool depthTest = false;
++	bool depthAlways = false; // GL_ALWAYS rather than GL_LEQUAL
++	bool depthMask = true;
++#ifdef _UWP
++	bool stencil = false;
++	UINT8 stencilFunc = D3D12_COMPARISON_FUNC_EQUAL, stencilRef = 0;
++	UINT8 stencilFail = D3D12_STENCIL_OP_KEEP, stencilDepthFail = D3D12_STENCIL_OP_KEEP;
++	UINT8 stencilPass = D3D12_STENCIL_OP_KEEP, stencilReadMask = 255, stencilWriteMask = 255;
++	UINT8 colorWriteMask = 7; // RGB; preserve the target's opaque alpha
++	float clipPlane[4] = {0, 0, 0, 1}; // camera space, or an always-positive disabled plane
++	float fullscreenDepth = 0;
++#endif
++	int texEnv = TE_MODULATE; // of texture unit 0
++	bool texture2D = false; // texturing enabled on unit 0
++	bool cullFace = false;
++	bool cullFront = false;
++	bool lighting = false; // GL_LIGHTING, for models without shaders
++	float lightDir[3] = {0.0f, 1.0f, 0.0f}; // GL_LIGHT0's eye-space direction
++	float material[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // the ambient and diffuse material
++	UINT8 color[4] = {255, 255, 255, 255}; // glColor
++	float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
++	int viewport[4] = {0, 0, 0, 0}; // x, y from the bottom (as in OpenGL), width, height
++};
++GLState g_gl;
++FBITFIELD g_currentPolyFlags = 0;
++
++RGBA_t g_palette[256];
++
++void SetViewport(int x, int y, int width, int height)
++{
++	g_gl.viewport[0] = x;
++	g_gl.viewport[1] = y;
++	g_gl.viewport[2] = width;
++	g_gl.viewport[3] = height;
++}
++
++void SetColor(const UINT8 *color)
++{
++	memcpy(g_gl.color, color, sizeof g_gl.color);
++}
++
++[[maybe_unused]] const UINT8 kWhite[4] = {255, 255, 255, 255};
++
++
++struct ProgramUniforms
++{
++	float poly[4], tint[4], fade[4];
++	float lighting, fadeStart, fadeEnd;
++	float lightDir[3];
++	float lightContrast, lightBacklight;
++	float leveltime;
++};
++ProgramUniforms g_uniforms[NUMBASESHADERS];
++
++hwdshaderoption_t g_allowShaders = HWD_SHADEROPTION_OFF; // gl_allowshaders
++bool g_shadersEnabled = false; // gl_shadersenabled
++bool g_modelLighting = false;
++int g_shaderCurrent = -1; // gl_shaderstate.current, as its type, or -1 for NULL
++int g_shaderType = 0; // gl_shaderstate.type
++bool g_shaderChanged = false; // gl_shaderstate.changed
++bool g_postImage = false;
++bool g_waterRefraction = false;
++bool g_fogRemap = false;
++int g_program = -1; // the program glUseProgram last set, as its type, or -1 for none
++
++INT32 g_shaderLeveltime = 0;
++float g_shaderLightX = 0.0f, g_shaderLightY = 0.0f, g_shaderLightZ = 0.0f;
++INT32 g_shaderLightContrast = 0, g_shaderLightBacklight = 0;
++
++
++// Must match DrawConstants in shaders.hlsl
++struct Constants
++{
++	float projection[16];
++	float modelview[16];
++	float poly[4];
++	float tint[4];
++	float fade[4];
++	float color[4];
++	float lightDir[4];
++	float ffLight[4];
++	float lighting, fadeStart, fadeEnd, lightContrast;
++	float lightBacklight, leveltime, alphaRef;
++	INT32 alphaFunc;
++	INT32 texMode;
++	INT32 palette; // palette rendering, with a light table
++	INT32 pad[2];
++#ifdef _UWP
++	float clipPlane[4];
++	float fullscreenDepth, portalPad[3];
++	float postImageRect[4];
++	float postImageInfo[4];
++#endif
++};
++#ifdef _UWP
++static_assert(sizeof(Constants) == 336, "Constants must match DrawConstants in shaders.hlsl");
++#else
++static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
++#endif
++
++
++bool ProgramExists(int type)
++{
++	// Add-on programs replace a base type; invalid replacements use the built-in shader.
++	return type >= 0 && type < NUMBASESHADERS;
++}
++void SetUniforms(const FSurfaceInfo *surface, const float *poly, const float *tint, const float *fade)
++{
++	static const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
++
++	if (!g_shadersEnabled || g_shaderCurrent < 0)
++		return;
++
++	if (!ProgramExists(g_shaderCurrent))
++	{
++		g_program = -1;
++		return;
++	}
++
++	if (g_shaderChanged)
++	{
++		g_program = g_shaderCurrent;
++		g_shaderChanged = false;
++	}
++
++	if (g_program < 0)
++		return;
++
++	ProgramUniforms &u = g_uniforms[g_program];
++	boolean directional = false;
++
++	memcpy(u.poly, poly ? poly : white, sizeof u.poly);
++	memcpy(u.tint, tint ? tint : white, sizeof u.tint);
++	memcpy(u.fade, fade ? fade : white, sizeof u.fade);
++
++	if (surface != NULL)
++	{
++		u.lighting = (float)surface->LightInfo.light_level;
++		u.fadeStart = (float)surface->LightInfo.fade_start;
++		u.fadeEnd = (float)surface->LightInfo.fade_end;
++		directional = surface->LightInfo.directional;
++	}
++	else
++	{
++		u.lighting = 255.0f;
++		u.fadeStart = 0.0f;
++		u.fadeEnd = 31.0f;
++	}
++
++	if (directional)
++	{
++		u.lightDir[0] = g_shaderLightX;
++		u.lightDir[1] = g_shaderLightY;
++		u.lightDir[2] = g_shaderLightZ;
++		u.lightContrast = (float)g_shaderLightContrast;
++		u.lightBacklight = (float)g_shaderLightBacklight;
++	}
++	else
++	{
++		u.lightDir[0] = u.lightDir[1] = u.lightDir[2] = 0.0f;
++		u.lightContrast = u.lightBacklight = 0.0f;
++	}
++
++	u.leveltime = ((float)g_shaderLeveltime) / TICRATE;
++}
++
++enum Filter : UINT8 { FILTER_NEAREST, FILTER_LINEAR, FILTER_LINEAR_MIPMAP_LINEAR, FILTER_NEAREST_MIPMAP_LINEAR };
++
++// Legacy GL's settings for new textures
++UINT8 g_minFilter = FILTER_LINEAR, g_magFilter = FILTER_LINEAR;
++bool g_mipmap = false;
++int g_anisotropicFilter = 0;
++constexpr int kMaximumAnisotropy = 16;
++
++bool g_paletteRendering = false;
++void Flush() { g_stats.flushes++; }
++void SetWaterSurface(INT32) { D3D12_LOG_ONCE("water capture not drawn yet (S6)"); }
++
++void SetRepeatS(bool) {} // Texture objects arrive in S2b.
++void SetRepeatT(bool) {}
++void SetNoTexture(int) {}
++void SetLightTable(UINT32) {}
++struct CustomProgram {};
++const CustomProgram *CustomDrawProgram(Layout) { return nullptr; }
++void SetBlendMode(FBITFIELD flags)
++{
++	// Set blending function
++	if (flags & PF_Fog)
++	{
++		// Sryder: Fog
++		// multiplies input colour by input alpha, and destination colour by input colour, then adds them
++		g_gl.blendSrc = BF_SRC_ALPHA;
++		g_gl.blendDst = BF_SRC_COLOR;
++	}
++	else
++	{
++		boolean blending = true;
++		switch (flags & (PF_Blending & ~(PF_Masked | PF_Occlude)))
++		{
++			case PF_Translucent:
++				g_gl.blendSrc = BF_SRC_ALPHA; // alpha = level of transparency
++				g_gl.blendDst = BF_ONE_MINUS_SRC_ALPHA;
++				break;
++			case PF_Additive:
++			case PF_Subtractive:
++			case PF_ReverseSubtract:
++				g_gl.blendSrc = BF_SRC_ALPHA; // src * alpha + dest
++				g_gl.blendDst = BF_ONE;
++				break;
++			case PF_Environment:
++				g_gl.blendSrc = BF_ONE;
++				g_gl.blendDst = BF_ONE_MINUS_SRC_ALPHA;
++				break;
++			case PF_Multiplicative:
++				g_gl.blendSrc = BF_DST_COLOR;
++				g_gl.blendDst = BF_ZERO;
++				break;
++			case PF_Invert:
++				// [UWP]: Unlike r_opengl.c, invert the destination for Encore's white quad.
++				g_gl.blendSrc = BF_ONE_MINUS_DST_COLOR;
++				g_gl.blendDst = BF_ZERO;
++				break;
++			default:
++				blending = false;
++				break;
++		}
++
++		if (!blending)
++		{
++			if (flags & PF_Masked)
++			{
++				g_gl.blendSrc = BF_SRC_ALPHA; // 0 alpha = holes in texture
++				g_gl.blendDst = BF_ZERO;
++			}
++			else
++			{
++				g_gl.blendSrc = BF_ONE; // the same as no blending
++				g_gl.blendDst = BF_ZERO;
++			}
++		}
++	}
++
++	// Set blending equation
++	switch (flags & (PF_Blending & ~(PF_Masked | PF_Occlude)))
++	{
++		case PF_Subtractive & PF_Blending:
++			g_gl.blendEquation = BE_SUBTRACT;
++			break;
++		case PF_ReverseSubtract & PF_Blending:
++			g_gl.blendEquation = BE_REVERSE_SUBTRACT;
++			break;
++		default:
++			g_gl.blendEquation = BE_ADD;
++			break;
++	}
++
++	// Alpha test
++	if (flags & PF_Fog)
++	{
++		g_gl.alphaFunc = AF_ALWAYS; // Don't discard zero alpha fragments
++		g_gl.alphaRef = 0.0f;
++	}
++	else
++	{
++		switch (flags & (PF_Blending & ~(PF_Masked | PF_Occlude)))
++		{
++			case PF_Translucent:
++			case PF_Additive:
++			case PF_Subtractive:
++			case PF_ReverseSubtract:
++			case PF_Environment:
++			case PF_Multiplicative:
++			case PF_Invert:
++				g_gl.alphaFunc = AF_NOTEQUAL;
++				g_gl.alphaRef = 0.0f;
++				break;
++			default:
++				g_gl.alphaFunc = AF_GREATER;
++				g_gl.alphaRef = 0.5f;
++				break;
++		}
++	}
++}
++void D3D_SetBlend(FBITFIELD);
++void D3D_FlushScreenTextures();
++void SetStates()
++{
++	g_gl.texture2D = true;
++	g_gl.texEnv = TE_MODULATE;
++
++	g_gl.alphaTest = true;
++	g_gl.alphaFunc = AF_NOTEQUAL;
++	g_gl.alphaRef = 0.0f;
++
++	g_gl.blend = true;
++
++	g_gl.depthTest = true;
++	g_gl.depthMask = true;
++	g_gl.depthAlways = false;
++
++	// this set CurrentPolyFlags to the actual configuration
++	g_currentPolyFlags = 0xffffffff;
++	D3D_SetBlend(0);
++
++	SetNoTexture(0);
++
++	g_gl.lighting = false;
++
++	// bp : when no t&l :)
++	MatLoadIdentity();
++	MatScale(1.0f, 1.0f, -1.0f);
++}
 +
 +// ==========================================================================
 +//                                                               RENDER TARGET
@@ -17395,7 +18442,296 @@ index 0000000..2e86197
 +ComPtr<ID3D12Resource> g_depth; // DEPTH_WRITE
 +UINT g_rtWidth = 0, g_rtHeight = 0;
 +
-+// Whenever the list is (re)opened. D3D12 always scissors, so the scissor is the whole target.
++// Shader-visible descriptors are persistent and never rewritten while in use.
++ComPtr<ID3D12RootSignature> g_root;
++ComPtr<ID3D12DescriptorHeap> g_srvHeap, g_samplerHeap;
++ComPtr<ID3D12Resource> g_zeroConstants;
++UploadRing g_vertexRing, g_indexRing, g_constantRing;
++Constants g_lastConstants = {};
++bool g_constantsValid = false;
++UploadAllocation g_constantAllocation;
++std::unordered_map<PipelineKey, ComPtr<ID3D12PipelineState>, PipelineKeyHash> g_pipelines;
++PipelineKey g_lastKey = {};
++ID3D12PipelineState *g_lastPipeline = nullptr, *g_boundPipeline = nullptr;
++UINT64 g_psoCreated = 0;
++double g_psoMs = 0, g_psoWorstMs = 0;
++
++bool InitDrawing()
++{
++	ID3D12Device *device = Core_Device();
++	if (Core_Failed(device->CreateRootSignature(0, g_RootSignature, sizeof g_RootSignature,
++		IID_PPV_ARGS(&g_root)), "CreateRootSignature")) return false;
++	g_root->SetName(L"Legacy GL root signature");
++	D3D12_DESCRIPTOR_HEAP_DESC heap = {};
++	heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
++	heap.NumDescriptors = 65536;
++	heap.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
++	if (Core_Failed(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&g_srvHeap)), "Create SRV heap")) return false;
++	g_srvHeap->SetName(L"persistent SRV heap");
++	heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
++	heap.NumDescriptors = 2048;
++	if (Core_Failed(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&g_samplerHeap)), "Create sampler heap")) return false;
++	g_samplerHeap->SetName(L"persistent sampler heap");
++	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
++	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++	srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
++	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++	srv.Texture2D.MipLevels = 1;
++	auto handle = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
++	const UINT step = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++	device->CreateShaderResourceView(nullptr, &srv, handle);
++	handle.ptr += step;
++	srv = {};
++	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++	srv.Format = DXGI_FORMAT_R8_UNORM;
++	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
++	srv.Texture3D.MipLevels = 1;
++	device->CreateShaderResourceView(nullptr, &srv, handle);
++	handle.ptr += step;
++	srv = {};
++	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++	srv.Format = DXGI_FORMAT_R32_SINT;
++	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++	srv.Texture2D.MipLevels = 1;
++	device->CreateShaderResourceView(nullptr, &srv, handle);
++	// Slot 3 is reserved for S2b's black texture.
++	D3D12_SAMPLER_DESC sampler = {};
++	sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
++	sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++	sampler.MaxAnisotropy = 1;
++	sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
++	sampler.MaxLOD = D3D12_FLOAT32_MAX;
++	device->CreateSampler(&sampler, g_samplerHeap->GetCPUDescriptorHandleForHeapStart());
++	D3D12_HEAP_PROPERTIES upload = {};
++	upload.Type = D3D12_HEAP_TYPE_UPLOAD;
++	D3D12_RESOURCE_DESC buffer = {};
++	buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++	buffer.Width = 1024; // Covers every unused b1-b5, rounded to 256 bytes.
++	buffer.Height = buffer.DepthOrArraySize = buffer.MipLevels = 1;
++	buffer.SampleDesc.Count = 1;
++	buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++	if (Core_Failed(device->CreateCommittedResource(&upload, D3D12_HEAP_FLAG_NONE, &buffer,
++		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_zeroConstants)), "Create zero constants")) return false;
++	g_zeroConstants->SetName(L"zero constants b0-b5");
++	void *cpu = nullptr;
++	const D3D12_RANGE none = {0, 0};
++	if (Core_Failed(g_zeroConstants->Map(0, &none, &cpu), "Map zero constants")) return false;
++	memset(cpu, 0, 1024);
++	g_zeroConstants->Unmap(0, nullptr);
++	return g_vertexRing.Init(16 << 20, L"vertex ring") && g_indexRing.Init(8 << 20, L"index ring")
++		&& g_constantRing.Init(4 << 20, L"constant ring");
++}
++
++void BindViewport()
++{
++	const D3D12_VIEWPORT viewport = {(float)g_gl.viewport[0],
++		(float)((int)g_rtHeight - (g_gl.viewport[1] + g_gl.viewport[3])),
++		(float)std::max(g_gl.viewport[2], 0), (float)std::max(g_gl.viewport[3], 0), 0, 1};
++	Core_List()->RSSetViewports(1, &viewport);
++	// D3D11's rasterizer leaves ScissorEnable false.
++	const D3D12_RECT scissor = {0, 0, (LONG)g_rtWidth, (LONG)g_rtHeight};
++	Core_List()->RSSetScissorRects(1, &scissor);
++}
++
++bool ApplyConstants()
++{
++	Constants c = {};
++	memcpy(c.projection, g_projection.m, sizeof c.projection);
++	memcpy(c.modelview, g_modelview.back().m, sizeof c.modelview);
++	memcpy(c.clipPlane, g_gl.clipPlane, sizeof c.clipPlane);
++	c.fullscreenDepth = g_gl.fullscreenDepth;
++	if (g_program >= 0)
++	{
++		const ProgramUniforms &u = g_uniforms[g_program];
++		memcpy(c.poly, u.poly, sizeof c.poly);
++		memcpy(c.tint, u.tint, sizeof c.tint);
++		memcpy(c.fade, u.fade, sizeof c.fade);
++		memcpy(c.lightDir, u.lightDir, sizeof u.lightDir);
++		c.lighting = u.lighting; c.fadeStart = u.fadeStart; c.fadeEnd = u.fadeEnd;
++		c.lightContrast = u.lightContrast; c.lightBacklight = u.lightBacklight; c.leveltime = u.leveltime;
++	}
++	if (g_gl.lighting)
++	{
++		memcpy(c.color, g_gl.material, sizeof c.color);
++		memcpy(c.ffLight, g_gl.lightDir, sizeof g_gl.lightDir);
++		c.ffLight[3] = 1;
++	}
++	else for (int i = 0; i < 4; i++) c.color[i] = g_gl.color[i] / 255.0f;
++	c.alphaFunc = g_gl.alphaTest ? g_gl.alphaFunc : AF_ALWAYS;
++	c.alphaRef = g_gl.alphaRef;
++	c.texMode = 0;
++	c.palette = 0; // No LUT or light tables until S4, as in D3D11 without those resources.
++	if (!g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
++		|| memcmp(&c, &g_lastConstants, sizeof c) != 0)
++	{
++		auto slot = g_constantRing.Alloc(512, 256);
++		if (!slot.cpu) return false;
++		memcpy(slot.cpu, &c, sizeof c);
++		memset(static_cast<UINT8 *>(slot.cpu) + sizeof c, 0, 512 - sizeof c);
++		g_constantAllocation = slot;
++		g_lastConstants = c;
++		g_constantsValid = true;
++		g_stats.constantUpdates++;
++	}
++	Core_List()->SetGraphicsRootConstantBufferView(0, g_constantAllocation.gpu);
++	g_stats.rootSets++;
++	return true;
++}
++
++// Same built-in shader selector as D3D11; custom shaders remain S8.
++bool ApplyState(Layout layout, D3D12_PRIMITIVE_TOPOLOGY topology, bool wipe = false)
++{
++	VSKind vs;
++	PSKind ps;
++	if (g_program >= 0)
++	{
++		switch (g_program)
++		{
++			case SHADER_DEFAULT: ps = PS_DEFAULT; break;
++			case SHADER_MODEL_LIGHTING: ps = PS_MODELLIGHT; break;
++			case SHADER_WATER: ps = g_waterRefraction ? PS_WATERREFRACTION : PS_WATER; break;
++			case SHADER_FOG: ps = g_fogRemap ? PS_FOGREMAP : PS_FOG; break;
++			case SHADER_SKY: ps = PS_SKY; break;
++			default: ps = PS_SOFTWARE; break;
++		}
++		vs = layout == LAYOUT_SKY ? VS_SKY : layout == LAYOUT_MODEL
++			? (g_program == SHADER_MODEL_LIGHTING ? VS_MODELLIGHT : VS_MODEL)
++			: (g_program == SHADER_SPRITECLIPHACK ? VS_POLYCLIP : VS_POLY);
++	}
++	else
++	{
++		ps = wipe ? PS_WIPE : PS_FIXED;
++		vs = layout == LAYOUT_SKY ? VS_SKY : layout == LAYOUT_MODEL ? VS_MODEL : wipe ? VS_WIPE : VS_POLY;
++	}
++	if (g_postImage) { vs = VS_POSTIMAGE; ps = PS_POSTIMAGE; }
++	(void)CustomDrawProgram(layout);
++	PipelineKey key = {};
++	key.vs = vs; key.ps = ps; key.layout = layout;
++	key.topologyType = topology == D3D_PRIMITIVE_TOPOLOGY_LINELIST ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
++		: D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++	key.rtFormat = DXGI_FORMAT_R8G8B8A8_UNORM; key.dsvFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
++	if (g_gl.blend && !g_waterRefraction && !g_fogRemap
++		&& !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
++		key.blend = 1 | (g_gl.blendSrc << 1) | (g_gl.blendDst << 4) | (g_gl.blendEquation << 7);
++	key.blend |= g_gl.colorWriteMask << 10;
++	key.depth = (g_gl.depthTest ? 1 : 0) | (g_gl.depthAlways ? 2 : 0) | (g_gl.depthMask ? 4 : 0)
++		| ((UINT64)g_gl.stencil << 3) | ((UINT64)g_gl.stencilFunc << 4)
++		| ((UINT64)g_gl.stencilFail << 8) | ((UINT64)g_gl.stencilDepthFail << 12)
++		| ((UINT64)g_gl.stencilPass << 16) | ((UINT64)g_gl.stencilReadMask << 20)
++		| ((UINT64)g_gl.stencilWriteMask << 28);
++	key.raster = (g_gl.cullFace ? (g_gl.cullFront ? 2 : 1) : 0) | (g_gl.polygonOffset ? 4 : 0);
++	ID3D12PipelineState *pso = nullptr;
++	if (g_lastPipeline && key == g_lastKey) pso = g_lastPipeline;
++	else
++	{
++		auto found = g_pipelines.find(key);
++		if (found == g_pipelines.end())
++		{
++			const auto desc = BuildPipelineDesc(g_root.Get(), key);
++			ComPtr<ID3D12PipelineState> created;
++			LARGE_INTEGER frequency = {}, begin = {}, end = {};
++			QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
++			const HRESULT hr = Core_Device()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&created));
++			QueryPerformanceCounter(&end);
++			const double ms = frequency.QuadPart > 0 ? (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart : 0;
++			g_psoCreated++; g_psoMs += ms; g_psoWorstMs = std::max(g_psoWorstMs, ms);
++			if (g_psoCreated <= 64)
++				Log("PSO #%u %s+%s layout %u topology %u blend 0x%X depth 0x%llX raster 0x%X: %.1f ms (prewarm %s)",
++					(unsigned)g_psoCreated, ShaderName(vs), ShaderName(ps), key.layout, key.topologyType, key.blend,
++					(unsigned long long)key.depth, key.raster, ms, Prewarm_Done() ? "done" : "running");
++			// A failure is cached too, so it isn't retried every draw
++			if (Core_Failed(hr, "CreateGraphicsPipelineState")) created.Reset();
++			else created->SetName(L"Legacy GL cached pipeline");
++			found = g_pipelines.emplace(key, created).first;
++		}
++		pso = found->second.Get();
++		if (!pso) return false;
++		g_lastKey = key; g_lastPipeline = pso;
++	}
++	// Constants may submit a full ring and reopen the list: bind the PSO afterwards.
++	if (!ApplyConstants()) return false;
++	if (g_boundPipeline != pso)
++	{
++		Core_List()->SetPipelineState(pso); g_boundPipeline = pso; g_stats.psoChanges++;
++	}
++	Core_List()->IASetPrimitiveTopology(topology);
++	Core_List()->OMSetStencilRef(g_gl.stencilRef);
++	BindViewport();
++	return true;
++}
++
++bool CanDraw() { return Core_List() && g_rt && !g_deviceLost && !g_shutdown; }
++enum Primitive { PRIM_FAN, PRIM_LINES, PRIM_STRIP };
++
++bool DrawUploaded(Layout layout, D3D12_PRIMITIVE_TOPOLOGY topology, const void *vertices, UINT count,
++	const void *indices, UINT indexCount, bool wipe = false, DXGI_FORMAT indexFormat = DXGI_FORMAT_R32_UINT)
++{
++	const UINT strides[] = {sizeof(FOutVector), sizeof(gl_skyvertex_t), 32};
++	const UINT stride = strides[layout];
++	const UINT indexStride = indexFormat == DXGI_FORMAT_R16_UINT ? sizeof(UINT16) : sizeof(UINT32);
++	if (!CanDraw() || !count || !vertices) return false;
++	auto vb = g_vertexRing.Alloc((size_t)count * stride, stride);
++	if (!vb.cpu) return false;
++	memcpy(vb.cpu, vertices, (size_t)count * stride);
++	UploadAllocation ib = {};
++	if (indexCount)
++	{
++		ib = g_indexRing.Alloc((size_t)indexCount * indexStride, indexStride);
++		if (!ib.cpu) return false;
++		memcpy(ib.cpu, indices, (size_t)indexCount * indexStride);
++	}
++	if (!ApplyState(layout, topology, wipe)) return false;
++	// Allocations can submit while another ring is full. Retag all inputs for the draw's actual list.
++	if (!g_vertexRing.Touch(vb, (size_t)count * stride)) return false;
++	if (indexCount && !g_indexRing.Touch(ib, (size_t)indexCount * indexStride)) return false;
++	if (!g_constantRing.Touch(g_constantAllocation, 512)) return false;
++	const D3D12_VERTEX_BUFFER_VIEW view = {vb.gpu, count * stride, stride};
++	Core_List()->IASetVertexBuffers(0, 1, &view);
++	if (indexCount)
++	{
++		const D3D12_INDEX_BUFFER_VIEW indexView = {ib.gpu, indexCount * indexStride, indexFormat};
++		Core_List()->IASetIndexBuffer(&indexView);
++	}
++	Core_FlushBarriers();
++	if (indexCount) Core_List()->DrawIndexedInstanced(indexCount, 1, 0, 0, 0);
++	else Core_List()->DrawInstanced(count, 1, 0, 0);
++	g_stats.draws++; g_stats.vertices += count; g_stats.indices += indexCount;
++	return true;
++}
++
++void DrawArrays(Layout layout, Primitive primitive, const void *vertices, UINT count, bool wipe = false)
++{
++	if (primitive == PRIM_FAN)
++	{
++		if (count < 3) return;
++		if (count <= 65535) // D3D11's kMaxFanVertices/R16 path.
++		{
++			std::vector<UINT16> indices;
++			indices.reserve((size_t)(count - 2) * 3);
++			for (UINT i = 1; i + 1 < count; i++)
++			{
++				indices.push_back(0); indices.push_back((UINT16)i); indices.push_back((UINT16)(i + 1));
++			}
++			DrawUploaded(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, count,
++				indices.data(), (UINT)indices.size(), wipe, DXGI_FORMAT_R16_UINT);
++		}
++		else
++		{
++			std::vector<UINT32> indices;
++			indices.reserve((size_t)(count - 2) * 3);
++			for (UINT i = 1; i + 1 < count; i++)
++			{
++				indices.push_back(0); indices.push_back(i); indices.push_back(i + 1);
++			}
++			DrawUploaded(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, count,
++				indices.data(), (UINT)indices.size(), wipe);
++		}
++	}
++	else DrawUploaded(layout, primitive == PRIM_LINES ? D3D_PRIMITIVE_TOPOLOGY_LINELIST : D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
++		vertices, primitive == PRIM_LINES ? count & ~1u : count, nullptr, 0, wipe);
++}
++
++// Whenever the list is (re)opened: restore every root argument and dynamic binding.
 +void BindRenderTarget()
 +{
 +	ID3D12GraphicsCommandList *list = Core_List();
@@ -17403,10 +18739,32 @@ index 0000000..2e86197
 +		return;
 +	const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kRtvScreen), dsv = Core_Dsv(kDsvScreen);
 +	list->OMSetRenderTargets(1, &rtv, FALSE, g_depth ? &dsv : nullptr);
-+	const D3D12_VIEWPORT viewport = {0.0f, 0.0f, (float)g_rtWidth, (float)g_rtHeight, 0.0f, 1.0f};
-+	const D3D12_RECT scissor = {0, 0, (LONG)g_rtWidth, (LONG)g_rtHeight};
-+	list->RSSetViewports(1, &viewport);
-+	list->RSSetScissorRects(1, &scissor);
++	if (g_root && g_zeroConstants)
++	{
++		ID3D12DescriptorHeap *heaps[] = {g_srvHeap.Get(), g_samplerHeap.Get()};
++		list->SetDescriptorHeaps(2, heaps);
++		list->SetGraphicsRootSignature(g_root.Get());
++		const auto base = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
++		const auto sampler = g_samplerHeap->GetGPUDescriptorHandleForHeapStart();
++		const UINT step = Core_Device()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++		for (UINT param = 1; param <= 13; param++)
++		{
++			auto handle = base;
++			if (param == 6) handle.ptr += step; // t2: Texture3D R8
++			if (param == 13) handle.ptr += 2 * step; // t10: Texture2D R32_SINT
++			list->SetGraphicsRootDescriptorTable(param, param == 2 || param == 4 ? sampler : handle);
++			g_stats.tableSets++;
++		}
++		list->SetGraphicsRootConstantBufferView(0, g_zeroConstants->GetGPUVirtualAddress());
++		for (UINT param = 14; param <= 18; param++)
++			list->SetGraphicsRootConstantBufferView(param, g_zeroConstants->GetGPUVirtualAddress());
++		g_stats.rootSets += 6;
++	}
++	BindViewport();
++	g_boundPipeline = nullptr;
++	// Root arguments were reset, but the cached constants retain their contents until the ring wraps.
++	// ApplyConstants always rebinds b0; each draw retags the cached slot for its pending fence.
++
 +}
 +
 +// A full turn every 240 frames, about 1.5 degrees a frame
@@ -17431,7 +18789,7 @@ index 0000000..2e86197
 +	if (!list || !g_rt)
 +		return;
 +	// The screen's alpha stays 1, as in the Direct3D 11 driver
-+	float color[4] = {g_clearColor[0], g_clearColor[1], g_clearColor[2], 1.0f};
++	float color[4] = {g_gl.clearColor[0], g_gl.clearColor[1], g_gl.clearColor[2], 1.0f};
 +	if (kDiagnosticHue)
 +	{
 +		float hue[3];
@@ -17526,11 +18884,26 @@ index 0000000..2e86197
 +// r_opengl.c's SetModelView, so far without the matrices
 +void SetModelView(INT32 w, INT32 h)
 +{
++	// The screen textures need to be flushed if the width or height change so that they be remade for the correct size
 +	if (g_screenWidth != w || g_screenHeight != h)
++	{
++		D3D_FlushScreenTextures();
 +		Log("screen size %dx%d", (int)w, (int)h);
++	}
++
 +	g_screenWidth = w;
 +	g_screenHeight = h;
 +	CreateRenderTarget(w, h);
++
++	SetViewport(0, 0, w, h);
++
++	g_matrixMode = MODE_PROJECTION;
++	MatLoadIdentity();
++
++	g_matrixMode = MODE_MODELVIEW;
++	MatLoadIdentity();
++
++	Perspective(g_fov, 1.0f);
 +}
 +
 +// If gr_d3d12 is On, a broken start shouldn't repeat every launch: Software for this session, D3D11 next time
@@ -17553,7 +18926,7 @@ index 0000000..2e86197
 +	if (Core_Device())
 +		return true;
 +
-+	Log("starting Legacy GL's Direct3D 12 driver (clearing and presenting only so far)");
++	Log("starting Legacy GL's Direct3D 12 driver (drawing without textures)");
 +	Core_SetListBegin(BindRenderTarget);
 +	// On the same adapter as ANGLE, which the window's frames go through
 +	if (!Core_Init(Present_AngleDevice()))
@@ -17561,13 +18934,25 @@ index 0000000..2e86197
 +		TurnOffAfterFailure();
 +		return false;
 +	}
++	if (!InitDrawing())
++	{
++		TurnOffAfterFailure();
++		D3D12_Shutdown();
++		return false;
++	}
++	Prewarm_Start(Core_Device(), g_root.Get());
 +	Present_SelectPath();
 +	return true;
 +}
 +
-+void D3D_SetPalette(RGBA_t *)
++void D3D_SetPalette(RGBA_t *palette)
 +{
 +	g_stats.states++;
++	if (palette && memcmp(g_palette, palette, sizeof g_palette))
++	{
++		memcpy(g_palette, palette, sizeof g_palette);
++		g_stats.flushes++;
++	}
 +}
 +
 +void D3D_FinishUpdate(INT32 waitvbl)
@@ -17575,40 +18960,195 @@ index 0000000..2e86197
 +	D3D12_FinishUpdate(waitvbl);
 +}
 +
-+void D3D_Draw2DLine(F2DCoord *, F2DCoord *, RGBA_t)
++void D3D_Draw2DLine(F2DCoord *v1, F2DCoord *v2, RGBA_t Color)
 +{
++	FOutVector p[4];
++	float angle;
++
++	g_gl.texture2D = false;
++
++	// This is the preferred, 'modern' way of rendering lines -- creating a polygon.
++	if (fabsf(v2->x - v1->x) > FLT_EPSILON)
++		angle = (float)atan((v2->y-v1->y)/(v2->x-v1->x));
++	else
++		angle = (float)(M_PI / 2.0);
++	const float dx = (float)sin(angle) / (float)g_screenWidth;
++	const float dy = (float)cos(angle) / (float)g_screenHeight;
++
++	memset(p, 0, sizeof p);
++	p[0].x = v1->x - dx;  p[0].y = -(v1->y + dy); p[0].z = 1;
++	p[1].x = v2->x - dx;  p[1].y = -(v2->y + dy); p[1].z = 1;
++	p[2].x = v2->x + dx;  p[2].y = -(v2->y - dy); p[2].z = 1;
++	p[3].x = v1->x + dx;  p[3].y = -(v1->y - dy); p[3].z = 1;
++
++	SetColor(&Color.s.red);
++	DrawArrays(LAYOUT_POLY, PRIM_FAN, p, 4);
 +	g_stats.lines++;
++
++	g_gl.texture2D = true;
 +}
 +
-+void D3D_DrawPolygon(FSurfaceInfo *, FOutVector *, FUINT, FBITFIELD)
++void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *vertices, UINT count)
 +{
-+	g_stats.polygons++;
++	static float poly[4] = {0, 0, 0, 0};
++	static float tint[4] = {0, 0, 0, 0};
++	static float fade[4] = {0, 0, 0, 0};
++
++	// Coronas read back the depth buffer in r_opengl.c, unless it can't (GLF_NOZBUFREAD), which is what this does
++	if (PolyFlags & PF_Corona)
++	{
++		D3D12_LOG_ONCE("drawing coronas as if the depth buffer can't be read (logged once)");
++		PolyFlags &= ~(PF_NoDepthTest|PF_Corona);
++	}
++
++	D3D_SetBlend(PolyFlags);
++
++	if (pSurf)
++	{
++		// If modulated, mix the surface colour to the texture
++		if (g_currentPolyFlags & PF_Modulated)
++			SetColor(&pSurf->PolyColor.s.red);
++
++		// If the surface is either modulated or colormapped, or both
++		if (g_currentPolyFlags & (PF_Modulated | PF_ColorMapped))
++		{
++			poly[0] = pSurf->PolyColor.s.red / 255.0f;
++			poly[1] = pSurf->PolyColor.s.green / 255.0f;
++			poly[2] = pSurf->PolyColor.s.blue / 255.0f;
++			poly[3] = pSurf->PolyColor.s.alpha / 255.0f;
++		}
++
++		// Only if the surface is colormapped
++		if (g_currentPolyFlags & PF_ColorMapped)
++		{
++			SetLightTable(pSurf->LightTableId);
++
++			tint[0] = pSurf->TintColor.s.red / 255.0f;
++			tint[1] = pSurf->TintColor.s.green / 255.0f;
++			tint[2] = pSurf->TintColor.s.blue / 255.0f;
++			tint[3] = pSurf->TintColor.s.alpha / 255.0f;
++
++			fade[0] = pSurf->FadeColor.s.red / 255.0f;
++			fade[1] = pSurf->FadeColor.s.green / 255.0f;
++			fade[2] = pSurf->FadeColor.s.blue / 255.0f;
++			fade[3] = pSurf->FadeColor.s.alpha / 255.0f;
++		}
++	}
++
++	SetUniforms(pSurf, poly, tint, fade);
++	if (PolyFlags & PF_Ripple) D3D12_LOG_ONCE("water capture not drawn yet (S6)");
++	if (PolyFlags & PF_Fog) D3D12_LOG_ONCE("fog capture not drawn yet (S6)");
++	(void)vertices; (void)count;
 +}
 +
-+void D3D_DrawIndexedTriangles(FSurfaceInfo *, FOutVector *, FUINT, FBITFIELD, UINT32 *)
++void D3D_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
++{
++
++	PreparePolygon(pSurf, PolyFlags, pOutVerts, iNumPts);
++
++	if (PolyFlags & PF_WireFrame)
++		DrawArrays(LAYOUT_POLY, PRIM_LINES, pOutVerts, (UINT)iNumPts);
++	else
++		DrawArrays(LAYOUT_POLY, PRIM_FAN, pOutVerts, (UINT)iNumPts);
++	g_stats.polygons++;
++
++	if (PolyFlags & PF_RemoveYWrap)
++		SetRepeatT(true);
++
++	if (PolyFlags & PF_ForceWrapX)
++		SetRepeatS(false);
++
++	if (PolyFlags & PF_ForceWrapY)
++		SetRepeatT(false);
++}
++
++void D3D_DrawIndexedTriangles(FSurfaceInfo *surface, FOutVector *vertices, FUINT count, FBITFIELD flags, UINT32 *indices)
 +{
 +	g_stats.batches++;
++	if (!CanDraw() || !count || !indices) return;
++	UINT vertexCount = 0;
++	for (FUINT i = 0; i < count; i++) vertexCount = std::max(vertexCount, indices[i] + 1);
++	PreparePolygon(surface, flags, vertices, vertexCount);
++	DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, vertexCount, indices, count);
 +}
 +
 +void D3D_RenderSkyDome(gl_sky_t *)
 +{
++	D3D12_LOG_ONCE("sky dome not drawn yet (S3)");
 +	g_stats.skies++;
 +}
 +
 +void D3D_SetBlend(FBITFIELD PolyFlags)
 +{
++	g_waterRefraction = false;
++#ifdef _UWP
++	// Sky occluders and sprite silhouettes only write depth. Blend factors can
++	// change while both draws are Invisible, so they cannot enforce this mask.
++	g_gl.colorWriteMask = (PolyFlags & PF_Invisible) ? 0 : 7;
++#endif
++	g_fogRemap = false;
++	const FBITFIELD Xor = g_currentPolyFlags ^ PolyFlags;
++
++	if (Xor & (PF_Blending|PF_RemoveYWrap|PF_ForceWrapX|PF_ForceWrapY|PF_Occlude|PF_NoTexture|PF_Modulated|PF_NoDepthTest|PF_Decal|PF_Invisible))
++	{
++		if (Xor & PF_Blending) // if blending mode must be changed
++			SetBlendMode(PolyFlags & PF_Blending);
++
++		if (Xor & PF_NoAlphaTest)
++			g_gl.alphaTest = !(PolyFlags & PF_NoAlphaTest);
++
++		if (Xor & PF_Decal)
++			g_gl.polygonOffset = (PolyFlags & PF_Decal) != 0;
++
++		if (Xor & PF_NoDepthTest)
++			g_gl.depthAlways = (PolyFlags & PF_NoDepthTest) != 0;
++
++		if ((Xor & PF_RemoveYWrap) && (PolyFlags & PF_RemoveYWrap))
++			SetRepeatT(false);
++
++		if ((Xor & PF_ForceWrapX) && (PolyFlags & PF_ForceWrapX))
++			SetRepeatS(true);
++
++		if ((Xor & PF_ForceWrapY) && (PolyFlags & PF_ForceWrapY))
++			SetRepeatT(true);
++
++		if (Xor & PF_Modulated)
++			g_gl.texEnv = (PolyFlags & PF_Modulated) ? TE_MODULATE : TE_REPLACE;
++
++		if (Xor & PF_Occlude) // depth test but (no) depth write
++			g_gl.depthMask = (PolyFlags & PF_Occlude) != 0;
++
++#ifndef _UWP
++		if (Xor & PF_Invisible)
++		{
++			if (PolyFlags & PF_Invisible)
++			{
++				g_gl.blendSrc = BF_ZERO; // transparent blending
++				g_gl.blendDst = BF_ONE;
++			}
++			else if ((PolyFlags & PF_Blending) == PF_Masked)
++			{
++				g_gl.blendSrc = BF_SRC_ALPHA;
++				g_gl.blendDst = BF_ZERO;
++			}
++		}
++
++#endif
++
++		if (PolyFlags & PF_NoTexture)
++			SetNoTexture(0);
++	}
 +	g_currentPolyFlags = PolyFlags;
-+	g_stats.states++;
 +}
 +
 +void D3D_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *ClearColor)
 +{
 +	if (ColorMask && ClearColor)
 +	{
-+		g_clearColor[0] = ClearColor->red;
-+		g_clearColor[1] = ClearColor->green;
-+		g_clearColor[2] = ClearColor->blue;
-+		g_clearColor[3] = ClearColor->alpha;
++		g_gl.clearColor[0] = ClearColor->red;
++		g_gl.clearColor[1] = ClearColor->green;
++		g_gl.clearColor[2] = ClearColor->blue;
++		g_gl.clearColor[3] = ClearColor->alpha;
 +	}
 +
 +	D3D_SetBlend(DepthMask ? PF_Occlude | g_currentPolyFlags : g_currentPolyFlags&~PF_Occlude);
@@ -17636,9 +19176,10 @@ index 0000000..2e86197
 +		pTexInfo->downloaded = 0;
 +}
 +
-+// Nothing is drawn yet, so the screen reads as black rather than leaving the caller's memory as it was
++// Readback arrives in S9; initialize the caller's output while it remains a stub.
 +void D3D_ReadRect(INT32, INT32, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
 +{
++	D3D12_LOG_ONCE("ReadRect not drawn yet (S9)");
 +	if (!dst_data || width <= 0 || height <= 0)
 +		return;
 +	if (dst_stride == width*3)
@@ -17647,9 +19188,15 @@ index 0000000..2e86197
 +		memset(dst_data, 0, (size_t)width * height * sizeof *dst_data);
 +}
 +
-+void D3D_GClipRect(INT32, INT32, INT32, INT32, float)
++void D3D_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)
 +{
-+	g_stats.states++;
++	SetViewport(minx, g_screenHeight-maxy, maxx-minx, maxy-miny);
++	g_nearClippingPlane = nearclip;
++
++	g_matrixMode = MODE_PROJECTION;
++	MatLoadIdentity();
++	Perspective(g_fov, 1.0f);
++	g_matrixMode = MODE_MODELVIEW;
 +}
 +
 +void D3D_ClearMipMapCache(void)
@@ -17657,13 +19204,90 @@ index 0000000..2e86197
 +	g_stats.flushes++;
 +}
 +
-+void D3D_SetSpecialState(hwdspecialstate_t, INT32)
++void D3D_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 +{
-+	g_stats.states++;
++	switch (IdState)
++	{
++#ifdef _UWP
++		case HWD_SET_WATER_SURFACE:
++			SetWaterSurface(Value);
++			break;
++#endif
++		case HWD_SET_MODEL_LIGHTING:
++			// Set around each model, so not logged
++			g_modelLighting = Value;
++			break;
++
++		case HWD_SET_SHADERS:
++			if (g_allowShaders != (hwdshaderoption_t)Value)
++				Log("shaders %s", Value == HWD_SHADEROPTION_OFF ? "off" : Value == HWD_SHADEROPTION_ON ? "on" : "on (no custom)");
++			g_allowShaders = (hwdshaderoption_t)Value;
++			break;
++
++		case HWD_SET_TEXTUREFILTERMODE:
++			switch (Value)
++			{
++				case HWD_SET_TEXTUREFILTER_TRILINEAR:
++					g_minFilter = FILTER_LINEAR_MIPMAP_LINEAR;
++					g_magFilter = FILTER_LINEAR;
++					g_mipmap = true;
++					break;
++				case HWD_SET_TEXTUREFILTER_BILINEAR:
++					g_minFilter = g_magFilter = FILTER_LINEAR;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_POINTSAMPLED:
++					g_minFilter = g_magFilter = FILTER_NEAREST;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_MIXED1:
++					g_minFilter = FILTER_NEAREST;
++					g_magFilter = FILTER_LINEAR;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_MIXED2:
++					g_minFilter = FILTER_LINEAR;
++					g_magFilter = FILTER_NEAREST;
++					g_mipmap = false;
++					break;
++				case HWD_SET_TEXTUREFILTER_MIXED3:
++					g_minFilter = FILTER_LINEAR_MIPMAP_LINEAR;
++					g_magFilter = FILTER_NEAREST;
++					g_mipmap = true;
++					break;
++				default:
++					g_magFilter = FILTER_LINEAR;
++					g_minFilter = FILTER_NEAREST;
++			}
++			Log("texture filter mode %d", (int)Value);
++			{
++				Flush(); //??? if we want to change filter mode by texture, remove this
++			}
++			break;
++
++		case HWD_SET_PALETTE_RENDERING:
++			if (g_paletteRendering != (Value != 0))
++				Log("palette rendering %s", Value ? "on" : "off");
++			g_paletteRendering = Value != 0;
++			D3D12_LOG_ONCE("palette rendering not drawn yet (S4)");
++			break;
++
++		case HWD_SET_TEXTUREANISOTROPICMODE:
++			g_anisotropicFilter = std::min((int)Value, kMaximumAnisotropy);
++			Log("anisotropic filtering %d", g_anisotropicFilter);
++			{
++				Flush(); //??? if we want to change filter mode by texture, remove this
++			}
++			break;
++
++		default:
++			break;
++	}
 +}
 +
 +void D3D_DrawModel(model_t *, INT32, float, float, INT32, FTransform *, float, float, UINT8, UINT8, FSurfaceInfo *)
 +{
++	D3D12_LOG_ONCE("models not drawn yet (S3)");
 +	g_stats.models++;
 +}
 +
@@ -17671,9 +19295,61 @@ index 0000000..2e86197
 +{
 +}
 +
-+void D3D_SetTransform(FTransform *)
++void D3D_SetTransform(FTransform *stransform)
 +{
-+	g_stats.states++;
++	static boolean special_splitscreen;
++	boolean shearing = false;
++	float used_fov;
++
++	MatLoadIdentity();
++
++	if (stransform)
++	{
++		used_fov = stransform->fovxangle;
++		if (stransform->mirror)
++			MatScale(-stransform->scalex, stransform->scaley, -stransform->scalez);
++		else if (stransform->flip)
++			MatScale(stransform->scalex, -stransform->scaley, -stransform->scalez);
++		else
++			MatScale(stransform->scalex, stransform->scaley, -stransform->scalez);
++
++		if (stransform->roll)
++			MatRotate(stransform->rollangle, 0.0f, 0.0f, 1.0f);
++		MatRotate(stransform->anglex       , 1.0f, 0.0f, 0.0f);
++		MatRotate(stransform->angley+270.0f, 0.0f, 1.0f, 0.0f);
++		MatTranslate(-stransform->x, -stransform->z, -stransform->y);
++
++		special_splitscreen = (stransform->splitscreen == 1);
++		shearing = stransform->shearing;
++	}
++	else
++	{
++		used_fov = g_fov;
++		MatScale(1.0f, 1.0f, -1.0f);
++	}
++
++	g_matrixMode = MODE_PROJECTION;
++	MatLoadIdentity();
++
++	// Simulate Software's y-shearing
++	// https://zdoom.org/wiki/Y-shearing
++	if (shearing)
++	{
++		float fdy = stransform->viewaiming * 2;
++		if (stransform->flip)
++			fdy *= -1.0f;
++		MatTranslate(0.0f, -fdy/BASEVIDHEIGHT, 0.0f);
++	}
++
++	if (special_splitscreen)
++	{
++		used_fov = (float)(atan(tan(used_fov*M_PI/360)*0.8)*360/M_PI);
++		Perspective(used_fov, 2.0f);
++	}
++	else
++		Perspective(used_fov, 1.0f);
++
++	g_matrixMode = MODE_MODELVIEW;
 +}
 +
 +INT32 D3D_GetTextureUsed(void)
@@ -17683,6 +19359,7 @@ index 0000000..2e86197
 +
 +void D3D_PostImgRedraw(float [SCREENVERTS][SCREENVERTS][2])
 +{
++	D3D12_LOG_ONCE("postimage not drawn yet (S5)");
 +	g_stats.screens++;
 +}
 +
@@ -17702,12 +19379,14 @@ index 0000000..2e86197
 +
 +void D3D_DoScreenWipe(void)
 +{
++	D3D12_LOG_ONCE("wipe not drawn yet (S5)");
 +	Present_Immediately(); // as the Direct3D 11 driver does
 +	g_stats.screens++;
 +}
 +
 +void D3D_DrawIntermissionBG(void)
 +{
++	D3D12_LOG_ONCE("intermission background not drawn yet (S5)");
 +	g_stats.screens++;
 +}
 +
@@ -17723,6 +19402,7 @@ index 0000000..2e86197
 +
 +void D3D_DrawScreenFinalTexture(int, int)
 +{
++	D3D12_LOG_ONCE("final screen not drawn yet (S5)");
 +	g_stats.screens++;
 +}
 +
@@ -17736,23 +19416,85 @@ index 0000000..2e86197
 +{
 +}
 +
-+void D3D_SetShader(int)
++void D3D_SetShader(int type)
 +{
-+	g_stats.states++;
++	g_waterRefraction = false;
++#ifdef _UWP
++	if (type == SHADER_WATER && cv_reducevfx.value) type = SHADER_FLOOR;
++#endif
++	g_fogRemap = false;
++	if (type == SHADER_NONE)
++	{
++		g_shaderCurrent = -1;
++		g_shaderType = 0;
++		g_program = -1;
++		g_shadersEnabled = false;
++		return;
++	}
++
++	if (g_allowShaders != HWD_SHADEROPTION_OFF)
++	{
++		// If using model lighting, set the appropriate shader.
++		if (type == SHADER_MODEL && g_modelLighting)
++			type = SHADER_MODEL_LIGHTING;
++
++		if (g_shaderCurrent < 0 || type != g_shaderType)
++		{
++			g_shaderCurrent = type;
++			g_shaderType = type;
++			g_shaderChanged = true;
++		}
++
++		if (!ProgramExists(type))
++			D3D12_LOG_ONCE("SetShader: invalid shader type %d (logged once)", type);
++
++		g_shadersEnabled = ProgramExists(type);
++		return;
++	}
++
++	g_shadersEnabled = false;
 +}
 +
 +void D3D_UnSetShader(void)
 +{
-+	g_stats.states++;
++	g_waterRefraction = false;
++	g_fogRemap = false;
++	g_shaderCurrent = -1;
++	g_shaderType = 0;
++	g_program = -1;
++	g_shadersEnabled = false;
 +}
 +
-+void D3D_SetShaderInfo(hwdshaderinfo_t, INT32)
++void D3D_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
 +{
-+	g_stats.states++;
++	switch (info)
++	{
++		case HWD_SHADERINFO_LEVELTIME:
++			g_shaderLeveltime = value;
++			break;
++		case HWD_SHADERINFO_LIGHT_X:
++			g_shaderLightX = FixedToFloat(value);
++			break;
++		case HWD_SHADERINFO_LIGHT_Y:
++			g_shaderLightY = FixedToFloat(value);
++			break;
++		case HWD_SHADERINFO_LIGHT_Z:
++			g_shaderLightZ = FixedToFloat(value);
++			break;
++		case HWD_SHADERINFO_LIGHT_CONTRAST:
++			g_shaderLightContrast = value;
++			break;
++		case HWD_SHADERINFO_LIGHT_BACKLIGHT:
++			g_shaderLightBacklight = value;
++			break;
++		default:
++			break;
++	}
 +}
 +
 +void D3D_LoadCustomShader(int, char *, size_t, boolean)
 +{
++	D3D12_LOG_ONCE("custom shaders not drawn yet (S8); keeping built-ins");
 +}
 +
 +void D3D_SetScreenPalette(RGBA_t *)
@@ -17869,6 +19611,7 @@ index 0000000..2e86197
 +	g_vsyncSet = true;
 +
 +	SetModelView(w, h);
++	SetStates();
 +	ClearScreenColor();
 +	ClearScreenDepth();
 +
@@ -17890,15 +19633,17 @@ index 0000000..2e86197
 +	if (!Core_Device() || !g_rt || g_deviceLost || g_shutdown)
 +		return;
 +
++	Prewarm_LogDone();
 +	const bool trace = Present_Tracing();
 +	if (trace)
-+		Log("presenting frame %d: %d clears, %d polygons, %d batches, %d models so far (not drawn yet)", g_stats.frames,
++		Log("presenting frame %d: %d clears, %d polygons, %d batches, %d models so far", g_stats.frames,
 +			g_stats.clears, g_stats.polygons, g_stats.batches, g_stats.models);
 +
 +	const precise_t start = I_GetPreciseTime();
 +	Present_Frame(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight);
 +	g_stats.presentTime += I_GetPreciseTime() - start;
 +	g_stats.frames++;
++	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
 +	g_hueFrame++;
 +
 +	if (trace)
@@ -17954,6 +19699,7 @@ index 0000000..2e86197
 +
 +boolean D3D12_DrawPortalAperture(const FOutVector *, INT32, boolean)
 +{
++	D3D12_LOG_ONCE("portal aperture not drawn yet (S7)");
 +	g_stats.portals++;
 +	return false;
 +}
@@ -17965,6 +19711,7 @@ index 0000000..2e86197
 +
 +boolean D3D12_ApplyFadeMap(const UINT8 *, size_t, UINT32, UINT8)
 +{
++	D3D12_LOG_ONCE("fade map not drawn yet (S5)");
 +	g_stats.fadeMaps++;
 +	return false;
 +}
@@ -17990,9 +19737,19 @@ index 0000000..2e86197
 +	I_OutputMsg("UWP perf:   D3D12: fence waits %d, %.2f ms total (worst %.2f), %d timeouts; presenting %.2f ms per frame\n",
 +		core.waits, core.waitMs, core.worstWaitMs, core.waitTimeouts, PreciseToMs(s.presentTime) / n);
 +	Present_LogPerf(n);
-+	I_OutputMsg("UWP perf:   D3D12: per frame %.1f clears; not drawn yet: %.0f polygons, %.0f batches, %.1f lines, %.1f skies, %.1f models, %.0f texture sets, %.1f updates, %.1f deletes, %d flushes, %.1f screen calls, %.0f state calls, %.1f portal calls, %d fade maps\n",
-+		s.clears / n, s.polygons / n, s.batches / n, s.lines / n, s.skies / n, s.models / n, s.textureSets / n,
-+		s.textureUpdates / n, s.textureDeletes / n, s.flushes, s.screens / n, s.states / n, s.portals / n, s.fadeMaps);
++	I_OutputMsg("UWP perf:   D3D12: per frame %.1f clears, %.0f polygons, %.0f batches, %.1f lines; %.0f draws, %.0f vertices, %.0f indices, %.0f constant updates (root CBV ring)\n",
++		s.clears / n, s.polygons / n, s.batches / n, s.lines / n, s.draws / n, s.vertices / n, s.indices / n, s.constantUpdates / n);
++	I_OutputMsg("UWP perf:   D3D12: pipeline: %.0f PSO changes/frame; cache %u alive, %llu created (%.1f ms total, worst %.1f ms); %.0f root CBV sets, %.0f table sets/frame; prewarm %s\n",
++		s.psoChanges / n, (unsigned)g_pipelines.size(), (unsigned long long)g_psoCreated, g_psoMs, g_psoWorstMs,
++		s.rootSets / n, s.tableSets / n, Prewarm_Done() ? "done" : "running");
++	const RingStats vertex = g_vertexRing.TakeStats(), index = g_indexRing.TakeStats(), constants = g_constantRing.TakeStats();
++	I_OutputMsg("UWP perf:   D3D12: rings: vertex/index/constant peak MB per frame %.2f/%.2f/%.2f; wraps %u/%u/%u; stalls %u (%.2f ms); grows %u\n",
++		vertex.peakBytes / 1048576.0, index.peakBytes / 1048576.0, constants.peakBytes / 1048576.0,
++		vertex.wraps, index.wraps, constants.wraps, vertex.stalls + index.stalls + constants.stalls,
++		vertex.stallMs + index.stallMs + constants.stallMs, vertex.grows + index.grows + constants.grows);
++	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f skies, %.1f models, %.0f texture sets, %.1f updates, %.1f deletes, %d flushes, %.1f screen calls, %.1f portal calls, %d fade maps; palettes, light tables, fog/water captures, ReadRect, custom shaders\n",
++		s.skies / n, s.models / n, s.textureSets / n, s.textureUpdates / n, s.textureDeletes / n,
++		s.flushes, s.screens / n, s.portals / n, s.fadeMaps);
 +
 +	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
 +	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
@@ -18013,6 +19770,7 @@ index 0000000..2e86197
 +	if (g_shutdown || !Core_Device())
 +		return;
 +	g_shutdown = true;
++	Prewarm_Stop();
 +
 +	// Nothing is released until the GPU has finished with it; if it doesn't finish, D3D12's objects are kept
 +	const bool idle = Core_WaitIdle(2000, "shutting down");
@@ -18028,6 +19786,11 @@ index 0000000..2e86197
 +		Core_Retire(g_rt);
 +		Core_Retire(g_depth);
 +	}
++	Core_SetListBegin(nullptr);
++	g_vertexRing.Shutdown(); g_indexRing.Shutdown(); g_constantRing.Shutdown();
++	for (auto &pipeline : g_pipelines) Core_Retire(pipeline.second);
++	g_pipelines.clear(); g_lastPipeline = g_boundPipeline = nullptr;
++	Core_Retire(g_root); Core_Retire(g_srvHeap); Core_Retire(g_samplerHeap); Core_Retire(g_zeroConstants);
 +	Core_Shutdown(idle);
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
