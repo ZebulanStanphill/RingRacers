@@ -1,0 +1,260 @@
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <map>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include "r_things.h"
+#include "r_state.h"
+#include "w_wad.h"
+#include "z_zone.h"
+#include "hardware/hw_glob.h"
+#include "hardware/hw_batching.h"
+
+// Dependency mocks stop at WAD lookup, GPU allocation and color translation.
+// Selection, admission, mipmap flags, binding and batch replay come from production.
+static patch_t base{}, specific{}, fallback{}, skinBright{}, rotated{};
+static std::vector<std::string> lookups;
+static std::map<std::string, patch_t *> lumps;
+static std::vector<patch_t *> cached;
+lumpnum_t W_CheckNumForLongName(const char *name) {
+    lookups.emplace_back(name ? name : "");
+    auto it = lumps.find(name ? name : "");
+    if (it == lumps.end()) return LUMPERROR;
+    cached.push_back(it->second); return static_cast<lumpnum_t>(cached.size());
+}
+void *W_CachePatchNum(lumpnum_t num, INT32 tag) {
+    assert(tag == PU_SPRITE);
+    if (num == 0) return &base;
+    assert(num <= cached.size()); return cached[num-1];
+}
+@@CACHE_BRIGHT@@
+
+spriteinfo_t spriteinfo[NUMSPRITES]{};
+static spritedef_t definitions[NUMSPRITES]{};
+spritedef_t *sprites = definitions;
+state_t states[NUMSTATES]{};
+char sprnames[NUMSPRITES+1][5]{};
+void CONS_Alert(alerttype_t, const char *, ...) {}
+char *sizeu1(size_t) { static char text[]="frame"; return text; }
+char *sizeu2(size_t) { static char text[]="count"; return text; }
+static spriteframe_t frames[2]{};
+static unsigned projectionCases;
+static gl_vissprite_t project(mobj_t *thing, patch_t *rotsprite = nullptr) {
+    ++projectionCases;
+    spritedef_t *sprdef = nullptr;
+    spriteinfo_t *sprinfo = nullptr;
+    unsigned rot;
+    gl_vissprite_t result{}, *vis = &result;
+    vis->gbright = &specific; // Reused vissprite storage must not retain the previous map.
+@@SELECT@@
+    spriteframe_t *sprframe = &sprdef->spriteframes[rot];
+    rot = 0; // Viewing-angle selection uses the common first patch in this fixture.
+@@PROJECT@@
+    return result;
+}
+static gl_vissprite_t projectPrecip(precipmobj_t *thing) {
+    ++projectionCases;
+    spriteframe_t *sprframe = &frames[thing->frame & FF_FRAMEMASK];
+    unsigned rot = 0;
+    gl_vissprite_t result{}, *vis = &result;
+    vis->gbright = &specific; // Reused vissprite storage must not retain the previous map.
+@@PROJECT_PRECIP@@
+    return result;
+}
+
+struct Texture {
+    UINT32 id{}; bool listed{}; GLMipmap_t *mipmap{};
+    GLTextureFormat_t listFormat{}; UINT32 listWidth{}, listHeight{};
+};
+static constexpr UINT32 kNoTexture = UINT32_MAX;
+static UINT32 g_texDownloaded = 0, nextTexture = 1;
+static std::unordered_map<UINT32, Texture> g_textures;
+static Texture *g_units[2]{};
+@@FIND_TEXTURE@@
+@@BIND_TEXTURE@@
+@@NO_TEXTURE@@
+static std::vector<GLMipmap_t *> uploads, binds;
+static void UpdateTextureInternal(GLMipmap_t *pTexInfo) {
+    assert(pTexInfo->data);
+    uploads.push_back(pTexInfo);
+    const UINT32 num = nextTexture++;
+    pTexInfo->downloaded = num;
+    g_textures[num].id = num;
+@@UPLOAD_BIND@@
+}
+@@SET_TEXTURE@@
+static void DriverTexture(GLMipmap_t *mip) {
+    binds.push_back(mip);
+    SetTextureInternal(mip);
+}
+hwdriver_s hwdriver{};
+GLMipmap_t *current_texture = nullptr, *current_brightmap = nullptr;
+boolean currently_batching = false;
+@@CURRENT_TEXTURE@@
+struct CachedPatch { GLPatch_t patch{}; GLMipmap_t mip{}; };
+static std::map<patch_t *, CachedPatch> gpu;
+void *Patch_CreateGL(patch_t *patch) {
+    auto &g = gpu[patch]; g.patch.mipmap = &g.mip;
+    patch->hardware = &g.patch; return patch->hardware;
+}
+static int makes;
+static void HWR_MakePatch(patch_t *, GLPatch_t *, GLMipmap_t *mip, boolean makebitmap) {
+    assert(makebitmap); ++makes;
+    // The actual allocator initializes flags, so the loader must mark it AFTER this call.
+    mip->flags = TF_TRANSPARENT;
+    mip->data = &makes;
+}
+#undef Z_ChangeTag
+#define Z_ChangeTag(p,t) ((void)(p), assert((t) == PU_HWRCACHE_UNLOCKED))
+@@LOAD_PATCH@@
+@@GET_PATCH@@
+@@LOAD_BRIGHT@@
+static const UINT8 *lastColormap;
+void HWR_GetMappedPatch(patch_t *patch, const UINT8 *colormap) {
+    lastColormap = colormap; HWR_GetPatch(patch);
+}
+static void draw(gl_vissprite_t *spr) {
+    patch_t *gpatch = spr->gpatch;
+@@DRAW@@
+}
+static void split(gl_vissprite_t *spr) {
+    patch_t *gpatch = spr->gpatch;
+@@SPLIT@@
+}
+static void precip(gl_vissprite_t *spr) {
+    patch_t *gpatch = spr->gpatch;
+@@PRECIP@@
+}
+static void linkdraw(gl_vissprite_t *spr) {
+    struct { gl_vissprite_t *spr; } linkdrawlist[] = {{spr}};
+    unsigned i = 0;
+@@LINKDRAW@@
+}
+// Exercise the renderer's actual first-batch and texture-transition blocks.
+static void replayFirst() {
+    auto *currentTexture = current_texture;
+    auto *currentBrightmap = current_brightmap;
+    FBITFIELD currentPolyFlags = PF_Masked;
+@@BATCH_FIRST@@
+}
+int ps_hw_numtextures;
+static void replayNext(GLMipmap_t *&currentTexture, GLMipmap_t *&currentBrightmap) {
+    auto *nextTexture = current_texture;
+    auto *nextBrightmap = current_brightmap;
+    boolean changeTexture = false, changeState = false;
+@@BATCH_CHANGE@@
+    assert(changeState && changeTexture);
+@@BATCH_NEXT@@
+    assert(!changeTexture);
+}
+
+static void resetGPU() {
+    for (patch_t *p : {&base, &specific, &fallback, &skinBright, &rotated}) p->hardware = nullptr;
+    gpu.clear(); g_textures.clear(); uploads.clear(); binds.clear();
+    g_units[0] = g_units[1] = nullptr; g_texDownloaded = 0; nextTexture = 1;
+    current_texture = current_brightmap = nullptr; makes = 0;
+}
+int main() {
+    hwdriver.pfnSetTexture = DriverTexture;
+    base.width = specific.width = fallback.width = skinBright.width = rotated.width = 16;
+    base.height = specific.height = fallback.height = skinBright.height = rotated.height = 32;
+    definitions[SPR_SYM0] = {2, frames};
+    definitions[SPR_UNKN] = {2, frames};
+    states[S_UNKNOWN].sprite = SPR_UNKN;
+    states[S_UNKNOWN].frame = 0;
+    spriteinfo[SPR_SYM0].bright[0] = const_cast<char *>("FRAME");
+    spriteinfo[SPR_SYM0].bright[SPRINFO_DEFAULT_PIVOT] = const_cast<char *>("SYMBXXB");
+    spriteinfo[SPR_UNKN].bright[SPRINFO_DEFAULT_PIVOT] = const_cast<char *>("FALLBACK");
+    lumps = {{"FRAME", &specific}, {"SYMBXXB", &fallback}, {"FALLBACK", &fallback}, {"SKIN", &skinBright}};
+    state_t state{}; mobj_t thing{};
+    thing.sprite = SPR_SYM0; thing.state = &state;
+    for (unsigned frame : {0u, 1u}) {
+        thing.frame = frame | FF_TRANS50;
+        lookups.clear();
+        auto spr = project(&thing);
+        auto *software = R_CacheSpriteBrightMap(&spriteinfo[SPR_SYM0], frame);
+        assert(spr.gpatch == &base && spr.gbright == software);
+        assert(lookups.size() == 2 && lookups[0] == lookups[1]);
+        assert(lookups[0] == (frame ? "SYMBXXB" : "FRAME"));
+    }
+    skin_t skin{};
+    skin.sprites[1] = {2, frames};
+    skin.sprinfo[1].bright[SPRINFO_DEFAULT_PIVOT] = const_cast<char *>("SKIN");
+    thing.skin = &skin; thing.sprite = SPR_PLAY; thing.sprite2 = 1; thing.frame = 1;
+    assert(project(&thing).gbright == R_CacheSpriteBrightMap(&skin.sprinfo[1], 1));
+    thing.skin = nullptr; thing.sprite = SPR_SYM0; thing.frame = 5;
+    assert(project(&thing).gbright == &fallback);
+    assert(thing.sprite == SPR_UNKN && thing.frame == 0 && state.sprite == SPR_UNKN);
+    thing.sprite = SPR_SYM0; thing.frame = 0;
+    assert(project(&thing, &rotated).gbright == nullptr);
+    assert(project(&thing, &rotated).gpatch == &rotated);
+    for (int axis = 0; axis < 2; ++axis) {
+        specific.width = axis == 0 ? 17 : 16; specific.height = axis == 1 ? 33 : 32;
+        assert(project(&thing).gbright == nullptr);
+        precipmobj_t rain{}; rain.sprite = SPR_SYM0; rain.frame = 0;
+        assert(projectPrecip(&rain).gbright == nullptr);
+    }
+    specific.width = 16; specific.height = 32;
+    precipmobj_t rain{}; rain.sprite = SPR_SYM0; rain.frame = 0;
+    assert(projectPrecip(&rain).gbright == &specific);
+    spriteinfo[SPR_SYM0].bright[0] = const_cast<char *>("MISSING");
+    assert(project(&thing).gbright == nullptr); // An explicit missing frame name does not use the default.
+    spriteinfo[SPR_SYM0].bright[0] = nullptr;
+    spriteinfo[SPR_SYM0].bright[SPRINFO_DEFAULT_PIVOT] = nullptr;
+    assert(project(&thing).gbright == nullptr);
+
+    // The allocator can retain CPU data while the GPU copy is evicted.
+    // This path must mark the upload despite bypassing HWR_MakePatch.
+    resetGPU(); currently_batching = false;
+    Patch_CreateGL(&specific);
+    auto *resident = static_cast<GLPatch_t *>(specific.hardware)->mipmap;
+    resident->data = &makes;
+    HWR_GetSpriteBrightmap(&specific);
+    assert(makes == 0 && uploads.size() == 1 && (resident->flags & TF_BRIGHTMAP));
+    assert(g_units[0] == nullptr && g_units[1] == FindTexture(resident->downloaded));
+
+    unsigned cases = 0;
+    for (bool batching : {false, true}) for (auto dispatch : {draw, split, precip, linkdraw}) {
+        resetGPU(); currently_batching = batching;
+        UINT8 colormap[256]{};
+        gl_vissprite_t spr{}; spr.gpatch = &base; spr.gbright = &specific; spr.colormap = colormap;
+        dispatch(&spr);
+        assert(base.hardware && specific.hardware);
+        auto *baseMip = static_cast<GLPatch_t *>(base.hardware)->mipmap, *brightMip = static_cast<GLPatch_t *>(specific.hardware)->mipmap;
+        assert(makes == 2 && uploads.size() == 2);
+        assert(!(uploads[0]->flags & TF_BRIGHTMAP) && (uploads[1]->flags & TF_BRIGHTMAP));
+        assert(brightMip->colormap == nullptr && (brightMip->flags & TF_TRANSPARENT));
+        if (dispatch != linkdraw) assert(lastColormap == colormap);
+        if (batching) {
+            assert(current_texture == baseMip && current_brightmap == brightMip);
+            replayFirst();
+        }
+        assert(g_units[0] == FindTexture(baseMip->downloaded));
+        assert(g_units[1] == FindTexture(brightMip->downloaded));
+        // A purge/rebind must restore the flag even without making/uploading data.
+        brightMip->flags &= ~TF_BRIGHTMAP;
+        dispatch(&spr);
+        assert(brightMip->flags & TF_BRIGHTMAP);
+        assert(makes == 2 && uploads.size() == 2);
+        if (batching) replayFirst();
+        assert(g_units[0] == FindTexture(baseMip->downloaded));
+        assert(g_units[1] == FindTexture(brightMip->downloaded));
+        // Same base texture, now without a brightmap: batch transitions must rebind
+        // base even though only currentBrightmap changed, clearing stale unit 1.
+        auto *previousBase = baseMip, *previousBright = brightMip;
+        spr.gbright = nullptr; dispatch(&spr);
+        if (batching) {
+            assert(current_texture == baseMip && current_brightmap == nullptr);
+            replayNext(previousBase, previousBright);
+            assert(previousBase == baseMip && previousBright == nullptr);
+        }
+        assert(g_units[0] == FindTexture(baseMip->downloaded) && g_units[1] == nullptr);
+        assert(!(baseMip->flags & TF_BRIGHTMAP));
+        ++cases;
+    }
+    resetGPU();
+    assert(projectionCases == 13);
+    printf("sprite brightmaps: %u projection cases, resident-data upload and %u draw/batch transitions passed\n", projectionCases, cases);
+}

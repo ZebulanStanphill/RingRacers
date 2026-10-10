@@ -27,6 +27,17 @@ def render(template, parts, output):
     output.write_text(text, encoding="utf-8")
 
 
+def function_section(source, name, first, after):
+    """Extract a bounded part of one function, retaining production line numbers."""
+    code = source.function(name).split("\n", 1)[1].rstrip("\n")
+    if code.count(first) != 1:
+        raise ValueError(f"{source.path}: {name}: ambiguous or missing start {first!r}")
+    start = code.index(first)
+    end = code.index(after, start + len(first))
+    offset = source.text.index(code)
+    return source.annotated(offset + start, offset + end)
+
+
 def generate(engine, output):
     output.mkdir(parents=True, exist_ok=True)
     templates = Path(__file__).parent / "templates"
@@ -120,6 +131,48 @@ def generate(engine, output):
         "CLIP_SLICE": hardware.function("HWR_DrawWallLightSlice"),
         "SPLIT_WALL": hardware.function("HWR_SplitWall"),
     }, output / "wall_light.cpp")
+    things = Source(engine / "src/r_things.cpp")
+    batching = Source(engine / "src/hardware/hw_batching.c")
+    sprite_parts = {
+        "CACHE_BRIGHT": things.function("R_CacheSpriteBrightMap"),
+        # C permits these void-pointer assignments; add only the C++ harness cast.
+        "LOAD_BRIGHT": cache.function("HWR_GetSpriteBrightmap").replace(
+            "grPatch = patch->hardware;", "grPatch = (GLPatch_t *)patch->hardware;"),
+        "LOAD_PATCH": cache.function("HWR_LoadPatchMipmap").replace(
+            "grPatch = patch->hardware;", "grPatch = (GLPatch_t *)patch->hardware;"),
+        "GET_PATCH": cache.function("HWR_GetPatch"),
+        "SELECT": function_section(hardware, "HWR_ProjectSprite",
+            "\n\trot = thing->frame&FF_FRAMEMASK;", "\n\tsprframe ="),
+        "PROJECT": function_section(hardware, "HWR_ProjectSprite",
+            "\tvis->rotated = false;", "\n\tvis->mobj = thing;"),
+        "PROJECT_PRECIP": function_section(hardware, "HWR_ProjectPrecipitationSprite",
+            "\tvis->gpatch =", "\n\tvis->flip ="),
+        "LINKDRAW": function_section(hardware, "HWR_LinkDrawHackFinish",
+            "\t\tHWR_GetPatch(linkdrawlist[i].spr->gpatch);", "\n\t\tHWR_ProcessPolygon"),
+        "CURRENT_TEXTURE": batching.function("HWR_SetCurrentTexture"),
+        "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
+            "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
+        "BATCH_CHANGE": function_section(batching, "HWR_RenderBatches",
+            "\t\t\tif (currentTexture != nextTexture || currentBrightmap != nextBrightmap)",
+            "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
+        "BATCH_NEXT": function_section(batching, "HWR_RenderBatches",
+            "\t\tif (changeTexture)", "\n\t\tif (changePolyFlags)"),
+        "FIND_TEXTURE": driver.function("FindTexture"),
+        "BIND_TEXTURE": driver.function("BindTexture"),
+        "NO_TEXTURE": driver.function("SetNoTexture"),
+        "SET_TEXTURE": driver.function("SetTextureInternal"),
+        "UPLOAD_BIND": function_section(driver, "UpdateTextureInternal",
+            "\tif (!(pTexInfo->flags & TF_BRIGHTMAP))", "\n\tTexture *texture = FindTexture(num);"),
+    }
+    for token, function, after in [
+        ("DRAW", "HWR_DrawSprite", "\n\tif (spr->flip)"),
+        ("SPLIT", "HWR_SplitSprite", "\n\tbaseWallVerts[0].x"),
+        ("PRECIP", "HWR_DrawPrecipitationSprite", "\n\t// colormap test"),
+    ]:
+        sprite_parts[token] = function_section(hardware, function,
+            "\tHWR_GetMappedPatch(gpatch, spr->colormap);", after)
+    render(templates / "sprite_brightmap.cpp.in", sprite_parts, output / "sprite_brightmap.cpp")
+
     render(templates / "surface_probe.cpp.in", {
         "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
         "COMMAND": hardware.function("HWR_SurfaceProbe_f"),

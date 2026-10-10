@@ -1,4 +1,4 @@
-From 036f52f0e39d75218c19b91aab8f86ed107c041e Mon Sep 17 00:00:00 2001
+From 9cb1eed2b101a2fbf0fd390569ae294d389ad234 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -338,6 +338,9 @@ RingRacers-dev, rebased onto v2.4.
   Ship compiler license notices with the launcher. Add translation,
   production dispatch and real SM4/WARP rendering regressions.
 
+- Apply SPRTINFO sprite brightmaps in Legacy GL, with ordinary lighting for
+  roll-rotated sprites and mismatched dimensions.
+
 Agent: Claude
 Model: Claude Opus 5.5 (1M context)
 Agent: Codex (Sol)
@@ -359,15 +362,15 @@ Model: claude-haiku-5-5
  src/hardware/CMakeLists.txt               |   37 +
  src/hardware/hw_batching.c                |   11 +-
  src/hardware/hw_bsp.c                     |  113 +-
- src/hardware/hw_cache.c                   |  313 +-
+ src/hardware/hw_cache.c                   |  335 +-
  src/hardware/hw_clip.c                    |   15 +
  src/hardware/hw_clip.h                    |    5 +
  src/hardware/hw_defs.h                    |    9 +-
  src/hardware/hw_draw.c                    |   57 +-
  src/hardware/hw_drv.h                     |   13 +
- src/hardware/hw_glob.h                    |    9 +
+ src/hardware/hw_glob.h                    |   11 +
  src/hardware/hw_glsl.h                    |  321 ++
- src/hardware/hw_main.c                    | 1728 +++++-
+ src/hardware/hw_main.c                    | 1758 +++++-
  src/hardware/hw_main.h                    |   18 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
@@ -409,8 +412,8 @@ Model: claude-haiku-5-5
  src/r_sky.c                               |    4 +-
  src/r_textures.cpp                        |    2 +
  src/r_textures.h                          |   10 +
- src/r_things.cpp                          |  158 +-
- src/r_things.h                            |    5 +
+ src/r_things.cpp                          |  160 +-
+ src/r_things.h                            |    7 +
  src/rhi/gl2/gl2_rhi.cpp                   |  618 +-
  src/rhi/gl2/gl2_rhi.hpp                   |   36 +
  src/screen.c                              |    4 +-
@@ -429,7 +432,7 @@ Model: claude-haiku-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 84 files changed, 13765 insertions(+), 1091 deletions(-)
+ 84 files changed, 13814 insertions(+), 1100 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1815,7 +1818,7 @@ index 0b036ea..80fbf27 100644
  	i = SolveTProblem();
  	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
-index aee197a..0fcb116 100644
+index aee197a..e7bff6d 100644
 --- a/src/hardware/hw_cache.c
 +++ b/src/hardware/hw_cache.c
 @@ -18,6 +18,9 @@
@@ -2108,7 +2111,36 @@ index aee197a..0fcb116 100644
  }
  
  // --------------------+
-@@ -1181,77 +1374,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
+@@ -1117,6 +1310,28 @@ void HWR_GetPatch(patch_t *patch)
+ 	HWR_LoadPatchMipmap(patch, ((GLPatch_t *)patch->hardware)->mipmap);
+ }
+ 
++// Sprite brightmaps use the base mipmap, without color translation.
++void HWR_GetSpriteBrightmap(patch_t *patch)
++{
++	GLPatch_t *grPatch;
++	GLMipmap_t *grMipmap;
++
++	if (!patch->hardware)
++		Patch_CreateGL(patch);
++	grPatch = patch->hardware;
++	grMipmap = grPatch->mipmap;
++	if (!grMipmap->downloaded && !grMipmap->data)
++		HWR_MakePatch(patch, grPatch, grMipmap, true);
++
++	// HWR_MakePatch clears flags on initial allocation. Set this after it,
++	// on every path, so both the first upload and later binds select unit 1.
++	grMipmap->flags |= TF_BRIGHTMAP;
++	if (!grMipmap->downloaded)
++		HWD.pfnSetTexture(grMipmap);
++	HWR_SetCurrentTexture(grMipmap);
++	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
++}
++
+ // -------------------+
+ // HWR_GetMappedPatch : Same as HWR_GetPatch for sprite color
+ // -------------------+
+@@ -1181,77 +1396,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
  	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
  }
  
@@ -2199,22 +2231,22 @@ index aee197a..0fcb116 100644
 +				case INTENSITY:
 +					dest[0] = dest[1] = dest[2] = src[0];
 +					dest[3] = 255;
-+					break;
-+				case INTENSITY_ALPHA:
-+					memcpy(dest, src, 2);
  					break;
 -				case INTENSITY_ALPHA : // assume dest bpp = 2
 -					memcpy(dest, src + ((posx+FRACUNIT/2)>>FRACBITS)*sizeof(UINT16), sizeof(UINT16));
 -					dest += sizeof(UINT16);
-+				case RGB24:
-+					memcpy(dest, src, 3);
-+					dest[3] = 255;
++				case INTENSITY_ALPHA:
++					memcpy(dest, src, 2);
  					break;
 -				case RGB24 :
 -					break;  // not supported yet
 -				case RGBA32 : // assume dest bpp = 4
 -					dest += sizeof(UINT32);
 -					memcpy(dest, src + ((posx+FRACUNIT/2)>>FRACBITS)*sizeof(UINT32), sizeof(UINT32));
++				case RGB24:
++					memcpy(dest, src, 3);
++					dest[3] = 255;
++					break;
 +				case RGBA32:
 +					memcpy(dest, src, 4);
  					break;
@@ -2225,7 +2257,7 @@ index aee197a..0fcb116 100644
  	}
  }
  
-@@ -1270,16 +1448,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
+@@ -1270,16 +1470,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
  		UINT8 *block;
  		size_t len;
  
@@ -2252,7 +2284,7 @@ index aee197a..0fcb116 100644
  		else
  			grPatch->mipmap->format = picmode2GR[pic->mode];
  
-@@ -1290,7 +1475,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
+@@ -1290,7 +1497,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
  
  		if (patch->width  == SHORT(pic->width) &&
  			patch->height == SHORT(pic->height) &&
@@ -2261,7 +2293,7 @@ index aee197a..0fcb116 100644
  		{
  			// no conversion needed
  			M_Memcpy(grPatch->mipmap->data, pic->data,len);
-@@ -1357,7 +1542,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
+@@ -1357,7 +1564,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
  		{
  			// fademask bpp is always 1, and is used just for alpha
  			texel = src[(posx)>>FRACBITS];
@@ -2528,10 +2560,26 @@ index c4396c8..4ace846 100644
  
  extern struct hwdriver_s hwdriver;
 diff --git a/src/hardware/hw_glob.h b/src/hardware/hw_glob.h
-index 07dfb7a..6df0269 100644
+index 07dfb7a..4521034 100644
 --- a/src/hardware/hw_glob.h
 +++ b/src/hardware/hw_glob.h
-@@ -142,6 +142,15 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
+@@ -98,6 +98,7 @@ typedef struct gl_vissprite_s
+ 	INT32 dispoffset; // copy of info->dispoffset, affects ordering but not drawing
+ 
+ 	patch_t *gpatch;
++	patch_t *gbright; // NULL without a compatible sprite brightmap
+ 	mobj_t *mobj; // NOTE: This is a precipmobj_t if precip is true !!! Watch out.
+ } gl_vissprite_t;
+ 
+@@ -125,6 +126,7 @@ patch_t *HWR_GetCachedGLPatchPwad(UINT16 wad, UINT16 lump);
+ patch_t *HWR_GetCachedGLPatch(lumpnum_t lumpnum);
+ 
+ void HWR_GetPatch(patch_t *patch);
++void HWR_GetSpriteBrightmap(patch_t *patch);
+ void HWR_GetMappedPatch(patch_t *patch, const UINT8 *colormap);
+ void HWR_GetFadeMask(lumpnum_t fademasklumpnum);
+ patch_t *HWR_GetPic(lumpnum_t lumpnum);
+@@ -142,6 +144,15 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
  
  void HWR_SetPalette(RGBA_t *palette);
  
@@ -2875,7 +2923,7 @@ index 0000000..c025b5a
 +
 +#endif
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca..836200b 100644
+index b5e8fca..8721168 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -12,8 +12,13 @@
@@ -3897,7 +3945,25 @@ index b5e8fca..836200b 100644
  	if (linkdrawcount < MAXVISSPRITES)
  	{
  		memcpy(linkdrawlist[linkdrawcount].verts, verts, sizeof(FOutVector) * 4);
-@@ -3656,7 +4298,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3069,6 +3711,8 @@ static void HWR_LinkDrawHackFinish(void)
+ 	{
+ 		// draw sprite shape, only to z-buffer
+ 		HWR_GetPatch(linkdrawlist[i].spr->gpatch);
++		if (linkdrawlist[i].spr->gbright)
++			HWR_GetSpriteBrightmap(linkdrawlist[i].spr->gbright);
+ 		HWR_ProcessPolygon(&surf, linkdrawlist[i].verts, 4, PF_Translucent|PF_Occlude|PF_Invisible, 0, false);
+ 	}
+ 	// reset list
+@@ -3357,6 +4001,8 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
+ 	//12/12/99: Hurdler: same comment as above (for md2)
+ 	//Hurdler: 25/04/2000: now support colormap in hardware mode
+ 	HWR_GetMappedPatch(gpatch, spr->colormap);
++	if (spr->gbright)
++		HWR_GetSpriteBrightmap(spr->gbright);
+ 
+ 	baseWallVerts[0].x = baseWallVerts[3].x = spr->x1;
+ 	baseWallVerts[2].x = baseWallVerts[1].x = spr->x2;
+@@ -3656,7 +4302,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
  		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
  
@@ -3906,7 +3972,7 @@ index b5e8fca..836200b 100644
  
  	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
  }
-@@ -3666,47 +4308,11 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
+@@ -3666,47 +4312,11 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
  //                  : (monsters, bonuses, weapons, lights, ...)
  // Returns          :
  // -----------------+
@@ -3958,7 +4024,7 @@ index b5e8fca..836200b 100644
  	if (splat)
  	{
  		F2DCoord verts[4];
-@@ -3718,15 +4324,11 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+@@ -3718,15 +4328,11 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
  		float xscale, yscale;
  		float xoffset, yoffset;
  		float leftoffset, topoffset;
@@ -3975,7 +4041,7 @@ index b5e8fca..836200b 100644
  		if (spr->rotateflags & SRF_3D || renderflags & RF_NOSPLATBILLBOARD)
  			angle = spr->angle;
  		else
-@@ -3828,30 +4430,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+@@ -3828,30 +4434,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
  		wallVerts[1].z = wallVerts[2].z = spr->z2;
  	}
  
@@ -4006,7 +4072,7 @@ index b5e8fca..836200b 100644
  	if (!splat)
  	{
  		// if it has a dispoffset, push it a little towards the camera
-@@ -3865,22 +4443,92 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
+@@ -3865,22 +4447,94 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
  		}
  
  		// Let dispoffset work first since this adjust each vertex
@@ -4076,6 +4142,8 @@ index b5e8fca..836200b 100644
 +	//12/12/99: Hurdler: same comment as above (for md2)
 +	//Hurdler: 25/04/2000: now support colormap in hardware mode
 +	HWR_GetMappedPatch(gpatch, spr->colormap);
++	if (spr->gbright)
++		HWR_GetSpriteBrightmap(spr->gbright);
 +
 +	if (spr->flip)
 +	{
@@ -4113,7 +4181,16 @@ index b5e8fca..836200b 100644
  
  		if (splat && sector->numlights)
  		{
-@@ -4379,25 +5027,313 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
+@@ -4024,6 +4678,8 @@ static inline void HWR_DrawPrecipitationSprite(gl_vissprite_t *spr)
+ 	//12/12/99: Hurdler: same comment as above (for md2)
+ 	//Hurdler: 25/04/2000: now support colormap in hardware mode
+ 	HWR_GetMappedPatch(gpatch, spr->colormap);
++	if (spr->gbright)
++		HWR_GetSpriteBrightmap(spr->gbright);
+ 
+ 	// colormap test
+ 	{
+@@ -4379,25 +5035,313 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
  	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
  }
  
@@ -4439,7 +4516,7 @@ index b5e8fca..836200b 100644
  
  	ps_hw_nodesorttime = I_GetPreciseTime();
  
-@@ -4428,7 +5364,7 @@ static void HWR_CreateDrawNodes(void)
+@@ -4428,7 +5372,7 @@ static void HWR_CreateDrawNodes(void)
  
  	// an additional pass is needed to correct the order of consecutive planes in the list.
  	// for each consecutive run of planes in the list, sort that run based on plane height and view height.
@@ -4448,7 +4525,7 @@ index b5e8fca..836200b 100644
  	{
  		// locate run start
  		if (sortnode[sortindex[run_start]].plane)
-@@ -4454,6 +5390,8 @@ static void HWR_CreateDrawNodes(void)
+@@ -4454,6 +5398,8 @@ static void HWR_CreateDrawNodes(void)
  		}
  	}
  
@@ -4457,7 +4534,7 @@ index b5e8fca..836200b 100644
  	ps_hw_nodesorttime = I_GetPreciseTime() - ps_hw_nodesorttime;
  
  	ps_hw_nodedrawtime = I_GetPreciseTime();
-@@ -4461,9 +5399,16 @@ static void HWR_CreateDrawNodes(void)
+@@ -4461,9 +5407,16 @@ static void HWR_CreateDrawNodes(void)
  	// Okay! Let's draw it all! Woo!
  	HWD.pfnSetTransform(&atransform);
  	HWD.pfnSetShader(SHADER_DEFAULT);
@@ -4474,7 +4551,7 @@ index b5e8fca..836200b 100644
  		if (sortnode[sortindex[i]].plane)
  		{
  			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
-@@ -4491,7 +5436,17 @@ static void HWR_CreateDrawNodes(void)
+@@ -4491,7 +5444,17 @@ static void HWR_CreateDrawNodes(void)
  			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
  				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
  		}
@@ -4492,7 +4569,7 @@ index b5e8fca..836200b 100644
  
  	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
  
-@@ -4502,6 +5457,8 @@ static void HWR_CreateDrawNodes(void)
+@@ -4502,6 +5465,8 @@ static void HWR_CreateDrawNodes(void)
  	// No mem leaks, please.
  	Z_Free(sortnode);
  	Z_Free(sortindex);
@@ -4501,7 +4578,7 @@ index b5e8fca..836200b 100644
  }
  
  // --------------------------------------------------------------------------
-@@ -4509,88 +5466,111 @@ static void HWR_CreateDrawNodes(void)
+@@ -4509,88 +5474,111 @@ static void HWR_CreateDrawNodes(void)
  // --------------------------------------------------------------------------
  
  // added the stransform so they can be switched as drawing happenes so MD2s and sprites are sorted correctly with each other
@@ -4673,7 +4750,7 @@ index b5e8fca..836200b 100644
  }
  
  // --------------------------------------------------------------------------
-@@ -4621,6 +5601,12 @@ static void HWR_AddSprites(sector_t *sec)
+@@ -4621,6 +5609,12 @@ static void HWR_AddSprites(sector_t *sec)
  	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
  	for (thing = sec->thinglist; thing; thing = thing->snext)
  	{
@@ -4686,7 +4763,7 @@ index b5e8fca..836200b 100644
  		if (R_ThingWithinDist(thing, limit_dist))
  		{
  			if (R_ThingVisible(thing))
-@@ -4653,6 +5639,12 @@ static void HWR_AddPrecipitationSprites(void)
+@@ -4653,6 +5647,12 @@ static void HWR_AddPrecipitationSprites(void)
  		return;
  	}
  
@@ -4699,7 +4776,17 @@ index b5e8fca..836200b 100644
  	R_GetRenderBlockMapDimensions(drawdist, &xl, &xh, &yl, &yh);
  
  	for (bx = xl; bx <= xh; bx++)
-@@ -4732,6 +5724,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -4690,9 +5690,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
+ 	float gz, gzt;
+ 	spritedef_t *sprdef;
+ 	spriteframe_t *sprframe;
+-#ifdef ROTSPRITE
+ 	spriteinfo_t *sprinfo;
+-#endif
+ 	md2_t *md2;
+ 	size_t lumpoff;
+ 	unsigned rot;
+@@ -4732,6 +5730,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
  		R_InterpolateMobjState(thing, FRACUNIT, &interp);
  	}
  
@@ -4711,7 +4798,55 @@ index b5e8fca..836200b 100644
  	dispoffset = thing->dispoffset;
  
  	// hitlag vibrating
-@@ -5233,7 +6230,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -4806,16 +5809,12 @@ static void HWR_ProjectSprite(mobj_t *thing)
+ 	if (thing->skin && thing->sprite == SPR_PLAY)
+ 	{
+ 		sprdef = &((skin_t *)thing->skin)->sprites[thing->sprite2];
+-#ifdef ROTSPRITE
+ 		sprinfo = &((skin_t *)thing->skin)->sprinfo[thing->sprite2];
+-#endif
+ 	}
+ 	else
+ 	{
+ 		sprdef = &sprites[thing->sprite];
+-#ifdef ROTSPRITE
+ 		sprinfo = &spriteinfo[thing->sprite];
+-#endif
+ 	}
+ 
+ 	if (rot >= sprdef->numframes)
+@@ -4825,9 +5824,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
+ 		thing->sprite = states[S_UNKNOWN].sprite;
+ 		thing->frame = states[S_UNKNOWN].frame;
+ 		sprdef = &sprites[thing->sprite];
+-#ifdef ROTSPRITE
+ 		sprinfo = &spriteinfo[thing->sprite];
+-#endif
+ 		rot = thing->frame&FF_FRAMEMASK;
+ 		thing->state->sprite = thing->sprite;
+ 		thing->state->frame = thing->frame;
+@@ -5157,11 +6154,20 @@ static void HWR_ProjectSprite(mobj_t *thing)
+ 	if (rotsprite)
+ 	{
+ 		vis->gpatch = (patch_t *)rotsprite;
++		vis->gbright = NULL;
+ 		vis->rotated = true;
+ 	}
+ 	else
+ #endif
++	{
+ 		vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
++		vis->gbright = R_CacheSpriteBrightMap(sprinfo, thing->frame & FF_FRAMEMASK);
++		// Software skips the entire sprite on a size mismatch. Legacy GL
++		// keeps the sprite visible, falling back to ordinary lighting.
++		if (vis->gbright && (vis->gbright->width != vis->gpatch->width
++			|| vis->gbright->height != vis->gpatch->height))
++			vis->gbright = NULL;
++	}
+ 
+ 	vis->mobj = thing;
+ 
+@@ -5233,7 +6239,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -4723,7 +4858,19 @@ index b5e8fca..836200b 100644
  	{
  		return;
  	}
-@@ -5396,6 +6397,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
+@@ -5319,6 +6329,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+ 	vis->tz = tz;
+ 	vis->dispoffset = 0; // Monster Iestyn: 23/11/15: HARDWARE SUPPORT AT LAST
+ 	vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
++	vis->gbright = R_CacheSpriteBrightMap(&spriteinfo[thing->sprite], thing->frame & FF_FRAMEMASK);
++	// As above, keep mismatched sprites visible without their brightmap.
++	if (vis->gbright && (vis->gbright->width != vis->gpatch->width
++		|| vis->gbright->height != vis->gpatch->height))
++		vis->gbright = NULL;
+ 	vis->flip = flip;
+ 	vis->mobj = (mobj_t *)thing;
+ 
+@@ -5396,6 +6411,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
  
  static gl_sky_t gl_sky;
  
@@ -4737,7 +4884,7 @@ index b5e8fca..836200b 100644
  static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, signed char yflip, float delta, boolean foglayer)
  {
  	const float radians = (float)(M_PIl / 180.0f);
-@@ -5426,6 +6434,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
+@@ -5426,6 +6448,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
  			vbo->v = (r / (float)sky->rows) + 0.5f;
  		else
  			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
@@ -4745,7 +4892,7 @@ index b5e8fca..836200b 100644
  	}
  
  	if (r != 4)
-@@ -5662,6 +6671,11 @@ static void HWR_DrawSkyBackground(player_t *player)
+@@ -5662,6 +6685,11 @@ static void HWR_DrawSkyBackground(player_t *player)
  			v[0].t = v[1].t -= ((float) angle / angleturn);
  		}
  
@@ -4757,7 +4904,7 @@ index b5e8fca..836200b 100644
  		HWD.pfnUnSetShader();
  		HWD.pfnDrawPolygon(NULL, v, 4, 0);
  	}
-@@ -5791,21 +6805,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +6819,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -4814,7 +4961,7 @@ index b5e8fca..836200b 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5857,13 +6895,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,13 +6909,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -4850,7 +4997,7 @@ index b5e8fca..836200b 100644
  
  	HWR_ClearSprites();
  
-@@ -5873,6 +6932,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +6946,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -4861,7 +5008,7 @@ index b5e8fca..836200b 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5952,17 +7015,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5952,17 +7029,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		ps_hw_nodedrawtime = 0;
  	}
  
@@ -5028,7 +5175,7 @@ index b5e8fca..836200b 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +7184,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +7198,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -5038,7 +5185,7 @@ index b5e8fca..836200b 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +7208,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +7222,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -5048,7 +5195,7 @@ index b5e8fca..836200b 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6017,6 +7233,10 @@ void HWR_RenderPlayerView(void)
+@@ -6017,6 +7247,10 @@ void HWR_RenderPlayerView(void)
  		HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_BACKLIGHT, maplighting.backlight);
  	}
  
@@ -5059,7 +5206,7 @@ index b5e8fca..836200b 100644
  	if (viewssnum == 0) // Only do it if it's the first screen being rendered
  		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
  
-@@ -6027,17 +7247,55 @@ void HWR_RenderPlayerView(void)
+@@ -6027,17 +7261,55 @@ void HWR_RenderPlayerView(void)
  
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SetupFrame(viewssnum);
@@ -5115,7 +5262,7 @@ index b5e8fca..836200b 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6081,6 +7339,49 @@ void CV_glanisotropic_OnChange(void)
+@@ -6081,6 +7353,49 @@ void CV_glanisotropic_OnChange(void)
  		HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
  }
  
@@ -5165,7 +5312,7 @@ index b5e8fca..836200b 100644
  //added by Hurdler: console varibale that are saved
  void HWR_AddCommands(void)
  {
-@@ -6094,6 +7395,9 @@ void HWR_AddSessionCommands(void)
+@@ -6094,6 +7409,9 @@ void HWR_AddSessionCommands(void)
  {
  	if (gl_sessioncommandsadded)
  		return;
@@ -5175,7 +5322,7 @@ index b5e8fca..836200b 100644
  	// Kept in case we ever need this again.
  	gl_sessioncommandsadded = true;
  }
-@@ -6138,6 +7442,8 @@ void HWR_Switch(void)
+@@ -6138,6 +7456,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -5184,7 +5331,7 @@ index b5e8fca..836200b 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6241,6 +7547,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
+@@ -6241,6 +7561,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
  		blendmode |= PF_Fog;
  
  	blendmode |= PF_Modulated;	// No PF_Occlude means overlapping (incorrect) transparency
@@ -5194,7 +5341,7 @@ index b5e8fca..836200b 100644
  	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode, shader, false);
  }
  
-@@ -6257,7 +7566,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +7580,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -5204,7 +5351,7 @@ index b5e8fca..836200b 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +7576,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +7590,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -5214,7 +5361,7 @@ index b5e8fca..836200b 100644
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +7597,23 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +7611,23 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
@@ -5240,7 +5387,7 @@ index b5e8fca..836200b 100644
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +7639,26 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +7653,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.
@@ -15836,7 +15983,7 @@ index 4f04479..147e7e6 100644
  boolean R_TextureHasBrightmap(INT32 texnum);
  boolean R_TextureCanRemap(INT32 texnum);
 diff --git a/src/r_things.cpp b/src/r_things.cpp
-index 7e608da..b0aaca1 100644
+index 7e608da..175c281 100644
 --- a/src/r_things.cpp
 +++ b/src/r_things.cpp
 @@ -650,6 +650,18 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
@@ -15970,6 +16117,15 @@ index 7e608da..b0aaca1 100644
  			}
  #ifdef PARANOIA
  			else
+@@ -1290,7 +1287,7 @@ static void R_SplitSprite(vissprite_t *sprite)
+ 	}
+ }
+ 
+-static patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame)
++patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame)
+ {
+ 	const char *name = sprinfo->bright[frame];
+ 
 @@ -3080,6 +3077,49 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link);
  
  static drawnode_t nodebankhead;
@@ -16153,10 +16309,19 @@ index 7e608da..b0aaca1 100644
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b0..41754ce 100644
+index bf1e28b0..6de17b2 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
-@@ -266,6 +266,11 @@ struct drawnode_t
+@@ -64,6 +64,8 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t
+ extern INT16 negonearray[MAXVIDWIDTH];
+ extern INT16 screenheightarray[MAXVIDWIDTH];
+ 
++patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame);
++
+ fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope);
+ fixed_t R_GetSpriteDirectionalLighting(angle_t angle);
+ 
+@@ -266,6 +268,11 @@ struct drawnode_t
  
  	drawnode_t *next;
  	drawnode_t *prev;

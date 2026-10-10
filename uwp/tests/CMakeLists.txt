@@ -24,6 +24,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/g_game.c"
     "${RR_SOURCE_DIR}/src/r_main.cpp"
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
+    "${RR_SOURCE_DIR}/src/hardware/hw_batching.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/r_d3d11.cpp"
     "${RR_SOURCE_DIR}/src/menus/options-1.c"
     "${RR_SOURCE_DIR}/src/d_main.cpp"
@@ -87,6 +88,7 @@ regression(sky_offsets sky)
 regression(horizon_visibility horizon HWRENDER)
 regression(sky_surface_trace sky_trace _UWP HWRENDER)
 regression(surface_pixel_probe surface_probe _UWP HWRENDER)
+regression(sprite_brightmap sprite_brightmap _UWP HWRENDER HWPRECIP)
 regression(wall_light_slices wall_light _UWP HWRENDER)
 regression(custom_shader_dispatch custom_dispatch _UWP HWRENDER)
 regression(transparency_uwp transparency _UWP HWRENDER HWPRECIP)
