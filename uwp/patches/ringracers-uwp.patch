@@ -1,4 +1,4 @@
-From 8e48277d20475c59b68f3fdcdd9210e745cc83cb Mon Sep 17 00:00:00 2001
+From fd309ad6f36949cd89be8ba2c15a726813cb2fda Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -443,7 +443,7 @@ Model: claude-opus-5-5
  src/sdl/hwsym_sdl.c                       |    7 +
  src/sdl/i_main.cpp                        |   11 +-
  src/sdl/i_system.cpp                      |   99 +-
- src/sdl/i_uwpd3d12.cpp                    |  122 +
+ src/sdl/i_uwpd3d12.cpp                    |  130 +
  src/sdl/i_uwpprofile.cpp                  |  886 +++
  src/sdl/i_uwptrace.h                      |   25 +
  src/sdl/i_video.cpp                       |   98 +-
@@ -455,7 +455,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 88 files changed, 14711 insertions(+), 1126 deletions(-)
+ 88 files changed, 14719 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -14780,7 +14780,7 @@ index 3fd6666..3cfcb18 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e..097d6b3 100644
+index 56d507e..f3813f8 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
 @@ -313,8 +313,82 @@ boolean I_HasOpenURL(void);
@@ -14801,8 +14801,8 @@ index 56d507e..097d6b3 100644
 +// [UWP]: Logs the process budget. GlobalMemoryStatusEx reports physical memory, not this budget.
 +void I_UWPLogMemoryLimit(void);
 +
-+// [UWP]: Exits with a pop-up explaining how to set the app type to Game if Xbox runs the game as an app (see
-+// I_UWPCpuSetMode) or Direct3D 12 hardware isn't available (sdl/i_uwpd3d12.cpp).
++// [UWP]: Exits with a pop-up explaining how to set the app type to Game if Direct3D 12 hardware isn't available
++// (sdl/i_uwpd3d12.cpp). Logs signals that might tell the App and Game app types apart.
 +void I_UWPRequireGameMode(void);
 +
 +// [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
@@ -18555,10 +18555,10 @@ index 827f493..633c62f 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpd3d12.cpp b/src/sdl/i_uwpd3d12.cpp
 new file mode 100644
-index 0000000..43b7a6a
+index 0000000..cf28655
 --- /dev/null
 +++ b/src/sdl/i_uwpd3d12.cpp
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,130 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -18566,7 +18566,8 @@ index 0000000..43b7a6a
 +// See the 'LICENSE' file for more details.
 +//-----------------------------------------------------------------------------
 +/// \file  i_uwpd3d12.cpp
-+/// \brief [UWP]: Checks that Xbox runs the game with the app type Game, and that Direct3D 12 hardware is available
++/// \brief [UWP]: Checks that Direct3D 12 hardware is available, and logs what might tell Xbox's App and Game app
++///        types apart
 +
 +#include <cstdio>
 +#include <cstdlib>
@@ -18638,6 +18639,17 @@ index 0000000..43b7a6a
 +			continue;
 +		}
 +
++		// Not yet known to differ between the app types; logged to find out
++		ComPtr<IDXGIAdapter3> adapter3;
++		DXGI_QUERY_VIDEO_MEMORY_INFO local = {}, nonlocal = {};
++		if (SUCCEEDED(adapter.As(&adapter3))
++			&& SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local))
++			&& SUCCEEDED(adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &nonlocal)))
++		{
++			I_OutputMsg("UWP: Direct3D 12 check: video memory budget %llu MB local, %llu MB non-local\n",
++				local.Budget >> 20, nonlocal.Budget >> 20);
++		}
++
 +		I_OutputMsg("UWP: Direct3D 12 check: supported\n");
 +		return true;
 +	}
@@ -18650,18 +18662,14 @@ index 0000000..43b7a6a
 +
 +void I_UWPRequireGameMode(void)
 +{
-+	// Xbox One X offers hardware Direct3D 12 and a 5120 MB budget with either app type, so the processors are what
-+	// tell an app apart: Xbox marks none of them as the app's own
-+	UINT64 limit = 0, usage = 0;
-+	int isXbox = 0;
-+	I_UWPGetMemoryBudget(&limit, &usage, &isXbox);
++	// On an Xbox One X, the App type offered hardware Direct3D 12 at feature level 12_0 and the same 5120 MB budget
++	// as Game, and Game launches have been seen with no processors marked as the game's, like App launches. None of
++	// these tells the app types apart, so they're only logged, and only missing Direct3D 12 shows the pop-up.
 +	const int cpusetmode = I_UWPCpuSetMode();
-+	const bool app = isXbox && cpusetmode == 0;
-+	I_OutputMsg("UWP: app type check: %s (Xbox %s, processors: %s)\n", app ? "App" : "Game or not Xbox",
-+		isXbox ? "yes" : "no",
++	I_OutputMsg("UWP: app type signals: processors %s\n",
 +		cpusetmode == 1 ? "some are the game's" : cpusetmode == 0 ? "none are the game's" : "not reported");
 +
-+	if (!app && HasD3D12Hardware())
++	if (HasD3D12Hardware())
 +		return;
 +
 +	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
