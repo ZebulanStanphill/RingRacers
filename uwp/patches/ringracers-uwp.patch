@@ -1,4 +1,4 @@
-From a7bdfd088a0d6df79338921daff0f058e96bb655 Mon Sep 17 00:00:00 2001
+From 84cfa8b714fcf1993014aa867769f7ea7b672d66 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -1731,7 +1731,7 @@ index ce69d80..9db72cf 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f28..7aa7c31 100644
+index a0a0f28..68cb552 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
 @@ -13,3 +13,71 @@ target_sources(SRB2SDL2 PRIVATE
@@ -1779,7 +1779,7 @@ index a0a0f28..7aa7c31 100644
 +		set(header "${d3d12_shader_dir}/${entry}.h")
 +		add_custom_command(
 +			OUTPUT "${header}"
-+			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /DRR_D3D12 /force_rootsig_ver rootsig_1_0 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d11_shader_source}"
++			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /DRR_D3D12 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d11_shader_source}"
 +			DEPENDS "${d3d11_shader_source}"
 +			COMMENT "Compiling the ${entry} D3D12 shader"
 +			VERBATIM
