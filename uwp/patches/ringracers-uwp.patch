@@ -1,4 +1,4 @@
-From fd7d14e8ddeb4714352bf23764950982bb456d54 Mon Sep 17 00:00:00 2001
+From 13a6d85a3021b72e1257f7840c1626b1411404d7 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -461,6 +461,12 @@ Model: gpt-6.1-sol
 
 Agent: Claude Code (Opus, D3D12 S3 review)
 Model: claude-opus-5-5
+
+- [UWP]: VibeRant D3D12 sets the primitive topology, stencil reference and
+  viewport only when they change, instead of on every draw.
+
+Agent: Claude Code (Opus, D3D12 per-draw state)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -512,7 +518,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2744 +++++++++
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2764 +++++++++
  src/hardware/r_d3d12/r_d3d12.h            |   54 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -567,7 +573,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 105 files changed, 21873 insertions(+), 1127 deletions(-)
+ 105 files changed, 21893 insertions(+), 1127 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -18761,10 +18767,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..1ff7cb3
+index 0000000..d6a1880
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2744 @@
+@@ -0,0 +1,2764 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -19501,6 +19507,11 @@ index 0000000..1ff7cb3
 +std::unordered_map<PipelineKey, ComPtr<ID3D12PipelineState>, PipelineKeyHash> g_pipelines;
 +PipelineKey g_lastKey = {};
 +ID3D12PipelineState *g_lastPipeline = nullptr, *g_boundPipeline = nullptr;
++// The topology, stencil reference and viewport last set on the open list; g_dynamicBound is false after it reopens
++D3D12_PRIMITIVE_TOPOLOGY g_boundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
++UINT g_boundStencilRef = 0;
++int g_boundViewport[4] = {};
++bool g_dynamicBound = false;
 +UINT64 g_psoCreated = 0;
 +double g_psoMs = 0, g_psoWorstMs = 0;
 +
@@ -20209,9 +20220,23 @@ index 0000000..1ff7cb3
 +			g_stats.tableSets++;
 +		}
 +	}
-+	Core_List()->IASetPrimitiveTopology(topology);
-+	Core_List()->OMSetStencilRef(g_gl.stencilRef);
-+	BindViewport();
++	// Each costs a driver call, so set only what changed since the list began
++	if (!g_dynamicBound || g_boundTopology != topology)
++	{
++		Core_List()->IASetPrimitiveTopology(topology);
++		g_boundTopology = topology;
++	}
++	if (!g_dynamicBound || g_boundStencilRef != g_gl.stencilRef)
++	{
++		Core_List()->OMSetStencilRef(g_gl.stencilRef);
++		g_boundStencilRef = g_gl.stencilRef;
++	}
++	if (!g_dynamicBound || memcmp(g_boundViewport, g_gl.viewport, sizeof g_boundViewport) != 0)
++	{
++		BindViewport();
++		memcpy(g_boundViewport, g_gl.viewport, sizeof g_boundViewport);
++	}
++	g_dynamicBound = true;
 +	return true;
 +}
 +
@@ -20335,6 +20360,7 @@ index 0000000..1ff7cb3
 +	}
 +	BindViewport();
 +	g_boundPipeline = nullptr;
++	g_dynamicBound = false;
 +	// Root arguments were reset, but the cached constants retain their contents until the ring wraps.
 +	// ApplyConstants always rebinds b0; each draw retags the cached slot for its pending fence.
 +
