@@ -1,4 +1,4 @@
-From 08d5a2abff986f93da65852e0d9bc7c1919d672e Mon Sep 17 00:00:00 2001
+From ccc6e26faecf01fedc6f470d80d15a4d0daf812c Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -362,7 +362,7 @@ Model: claude-haiku-5-5
  src/g_game.c                              |   56 +
  src/hardware/CMakeLists.txt               |   37 +
  src/hardware/hw_batching.c                |   11 +-
- src/hardware/hw_bsp.c                     |  113 +-
+ src/hardware/hw_bsp.c                     |  110 +-
  src/hardware/hw_cache.c                   |  335 +-
  src/hardware/hw_clip.c                    |   15 +
  src/hardware/hw_clip.h                    |    5 +
@@ -389,7 +389,7 @@ Model: claude-haiku-5-5
  src/i_system.h                            |   66 +
  src/i_video_common.cpp                    |   60 +-
  src/k_menu.h                              |   12 +-
- src/k_menufunc.c                          |    6 +
+ src/k_menufunc.c                          |    2 +-
  src/lua_script.c                          |  127 +
  src/m_fixed.h                             |   11 +
  src/m_perfstats.c                         |  244 +
@@ -433,7 +433,7 @@ Model: claude-haiku-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 85 files changed, 13870 insertions(+), 1100 deletions(-)
+ 85 files changed, 13862 insertions(+), 1101 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1752,7 +1752,7 @@ index 9c0e2f6..58bd38e 100644
  					changeState = true;
  					changeSurfaceInfo = true;
 diff --git a/src/hardware/hw_bsp.c b/src/hardware/hw_bsp.c
-index 0b036ea..80fbf27 100644
+index 0b036ea..0625182 100644
 --- a/src/hardware/hw_bsp.c
 +++ b/src/hardware/hw_bsp.c
 @@ -15,6 +15,9 @@
@@ -1823,18 +1823,15 @@ index 0b036ea..80fbf27 100644
  		return;
  	}
  	if (pe <= ps)
-@@ -603,11 +632,19 @@ static void loading_status(void)
+@@ -603,11 +632,16 @@ static void loading_status(void)
  	V_DrawRightAlignedString(x+50, y, V_YELLOWMAP, s);
  
  	// Is this really necessary at this point..?
-+#ifdef _UWP
-+	V_DrawCenteredString(BASEVIDWIDTH/2, 40, V_YELLOWMAP, "VIBERANT D3D11 IS MISSING SOME");
-+	V_DrawCenteredString(BASEVIDWIDTH/2, 50, V_YELLOWMAP, "VISUAL FEATURES.");
-+#else
++#ifndef _UWP // [UWP]: No warning; VibeRant D3D11 has close to Software's features
  	V_DrawCenteredString(BASEVIDWIDTH/2, 40, V_YELLOWMAP, "LEGACY GL IS INCOMPLETE AND MANY");
  	V_DrawCenteredString(BASEVIDWIDTH/2, 50, V_YELLOWMAP, "VISUAL FEATURES ARE MISSING/BROKEN.");
-+#endif
  	V_DrawCenteredString(BASEVIDWIDTH/2, 70, V_YELLOWMAP, "USE AT ROBOTNIK'S RISK.");
++#endif
  
  	I_UpdateNoVsync();
 +#ifdef _UWP
@@ -1843,7 +1840,7 @@ index 0b036ea..80fbf27 100644
  }
  #endif
  
-@@ -679,26 +716,67 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
+@@ -679,26 +713,67 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
  
  	// Recursively divide front space.
  	if (frontpoly)
@@ -1882,7 +1879,12 @@ index 0b036ea..80fbf27 100644
 +	INT32 j, count;
 +	seg_t *lseg;
 +	poly_t *poly;
-+
+ 
+-		// enlarge bbox with second child
+-		M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
+-		                 bsp->bbox[1][BOXTOP   ]);
+-		M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
+-		                 bsp->bbox[1][BOXBOTTOM]);
 +	for (i = 0; i < numsubsectors; first += subsectors[i].numlines, i++)
 +	{
 +		count = subsectors[i].numlines;
@@ -1905,12 +1907,7 @@ index 0b036ea..80fbf27 100644
 +				break;
 +		if (j < count)
 +			continue;
- 
--		// enlarge bbox with second child
--		M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
--		                 bsp->bbox[1][BOXTOP   ]);
--		M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
--		                 bsp->bbox[1][BOXBOTTOM]);
++
 +		poly = HWR_AllocPoly(count);
 +		for (j = 0; j < count; j++)
 +		{
@@ -1922,7 +1919,7 @@ index 0b036ea..80fbf27 100644
  	}
  }
  
-@@ -1015,6 +1093,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
+@@ -1015,6 +1090,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
  	rootpv++;
  
  	WalkBSPNode(bspnum, rootp, NULL,rootbbox);
@@ -14272,24 +14269,18 @@ index d52750a..c2d4447 100644
  	vaopt_perspective,
  	vaopt_legacygl_end,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
-index 812c7f8..56eba74 100644
+index 812c7f8..dd6eca9 100644
 --- a/src/k_menufunc.c
 +++ b/src/k_menufunc.c
-@@ -203,8 +203,14 @@ static void M_ChangeCvar(INT32 choice)
- 		choice != -1)
- 	{
- 		M_StartMessage(
-+#ifdef _UWP
-+			"Switching to VibeRant D3D11",
-+			"\x85" "VibeRant D3D11 is missing\n"
-+			"\x85" "some features.\x80\n"
-+#else
- 			"Switching to Legacy GL",
- 			"Legacy GL is \x85" "INCOMPLETE and BROKEN.\x80\n"
-+#endif
- 			"\n"
- 			"ARE YOU SURE?",
- 			M_ChangeCvarResponse,
+@@ -195,7 +195,7 @@ static void M_ChangeCvar(INT32 choice)
+ {
+ 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
+ 
+-#ifdef HWRENDER
++#if defined(HWRENDER) && !defined(_UWP) // [UWP]: VibeRant D3D11 has close to Software's features, so switching to it doesn't ask
+ 	if (cvar == &cv_renderer &&
+ 		// Switching from Software [to Legacy GL]
+ 		cv_renderer.value == 1 &&
 diff --git a/src/lua_script.c b/src/lua_script.c
 index 51cef51..8581c10 100644
 --- a/src/lua_script.c
