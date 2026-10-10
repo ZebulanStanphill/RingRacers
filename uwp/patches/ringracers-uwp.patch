@@ -1,4 +1,4 @@
-From 84cfa8b714fcf1993014aa867769f7ea7b672d66 Mon Sep 17 00:00:00 2001
+From f8d766e277f3d05c0d33cd7a84c87643227215dc Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -376,6 +376,20 @@ Agent: Codex (Sol, D3D12 shader probe)
 Model: gpt-6.1-sol
 Agent: Claude (Haiku, D3D12 probe documentation)
 Model: claude-haiku-5-5
+
+- [UWP]: Add VibeRant's Direct3D 12 driver (src/hardware/r_d3d12) behind the
+  saved gr_d3d12 setting (Off/Once/On, Video > Advanced), read at the first
+  hwSym lookup; Once saves itself as Off. The D3D11 exports forward to it.
+  So far it makes its device on ANGLE's adapter, one command list with
+  fenced submissions, an allocator pool and deferred releases, the screen's
+  render target and depth, clears (tinted by a per-frame diagnostic hue)
+  and presents through ANGLE with the first sharing path (A-D) that passes
+  a content check, synchronized by the CPU fence and ANGLE's queries. The
+  other driver functions only count calls. Stop running the D3D12 probes
+  when VibeRant D3D11 starts.
+
+Agent: Claude Code (Opus, D3D12 core and present)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -383,13 +397,13 @@ Model: claude-haiku-5-5
  src/console.c                             |   57 +
  src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
- src/cvars.cpp                             |    9 +
+ src/cvars.cpp                             |   15 +
  src/d_clisrv.c                            |   49 +
  src/d_main.cpp                            |  367 +-
  src/f_finale.c                            |    6 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
- src/hardware/CMakeLists.txt               |   68 +
+ src/hardware/CMakeLists.txt               |   69 +
  src/hardware/hw_batching.c                |   11 +-
  src/hardware/hw_bsp.c                     |  110 +-
  src/hardware/hw_cache.c                   |  335 +-
@@ -401,19 +415,25 @@ Model: claude-haiku-5-5
  src/hardware/hw_glob.h                    |   11 +
  src/hardware/hw_glsl.h                    |  321 ++
  src/hardware/hw_main.c                    | 1758 +++++-
- src/hardware/hw_main.h                    |   18 +-
+ src/hardware/hw_main.h                    |   21 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
  src/hardware/r_d3d11/custom_shader.cpp    |  308 +
  src/hardware/r_d3d11/custom_shader.h      |   12 +
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
- src/hardware/r_d3d11/r_d3d11.cpp          | 6326 +++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h            |   66 +
+ src/hardware/r_d3d11/r_d3d11.cpp          | 6402 +++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
+ src/hardware/r_d3d12/d3d12_core.cpp       |  811 +++
+ src/hardware/r_d3d12/d3d12_core.h         |  134 +
  src/hardware/r_d3d12/d3d12_interop.cpp    |  562 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
+ src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
+ src/hardware/r_d3d12/d3d12_present.h      |   50 +
  src/hardware/r_d3d12/d3d12_pso_probe.cpp  |  216 +
  src/hardware/r_d3d12/d3d12_pso_probe.h    |   26 +
+ src/hardware/r_d3d12/r_d3d12.cpp          |  737 +++
+ src/hardware/r_d3d12/r_d3d12.h            |   50 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
  src/hwr2/patch_atlas.cpp                  |    8 +
@@ -421,7 +441,7 @@ Model: claude-haiku-5-5
  src/hwr2/resource_management.hpp          |   31 +-
  src/i_system.h                            |   74 +
  src/i_video_common.cpp                    |   60 +-
- src/k_menu.h                              |   12 +-
+ src/k_menu.h                              |   13 +-
  src/k_menufunc.c                          |    2 +-
  src/lua_script.c                          |  127 +
  src/m_fixed.h                             |   11 +
@@ -430,7 +450,7 @@ Model: claude-haiku-5-5
  src/md5.c                                 |   19 +-
  src/md5.h                                 |   31 +-
  src/menus/options-1.c                     |   34 +
- src/menus/options-video-advanced.c        |   44 +-
+ src/menus/options-video-advanced.c        |   47 +-
  src/p_lights.c                            |    9 +
  src/p_mobj.c                              |   98 +-
  src/p_mobj.h                              |   11 +
@@ -458,7 +478,7 @@ Model: claude-haiku-5-5
  src/sdl/i_uwpd3d12.cpp                    |  130 +
  src/sdl/i_uwpprofile.cpp                  |  886 +++
  src/sdl/i_uwptrace.h                      |   25 +
- src/sdl/i_video.cpp                       |   98 +-
+ src/sdl/i_video.cpp                       |  102 +-
  src/sdl/mixer_sound.c                     |    4 +-
  src/sdl/ogl_sdl.c                         |    8 +
  src/sdl/rhi_gl2_platform.cpp              |    9 +
@@ -467,7 +487,7 @@ Model: claude-haiku-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 90 files changed, 15045 insertions(+), 1126 deletions(-)
+ 96 files changed, 18541 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -475,10 +495,16 @@ Model: claude-haiku-5-5
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
+ create mode 100644 src/hardware/r_d3d12/d3d12_core.cpp
+ create mode 100644 src/hardware/r_d3d12/d3d12_core.h
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_present.cpp
+ create mode 100644 src/hardware/r_d3d12/d3d12_present.h
  create mode 100644 src/hardware/r_d3d12/d3d12_pso_probe.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_pso_probe.h
+ create mode 100644 src/hardware/r_d3d12/r_d3d12.cpp
+ create mode 100644 src/hardware/r_d3d12/r_d3d12.h
  create mode 100644 src/sdl/i_uwpd3d12.cpp
  create mode 100644 src/sdl/i_uwpprofile.cpp
  create mode 100644 src/sdl/i_uwptrace.h
@@ -851,7 +877,7 @@ index 8a434ba..b4518d0 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33..de2505c 100644
+index d589b33..959f784 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
 @@ -431,7 +431,11 @@ consvar_t cv_bgaudio = Player("bgaudio", "Nothing").onchange_noinit(BGAudio_OnCh
@@ -866,7 +892,7 @@ index d589b33..de2505c 100644
  consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
  
  consvar_t cv_renderview = Player("renderview", "On").values({{0, "Off"}, {1, "On"}, {2, "Force"}}).dont_save();
-@@ -1478,6 +1482,11 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+@@ -1478,6 +1482,17 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
  	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
  
  	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
@@ -875,6 +901,12 @@ index d589b33..de2505c 100644
 +
 +	// [UWP]: Palette rendering, from SRB2, which needs shaders
 +	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
++
++#ifdef _UWP
++	// [UWP]: VibeRant's Direct3D 12 backend while it's ported, read once at startup. Once turns itself Off then,
++	// so a broken build is back on Direct3D 11 at the next launch.
++	consvar_t cv_gld3d12 = OpenGL("gr_d3d12", "Off").values({{0, "Off"}, {1, "Once"}, {2, "On"}});
++#endif
  
  #ifdef ALAM_LIGHTING
  		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
@@ -1731,10 +1763,10 @@ index ce69d80..9db72cf 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f28..68cb552 100644
+index a0a0f28..051044f 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
-@@ -13,3 +13,71 @@ target_sources(SRB2SDL2 PRIVATE
+@@ -13,3 +13,72 @@ target_sources(SRB2SDL2 PRIVATE
  	hw_batching.c
  	r_opengl/r_opengl.c
  )
@@ -1802,7 +1834,8 @@ index a0a0f28..68cb552 100644
 +	add_custom_target(SRB2D3D11Shaders DEPENDS ${d3d11_shader_headers})
 +	add_dependencies(SRB2SDL2 SRB2D3D11Shaders)
 +	include(r_d3d11/custom_shaders.cmake)
-+	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp r_d3d12/d3d12_interop.cpp r_d3d12/d3d12_pso_probe.cpp)
++	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp r_d3d12/d3d12_interop.cpp r_d3d12/d3d12_pso_probe.cpp
++		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_present.cpp r_d3d12/r_d3d12.cpp)
 +	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl d3dcompiler)
 +	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}" "${CMAKE_CURRENT_BINARY_DIR}")
 +endif()
@@ -5694,7 +5727,7 @@ index b5e8fca..8721168 100644
  		// Capture the screen again for screen waving on the intermission
  		if(gamestate != GS_INTERMISSION)
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b409..4d9ab9f 100644
+index 652b409..8cd0161 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,10 @@ extern "C" {
@@ -5730,16 +5763,19 @@ index 652b409..4d9ab9f 100644
  extern consvar_t cv_glmodels;
  
  // SRB2Kart: We don't like these options.
-@@ -120,7 +132,7 @@ extern consvar_t cv_glshearing;
+@@ -120,7 +132,10 @@ extern consvar_t cv_glshearing;
  extern consvar_t cv_glspritebillboarding;
  extern consvar_t cv_glskydome;
  
 -extern consvar_t cv_glbatching;
 +extern consvar_t cv_glbatching, cv_glbettertransparency;
++#ifdef _UWP
++extern consvar_t cv_gld3d12; // [UWP]: VibeRant's backend, chosen at startup
++#endif
  
  extern float gl_viewwidth, gl_viewheight, gl_baseviewwindowy;
  
-@@ -133,6 +145,10 @@ extern float gl_viewsin, gl_viewcos;
+@@ -133,6 +148,10 @@ extern float gl_viewsin, gl_viewcos;
  
  
  // Render stats
@@ -6591,10 +6627,10 @@ index 0000000..31f8d89
 +    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 0000000..aa987c5
+index 0000000..20f2e5d
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,6326 @@
+@@ -0,0 +1,6402 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -6666,7 +6702,9 @@ index 0000000..aa987c5
 +#include "r_d3d11.h"
 +#include "custom_shader.h"
 +#ifdef _UWP
-+#include "../r_d3d12/d3d12_interop.h"
++#include "../../command.h"
++#include "../../m_misc.h"
++#include "../r_d3d12/r_d3d12.h"
 +#endif
 +#include "../hw_glsl.h"
 +
@@ -9824,33 +9862,6 @@ index 0000000..aa987c5
 +	return egl.CreatePbufferFromClientBuffer(g_present.display, EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, handle, config, attributes);
 +}
 +
-+#ifdef _UWP
-+// [UWP]: Diagnostics only; this never changes the selected D3D11 presentation path.
-+void ProbeD3D12Interop(EGLConfig config)
-+{
-+	static bool probed = false;
-+	if (probed)
-+		return;
-+	probed = true;
-+	InitAngleDevice();
-+	LoadGles();
-+	rr_d3d12::EglApi api;
-+	api.display = g_present.display;
-+	api.CreatePbufferFromClientBuffer = egl.CreatePbufferFromClientBuffer;
-+	api.DestroySurface = egl.DestroySurface;
-+	api.BindTexImage = egl.BindTexImage;
-+	api.ReleaseTexImage = egl.ReleaseTexImage;
-+	api.GetError = egl.GetError;
-+	api.GetIntegerv = gl.GetIntegerv;
-+	api.GenTextures = gl.GenTextures;
-+	api.DeleteTextures = gl.DeleteTextures;
-+	api.BindTexture = gl.BindTexture;
-+	api.GetGlError = gl.GetError;
-+	api.LogMessage = [](const char *message) { I_OutputMsg("UWP D3D12 probe: %s\n", message); };
-+	rr_d3d12::D3D12Interop_Probe(g_present.angleDevice.Get(), api, config);
-+}
-+#endif
-+
 +// Finds an EGL config and texture format that ANGLE opens shared textures with. Call with ANGLE's context current.
 +void ProbeSharing()
 +{
@@ -9935,9 +9946,6 @@ index 0000000..aa987c5
 +				g_present.shared = true;
 +				g_rtFormat = format;
 +				Log("presenting through a texture shared with ANGLE: %s, pbuffer config %d", DescribeFormat(format), (int)i);
-+#ifdef _UWP
-+				ProbeD3D12Interop(g_present.config);
-+#endif
 +				return;
 +			}
 +			Log("ANGLE couldn't open a shared %s texture with config %d (EGL error 0x%X)", DescribeFormat(format), (int)i,
@@ -9946,10 +9954,6 @@ index 0000000..aa987c5
 +	}
 +
 +	Log("presenting by reading frames back: ANGLE couldn't open any shared texture");
-+#ifdef _UWP
-+	// Still diagnose NT sharing if the existing legacy sharing probe failed; keep its fallback unchanged.
-+	ProbeD3D12Interop(configs[0]);
-+#endif
 +}
 +
 +void DestroySlots()
@@ -12548,6 +12552,34 @@ index 0000000..aa987c5
 +	}
 +}
 +
++#ifdef _UWP
++// [UWP]: VibeRant's Direct3D 12 driver (r_d3d12) while it's ported. gr_d3d12 chooses it once, at the first hwSym
++// lookup, which comes after the config loads; the D3D11_* exports forward to it from then on.
++bool g_useD3D12 = false;
++
++void SelectBackend()
++{
++	static bool selected = false;
++	if (selected)
++		return;
++	selected = true;
++
++	// Registered with the OpenGL variables, after which the config sets it
++	const bool registered = cv_gld3d12.string != nullptr;
++	g_useD3D12 = registered && cv_gld3d12.value != 0;
++	if (g_useD3D12 && cv_gld3d12.value == 1)
++	{
++		// Once: saved as Off right away, so a build that doesn't work goes back to D3D11 at the next launch
++		CV_StealthSet(&cv_gld3d12, "Off");
++		M_SaveConfig(NULL);
++		I_OutputMsg("UWP: VibeRant backend: D3D12 (gr_d3d12 Once -> Off)\n");
++	}
++	else
++		I_OutputMsg("UWP: VibeRant backend: %s (gr_d3d12 %s)\n", g_useD3D12 ? "D3D12" : "D3D11",
++			registered ? cv_gld3d12.string : "not registered yet");
++}
++#endif
++
 +#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&D3D_##name)}
 +const struct
 +{
@@ -12606,8 +12638,27 @@ index 0000000..aa987c5
 +	g_probePercentX = x; g_probePercentY = y; g_probePending = true;
 +	return true;
 +}
-+boolean D3D11_BeginSurfaceProbe(void) { return BeginSurfaceProbe(); }
-+void D3D11_EndSurfaceProbe(void) { EndSurfaceProbe(); }
++// [UWP]: Under Direct3D 12, requests, sources and textures only change this driver's probe state, which stays
++// inactive since D3D12_BeginSurfaceProbe doesn't start a probe.
++boolean D3D11_BeginSurfaceProbe(void)
++{
++#ifdef _UWP
++	if (g_useD3D12)
++		return D3D12_BeginSurfaceProbe();
++#endif
++	return BeginSurfaceProbe();
++}
++void D3D11_EndSurfaceProbe(void)
++{
++#ifdef _UWP
++	if (g_useD3D12)
++	{
++		D3D12_EndSurfaceProbe();
++		return;
++	}
++#endif
++	EndSurfaceProbe();
++}
 +void D3D11_SurfaceProbeSource(const char *kind, INT32 source)
 +{
 +	if (!g_probeActive) return;
@@ -12621,6 +12672,11 @@ index 0000000..aa987c5
 +
 +void *D3D11_GetDriverFunction(const char *name)
 +{
++#ifdef _UWP
++	SelectBackend();
++	if (g_useD3D12)
++		return D3D12_GetDriverFunction(name);
++#endif
 +	for (const auto &function : kDriverFunctions)
 +	{
 +		if (strcmp(function.name, name) == 0)
@@ -12633,6 +12689,11 @@ index 0000000..aa987c5
 +boolean D3D11_Surface(INT32 w, INT32 h)
 +{
 +	static bool first = true;
++
++#ifdef _UWP
++	if (g_useD3D12)
++		return D3D12_Surface(w, h);
++#endif
 +
 +	if (first)
 +	{
@@ -12663,6 +12724,14 @@ index 0000000..aa987c5
 +void D3D11_FinishUpdate(INT32 waitvbl)
 +{
 +	const bool vsync = waitvbl != 0;
++
++#ifdef _UWP
++	if (g_useD3D12)
++	{
++		D3D12_FinishUpdate(waitvbl);
++		return;
++	}
++#endif
 +
 +	if (!g_present.vsyncSet || g_present.vsync != vsync)
 +	{
@@ -12703,6 +12772,10 @@ index 0000000..aa987c5
 +
 +boolean D3D11_TakeTextureFlushRequest(void)
 +{
++#ifdef _UWP
++	if (g_useD3D12)
++		return D3D12_TakeTextureFlushRequest();
++#endif
 +	const bool requested = g_textureFlushRequested;
 +	g_textureFlushRequested = false;
 +	if (!requested)
@@ -12721,6 +12794,11 @@ index 0000000..aa987c5
 +// disables it before HUD/postprocessing; fullscreen post passes use g_noDepth.
 +void D3D11_SetPortalStencil(INT32 level)
 +{
++	if (g_useD3D12)
++	{
++		D3D12_SetPortalStencil(level);
++		return;
++	}
 +	g_gl.stencil = level > 0;
 +	g_gl.stencilRef = (UINT8)level;
 +	g_gl.stencilPass = D3D11_STENCIL_OP_KEEP;
@@ -12729,6 +12807,11 @@ index 0000000..aa987c5
 +
 +void D3D11_SetPortalPlane(const float *worldPlane)
 +{
++	if (g_useD3D12)
++	{
++		D3D12_SetPortalPlane(worldPlane);
++		return;
++	}
 +	if (!worldPlane)
 +	{
 +		g_gl.clipPlane[0] = g_gl.clipPlane[1] = g_gl.clipPlane[2] = 0;
@@ -12757,6 +12840,8 @@ index 0000000..aa987c5
 +
 +boolean D3D11_PortalsSupported(void)
 +{
++	if (g_useD3D12)
++		return D3D12_PortalsSupported();
 +	if (!CanDraw() || !g_dsv || !g_vertexShaders[VS_FULLSCREEN])
 +		return false;
 +	const GLState saved = g_gl;
@@ -12779,6 +12864,8 @@ index 0000000..aa987c5
 +
 +boolean D3D11_DrawPortalAperture(const FOutVector *v, INT32 level, boolean restore)
 +{
++	if (g_useD3D12)
++		return D3D12_DrawPortalAperture(v, level, restore);
 +	if (!CanDraw())
 +		return false;
 +	const FOutVector triangles[6] = {v[0],v[1],v[2],v[0],v[2],v[3]};
@@ -12804,6 +12891,11 @@ index 0000000..aa987c5
 +
 +void D3D11_ResetPortalDepth(INT32 level)
 +{
++	if (g_useD3D12)
++	{
++		D3D12_ResetPortalDepth(level);
++		return;
++	}
 +	// ClearDepthStencilView ignores the stencil test. Use a far-depth
 +	// fullscreen triangle instead, touching only stencil == child level.
 +	const GLState saved = g_gl;
@@ -12827,18 +12919,38 @@ index 0000000..aa987c5
 +
 +boolean D3D11_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength)
 +{
++	if (g_useD3D12)
++		return D3D12_ApplyFadeMap(table, size, tableId, strength);
 +	return ApplyFadeMap(table, size, tableId, strength);
 +}
 +
 +void D3D11_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
 +{
++	if (g_useD3D12)
++	{
++		D3D12_GetPresentTrace(copied, shown, copyframe, showframe);
++		return;
++	}
 +	*copied = g_traceCopied; *shown = g_traceShown;
 +	*copyframe = g_traceCopyFrame; *showframe = g_traceShowFrame;
++}
++
++void D3D11_Shutdown(void)
++{
++	if (g_useD3D12)
++		D3D12_Shutdown();
 +}
 +#endif
 +
 +void D3D11_LogPerf(double seconds)
 +{
++#ifdef _UWP
++	if (g_useD3D12)
++	{
++		D3D12_LogPerf(seconds);
++		return;
++	}
++#endif
 +	const Stats &s = g_stats;
 +	const double n = s.frames ? s.frames : 1;
 +
@@ -12923,10 +13035,10 @@ index 0000000..aa987c5
 +}
 diff --git a/src/hardware/r_d3d11/r_d3d11.h b/src/hardware/r_d3d11/r_d3d11.h
 new file mode 100644
-index 0000000..bb2921c
+index 0000000..ec3cb05
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,72 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -12987,6 +13099,12 @@ index 0000000..bb2921c
 +
 +// Logs the driver's counters and timings since the last call, for the UWP perf summary
 +void D3D11_LogPerf(double seconds);
++
++#ifdef _UWP
++// Call before ANGLE's context goes away. Releases the Direct3D 12 driver if gr_d3d12 chose it; the Direct3D 11
++// driver keeps its objects until exit, as it always has.
++void D3D11_Shutdown(void);
++#endif
 +
 +#ifdef __cplusplus
 +} // extern "C"
@@ -13659,6 +13777,963 @@ index 0000000..0921d27
 +{
 +	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
+diff --git a/src/hardware/r_d3d12/d3d12_core.cpp b/src/hardware/r_d3d12/d3d12_core.cpp
+new file mode 100644
+index 0000000..60c52ae
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_core.cpp
+@@ -0,0 +1,811 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  d3d12_core.cpp
++/// \brief [UWP]: VibeRant D3D12's device, queue, command list, fences, deferred releases and CPU descriptor heaps
++///
++/// D3D11 kept whatever the GPU still used alive; D3D12 doesn't. Everything here assumes one queue, so fence values
++/// complete in order: an allocator or retired object tagged with a value is free once the fence reaches it.
++
++#include "d3d12_core.h"
++
++#include <algorithm>
++#include <cmath>
++#include <cstdarg>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <deque>
++#include <vector>
++
++#include "../../doomdef.h"
++#include "../../i_system.h"
++
++// doomdef.h's
++#undef min
++#undef max
++#undef clamp
++
++namespace rr_d3d12
++{
++namespace
++{
++
++ComPtr<ID3D12Device> g_device;
++ComPtr<ID3D12CommandQueue> g_queue;
++ComPtr<ID3D12GraphicsCommandList> g_list;
++ComPtr<ID3D12Fence> g_fence;
++HANDLE g_event = nullptr;
++ComPtr<IDXGIAdapter3> g_memoryAdapter;
++ComPtr<ID3D12DescriptorHeap> g_rtvHeap, g_dsvHeap;
++UINT g_rtvStep = 0, g_dsvStep = 0;
++UINT64 g_frequency = 0;
++bool g_uma = false;
++bool g_dred = false;
++HRESULT g_dredResult = S_OK;
++
++UINT64 g_lastSubmitted = 0; // the value the last submission signals
++UINT64 g_lastSignaled = 0; // the last value whose Signal reached the queue
++bool g_signalFailed = false;
++bool g_listOpen = false;
++
++// Allocators of submitted lists, oldest first. One is recording (g_current).
++struct Allocator
++{
++	ComPtr<ID3D12CommandAllocator> allocator;
++	UINT64 fence;
++};
++std::deque<Allocator> g_allocators;
++ComPtr<ID3D12CommandAllocator> g_current;
++size_t g_allocatorCount = 0;
++constexpr size_t kAllocatorCap = 8; // Present keeps two frames in flight, plus mid-frame submissions
++
++struct Retired
++{
++	UINT64 fence;
++	ComPtr<IUnknown> object;
++};
++std::deque<Retired> g_retired;
++
++std::vector<D3D12_RESOURCE_BARRIER> g_barriers;
++void (*g_listBegin)(void) = nullptr;
++
++int g_errors = 0;
++bool g_removed = false, g_removalLogged = false;
++CoreStats g_stats;
++
++double PreciseToMs(precise_t t)
++{
++	return t * 1000.0 / I_GetPrecisePrecision();
++}
++
++// At most one line per second, with suppressed events counted
++void WarnStall(const char *what, double ms, UINT64 value, UINT64 done)
++{
++	static precise_t lastWarning = 0;
++	static bool warned = false;
++	static UINT64 suppressed = 0;
++	const precise_t now = I_GetPreciseTime();
++	if (warned && now - lastWarning < I_GetPrecisePrecision())
++	{
++		suppressed++;
++		return;
++	}
++	Core_Log("gave up waiting for %s after %.1f ms (fence %llu, GPU at %llu); %llu stall warnings suppressed", what, ms,
++		(unsigned long long)value, (unsigned long long)done, (unsigned long long)suppressed);
++	lastWarning = now;
++	warned = true;
++	suppressed = 0;
++}
++
++void MarkRemoved(const char *what)
++{
++	if (!g_removed)
++		Core_Log("the device was removed while waiting for %s", what);
++	g_removed = true;
++}
++
++const char *DescribeRemoval(HRESULT reason)
++{
++	switch (reason)
++	{
++		case DXGI_ERROR_DEVICE_HUNG: return "hung: a command took too long or was invalid";
++		case DXGI_ERROR_DEVICE_REMOVED: return "removed";
++		case DXGI_ERROR_DEVICE_RESET: return "reset: a badly formed command";
++		case DXGI_ERROR_DRIVER_INTERNAL_ERROR: return "driver internal error";
++		case DXGI_ERROR_INVALID_CALL: return "invalid call";
++		case S_OK: return "not removed";
++		default: return "other";
++	}
++}
++
++const char *DescribeBreadcrumb(D3D12_AUTO_BREADCRUMB_OP op)
++{
++	static const char *const names[] =
++	{
++		"SetMarker", "BeginEvent", "EndEvent", "DrawInstanced", "DrawIndexedInstanced", "ExecuteIndirect", "Dispatch",
++		"CopyBufferRegion", "CopyTextureRegion", "CopyResource", "CopyTiles", "ResolveSubresource",
++		"ClearRenderTargetView", "ClearUnorderedAccessView", "ClearDepthStencilView", "ResourceBarrier",
++		"ExecuteBundle", "Present", "ResolveQueryData", "BeginSubmission", "EndSubmission",
++	};
++	return (unsigned)op < sizeof names / sizeof *names ? names[op] : "other";
++}
++
++const char *DebugName(const char *a, const wchar_t *w, char *buffer, int size)
++{
++	if (a)
++		return a;
++	if (w && WideCharToMultiByte(CP_UTF8, 0, w, -1, buffer, size, nullptr, nullptr))
++		return buffer;
++	return "(unnamed)";
++}
++
++void EnableDred()
++{
++	// Must happen before the device is made. Optional: on Xbox it may not exist.
++	ComPtr<ID3D12DeviceRemovedExtendedDataSettings> settings;
++	g_dredResult = D3D12GetDebugInterface(IID_PPV_ARGS(&settings));
++	g_dred = SUCCEEDED(g_dredResult) && settings;
++	if (g_dred)
++	{
++		settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
++		settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
++	}
++}
++
++void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
++{
++	const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0,
++		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
++	D3D12_FEATURE_DATA_FEATURE_LEVELS fl = {4, levels, D3D_FEATURE_LEVEL_11_0};
++	const bool flKnown = SUCCEEDED(g_device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &fl, sizeof fl));
++
++	// E_INVALIDARG means a runtime that doesn't know the model, so step down
++	D3D12_FEATURE_DATA_SHADER_MODEL sm = {};
++	bool smKnown = false;
++	for (unsigned version = 0x64; version >= 0x51; version = version == 0x60 ? 0x51 : version - 1)
++	{
++		sm.HighestShaderModel = static_cast<D3D_SHADER_MODEL>(version);
++		const HRESULT hr = g_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm);
++		if (SUCCEEDED(hr))
++		{
++			smKnown = true;
++			break;
++		}
++		if (hr != E_INVALIDARG)
++			break;
++	}
++
++	D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
++	const bool optionsKnown = SUCCEEDED(g_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof options));
++	D3D12_FEATURE_DATA_ARCHITECTURE arch = {};
++	const bool archKnown = SUCCEEDED(g_device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &arch, sizeof arch));
++	g_uma = archKnown && arch.UMA;
++	D3D12_FEATURE_DATA_ROOT_SIGNATURE root = {D3D_ROOT_SIGNATURE_VERSION_1_1};
++	HRESULT rootResult = g_device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &root, sizeof root);
++	if (FAILED(rootResult))
++	{
++		root.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
++		rootResult = g_device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &root, sizeof root);
++	}
++	D3D12_FEATURE_DATA_FORMAT_SUPPORT color = {DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_FORMAT_SUPPORT1_NONE, D3D12_FORMAT_SUPPORT2_NONE};
++	D3D12_FEATURE_DATA_FORMAT_SUPPORT depth = {DXGI_FORMAT_D24_UNORM_S8_UINT, D3D12_FORMAT_SUPPORT1_NONE, D3D12_FORMAT_SUPPORT2_NONE};
++	g_device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &color, sizeof color);
++	g_device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &depth, sizeof depth);
++
++	char name[128] = {};
++	if (!WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof name, nullptr, nullptr))
++		snprintf(name, sizeof name, "(unknown)");
++	Core_Log("device: adapter '%s' %04X:%04X LUID %08X:%08X, FL %s0x%X, SM %s0x%X, binding tier %s%u, heap tier %s%u, UMA %s%u, cache-coherent UMA %s%u, root signature %s0x%X; RGBA8 support 0x%X, D24S8 support 0x%X",
++		name, desc.VendorId, desc.DeviceId, (unsigned)desc.AdapterLuid.HighPart, (unsigned)desc.AdapterLuid.LowPart,
++		flKnown ? "" : "unknown ", flKnown ? (unsigned)fl.MaxSupportedFeatureLevel : 0,
++		smKnown ? "" : "unknown ", smKnown ? (unsigned)sm.HighestShaderModel : 0,
++		optionsKnown ? "" : "unknown ", (unsigned)options.ResourceBindingTier,
++		optionsKnown ? "" : "unknown ", (unsigned)options.ResourceHeapTier,
++		archKnown ? "" : "unknown ", (unsigned)arch.UMA,
++		archKnown ? "" : "unknown ", (unsigned)arch.CacheCoherentUMA,
++		SUCCEEDED(rootResult) ? "" : "unknown ", SUCCEEDED(rootResult) ? (unsigned)root.HighestVersion : 0,
++		(unsigned)color.Support1, (unsigned)depth.Support1);
++}
++
++void CountSubmission(const char *reason)
++{
++	g_stats.submissions++;
++	if (!strcmp(reason, "present"))
++		g_stats.presentSubmissions++;
++	else if (!strcmp(reason, "ring"))
++		g_stats.ringSubmissions++;
++	else if (!strcmp(reason, "readback"))
++		g_stats.readbackSubmissions++;
++	else if (!strcmp(reason, "upload"))
++		g_stats.uploadSubmissions++;
++	else
++		g_stats.otherSubmissions++;
++}
++
++// The oldest submitted allocator, reset, if its list has finished
++ComPtr<ID3D12CommandAllocator> ReuseOldest()
++{
++	ComPtr<ID3D12CommandAllocator> allocator;
++	if (g_allocators.empty() || !Core_FenceDone(g_allocators.front().fence))
++		return allocator;
++	allocator = std::move(g_allocators.front().allocator);
++	g_allocators.pop_front();
++	if (Core_Failed(allocator->Reset(), "ID3D12CommandAllocator::Reset"))
++	{
++		allocator.Reset();
++		g_allocatorCount--;
++	}
++	return allocator;
++}
++
++// Never resets an allocator whose list the GPU may still be executing
++ComPtr<ID3D12CommandAllocator> TakeAllocator()
++{
++	ComPtr<ID3D12CommandAllocator> allocator = ReuseOldest();
++	if (allocator)
++		return allocator;
++
++	if (g_allocatorCount >= kAllocatorCap && !g_allocators.empty())
++	{
++		// The GPU is behind: wait for the oldest list rather than making more
++		if (Core_Wait(g_allocators.front().fence, 500, "a command allocator"))
++		{
++			allocator = ReuseOldest();
++			if (allocator)
++				return allocator;
++		}
++	}
++
++	if (Core_Failed(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)),
++		"CreateCommandAllocator"))
++		return nullptr;
++	g_allocatorCount++;
++	g_stats.allocatorsCreated++;
++	if (g_allocatorCount > kAllocatorCap)
++		D3D12_LOG_ONCE("made command allocator %u, over the cap of %u, since the GPU didn't finish in time",
++			(unsigned)g_allocatorCount, (unsigned)kAllocatorCap);
++	return allocator;
++}
++
++// Opens the list on a free allocator, then lets the driver bind its targets again
++bool Reopen()
++{
++	if (!g_current)
++		g_current = TakeAllocator();
++	if (!g_current)
++		return false;
++	if (Core_Failed(g_list->Reset(g_current.Get(), nullptr), "ID3D12GraphicsCommandList::Reset"))
++		return false;
++	g_listOpen = true;
++	Core_CollectGarbage();
++	if (g_listBegin)
++		g_listBegin();
++	return true;
++}
++
++template <typename T>
++void Leak(ComPtr<T> &object)
++{
++	(void)object.Detach();
++}
++
++} // namespace
++
++void Core_Log(const char *format, ...)
++{
++	char message[2048];
++	va_list args;
++
++	va_start(args, format);
++	vsnprintf(message, sizeof message, format, args);
++	va_end(args);
++	I_OutputMsg("UWP D3D12: %s\n", message);
++}
++
++bool Core_Failed(HRESULT hr, const char *what)
++{
++	if (SUCCEEDED(hr))
++		return false;
++
++	g_errors++;
++	if (g_errors <= 50 || g_errors % 1000 == 0)
++	{
++		const HRESULT reason = g_device ? g_device->GetDeviceRemovedReason() : S_OK;
++		Core_Log("%s failed: 0x%08X (device removed reason 0x%08X; error %d)", what, (unsigned)hr, (unsigned)reason, g_errors);
++	}
++	return true;
++}
++
++int Core_Errors()
++{
++	return g_errors;
++}
++
++bool Core_Init(ID3D11Device *angle)
++{
++	if (g_device)
++		return true;
++
++	Core_Log("starting VibeRant's Direct3D 12 backend");
++
++	ComPtr<IDXGIFactory4> factory;
++	if (Core_Failed(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)), "CreateDXGIFactory2"))
++		return false;
++
++	// Sharing needs the adapter ANGLE draws the window with
++	ComPtr<IDXGIAdapter1> adapter;
++	if (angle)
++	{
++		ComPtr<IDXGIDevice> dxgiDevice;
++		ComPtr<IDXGIAdapter> angleAdapter;
++		DXGI_ADAPTER_DESC angleDesc = {};
++		if (Core_Failed(angle->QueryInterface(IID_PPV_ARGS(&dxgiDevice)), "QueryInterface IDXGIDevice (ANGLE)")
++			|| Core_Failed(dxgiDevice->GetAdapter(&angleAdapter), "GetAdapter (ANGLE)")
++			|| Core_Failed(angleAdapter->GetDesc(&angleDesc), "GetDesc (ANGLE)")
++			|| Core_Failed(factory->EnumAdapterByLuid(angleDesc.AdapterLuid, IID_PPV_ARGS(&adapter)), "EnumAdapterByLuid"))
++			return false;
++	}
++	else
++	{
++		Core_Log("no ANGLE device: using the first hardware adapter, so frames can only be read back");
++		for (UINT i = 0;; i++)
++		{
++			ComPtr<IDXGIAdapter1> candidate;
++			if (factory->EnumAdapters1(i, &candidate) == DXGI_ERROR_NOT_FOUND)
++				break;
++			DXGI_ADAPTER_DESC1 candidateDesc = {};
++			if (FAILED(candidate->GetDesc1(&candidateDesc)) || (candidateDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
++				continue;
++			adapter = candidate;
++			break;
++		}
++		if (!adapter)
++		{
++			Core_Log("no hardware adapter");
++			return false;
++		}
++	}
++	DXGI_ADAPTER_DESC1 desc = {};
++	adapter->GetDesc1(&desc);
++
++	EnableDred();
++	if (Core_Failed(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_device)), "D3D12CreateDevice"))
++	{
++		g_device.Reset();
++		return false;
++	}
++	if (FAILED(adapter.As(&g_memoryAdapter)))
++		Core_Log("video memory budgets unavailable (IDXGIAdapter3 not supported)");
++	LogCaps(desc);
++
++	D3D12_COMMAND_QUEUE_DESC queue = {};
++	queue.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
++	queue.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
++	queue.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
++	D3D12_DESCRIPTOR_HEAP_DESC rtv = {};
++	rtv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
++	rtv.NumDescriptors = kRtvCount;
++	D3D12_DESCRIPTOR_HEAP_DESC dsv = {};
++	dsv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
++	dsv.NumDescriptors = kDsvCount;
++	g_event = CreateEventExW(nullptr, nullptr, 0, EVENT_ALL_ACCESS);
++	if (Core_Failed(g_device->CreateCommandQueue(&queue, IID_PPV_ARGS(&g_queue)), "CreateCommandQueue")
++		|| Core_Failed(g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)), "CreateFence")
++		|| Core_Failed(g_device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&g_rtvHeap)), "CreateDescriptorHeap (RTV)")
++		|| Core_Failed(g_device->CreateDescriptorHeap(&dsv, IID_PPV_ARGS(&g_dsvHeap)), "CreateDescriptorHeap (DSV)")
++		|| !g_event)
++	{
++		if (!g_event)
++			Core_Log("CreateEventEx failed (%lu)", (unsigned long)GetLastError());
++		Core_Shutdown(true); // nothing was submitted
++		return false;
++	}
++	g_rtvStep = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
++	g_dsvStep = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
++	if (Core_Failed(g_queue->GetTimestampFrequency(&g_frequency), "GetTimestampFrequency"))
++		g_frequency = 0;
++	g_queue->SetName(L"VibeRant queue");
++	g_fence->SetName(L"VibeRant fence");
++
++	g_current = TakeAllocator();
++	if (!g_current || Core_Failed(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_current.Get(), nullptr,
++		IID_PPV_ARGS(&g_list)), "CreateCommandList"))
++	{
++		Core_Shutdown(true);
++		return false;
++	}
++	g_list->SetName(L"VibeRant frame");
++	g_listOpen = true; // CreateCommandList opens it
++
++	char dred[64];
++	if (g_dred)
++		snprintf(dred, sizeof dred, "on");
++	else
++		snprintf(dred, sizeof dred, "unavailable (0x%08X)", (unsigned)g_dredResult);
++	Core_Log("queue, fence and command list ready; timestamp frequency %llu; DRED %s", (unsigned long long)g_frequency, dred);
++
++	if (g_listBegin)
++		g_listBegin();
++	return true;
++}
++
++void Core_Shutdown(bool idle)
++{
++	if (!g_device)
++		return;
++
++	g_barriers.clear();
++	if (!idle && !Core_DeviceRemoved())
++	{
++		// Releasing what a running list uses is undefined; at exit, keeping it costs nothing
++		Core_Log("keeping the D3D12 objects until exit: the GPU didn't finish (fence %llu of %llu)",
++			(unsigned long long)Core_CompletedFence(), (unsigned long long)g_lastSignaled);
++		for (Retired &retired : g_retired)
++			Leak(retired.object);
++		for (Allocator &allocator : g_allocators)
++			Leak(allocator.allocator);
++		g_retired.clear();
++		g_allocators.clear();
++		Leak(g_current);
++		Leak(g_list);
++		Leak(g_rtvHeap);
++		Leak(g_dsvHeap);
++		Leak(g_fence);
++		Leak(g_queue);
++		Leak(g_device);
++		g_event = nullptr; // a pending SetEventOnCompletion may still use it
++	}
++	else
++	{
++		g_retired.clear();
++		g_list.Reset();
++		g_current.Reset();
++		g_allocators.clear();
++		g_rtvHeap.Reset();
++		g_dsvHeap.Reset();
++		g_fence.Reset();
++		g_queue.Reset();
++		g_device.Reset(); // after everything made from it
++		if (g_event)
++			CloseHandle(g_event);
++		g_event = nullptr;
++		Core_Log("released the device");
++	}
++	g_memoryAdapter.Reset();
++	g_allocatorCount = 0;
++	g_lastSubmitted = g_lastSignaled = 0;
++	g_signalFailed = false;
++	g_listOpen = false;
++	g_removed = g_removalLogged = false;
++}
++
++ID3D12Device *Core_Device()
++{
++	return g_device.Get();
++}
++
++ID3D12CommandQueue *Core_Queue()
++{
++	return g_queue.Get();
++}
++
++ID3D12GraphicsCommandList *Core_List()
++{
++	return g_listOpen ? g_list.Get() : nullptr;
++}
++
++IDXGIAdapter3 *Core_MemoryAdapter()
++{
++	return g_memoryAdapter.Get();
++}
++
++UINT64 Core_TimestampFrequency()
++{
++	return g_frequency;
++}
++
++bool Core_UMA()
++{
++	return g_uma;
++}
++
++void Core_SetListBegin(void (*callback)(void))
++{
++	g_listBegin = callback;
++}
++
++UINT64 Core_Submit(const char *reason)
++{
++	if (!g_list)
++		return 0;
++	if (!g_listOpen)
++	{
++		// A failed Reset left it closed: try again, without anything to execute
++		Reopen();
++		return 0;
++	}
++
++	Core_FlushBarriers();
++	CountSubmission(reason);
++	UINT64 value = 0;
++	const HRESULT closed = g_list->Close();
++	g_listOpen = false;
++	if (!Core_Failed(closed, "ID3D12GraphicsCommandList::Close"))
++	{
++		ID3D12CommandList *lists[] = {g_list.Get()};
++		g_queue->ExecuteCommandLists(1, lists);
++		value = ++g_lastSubmitted;
++		if (Core_Failed(g_queue->Signal(g_fence.Get(), value), "ID3D12CommandQueue::Signal"))
++			g_signalFailed = true; // later signals still cover this list, as the queue runs in order
++		else
++			g_lastSignaled = value;
++		g_allocators.push_back({std::move(g_current), value});
++	}
++	else if (g_current && Core_Failed(g_current->Reset(), "ID3D12CommandAllocator::Reset (unexecuted)"))
++	{
++		// Nothing ran, so the allocator only held this list's commands; if it can't be reset, drop it
++		g_current.Reset();
++		g_allocatorCount--;
++	}
++	Reopen();
++	return value;
++}
++
++UINT64 Core_PendingFence()
++{
++	return g_lastSubmitted + 1;
++}
++
++UINT64 Core_CompletedFence()
++{
++	if (!g_fence)
++		return 0;
++	const UINT64 done = g_fence->GetCompletedValue();
++	if (done == UINT64_MAX)
++		g_removed = true;
++	return done;
++}
++
++bool Core_FenceDone(UINT64 value)
++{
++	return Core_CompletedFence() >= value;
++}
++
++bool Core_Wait(UINT64 value, DWORD ms, const char *what, double *waitedMs)
++{
++	if (waitedMs)
++		*waitedMs = 0.0;
++	if (!g_fence)
++		return false;
++
++	UINT64 done = g_fence->GetCompletedValue();
++	if (done == UINT64_MAX)
++	{
++		MarkRemoved(what);
++		return false;
++	}
++	if (done >= value)
++		return true;
++	if (value > g_lastSignaled)
++	{
++		// Nothing will ever signal it, so don't block
++		D3D12_LOG_ONCE("not waiting for %s: fence %llu was never signaled (last %llu)", what,
++			(unsigned long long)value, (unsigned long long)g_lastSignaled);
++		return false;
++	}
++
++	const precise_t start = I_GetPreciseTime();
++	bool reached = false;
++	for (;;)
++	{
++		const double elapsed = PreciseToMs(I_GetPreciseTime() - start);
++		if (elapsed >= ms)
++			break;
++		// An earlier wait that timed out may still set the event, so check the fence after every wake
++		if (!g_event || FAILED(g_fence->SetEventOnCompletion(value, g_event)))
++			Sleep(1);
++		else
++			WaitForSingleObjectEx(g_event, (DWORD)std::max(1.0, std::ceil(ms - elapsed)), FALSE);
++		done = g_fence->GetCompletedValue();
++		if (done == UINT64_MAX)
++		{
++			MarkRemoved(what);
++			break;
++		}
++		if (done >= value)
++		{
++			reached = true;
++			break;
++		}
++	}
++
++	const double waited = PreciseToMs(I_GetPreciseTime() - start);
++	if (waitedMs)
++		*waitedMs = waited;
++	g_stats.waits++;
++	g_stats.waitMs += waited;
++	g_stats.worstWaitMs = std::max(g_stats.worstWaitMs, waited);
++	if (!reached && !g_removed)
++	{
++		g_stats.waitTimeouts++;
++		WarnStall(what, waited, value, done);
++	}
++	return reached;
++}
++
++bool Core_WaitIdle(DWORD ms, const char *what)
++{
++	if (!g_fence || Core_DeviceRemoved())
++		return true;
++	if (g_signalFailed)
++	{
++		// Lists after the last signal may still be running, with nothing to wait for
++		Core_Log("can't confirm the GPU is idle for %s: a fence signal failed", what);
++		return false;
++	}
++	if (g_lastSignaled == 0)
++		return true;
++	return Core_Wait(g_lastSignaled, ms, what) || Core_DeviceRemoved();
++}
++
++bool Core_DeviceRemoved()
++{
++	if (!g_device)
++		return false;
++	if (!g_removed && FAILED(g_device->GetDeviceRemovedReason()))
++		g_removed = true;
++	return g_removed;
++}
++
++HRESULT Core_RemovedReason()
++{
++	return g_device ? g_device->GetDeviceRemovedReason() : S_OK;
++}
++
++void Core_LogDeviceRemoved()
++{
++	if (!g_device || g_removalLogged)
++		return;
++	g_removalLogged = true;
++
++	const HRESULT reason = g_device->GetDeviceRemovedReason();
++	Core_Log("the device was removed: 0x%08X (%s); fence %llu of %llu", (unsigned)reason, DescribeRemoval(reason),
++		(unsigned long long)Core_CompletedFence(), (unsigned long long)g_lastSignaled);
++	if (!g_dred)
++	{
++		Core_Log("DRED: unavailable (0x%08X)", (unsigned)g_dredResult);
++		return;
++	}
++
++	ComPtr<ID3D12DeviceRemovedExtendedData> dred;
++	if (Core_Failed(g_device.As(&dred), "QueryInterface ID3D12DeviceRemovedExtendedData"))
++		return;
++
++	D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT breadcrumbs = {};
++	if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&breadcrumbs)))
++	{
++		int nodes = 0, unfinished = 0;
++		for (const D3D12_AUTO_BREADCRUMB_NODE *node = breadcrumbs.pHeadAutoBreadcrumbNode; node && nodes < 32;
++			node = node->pNext, nodes++)
++		{
++			const UINT32 count = node->BreadcrumbCount;
++			const UINT32 last = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
++			if (last >= count || !node->pCommandHistory || unfinished >= 4)
++				continue;
++			unfinished++;
++			char listName[64], queueName[64];
++			Core_Log("DRED: list '%s' on '%s' stopped after %u of %u operations",
++				DebugName(node->pCommandListDebugNameA, node->pCommandListDebugNameW, listName, sizeof listName),
++				DebugName(node->pCommandQueueDebugNameA, node->pCommandQueueDebugNameW, queueName, sizeof queueName),
++				(unsigned)last, (unsigned)count);
++			// The last five finished operations and the one that didn't
++			for (UINT32 i = last >= 5 ? last - 5 : 0; i <= last && i < count; i++)
++				Core_Log("DRED:   %s %u %s", i == last ? "->" : "  ", (unsigned)i, DescribeBreadcrumb(node->pCommandHistory[i]));
++		}
++		Core_Log("DRED: %d breadcrumb lists, %d unfinished", nodes, unfinished);
++	}
++	else
++		Core_Log("DRED: no breadcrumbs");
++
++	D3D12_DRED_PAGE_FAULT_OUTPUT fault = {};
++	if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault)) && fault.PageFaultVA)
++	{
++		Core_Log("DRED: page fault at GPU address 0x%llX", (unsigned long long)fault.PageFaultVA);
++		int count = 0;
++		char name[64];
++		for (const D3D12_DRED_ALLOCATION_NODE *node = fault.pHeadExistingAllocationNode; node && count < 8; node = node->pNext, count++)
++			Core_Log("DRED:   existing allocation '%s' (type %d)", DebugName(node->ObjectNameA, node->ObjectNameW, name, sizeof name),
++				(int)node->AllocationType);
++		count = 0;
++		for (const D3D12_DRED_ALLOCATION_NODE *node = fault.pHeadRecentFreedAllocationNode; node && count < 8; node = node->pNext, count++)
++			Core_Log("DRED:   recently freed allocation '%s' (type %d)", DebugName(node->ObjectNameA, node->ObjectNameW, name, sizeof name),
++				(int)node->AllocationType);
++	}
++	else
++		Core_Log("DRED: no page fault");
++}
++
++void Core_Retire(ComPtr<IUnknown> object)
++{
++	if (object)
++		g_retired.push_back({Core_PendingFence(), std::move(object)});
++}
++
++void Core_CollectGarbage()
++{
++	if (g_retired.empty())
++		return;
++	const UINT64 done = Core_CompletedFence();
++	while (!g_retired.empty() && g_retired.front().fence <= done)
++		g_retired.pop_front();
++}
++
++size_t Core_PendingReleases()
++{
++	return g_retired.size();
++}
++
++void Core_Transition(ID3D12Resource *resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
++{
++	if (!resource || before == after)
++		return;
++	D3D12_RESOURCE_BARRIER barrier = {};
++	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
++	barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
++	barrier.Transition.pResource = resource;
++	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
++	barrier.Transition.StateBefore = before;
++	barrier.Transition.StateAfter = after;
++	g_barriers.push_back(barrier);
++}
++
++void Core_FlushBarriers()
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (list && !g_barriers.empty())
++	{
++		list->ResourceBarrier((UINT)g_barriers.size(), g_barriers.data());
++		g_stats.barriers += (int)g_barriers.size();
++	}
++	g_barriers.clear();
++}
++
++D3D12_CPU_DESCRIPTOR_HANDLE Core_Rtv(UINT index)
++{
++	D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
++	if (g_rtvHeap && index < kRtvCount)
++	{
++		handle = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
++		handle.ptr += (SIZE_T)index * g_rtvStep;
++	}
++	return handle;
++}
++
++D3D12_CPU_DESCRIPTOR_HANDLE Core_Dsv(UINT index)
++{
++	D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
++	if (g_dsvHeap && index < kDsvCount)
++	{
++		handle = g_dsvHeap->GetCPUDescriptorHandleForHeapStart();
++		handle.ptr += (SIZE_T)index * g_dsvStep;
++	}
++	return handle;
++}
++
++CoreStats Core_TakeStats()
++{
++	const CoreStats stats = g_stats;
++	g_stats = CoreStats();
++	return stats;
++}
++
++size_t Core_Allocators()
++{
++	return g_allocatorCount;
++}
++
++} // namespace rr_d3d12
+diff --git a/src/hardware/r_d3d12/d3d12_core.h b/src/hardware/r_d3d12/d3d12_core.h
+new file mode 100644
+index 0000000..e287592
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_core.h
+@@ -0,0 +1,134 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  d3d12_core.h
++/// \brief [UWP]: VibeRant D3D12's device, queue, command list, fences, deferred releases and CPU descriptor heaps
++///
++/// The driver records into one command list, which Core_Submit executes and reopens. Nothing a submitted list uses
++/// may be released before its fence completes: release through Core_Retire, which keeps the object until then.
++
++#ifndef RR_D3D12_CORE_H
++#define RR_D3D12_CORE_H
++
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++#include <d3d11.h>
++#include <d3d12.h>
++#include <dxgi1_4.h>
++#include <wrl/client.h>
++
++namespace rr_d3d12
++{
++
++using Microsoft::WRL::ComPtr;
++
++// "UWP D3D12: " and the message, on a line of its own
++void Core_Log(const char *format, ...);
++
++// Logs a failed HRESULT with the device's removal reason (the first 50, then every 1000th) and counts it
++bool Core_Failed(HRESULT hr, const char *what);
++int Core_Errors();
++
++// Logs something the first time it happens
++#define D3D12_LOG_ONCE(...) do { static bool logged_ = false; if (!logged_) { logged_ = true; rr_d3d12::Core_Log(__VA_ARGS__); } } while (0)
++
++// Makes the device on ANGLE's adapter (found by LUID; without ANGLE, the first hardware adapter), its queue, fence
++// and an open command list. Called again after a failure, it tries again.
++bool Core_Init(ID3D11Device *angle);
++
++// Releases everything if the GPU is idle (or the device was removed); otherwise keeps it all until exit, since
++// releasing objects a list may still use is undefined. Call after the driver has retired or released its own objects.
++void Core_Shutdown(bool idle);
++
++ID3D12Device *Core_Device();
++ID3D12CommandQueue *Core_Queue();
++ID3D12GraphicsCommandList *Core_List(); // open for recording between submissions
++IDXGIAdapter3 *Core_MemoryAdapter(); // for QueryVideoMemoryInfo; may be null
++UINT64 Core_TimestampFrequency();
++bool Core_UMA();
++
++// Called whenever the list is (re)opened: set the render targets, viewport and scissor again there
++void Core_SetListBegin(void (*callback)(void));
++
++// Closes and executes the list, signals the fence and reopens the list. Returns the value the GPU will signal when
++// the work is done, or 0 if nothing could be submitted. reason is counted: "present" is the frame's normal
++// submission; anything else ("ring", "readback", "upload", "probe", "resize") is a mid-frame one.
++UINT64 Core_Submit(const char *reason);
++
++// The value the next Core_Submit signals, which covers everything recorded so far
++UINT64 Core_PendingFence();
++UINT64 Core_CompletedFence(); // UINT64_MAX once the device is removed
++bool Core_FenceDone(UINT64 value);
++
++// Waits up to ms for the GPU to reach value. Never waits for a value that hasn't been signaled; treats the device's
++// removal as failure. waitedMs, if given, receives the time blocked.
++bool Core_Wait(UINT64 value, DWORD ms, const char *what, double *waitedMs = nullptr);
++
++// Waits for everything submitted so far; true if the GPU is idle or the device is gone
++bool Core_WaitIdle(DWORD ms, const char *what);
++
++bool Core_DeviceRemoved();
++HRESULT Core_RemovedReason();
++void Core_LogDeviceRemoved(); // the reason and DRED's breadcrumbs and page fault, once
++
++// Keeps object alive until the work recorded so far is done
++void Core_Retire(ComPtr<IUnknown> object);
++template <typename T>
++void Core_Retire(ComPtr<T> &object)
++{
++	if (object)
++	{
++		ComPtr<IUnknown> unknown;
++		object.As(&unknown);
++		Core_Retire(unknown);
++		object.Reset();
++	}
++}
++void Core_CollectGarbage(); // frees retired objects whose fence has completed
++size_t Core_PendingReleases();
++
++// Batched resource transitions, flushed before clears, copies, draws and Close
++void Core_Transition(ID3D12Resource *resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after);
++void Core_FlushBarriers();
++
++// CPU-only RTV/DSV heaps. Views are read when a clear or OMSetRenderTargets is recorded, so they can be rewritten
++// right after.
++enum
++{
++	kRtvScreen = 0,
++	kRtvPost,
++	kRtvScratch, // the interop probe and other temporaries
++	kRtvCount = 16,
++};
++enum
++{
++	kDsvScreen = 0,
++	kDsvCount = 4,
++};
++D3D12_CPU_DESCRIPTOR_HANDLE Core_Rtv(UINT index);
++D3D12_CPU_DESCRIPTOR_HANDLE Core_Dsv(UINT index);
++
++// Since the last Core_TakeStats
++struct CoreStats
++{
++	int submissions; // all of them
++	int presentSubmissions;
++	int ringSubmissions, readbackSubmissions, uploadSubmissions, otherSubmissions;
++	int barriers;
++	int waits, waitTimeouts;
++	double waitMs, worstWaitMs;
++	int allocatorsCreated;
++};
++CoreStats Core_TakeStats();
++size_t Core_Allocators();
++
++} // namespace rr_d3d12
++#endif
 diff --git a/src/hardware/r_d3d12/d3d12_interop.cpp b/src/hardware/r_d3d12/d3d12_interop.cpp
 new file mode 100644
 index 0000000..f922620
@@ -14282,6 +15357,1682 @@ index 0000000..b3436f7
 +
 +} // namespace rr_d3d12
 +#endif
+diff --git a/src/hardware/r_d3d12/d3d12_present.cpp b/src/hardware/r_d3d12/d3d12_present.cpp
+new file mode 100644
+index 0000000..176935a
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_present.cpp
+@@ -0,0 +1,1614 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  d3d12_present.cpp
++/// \brief [UWP]: Shows VibeRant D3D12's frames through ANGLE, which owns the window
++///
++/// The Direct3D 11 driver's presenter (r_d3d11.cpp), with D3D12 resources: each frame is copied to one of four
++/// textures shared with ANGLE's device, which draws it to the window through OpenGL ES a frame later. The copy's
++/// fence is waited for on the CPU before ANGLE reads the texture, and ANGLE's event query for its last read of a
++/// texture before the submission that copies the next frame into it. How the texture is shared was probed on Xbox
++/// by d3d12_interop.cpp; the same paths are tried here in order, with the same content check.
++
++#include "d3d12_present.h"
++
++#include <d3d11_1.h>
++#include <dxgi1_2.h>
++
++#include <algorithm>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <cwchar>
++#include <thread>
++#include <vector>
++
++#include "SDL.h"
++
++#include "../../doomdef.h"
++#include "../../i_system.h"
++#include "../../sdl/i_uwptrace.h"
++#include "../../sdl/sdlmain.h"
++
++// doomdef.h's
++#undef min
++#undef max
++#undef clamp
++
++extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
++
++namespace rr_d3d12
++{
++namespace
++{
++
++#define Log Core_Log
++#define LOG_ONCE D3D12_LOG_ONCE
++
++double PreciseToMs(precise_t t)
++{
++	return t * 1000.0 / I_GetPrecisePrecision();
++}
++
++// ==========================================================================
++//                                                        EGL AND OPENGL ES
++// ==========================================================================
++
++// Loaded at runtime from ANGLE, as in r_d3d11.cpp
++typedef void *EGLDisplay;
++typedef void *EGLConfig;
++typedef void *EGLSurface;
++typedef void *EGLClientBuffer;
++typedef void *EGLDeviceEXT;
++typedef int32_t EGLint;
++typedef unsigned int EGLBoolean;
++typedef unsigned int EGLenum;
++typedef intptr_t EGLAttrib;
++
++constexpr EGLint EGL_SUCCESS = 0x3000;
++constexpr EGLint EGL_BAD_ATTRIBUTE = 0x3004;
++constexpr EGLint EGL_ALPHA_SIZE = 0x3021;
++constexpr EGLint EGL_BLUE_SIZE = 0x3022;
++constexpr EGLint EGL_GREEN_SIZE = 0x3023;
++constexpr EGLint EGL_RED_SIZE = 0x3024;
++constexpr EGLint EGL_DEPTH_SIZE = 0x3025;
++constexpr EGLint EGL_CONFIG_ID = 0x3028;
++constexpr EGLint EGL_SURFACE_TYPE = 0x3033;
++constexpr EGLint EGL_NONE = 0x3038;
++constexpr EGLint EGL_BIND_TO_TEXTURE_RGBA = 0x303A;
++constexpr EGLint EGL_RENDERABLE_TYPE = 0x3040;
++constexpr EGLint EGL_VENDOR = 0x3053;
++constexpr EGLint EGL_VERSION = 0x3054;
++constexpr EGLint EGL_EXTENSIONS = 0x3055;
++constexpr EGLint EGL_HEIGHT = 0x3056;
++constexpr EGLint EGL_WIDTH = 0x3057;
++constexpr EGLint EGL_TEXTURE_RGBA = 0x305E;
++constexpr EGLint EGL_TEXTURE_2D = 0x305F;
++constexpr EGLint EGL_TEXTURE_FORMAT = 0x3080;
++constexpr EGLint EGL_TEXTURE_TARGET = 0x3081;
++constexpr EGLint EGL_BACK_BUFFER = 0x3084;
++constexpr EGLint EGL_PBUFFER_BIT = 0x0001;
++constexpr EGLint EGL_OPENGL_ES2_BIT = 0x0004;
++constexpr EGLint EGL_TRUE = 1;
++constexpr EGLenum EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE = 0x3200;
++constexpr EGLint EGL_DEVICE_EXT = 0x322C;
++constexpr EGLint EGL_D3D11_DEVICE_ANGLE = 0x33A1;
++constexpr EGLenum EGL_D3D_TEXTURE_ANGLE = 0x33A3;
++
++#define EGLAPIENTRY WINAPI
++using PFNEGLGETCURRENTDISPLAY = EGLDisplay (EGLAPIENTRY *)(void);
++using PFNEGLQUERYSTRING = const char *(EGLAPIENTRY *)(EGLDisplay, EGLint);
++using PFNEGLCHOOSECONFIG = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
++using PFNEGLGETCONFIGATTRIB = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLConfig, EGLint, EGLint *);
++using PFNEGLCREATEPBUFFERFROMCLIENTBUFFER = EGLSurface (EGLAPIENTRY *)(EGLDisplay, EGLenum, EGLClientBuffer, EGLConfig, const EGLint *);
++using PFNEGLDESTROYSURFACE = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface);
++using PFNEGLBINDTEXIMAGE = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface, EGLint);
++using PFNEGLGETERROR = EGLint (EGLAPIENTRY *)(void);
++using PFNEGLGETPROCADDRESS = void *(EGLAPIENTRY *)(const char *);
++using PFNEGLQUERYDISPLAYATTRIBEXT = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLint, EGLAttrib *);
++using PFNEGLQUERYDEVICEATTRIBEXT = EGLBoolean (EGLAPIENTRY *)(EGLDeviceEXT, EGLint, EGLAttrib *);
++
++struct Egl
++{
++	bool loaded = false;
++	PFNEGLGETCURRENTDISPLAY GetCurrentDisplay = nullptr;
++	PFNEGLQUERYSTRING QueryString = nullptr;
++	PFNEGLCHOOSECONFIG ChooseConfig = nullptr;
++	PFNEGLGETCONFIGATTRIB GetConfigAttrib = nullptr;
++	PFNEGLCREATEPBUFFERFROMCLIENTBUFFER CreatePbufferFromClientBuffer = nullptr;
++	PFNEGLDESTROYSURFACE DestroySurface = nullptr;
++	PFNEGLBINDTEXIMAGE BindTexImage = nullptr;
++	PFNEGLBINDTEXIMAGE ReleaseTexImage = nullptr;
++	PFNEGLGETERROR GetError = nullptr;
++	PFNEGLGETPROCADDRESS GetProcAddress = nullptr;
++	PFNEGLQUERYDISPLAYATTRIBEXT QueryDisplayAttribEXT = nullptr;
++	PFNEGLQUERYDEVICEATTRIBEXT QueryDeviceAttribEXT = nullptr;
++};
++Egl egl;
++
++EGLint EglError()
++{
++	return egl.GetError ? egl.GetError() : 0;
++}
++
++void *GetEglFunction(HMODULE module, const char *name)
++{
++	void *function = module ? reinterpret_cast<void *>(::GetProcAddress(module, name)) : nullptr;
++
++	if (!function && egl.GetProcAddress)
++		function = egl.GetProcAddress(name);
++	if (!function)
++		function = SDL_GL_GetProcAddress(name);
++	return function;
++}
++
++bool LoadEgl()
++{
++	if (egl.loaded)
++		return egl.GetCurrentDisplay != nullptr;
++	egl.loaded = true;
++
++	HMODULE module = GetModuleHandleW(L"libEGL.dll");
++	if (!module)
++		Log("libEGL.dll isn't loaded (%lu); looking up EGL through SDL", (unsigned long)GetLastError());
++
++#define LOADEGL(member, name) *reinterpret_cast<void **>(&egl.member) = GetEglFunction(module, name)
++	LOADEGL(GetProcAddress, "eglGetProcAddress");
++	LOADEGL(GetCurrentDisplay, "eglGetCurrentDisplay");
++	LOADEGL(QueryString, "eglQueryString");
++	LOADEGL(ChooseConfig, "eglChooseConfig");
++	LOADEGL(GetConfigAttrib, "eglGetConfigAttrib");
++	LOADEGL(CreatePbufferFromClientBuffer, "eglCreatePbufferFromClientBuffer");
++	LOADEGL(DestroySurface, "eglDestroySurface");
++	LOADEGL(BindTexImage, "eglBindTexImage");
++	LOADEGL(ReleaseTexImage, "eglReleaseTexImage");
++	LOADEGL(GetError, "eglGetError");
++	LOADEGL(QueryDisplayAttribEXT, "eglQueryDisplayAttribEXT");
++	LOADEGL(QueryDeviceAttribEXT, "eglQueryDeviceAttribEXT");
++#undef LOADEGL
++
++	Log("EGL functions: GetCurrentDisplay %d, ChooseConfig %d, CreatePbufferFromClientBuffer %d, BindTexImage %d",
++		egl.GetCurrentDisplay != nullptr, egl.ChooseConfig != nullptr, egl.CreatePbufferFromClientBuffer != nullptr,
++		egl.BindTexImage != nullptr);
++	return egl.GetCurrentDisplay != nullptr;
++}
++
++// OpenGL ES 2
++typedef unsigned int GLenum;
++typedef unsigned int GLuint;
++typedef int GLint;
++typedef int GLsizei;
++typedef unsigned char GLboolean;
++typedef float GLfloat;
++typedef char GLchar;
++typedef ptrdiff_t GLsizeiptr;
++typedef unsigned int GLbitfield;
++
++constexpr GLenum GL_TRIANGLE_STRIP = 0x0005;
++constexpr GLenum GL_CULL_FACE = 0x0B44;
++constexpr GLenum GL_DEPTH_TEST = 0x0B71;
++constexpr GLenum GL_STENCIL_TEST = 0x0B90;
++constexpr GLenum GL_VIEWPORT = 0x0BA2;
++constexpr GLenum GL_BLEND = 0x0BE2;
++constexpr GLenum GL_SCISSOR_TEST = 0x0C11;
++constexpr GLenum GL_COLOR_CLEAR_VALUE = 0x0C22;
++constexpr GLenum GL_COLOR_WRITEMASK = 0x0C23;
++constexpr GLenum GL_UNPACK_ALIGNMENT = 0x0CF5;
++constexpr GLenum GL_TEXTURE_2D = 0x0DE1;
++constexpr GLenum GL_UNSIGNED_BYTE = 0x1401;
++constexpr GLenum GL_FLOAT = 0x1406;
++constexpr GLenum GL_RGBA = 0x1908;
++constexpr GLenum GL_NEAREST = 0x2600;
++constexpr GLenum GL_TEXTURE_MAG_FILTER = 0x2800;
++constexpr GLenum GL_TEXTURE_MIN_FILTER = 0x2801;
++constexpr GLenum GL_TEXTURE_WRAP_S = 0x2802;
++constexpr GLenum GL_TEXTURE_WRAP_T = 0x2803;
++constexpr GLenum GL_COLOR_BUFFER_BIT = 0x4000;
++constexpr GLenum GL_TEXTURE_BINDING_2D = 0x8069;
++constexpr GLenum GL_CLAMP_TO_EDGE = 0x812F;
++constexpr GLenum GL_TEXTURE0 = 0x84C0;
++constexpr GLenum GL_ACTIVE_TEXTURE = 0x84E0;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_ENABLED = 0x8622;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_SIZE = 0x8623;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_STRIDE = 0x8624;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_TYPE = 0x8625;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_POINTER = 0x8645;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_NORMALIZED = 0x886A;
++constexpr GLenum GL_ARRAY_BUFFER = 0x8892;
++constexpr GLenum GL_ARRAY_BUFFER_BINDING = 0x8894;
++constexpr GLenum GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING = 0x889F;
++constexpr GLenum GL_STATIC_DRAW = 0x88E4;
++constexpr GLenum GL_FRAGMENT_SHADER = 0x8B30;
++constexpr GLenum GL_VERTEX_SHADER = 0x8B31;
++constexpr GLenum GL_COMPILE_STATUS = 0x8B81;
++constexpr GLenum GL_LINK_STATUS = 0x8B82;
++constexpr GLenum GL_CURRENT_PROGRAM = 0x8B8D;
++constexpr GLenum GL_FRAMEBUFFER_BINDING = 0x8CA6;
++constexpr GLenum GL_FRAMEBUFFER = 0x8D40;
++
++#define GLAPIENTRY WINAPI
++struct Gles
++{
++	bool loaded = false;
++	void (GLAPIENTRY *ActiveTexture)(GLenum);
++	void (GLAPIENTRY *AttachShader)(GLuint, GLuint);
++	void (GLAPIENTRY *BindAttribLocation)(GLuint, GLuint, const GLchar *);
++	void (GLAPIENTRY *BindBuffer)(GLenum, GLuint);
++	void (GLAPIENTRY *BindFramebuffer)(GLenum, GLuint);
++	void (GLAPIENTRY *BindTexture)(GLenum, GLuint);
++	void (GLAPIENTRY *BufferData)(GLenum, GLsizeiptr, const void *, GLenum);
++	void (GLAPIENTRY *Clear)(GLbitfield);
++	void (GLAPIENTRY *ClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
++	void (GLAPIENTRY *ColorMask)(GLboolean, GLboolean, GLboolean, GLboolean);
++	void (GLAPIENTRY *CompileShader)(GLuint);
++	GLuint (GLAPIENTRY *CreateProgram)(void);
++	GLuint (GLAPIENTRY *CreateShader)(GLenum);
++	void (GLAPIENTRY *DeleteShader)(GLuint);
++	void (GLAPIENTRY *DeleteTextures)(GLsizei, const GLuint *);
++	void (GLAPIENTRY *Disable)(GLenum);
++	void (GLAPIENTRY *DisableVertexAttribArray)(GLuint);
++	void (GLAPIENTRY *DrawArrays)(GLenum, GLint, GLsizei);
++	void (GLAPIENTRY *Enable)(GLenum);
++	void (GLAPIENTRY *EnableVertexAttribArray)(GLuint);
++	void (GLAPIENTRY *Finish)(void);
++	void (GLAPIENTRY *GenBuffers)(GLsizei, GLuint *);
++	void (GLAPIENTRY *GenTextures)(GLsizei, GLuint *);
++	void (GLAPIENTRY *GetBooleanv)(GLenum, GLboolean *);
++	GLenum (GLAPIENTRY *GetError)(void);
++	void (GLAPIENTRY *GetFloatv)(GLenum, GLfloat *);
++	void (GLAPIENTRY *GetIntegerv)(GLenum, GLint *);
++	void (GLAPIENTRY *GetProgramiv)(GLuint, GLenum, GLint *);
++	void (GLAPIENTRY *GetShaderInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
++	void (GLAPIENTRY *GetShaderiv)(GLuint, GLenum, GLint *);
++	GLint (GLAPIENTRY *GetUniformLocation)(GLuint, const GLchar *);
++	void (GLAPIENTRY *GetVertexAttribiv)(GLuint, GLenum, GLint *);
++	void (GLAPIENTRY *GetVertexAttribPointerv)(GLuint, GLenum, void **);
++	GLboolean (GLAPIENTRY *IsEnabled)(GLenum);
++	void (GLAPIENTRY *LinkProgram)(GLuint);
++	void (GLAPIENTRY *PixelStorei)(GLenum, GLint);
++	void (GLAPIENTRY *ShaderSource)(GLuint, GLsizei, const GLchar *const *, const GLint *);
++	void (GLAPIENTRY *TexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void *);
++	void (GLAPIENTRY *TexParameteri)(GLenum, GLenum, GLint);
++	void (GLAPIENTRY *TexSubImage2D)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const void *);
++	void (GLAPIENTRY *Uniform1i)(GLint, GLint);
++	void (GLAPIENTRY *UseProgram)(GLuint);
++	void (GLAPIENTRY *VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void *);
++	void (GLAPIENTRY *Viewport)(GLint, GLint, GLsizei, GLsizei);
++};
++Gles gl;
++
++bool LoadGles()
++{
++	if (gl.loaded)
++		return true;
++
++	bool ok = true;
++#define LOADGL(name) \
++	if (!(*reinterpret_cast<void **>(&gl.name) = SDL_GL_GetProcAddress("gl" #name))) \
++	{ \
++		Log("couldn't find gl" #name); \
++		ok = false; \
++	}
++	LOADGL(ActiveTexture)
++	LOADGL(AttachShader)
++	LOADGL(BindAttribLocation)
++	LOADGL(BindBuffer)
++	LOADGL(BindFramebuffer)
++	LOADGL(BindTexture)
++	LOADGL(BufferData)
++	LOADGL(Clear)
++	LOADGL(ClearColor)
++	LOADGL(ColorMask)
++	LOADGL(CompileShader)
++	LOADGL(CreateProgram)
++	LOADGL(CreateShader)
++	LOADGL(DeleteShader)
++	LOADGL(DeleteTextures)
++	LOADGL(Disable)
++	LOADGL(DisableVertexAttribArray)
++	LOADGL(DrawArrays)
++	LOADGL(Enable)
++	LOADGL(EnableVertexAttribArray)
++	LOADGL(Finish)
++	LOADGL(GenBuffers)
++	LOADGL(GenTextures)
++	LOADGL(GetBooleanv)
++	LOADGL(GetError)
++	LOADGL(GetFloatv)
++	LOADGL(GetIntegerv)
++	LOADGL(GetProgramiv)
++	LOADGL(GetShaderInfoLog)
++	LOADGL(GetShaderiv)
++	LOADGL(GetUniformLocation)
++	LOADGL(GetVertexAttribiv)
++	LOADGL(GetVertexAttribPointerv)
++	LOADGL(IsEnabled)
++	LOADGL(LinkProgram)
++	LOADGL(PixelStorei)
++	LOADGL(ShaderSource)
++	LOADGL(TexImage2D)
++	LOADGL(TexParameteri)
++	LOADGL(TexSubImage2D)
++	LOADGL(Uniform1i)
++	LOADGL(UseProgram)
++	LOADGL(VertexAttribPointer)
++	LOADGL(Viewport)
++#undef LOADGL
++
++	gl.loaded = ok;
++	return ok;
++}
++
++// ==========================================================================
++//                                                                 PRESENTING
++// ==========================================================================
++
++constexpr int kPresentSlots = 4;
++constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // what the Xbox probe shared; the render target's too
++constexpr UINT kProbeSize = 64;
++
++enum Path { PATH_NONE, PATH_A, PATH_B, PATH_C, PATH_D };
++
++char PathName(Path path)
++{
++	return path == PATH_A ? 'A' : path == PATH_B ? 'B' : path == PATH_C ? 'C' : path == PATH_D ? 'D' : '-';
++}
++
++struct PresentSlot
++{
++	ComPtr<ID3D12Resource> resource; // shared with ANGLE (A-C), or a READBACK buffer (D)
++	ComPtr<ID3D11Texture2D> texture; // ANGLE's view of the shared texture (A-C)
++	ComPtr<ID3D11Texture2D> legacy; // C: what the EGL surface uses, copied from texture on ANGLE's device
++	EGLSurface surface = nullptr;
++	GLuint glTexture = 0;
++	UINT64 copyFence = 0; // the submission that copied a frame into it
++	ComPtr<ID3D11Query> read; // completion of ANGLE's draw that samples this slot
++	bool readPending = false;
++	bool timing = false; // the frame's begin timestamp is recorded
++	UINT64 timingFence = 0; // the submission that resolved its timestamps, until they're read
++};
++
++struct Presenter
++{
++	bool probed = false;
++	Path path = PATH_NONE;
++	bool cAngleOwned = false; // C's transport: B's rather than A's
++	EGLDisplay display = nullptr;
++	EGLConfig config = nullptr;
++	PresentSlot slots[kPresentSlots];
++	ComPtr<ID3D11Device> angleDevice;
++	ComPtr<ID3D11Device1> angleDevice1;
++	ComPtr<ID3D11DeviceContext> angleContext;
++	bool deviceProbed = false, angleQueries = false;
++	precise_t lastPresent = 0;
++	bool hasLastPresent = false;
++	UINT width = 0, height = 0;
++	UINT64 frame = 0;
++	GLuint program = 0;
++	GLuint quad = 0;
++	float quadSize[2] = {0.0f, 0.0f};
++	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {}; // D: the frame's layout in the READBACK buffer
++	UINT64 readbackBytes = 0;
++	std::vector<BYTE> readback;
++	ComPtr<ID3D12QueryHeap> timestamps; // a begin and end per slot
++	ComPtr<ID3D12Resource> timestampBuffer; // READBACK, 16 bytes per slot
++	bool timestampsTried = false;
++	bool failed = false; // couldn't set up presenting, so stop trying
++};
++Presenter g_present;
++bool g_presentImmediately = false;
++INT32 g_traceCopied = -1, g_traceShown = -1;
++UINT32 g_traceCopyFrame, g_traceShowFrame, g_traceSlotFrame[kPresentSlots];
++
++struct PresentStats
++{
++	precise_t copyTime, glTime, swapTime;
++	double copyWaitMs, worstCopyWaitMs;
++	int copyWaits, copyWaitFailures;
++	int angleReadWaits, angleReadTimeouts, fallbackFinishes;
++	precise_t angleReadWaitTime;
++	double gpuMs, worstGpuMs;
++	int gpuFrames;
++};
++PresentStats g_stats;
++
++int g_tracedFrames = 0;
++constexpr int kTraceFrames = 3;
++
++// Keep a reference: EGL owns the pointer returned by the device query.
++void InitAngleDevice()
++{
++	if (g_present.deviceProbed)
++		return;
++	if (!LoadEgl())
++	{
++		g_present.deviceProbed = true;
++		return;
++	}
++	const EGLDisplay display = egl.GetCurrentDisplay();
++	if (!display)
++		return; // retry once ANGLE's context is current
++	g_present.deviceProbed = true;
++	if (!egl.QueryDisplayAttribEXT || !egl.QueryDeviceAttribEXT)
++		return;
++
++	EGLAttrib device = 0, d3dDevice = 0;
++	if (!egl.QueryDisplayAttribEXT(display, EGL_DEVICE_EXT, &device) || !device)
++		return;
++	const EGLDeviceEXT eglDevice = reinterpret_cast<EGLDeviceEXT>(device);
++	if (!egl.QueryDeviceAttribEXT(eglDevice, EGL_D3D11_DEVICE_ANGLE, &d3dDevice) || !d3dDevice)
++	{
++		Log("couldn't get ANGLE's device (EGL error 0x%X)", EglError());
++		return;
++	}
++	g_present.angleDevice = reinterpret_cast<ID3D11Device *>(d3dDevice); // ComPtr assignment AddRefs
++	g_present.angleDevice->GetImmediateContext(&g_present.angleContext);
++	if (FAILED(g_present.angleDevice.As(&g_present.angleDevice1)))
++		Log("ANGLE's device has no ID3D11Device1, so it can't open D3D12's textures");
++	Log("ANGLE's device has feature level 0x%X", (unsigned)g_present.angleDevice->GetFeatureLevel());
++}
++
++// A copy on D3D12 must not overtake a pending read on ANGLE's device.
++void WaitForAngleRead(PresentSlot &slot)
++{
++	if (!slot.readPending)
++		return;
++	const precise_t start = I_GetPreciseTime();
++	bool blocked = false;
++	UINT flags = 0; // allow one submission, then poll without repeatedly flushing
++	for (;;)
++	{
++		BOOL done = FALSE;
++		const HRESULT hr = g_present.angleContext->GetData(slot.read.Get(), &done, sizeof done, flags);
++		if (hr == S_OK && done)
++			break;
++		if (Core_Failed(hr, "GetData (ANGLE read finished)"))
++			break;
++		blocked = true;
++		if (PreciseToMs(I_GetPreciseTime() - start) >= 100.0)
++		{
++			g_stats.angleReadTimeouts++;
++			LOG_ONCE("gave up waiting for ANGLE's slot read after 100 ms");
++			break; // bounded wait, as with the copy fence
++		}
++		flags = D3D11_ASYNC_GETDATA_DONOTFLUSH;
++		std::this_thread::yield();
++	}
++	if (blocked)
++	{
++		g_stats.angleReadWaits++;
++		g_stats.angleReadWaitTime += I_GetPreciseTime() - start;
++	}
++	slot.readPending = false;
++}
++
++// Called after allocating all slots, including on resize or readback fallback.
++void InitPresentSync()
++{
++	InitAngleDevice();
++	g_present.angleQueries = g_present.angleContext.Get() != nullptr;
++	if (g_present.angleQueries)
++	{
++		const D3D11_QUERY_DESC desc = {D3D11_QUERY_EVENT, 0};
++		for (PresentSlot &slot : g_present.slots)
++		{
++			if (Core_Failed(g_present.angleDevice->CreateQuery(&desc, &slot.read), "CreateQuery (ANGLE slot read)"))
++			{
++				g_present.angleQueries = false;
++				break;
++			}
++		}
++	}
++	if (g_present.angleQueries)
++		LOG_ONCE("present sync: cpu fence + ANGLE queries");
++	else
++	{
++		for (PresentSlot &slot : g_present.slots)
++			slot.read.Reset();
++		LOG_ONCE("present sync: cpu fence + glFinish on fast frames (under 8 ms)");
++	}
++}
++
++void FinishAngleRead(PresentSlot &slot, bool fastFrame)
++{
++	if (g_present.angleQueries)
++	{
++		// ANGLE issues GL draws directly on its immediate context, so End is ordered after DrawToWindow (see
++		// r_d3d11.cpp's FinishAngleRead).
++		g_present.angleContext->End(slot.read.Get());
++		slot.readPending = true;
++	}
++	else if (fastFrame)
++	{
++		gl.Finish();
++		g_stats.fallbackFinishes++;
++	}
++}
++
++// Without the error lost to a second eglGetError
++EGLSurface CreatePbuffer(EGLenum type, EGLClientBuffer buffer, EGLConfig config, UINT width, UINT height, EGLint *error)
++{
++	const EGLint attributes[] =
++	{
++		EGL_WIDTH, (EGLint)width,
++		EGL_HEIGHT, (EGLint)height,
++		EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
++		EGL_TEXTURE_TARGET, EGL_TEXTURE_2D,
++		EGL_NONE,
++	};
++	EGLSurface surface = egl.CreatePbufferFromClientBuffer(g_present.display, type, buffer, config, attributes);
++	*error = surface ? EGL_SUCCESS : EglError();
++	if (!surface && type == EGL_D3D_TEXTURE_ANGLE && *error == EGL_BAD_ATTRIBUTE)
++	{
++		// Older ANGLE builds take the size from the texture and reject EGL_WIDTH/EGL_HEIGHT here
++		surface = egl.CreatePbufferFromClientBuffer(g_present.display, type, buffer, config, attributes + 4);
++		*error = surface ? EGL_SUCCESS : EglError();
++	}
++	return surface;
++}
++
++// A (angleOwned false): a D3D12 texture ANGLE's device opens. B: a texture of ANGLE's device that D3D12 opens. The
++// NT handle is closed once both sides have it.
++bool CreateSharedTexture(bool angleOwned, UINT width, UINT height, const wchar_t *name, ComPtr<ID3D12Resource> &resource,
++	ComPtr<ID3D11Texture2D> &texture)
++{
++	ID3D12Device *device = Core_Device();
++	HANDLE handle = nullptr;
++	bool ok;
++	resource.Reset();
++	texture.Reset();
++	if (angleOwned)
++	{
++		D3D11_TEXTURE2D_DESC desc = {};
++		desc.Width = width;
++		desc.Height = height;
++		desc.MipLevels = 1;
++		desc.ArraySize = 1;
++		desc.Format = kFormat;
++		desc.SampleDesc.Count = 1;
++		desc.Usage = D3D11_USAGE_DEFAULT;
++		desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
++		desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
++		ComPtr<IDXGIResource1> dxgi;
++		ok = !Core_Failed(g_present.angleDevice->CreateTexture2D(&desc, nullptr, &texture), "CreateTexture2D (ANGLE, NT shared)")
++			&& !Core_Failed(texture.As(&dxgi), "QueryInterface IDXGIResource1")
++			&& !Core_Failed(dxgi->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr,
++				&handle), "CreateSharedHandle (ANGLE)")
++			&& handle
++			&& !Core_Failed(device->OpenSharedHandle(handle, IID_PPV_ARGS(&resource)), "OpenSharedHandle");
++	}
++	else
++	{
++		D3D12_HEAP_PROPERTIES heap = {};
++		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++		D3D12_RESOURCE_DESC desc = {};
++		desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++		desc.Width = width;
++		desc.Height = height;
++		desc.DepthOrArraySize = 1;
++		desc.MipLevels = 1;
++		desc.Format = kFormat;
++		desc.SampleDesc.Count = 1;
++		desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++		ok = g_present.angleDevice1
++			&& !Core_Failed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_SHARED, &desc, D3D12_RESOURCE_STATE_COMMON,
++				nullptr, IID_PPV_ARGS(&resource)), "CreateCommittedResource (shared)")
++			&& !Core_Failed(device->CreateSharedHandle(resource.Get(), nullptr, GENERIC_ALL, nullptr, &handle), "CreateSharedHandle")
++			&& handle
++			&& !Core_Failed(g_present.angleDevice1->OpenSharedResource1(handle, IID_PPV_ARGS(&texture)), "OpenSharedResource1");
++	}
++	if (handle && handle != INVALID_HANDLE_VALUE)
++		CloseHandle(handle);
++	if (!ok)
++	{
++		// Nothing has used them on the GPU yet
++		resource.Reset();
++		texture.Reset();
++		return false;
++	}
++	resource->SetName(name);
++	return true;
++}
++
++// C: a texture of ANGLE's device with a legacy share handle, which ANGLE's pbuffers have always opened. Legacy
++// handles aren't NT handles: never close them.
++bool CreateLegacyTexture(UINT width, UINT height, ComPtr<ID3D11Texture2D> &texture, HANDLE *handle)
++{
++	D3D11_TEXTURE2D_DESC desc = {};
++	desc.Width = width;
++	desc.Height = height;
++	desc.MipLevels = 1;
++	desc.ArraySize = 1;
++	desc.Format = kFormat;
++	desc.SampleDesc.Count = 1;
++	desc.Usage = D3D11_USAGE_DEFAULT;
++	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
++	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
++
++	*handle = nullptr;
++	ComPtr<IDXGIResource> resource;
++	if (Core_Failed(g_present.angleDevice->CreateTexture2D(&desc, nullptr, &texture), "CreateTexture2D (ANGLE, legacy shared)")
++		|| Core_Failed(texture.As(&resource), "QueryInterface IDXGIResource")
++		|| Core_Failed(resource->GetSharedHandle(handle), "GetSharedHandle")
++		|| !*handle)
++	{
++		texture.Reset();
++		return false;
++	}
++	return true;
++}
++
++// Clears the D3D12 side and reads it back on ANGLE's, like the S0a probe. Call with nothing else of the frame's
++// recorded that matters: the clear is submitted at once.
++bool CheckContent(ID3D12Resource *resource, ID3D11Texture2D *texture, ID3D11Texture2D *legacy, const char *scope)
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (!list)
++		return false;
++
++	const float color[] = {64.0f / 255.0f, 128.0f / 255.0f, 192.0f / 255.0f, 1.0f};
++	const UINT expected = 0xFFC08040;
++	const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kRtvScratch);
++	Core_Device()->CreateRenderTargetView(resource, nullptr, rtv);
++	Core_Transition(resource, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET);
++	Core_FlushBarriers();
++	list->ClearRenderTargetView(rtv, color, 0, nullptr);
++	Core_Transition(resource, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON);
++	const UINT64 fence = Core_Submit("probe");
++	if (!fence || !Core_Wait(fence, 500, "the interop test clear"))
++	{
++		Log("%s: the test clear didn't finish", scope);
++		return false;
++	}
++
++	D3D11_TEXTURE2D_DESC desc = {};
++	texture->GetDesc(&desc);
++	desc.Usage = D3D11_USAGE_STAGING;
++	desc.BindFlags = 0;
++	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
++	desc.MiscFlags = 0;
++	const D3D11_QUERY_DESC queryDesc = {D3D11_QUERY_EVENT, 0};
++	ComPtr<ID3D11Texture2D> staging;
++	ComPtr<ID3D11Query> query;
++	if (Core_Failed(g_present.angleDevice->CreateTexture2D(&desc, nullptr, &staging), "CreateTexture2D (interop staging)")
++		|| Core_Failed(g_present.angleDevice->CreateQuery(&queryDesc, &query), "CreateQuery (interop)"))
++		return false;
++
++	ID3D11DeviceContext *context = g_present.angleContext.Get();
++	if (legacy)
++		context->CopyResource(legacy, texture);
++	context->CopyResource(staging.Get(), legacy ? legacy : texture);
++	context->End(query.Get());
++	context->Flush();
++	const precise_t start = I_GetPreciseTime();
++	for (;;)
++	{
++		BOOL done = FALSE;
++		const HRESULT hr = context->GetData(query.Get(), &done, sizeof done, D3D11_ASYNC_GETDATA_DONOTFLUSH);
++		if (hr == S_OK && done)
++			break;
++		if (FAILED(hr) || PreciseToMs(I_GetPreciseTime() - start) >= 100.0)
++		{
++			Log("%s: ANGLE's copy query 0x%08X, %s", scope, (unsigned)hr, FAILED(hr) ? "failed" : "timed out after 100 ms");
++			return false;
++		}
++		std::this_thread::yield();
++	}
++
++	D3D11_MAPPED_SUBRESOURCE mapped = {};
++	if (Core_Failed(context->Map(staging.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped), "Map (interop staging)"))
++		return false;
++	UINT pixel = 0;
++	const bool valid = mapped.pData && mapped.RowPitch >= kProbeSize * 4;
++	if (valid)
++		memcpy(&pixel, mapped.pData, sizeof pixel);
++	context->Unmap(staging.Get(), 0);
++	if (valid && pixel == expected)
++	{
++		Log("%s: content ok", scope);
++		return true;
++	}
++	Log("%s: mismatch got 0x%08X expected 0x%08X%s", scope, pixel, expected, valid ? "" : " (invalid mapping)");
++	return false;
++}
++
++// Makes a test texture the path's way, finds the first config ANGLE opens it with (like r_d3d11.cpp's
++// ProbeSharing; config 0 fails with 0x300C on Xbox), then checks its content.
++bool TryPath(Path path, const EGLConfig *configs, EGLint count)
++{
++	const char *scope = path == PATH_A ? "share A" : path == PATH_B ? "share B" : "share C";
++	ComPtr<ID3D12Resource> resource;
++	ComPtr<ID3D11Texture2D> texture, legacy;
++	bool angleOwned = path == PATH_B;
++	if (!CreateSharedTexture(angleOwned, kProbeSize, kProbeSize, L"interop test", resource, texture))
++	{
++		if (path != PATH_C)
++		{
++			Log("%s: couldn't share a texture", scope);
++			return false;
++		}
++		Log("%s: retrying with an ANGLE-owned texture", scope);
++		angleOwned = true;
++		if (!CreateSharedTexture(true, kProbeSize, kProbeSize, L"interop test", resource, texture))
++		{
++			Log("%s: couldn't share a texture", scope);
++			return false;
++		}
++	}
++
++	HANDLE legacyHandle = nullptr;
++	if (path == PATH_C && !CreateLegacyTexture(kProbeSize, kProbeSize, legacy, &legacyHandle))
++	{
++		Log("%s: couldn't make the legacy shared texture", scope);
++		return false; // unused on the GPU, so released at once
++	}
++
++	const EGLenum type = path == PATH_C ? EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE : EGL_D3D_TEXTURE_ANGLE;
++	const EGLClientBuffer buffer = path == PATH_C ? static_cast<EGLClientBuffer>(legacyHandle)
++		: static_cast<EGLClientBuffer>(texture.Get());
++	GLint previousTexture = 0;
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
++	EGLSurface surface = nullptr;
++	GLuint glTexture = 0;
++	int chosen = -1;
++	for (EGLint i = 0; i < count && chosen < 0; i++)
++	{
++		EGLint error = 0;
++		surface = CreatePbuffer(type, buffer, configs[i], kProbeSize, kProbeSize, &error);
++		if (!surface)
++		{
++			Log("%s: ANGLE couldn't open it with config %d (EGL error 0x%X)", scope, (int)i, error);
++			continue;
++		}
++		gl.GenTextures(1, &glTexture);
++		gl.BindTexture(GL_TEXTURE_2D, glTexture);
++		if (egl.BindTexImage(g_present.display, surface, EGL_BACK_BUFFER))
++		{
++			chosen = (int)i;
++			break;
++		}
++		Log("%s: eglBindTexImage failed with config %d (EGL error 0x%X)", scope, (int)i, EglError());
++		egl.DestroySurface(g_present.display, surface);
++		gl.DeleteTextures(1, &glTexture);
++		surface = nullptr;
++		glTexture = 0;
++	}
++
++	const bool ok = chosen >= 0 && CheckContent(resource.Get(), texture.Get(), legacy.Get(), scope);
++
++	// The EGL surface before the textures it uses
++	if (surface)
++	{
++		gl.BindTexture(GL_TEXTURE_2D, glTexture);
++		egl.ReleaseTexImage(g_present.display, surface, EGL_BACK_BUFFER);
++		egl.DestroySurface(g_present.display, surface);
++	}
++	if (glTexture)
++		gl.DeleteTextures(1, &glTexture);
++	gl.BindTexture(GL_TEXTURE_2D, previousTexture);
++	legacy.Reset();
++	texture.Reset();
++	Core_Retire(resource); // still in use if the clear timed out
++
++	if (ok)
++	{
++		g_present.config = configs[chosen];
++		g_present.cAngleOwned = angleOwned;
++		Log("interop path %c (pbuffer config %d%s)", PathName(path), chosen,
++			path == PATH_C ? (angleOwned ? ", ANGLE-owned texture" : ", D3D12-owned texture") : "");
++	}
++	return ok;
++}
++
++void DestroySlots(bool idle)
++{
++	GLint previousTexture = 0;
++	if (gl.loaded)
++		gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
++	for (PresentSlot &slot : g_present.slots)
++	{
++		WaitForAngleRead(slot);
++		// The EGL surface first, then ANGLE's textures it uses, then D3D12's
++		if (slot.surface)
++		{
++			if (slot.glTexture)
++			{
++				gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++				egl.ReleaseTexImage(g_present.display, slot.surface, EGL_BACK_BUFFER);
++			}
++			egl.DestroySurface(g_present.display, slot.surface);
++		}
++		if (slot.glTexture)
++			gl.DeleteTextures(1, &slot.glTexture);
++		slot.legacy.Reset();
++		slot.texture.Reset();
++		if (idle)
++			slot.resource.Reset();
++		else
++			Core_Retire(slot.resource);
++		slot = PresentSlot();
++	}
++	if (gl.loaded)
++		gl.BindTexture(GL_TEXTURE_2D, previousTexture);
++	g_present.width = g_present.height = 0;
++}
++
++void CreateTimestamps()
++{
++	if (g_present.timestampsTried)
++		return;
++	g_present.timestampsTried = true;
++	if (!Core_TimestampFrequency())
++		return;
++
++	D3D12_QUERY_HEAP_DESC heapDesc = {};
++	heapDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
++	heapDesc.Count = 2 * kPresentSlots;
++	D3D12_HEAP_PROPERTIES heap = {};
++	heap.Type = D3D12_HEAP_TYPE_READBACK;
++	D3D12_RESOURCE_DESC desc = {};
++	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++	desc.Width = kPresentSlots * 2 * sizeof(UINT64);
++	desc.Height = 1;
++	desc.DepthOrArraySize = 1;
++	desc.MipLevels = 1;
++	desc.SampleDesc.Count = 1;
++	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++	if (Core_Failed(Core_Device()->CreateQueryHeap(&heapDesc, IID_PPV_ARGS(&g_present.timestamps)), "CreateQueryHeap (timestamps)")
++		|| Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
++			nullptr, IID_PPV_ARGS(&g_present.timestampBuffer)), "CreateCommittedResource (timestamps)"))
++	{
++		g_present.timestamps.Reset();
++		g_present.timestampBuffer.Reset();
++		return;
++	}
++	g_present.timestampBuffer->SetName(L"GPU timestamps");
++}
++
++// Makes the textures frames are presented from, at the size of the screen. Call with ANGLE's context current.
++bool CreateSlots(UINT width, UINT height)
++{
++	DestroySlots(false);
++	CreateTimestamps();
++
++	GLint previousTexture = 0;
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
++
++	if (g_present.path == PATH_D)
++	{
++		D3D12_RESOURCE_DESC desc = {};
++		desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++		desc.Width = width;
++		desc.Height = height;
++		desc.DepthOrArraySize = 1;
++		desc.MipLevels = 1;
++		desc.Format = kFormat;
++		desc.SampleDesc.Count = 1;
++		Core_Device()->GetCopyableFootprints(&desc, 0, 1, 0, &g_present.footprint, nullptr, nullptr, &g_present.readbackBytes);
++	}
++
++	bool ok = true;
++	for (int i = 0; i < kPresentSlots && ok; i++)
++	{
++		PresentSlot &slot = g_present.slots[i];
++		wchar_t name[32];
++		swprintf(name, sizeof name / sizeof *name, L"present slot %d", i);
++
++		gl.GenTextures(1, &slot.glTexture);
++		gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++		// Like DrawScreenFinalTexture's
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++
++		if (g_present.path == PATH_D)
++		{
++			D3D12_HEAP_PROPERTIES heap = {};
++			heap.Type = D3D12_HEAP_TYPE_READBACK;
++			D3D12_RESOURCE_DESC desc = {};
++			desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++			desc.Width = g_present.readbackBytes;
++			desc.Height = 1;
++			desc.DepthOrArraySize = 1;
++			desc.MipLevels = 1;
++			desc.SampleDesc.Count = 1;
++			desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++			ok = !Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++				D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&slot.resource)), "CreateCommittedResource (readback)");
++			if (ok)
++			{
++				slot.resource->SetName(name);
++				gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
++			}
++			continue;
++		}
++
++		const bool angleOwned = g_present.path == PATH_B || (g_present.path == PATH_C && g_present.cAngleOwned);
++		HANDLE legacyHandle = nullptr;
++		if (!CreateSharedTexture(angleOwned, width, height, name, slot.resource, slot.texture)
++			|| (g_present.path == PATH_C && !CreateLegacyTexture(width, height, slot.legacy, &legacyHandle)))
++		{
++			ok = false;
++			break;
++		}
++		EGLint error = 0;
++		if (g_present.path == PATH_C)
++			slot.surface = CreatePbuffer(EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, legacyHandle, g_present.config, width, height, &error);
++		else
++			slot.surface = CreatePbuffer(EGL_D3D_TEXTURE_ANGLE, slot.texture.Get(), g_present.config, width, height, &error);
++		if (!slot.surface)
++		{
++			Log("ANGLE couldn't open the %ux%u shared texture (EGL error 0x%X)", width, height, error);
++			ok = false;
++			break;
++		}
++		// The GL texture's storage stays the shared texture's, so it shows whatever was last copied to it
++		if (!egl.BindTexImage(g_present.display, slot.surface, EGL_BACK_BUFFER))
++		{
++			Log("eglBindTexImage failed (EGL error 0x%X)", EglError());
++			ok = false;
++			break;
++		}
++	}
++
++	gl.BindTexture(GL_TEXTURE_2D, previousTexture);
++	if (!ok)
++		return false;
++	g_present.width = width;
++	g_present.height = height;
++	g_present.frame = 0;
++	g_present.hasLastPresent = false;
++	InitPresentSync();
++
++	const GLenum error = gl.GetError();
++	Log("made %d %ux%u presentation textures (interop path %c; GL error 0x%X)", kPresentSlots, width, height,
++		PathName(g_present.path), error);
++	return true;
++}
++
++GLuint CompileGlShader(GLenum type, const char *source)
++{
++	GLuint shader = gl.CreateShader(type);
++	GLint status = 0;
++
++	gl.ShaderSource(shader, 1, &source, nullptr);
++	gl.CompileShader(shader);
++	gl.GetShaderiv(shader, GL_COMPILE_STATUS, &status);
++	if (!status)
++	{
++		char info[1024] = "";
++		gl.GetShaderInfoLog(shader, sizeof info, nullptr, info);
++		Log("presentation shader didn't compile: %s", info);
++		gl.DeleteShader(shader);
++		return 0;
++	}
++	return shader;
++}
++
++bool CreatePresentProgram()
++{
++	static const char *vertexSource =
++		"attribute vec2 a_position;\n"
++		"attribute vec2 a_texcoord;\n"
++		"varying vec2 v_texcoord;\n"
++		"void main()\n"
++		"{\n"
++		"	v_texcoord = a_texcoord;\n"
++		"	gl_Position = vec4(a_position, 0.0, 1.0);\n"
++		"}\n";
++	static const char *fragmentSource =
++		"precision mediump float;\n"
++		"uniform sampler2D u_texture;\n"
++		"varying vec2 v_texcoord;\n"
++		"void main()\n"
++		"{\n"
++		"	gl_FragColor = vec4(texture2D(u_texture, v_texcoord).rgb, 1.0);\n"
++		"}\n";
++
++	if (g_present.program)
++		return true;
++
++	GLuint vertex = CompileGlShader(GL_VERTEX_SHADER, vertexSource);
++	GLuint fragment = CompileGlShader(GL_FRAGMENT_SHADER, fragmentSource);
++	if (!vertex || !fragment)
++		return false;
++
++	GLuint program = gl.CreateProgram();
++	GLint status = 0, previousProgram = 0;
++
++	gl.AttachShader(program, vertex);
++	gl.AttachShader(program, fragment);
++	gl.BindAttribLocation(program, 0, "a_position");
++	gl.BindAttribLocation(program, 1, "a_texcoord");
++	gl.LinkProgram(program);
++	gl.DeleteShader(vertex);
++	gl.DeleteShader(fragment);
++	gl.GetProgramiv(program, GL_LINK_STATUS, &status);
++	if (!status)
++	{
++		Log("presentation shader didn't link");
++		return false;
++	}
++
++	gl.GetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
++	gl.UseProgram(program);
++	gl.Uniform1i(gl.GetUniformLocation(program, "u_texture"), 0);
++	gl.UseProgram(previousProgram);
++
++	g_present.program = program;
++	gl.GenBuffers(1, &g_present.quad);
++	return true;
++}
++
++// The OpenGL ES state of the GL2 RHI that presenting changes, to put it back
++struct SavedGlState
++{
++	GLint program, activeTexture, texture, arrayBuffer, framebuffer, viewport[4], unpackAlignment;
++	GLboolean blend, depthTest, scissorTest, cullFace, stencilTest, colorMask[4];
++	GLfloat clearColor[4];
++	struct
++	{
++		GLint enabled, size, type, normalized, stride, buffer;
++		void *pointer;
++	} attributes[2];
++};
++
++void SaveGlState(SavedGlState &s)
++{
++	gl.GetIntegerv(GL_CURRENT_PROGRAM, &s.program);
++	gl.GetIntegerv(GL_ACTIVE_TEXTURE, &s.activeTexture);
++	gl.ActiveTexture(GL_TEXTURE0);
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &s.texture);
++	gl.GetIntegerv(GL_ARRAY_BUFFER_BINDING, &s.arrayBuffer);
++	gl.GetIntegerv(GL_FRAMEBUFFER_BINDING, &s.framebuffer);
++	gl.GetIntegerv(GL_VIEWPORT, s.viewport);
++	gl.GetIntegerv(GL_UNPACK_ALIGNMENT, &s.unpackAlignment);
++	s.blend = gl.IsEnabled(GL_BLEND);
++	s.depthTest = gl.IsEnabled(GL_DEPTH_TEST);
++	s.scissorTest = gl.IsEnabled(GL_SCISSOR_TEST);
++	s.cullFace = gl.IsEnabled(GL_CULL_FACE);
++	s.stencilTest = gl.IsEnabled(GL_STENCIL_TEST);
++	gl.GetBooleanv(GL_COLOR_WRITEMASK, s.colorMask);
++	gl.GetFloatv(GL_COLOR_CLEAR_VALUE, s.clearColor);
++
++	for (GLuint i = 0; i < 2; i++)
++	{
++		auto &a = s.attributes[i];
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &a.enabled);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_SIZE, &a.size);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_TYPE, &a.type);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, &a.normalized);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &a.stride);
++		gl.GetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &a.buffer);
++		gl.GetVertexAttribPointerv(i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &a.pointer);
++	}
++}
++
++void SetEnabled(GLenum capability, GLboolean enabled)
++{
++	if (enabled)
++		gl.Enable(capability);
++	else
++		gl.Disable(capability);
++}
++
++void RestoreGlState(const SavedGlState &s)
++{
++	for (GLuint i = 0; i < 2; i++)
++	{
++		const auto &a = s.attributes[i];
++		gl.BindBuffer(GL_ARRAY_BUFFER, a.buffer);
++		gl.VertexAttribPointer(i, a.size, a.type, (GLboolean)a.normalized, a.stride, a.pointer);
++		if (a.enabled)
++			gl.EnableVertexAttribArray(i);
++		else
++			gl.DisableVertexAttribArray(i);
++	}
++
++	gl.BindBuffer(GL_ARRAY_BUFFER, s.arrayBuffer);
++	gl.UseProgram(s.program);
++	gl.BindTexture(GL_TEXTURE_2D, s.texture);
++	gl.ActiveTexture(s.activeTexture);
++	gl.BindFramebuffer(GL_FRAMEBUFFER, s.framebuffer);
++	gl.Viewport(s.viewport[0], s.viewport[1], s.viewport[2], s.viewport[3]);
++	gl.PixelStorei(GL_UNPACK_ALIGNMENT, s.unpackAlignment);
++	SetEnabled(GL_BLEND, s.blend);
++	SetEnabled(GL_DEPTH_TEST, s.depthTest);
++	SetEnabled(GL_SCISSOR_TEST, s.scissorTest);
++	SetEnabled(GL_CULL_FACE, s.cullFace);
++	SetEnabled(GL_STENCIL_TEST, s.stencilTest);
++	gl.ColorMask(s.colorMask[0], s.colorMask[1], s.colorMask[2], s.colorMask[3]);
++	gl.ClearColor(s.clearColor[0], s.clearColor[1], s.clearColor[2], s.clearColor[3]);
++}
++
++// Reads the GPU time of the frame a slot timed, once its submission has finished; otherwise drops it
++void ReadGpuTime(PresentSlot &slot)
++{
++	const UINT64 fence = slot.timingFence;
++	slot.timingFence = 0;
++	if (!fence || !g_present.timestampBuffer || !Core_FenceDone(fence) || Core_DeviceRemoved())
++		return;
++
++	const size_t index = &slot - g_present.slots;
++	const D3D12_RANGE range = {index * 2 * sizeof(UINT64), (index + 1) * 2 * sizeof(UINT64)};
++	void *data = nullptr;
++	if (Core_Failed(g_present.timestampBuffer->Map(0, &range, &data), "Map (timestamps)"))
++		return;
++	UINT64 times[2];
++	memcpy(times, static_cast<const BYTE *>(data) + range.Begin, sizeof times);
++	const D3D12_RANGE written = {0, 0};
++	g_present.timestampBuffer->Unmap(0, &written);
++
++	// No disjoint query in D3D12: drop what can't be right
++	if (times[1] <= times[0])
++		return;
++	const double ms = (times[1] - times[0]) * 1000.0 / Core_TimestampFrequency();
++	g_stats.gpuMs += ms;
++	g_stats.gpuFrames++;
++	if (ms > 250.0)
++		LOG_ONCE("GPU frame exceeded 250 ms (%.1f ms)", ms);
++	if (ms > g_stats.worstGpuMs)
++		g_stats.worstGpuMs = ms;
++}
++
++// At the start of a frame's recording
++void BeginGpuTime(PresentSlot &slot)
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (!list || !g_present.timestamps)
++		return;
++	const UINT index = (UINT)(&slot - g_present.slots);
++	list->EndQuery(g_present.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * index);
++	slot.timing = true;
++}
++
++// Before the frame's copy; Present_Frame records which submission resolves it
++bool EndGpuTime(PresentSlot &slot)
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (!slot.timing || !list || !g_present.timestamps)
++		return false;
++	slot.timing = false;
++	const UINT index = (UINT)(&slot - g_present.slots);
++	list->EndQuery(g_present.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * index + 1);
++	list->ResolveQueryData(g_present.timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * index, 2,
++		g_present.timestampBuffer.Get(), index * 2 * sizeof(UINT64));
++	return true;
++}
++
++// Draws a slot's frame to ANGLE's window surface
++void DrawToWindow(PresentSlot &slot, bool trace)
++{
++	int windowWidth = 0, windowHeight = 0;
++	uwp_GetScreenSize(&windowWidth, &windowHeight);
++	if (windowWidth <= 0 || windowHeight <= 0)
++	{
++		windowWidth = (int)g_present.width;
++		windowHeight = (int)g_present.height;
++	}
++
++	// Letterbox it like DrawScreenFinalTexture
++	const float origaspect = (float)g_present.width / g_present.height;
++	const float newaspect = (float)windowWidth / windowHeight;
++	float xoff = 1.0f, yoff = 1.0f;
++	if (origaspect < newaspect)
++		xoff = origaspect / newaspect;
++	else if (origaspect > newaspect)
++		yoff = newaspect / origaspect;
++
++	SavedGlState saved;
++	SaveGlState(saved);
++
++	gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
++	gl.Viewport(0, 0, windowWidth, windowHeight);
++	gl.Disable(GL_BLEND);
++	gl.Disable(GL_DEPTH_TEST);
++	gl.Disable(GL_SCISSOR_TEST);
++	gl.Disable(GL_CULL_FACE);
++	gl.Disable(GL_STENCIL_TEST);
++	gl.ColorMask(1, 1, 1, 1);
++	gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
++	gl.Clear(GL_COLOR_BUFFER_BIT);
++
++	gl.UseProgram(g_present.program);
++	gl.ActiveTexture(GL_TEXTURE0);
++	gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++	gl.BindBuffer(GL_ARRAY_BUFFER, g_present.quad);
++
++	if (g_present.quadSize[0] != xoff || g_present.quadSize[1] != yoff)
++	{
++		// The top of the frame is its first row, which is where OpenGL ES's t is 0
++		const GLfloat quad[] =
++		{
++			-xoff, yoff, 0.0f, 0.0f,
++			-xoff, -yoff, 0.0f, 1.0f,
++			xoff, yoff, 1.0f, 0.0f,
++			xoff, -yoff, 1.0f, 1.0f,
++		};
++		gl.BufferData(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
++		g_present.quadSize[0] = xoff;
++		g_present.quadSize[1] = yoff;
++	}
++
++	gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 4 * sizeof(GLfloat), reinterpret_cast<void *>(0));
++	gl.VertexAttribPointer(1, 2, GL_FLOAT, 0, 4 * sizeof(GLfloat), reinterpret_cast<void *>(2 * sizeof(GLfloat)));
++	gl.EnableVertexAttribArray(0);
++	gl.EnableVertexAttribArray(1);
++	gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++
++	RestoreGlState(saved);
++
++	if (trace)
++		Log("  drew slot %d to the %dx%d window (GL error 0x%X)", (int)(&slot - g_present.slots), windowWidth, windowHeight,
++			gl.GetError());
++}
++
++// D: the shown slot's frame, from its READBACK buffer to its GL texture
++void UploadReadback(PresentSlot &slot)
++{
++	const D3D12_RANGE range = {0, (SIZE_T)g_present.readbackBytes};
++	void *data = nullptr;
++	if (Core_Failed(slot.resource->Map(0, &range, &data), "Map (readback)"))
++		return;
++
++	const UINT rowBytes = g_present.width * 4;
++	const UINT pitch = g_present.footprint.Footprint.RowPitch;
++	const BYTE *source = static_cast<const BYTE *>(data) + g_present.footprint.Offset;
++	if (pitch != rowBytes)
++	{
++		g_present.readback.resize((size_t)rowBytes * g_present.height);
++		for (UINT y = 0; y < g_present.height; y++)
++			memcpy(&g_present.readback[(size_t)y * rowBytes], source + (size_t)y * pitch, rowBytes);
++		source = g_present.readback.data();
++	}
++
++	GLint previousTexture = 0;
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
++	gl.BindTexture(GL_TEXTURE_2D, slot.glTexture);
++	gl.TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_present.width, g_present.height, GL_RGBA, GL_UNSIGNED_BYTE, source);
++	gl.BindTexture(GL_TEXTURE_2D, previousTexture);
++	const D3D12_RANGE written = {0, 0};
++	slot.resource->Unmap(0, &written);
++}
++
++// After the frame's submission: the next frame is timed with the slot it'll be copied to, whose last timing has
++// had a few frames to finish
++void NextFrame()
++{
++	g_present.frame++;
++	PresentSlot &next = g_present.slots[g_present.frame % kPresentSlots];
++	ReadGpuTime(next);
++	BeginGpuTime(next);
++}
++
++// Whatever happens to presenting, the frame's commands must still run, or retired objects are never freed
++void SubmitWithoutPresenting()
++{
++	Core_Submit("present");
++}
++
++} // namespace
++
++ID3D11Device *Present_AngleDevice()
++{
++	InitAngleDevice();
++	return g_present.angleDevice.Get();
++}
++
++void Present_SelectPath()
++{
++	if (g_present.probed)
++		return;
++
++	if (!LoadEgl() || !egl.ChooseConfig || !egl.CreatePbufferFromClientBuffer || !egl.BindTexImage || !egl.ReleaseTexImage
++		|| !egl.DestroySurface)
++	{
++		g_present.probed = true;
++		g_present.path = PATH_D;
++		Log("interop path D: EGL functions are missing");
++		return;
++	}
++
++	g_present.display = egl.GetCurrentDisplay();
++	if (!g_present.display)
++	{
++		// Try again when presenting
++		LOG_ONCE("no current EGL display yet");
++		return;
++	}
++	g_present.probed = true;
++
++	const char *extensions = egl.QueryString ? egl.QueryString(g_present.display, EGL_EXTENSIONS) : nullptr;
++	Log("EGL vendor %s, version %s", egl.QueryString ? egl.QueryString(g_present.display, EGL_VENDOR) : "?",
++		egl.QueryString ? egl.QueryString(g_present.display, EGL_VERSION) : "?");
++	Log("EGL extensions: %s", extensions ? extensions : "(none)");
++
++	InitAngleDevice();
++	if (!LoadGles() || !g_present.angleDevice || !g_present.angleContext || !Core_Device())
++	{
++		g_present.path = PATH_D;
++		Log("interop path D: %s", !gl.loaded ? "OpenGL ES functions are missing" : "no ANGLE device to share with");
++		return;
++	}
++
++	const EGLint attributes[] =
++	{
++		EGL_RED_SIZE, 8,
++		EGL_GREEN_SIZE, 8,
++		EGL_BLUE_SIZE, 8,
++		EGL_ALPHA_SIZE, 8,
++		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++		EGL_BIND_TO_TEXTURE_RGBA, EGL_TRUE,
++		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++		EGL_NONE,
++	};
++	EGLConfig configs[64];
++	EGLint count = 0;
++	if (!egl.ChooseConfig(g_present.display, attributes, configs, 64, &count) || count <= 0)
++	{
++		g_present.path = PATH_D;
++		Log("interop path D: no RGBA8 pbuffer config (EGL error 0x%X)", EglError());
++		return;
++	}
++	for (EGLint i = 0; i < count && egl.GetConfigAttrib; i++)
++	{
++		EGLint id = 0, depth = 0;
++		egl.GetConfigAttrib(g_present.display, configs[i], EGL_CONFIG_ID, &id);
++		egl.GetConfigAttrib(g_present.display, configs[i], EGL_DEPTH_SIZE, &depth);
++		Log("pbuffer config %d: id %d, depth %d", (int)i, (int)id, (int)depth);
++	}
++
++	const precise_t start = I_GetPreciseTime();
++	for (Path path : {PATH_A, PATH_B, PATH_C})
++	{
++		if (TryPath(path, configs, count))
++		{
++			g_present.path = path;
++			Log("interop selection took %.1f ms", PreciseToMs(I_GetPreciseTime() - start));
++			return;
++		}
++	}
++	g_present.path = PATH_D;
++	Log("interop path D: reading frames back, since A, B and C failed (%.1f ms)", PreciseToMs(I_GetPreciseTime() - start));
++}
++
++void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height)
++{
++	g_traceCopied = g_traceShown = -1;
++	g_traceCopyFrame = g_traceShowFrame = 0;
++	const bool trace = Present_Tracing();
++	precise_t t = I_GetPreciseTime();
++	const precise_t presentStart = t;
++
++	if (g_present.failed || !source)
++	{
++		SubmitWithoutPresenting();
++		return;
++	}
++
++	if (!LoadGles() || (!g_present.program && !CreatePresentProgram()))
++	{
++		Log("can't present frames, so the screen will stay black");
++		g_present.failed = true;
++		SubmitWithoutPresenting();
++		return;
++	}
++
++	if (!g_present.probed)
++	{
++		Present_SelectPath();
++		if (!g_present.probed)
++		{
++			SubmitWithoutPresenting(); // no EGL display yet
++			return;
++		}
++	}
++
++	if (g_present.width != width || g_present.height != height)
++	{
++		if (!CreateSlots(width, height))
++		{
++			if (g_present.path == PATH_D)
++			{
++				DestroySlots(false);
++				g_present.failed = true;
++				Log("can't present frames, so the screen will stay black");
++				SubmitWithoutPresenting();
++				return;
++			}
++			Log("falling back to reading frames back (interop path D)");
++			DestroySlots(false);
++			g_present.path = PATH_D;
++			if (!CreateSlots(width, height))
++			{
++				DestroySlots(false);
++				g_present.failed = true;
++				Log("can't present frames, so the screen will stay black");
++				SubmitWithoutPresenting();
++				return;
++			}
++		}
++	}
++
++	const int index = (int)(g_present.frame % kPresentSlots);
++	PresentSlot &slot = g_present.slots[index];
++	const bool readback = g_present.path == PATH_D;
++	ID3D12GraphicsCommandList *list = Core_List();
++	bool timed = false;
++	if (list)
++	{
++		timed = EndGpuTime(slot);
++		// The shared texture is COMMON whenever ANGLE might use it
++		Core_Transition(source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
++		if (!readback)
++			Core_Transition(slot.resource.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
++		Core_FlushBarriers();
++		if (readback)
++		{
++			D3D12_TEXTURE_COPY_LOCATION destination = {};
++			destination.pResource = slot.resource.Get();
++			destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++			destination.PlacedFootprint = g_present.footprint;
++			D3D12_TEXTURE_COPY_LOCATION from = {};
++			from.pResource = source;
++			from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++			from.SubresourceIndex = 0;
++			list->CopyTextureRegion(&destination, 0, 0, 0, &from, nullptr);
++		}
++		else
++			list->CopyResource(slot.resource.Get(), source);
++		Core_Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
++		if (!readback)
++			Core_Transition(slot.resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
++	}
++	g_traceCopied = index;
++	g_traceCopyFrame = g_traceSlotFrame[index] = UWPTraceFrameId();
++
++	// Before the submission with the copy, not before recording it
++	const precise_t readStart = I_GetPreciseTime();
++	const bool readPending = slot.readPending;
++	WaitForAngleRead(slot);
++	const double readWait = PreciseToMs(I_GetPreciseTime() - readStart);
++	slot.copyFence = list ? Core_Submit("present") : 0;
++	if (!list)
++		SubmitWithoutPresenting(); // reopens the list
++	if (timed && slot.copyFence)
++		slot.timingFence = slot.copyFence;
++	if (trace)
++		Log("  copied the screen to slot %d; %s; submitted as fence %llu", index,
++			readPending ? (readWait >= 0.01 ? "waited for ANGLE's last read of it" : "ANGLE's last read of it was done")
++				: "no ANGLE read pending", (unsigned long long)slot.copyFence);
++
++	precise_t now = I_GetPreciseTime();
++	g_stats.copyTime += now - t;
++	t = now;
++
++	// Wipes show the current copy: presenting can stop after their last frame.
++	// The next normal frame will show that wipe frame again once, which is acceptable.
++	PresentSlot &shown = (!readback && g_present.frame > 0 && !g_presentImmediately)
++		? g_present.slots[(g_present.frame - 1) % kPresentSlots] : slot;
++	if (trace && g_presentImmediately)
++		Log("  showing the current wipe frame immediately");
++	g_presentImmediately = false;
++
++	double waited = 0.0;
++	g_stats.copyWaits++;
++	if (!shown.copyFence || !Core_Wait(shown.copyFence, 500, "a frame's copy", &waited))
++	{
++		g_stats.copyWaitFailures++;
++		if (trace)
++			Log("  slot %d's copy (fence %llu) didn't finish; not showing it", (int)(&shown - g_present.slots),
++				(unsigned long long)shown.copyFence);
++		NextFrame();
++		return;
++	}
++	g_stats.copyWaitMs += waited;
++	g_stats.worstCopyWaitMs = std::max(g_stats.worstCopyWaitMs, waited);
++	if (trace)
++		Log("  waited %.2f ms for slot %d's copy (fence %llu; GPU at %llu)", waited, (int)(&shown - g_present.slots),
++			(unsigned long long)shown.copyFence, (unsigned long long)Core_CompletedFence());
++
++	if (readback)
++		UploadReadback(shown);
++	else if (g_present.path == PATH_C)
++		g_present.angleContext->CopyResource(shown.legacy.Get(), shown.texture.Get()); // ordered before ANGLE's draw
++
++	DrawToWindow(shown, trace);
++	const bool fastFrame = g_present.hasLastPresent
++		&& PreciseToMs(presentStart - g_present.lastPresent) < 8.0;
++	FinishAngleRead(shown, fastFrame);
++	g_present.lastPresent = presentStart;
++	g_present.hasLastPresent = true;
++	g_traceShown = (INT32)(&shown - g_present.slots);
++	g_traceShowFrame = g_traceSlotFrame[g_traceShown];
++
++	now = I_GetPreciseTime();
++	g_stats.glTime += now - t;
++	t = now;
++
++	SDL_GL_SwapWindow(window);
++
++	now = I_GetPreciseTime();
++	g_stats.swapTime += now - t;
++	if (trace)
++		Log("  swapped (%.2f ms)", PreciseToMs(now - t));
++
++	NextFrame();
++}
++
++void Present_Immediately()
++{
++	g_presentImmediately = true;
++}
++
++void Present_Shutdown(bool idle)
++{
++	DestroySlots(idle);
++	if (idle)
++	{
++		g_present.timestamps.Reset();
++		g_present.timestampBuffer.Reset();
++	}
++	else
++	{
++		Core_Retire(g_present.timestamps);
++		Core_Retire(g_present.timestampBuffer);
++	}
++	// GL objects go with ANGLE's context, as with the Direct3D 11 driver
++	g_present.angleContext.Reset();
++	g_present.angleDevice1.Reset();
++	g_present.angleDevice.Reset();
++	g_present.deviceProbed = false;
++	g_present.failed = true; // nothing presents after this
++}
++
++void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
++{
++	*copied = g_traceCopied;
++	*shown = g_traceShown;
++	*copyframe = g_traceCopyFrame;
++	*showframe = g_traceShowFrame;
++}
++
++void Present_LogPerf(double frames)
++{
++	const PresentStats &s = g_stats;
++	const double n = frames > 0 ? frames : 1;
++	I_OutputMsg("UWP perf:   D3D12: present: interop path %c, sync %s; per frame copy %.2f ms, copy-fence wait %.2f ms (worst %.2f, %d of %d not shown), GL %.2f, swap %.2f ms; ANGLE read waits %d, %.2f ms total; %d timeouts; fallback finishes %d\n",
++		PathName(g_present.path), g_present.angleQueries ? "cpu fence + ANGLE queries" : "cpu fence + glFinish",
++		PreciseToMs(s.copyTime) / n, s.copyWaitMs / n, s.worstCopyWaitMs, s.copyWaitFailures, s.copyWaits,
++		PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
++		s.angleReadWaits, PreciseToMs(s.angleReadWaitTime), s.angleReadTimeouts, s.fallbackFinishes);
++	I_OutputMsg("UWP perf:   D3D12: GPU %.2f ms per frame (worst %.2f, %d timed)\n",
++		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames);
++	g_stats = PresentStats();
++}
++
++bool Present_Tracing()
++{
++	return g_tracedFrames < kTraceFrames;
++}
++
++void Present_FrameDone()
++{
++	if (g_tracedFrames < kTraceFrames)
++		g_tracedFrames++;
++}
++
++UINT64 Present_SlotBytes()
++{
++	UINT64 bytes = 0;
++	for (const PresentSlot &slot : g_present.slots)
++		if (slot.resource)
++			bytes += g_present.path == PATH_D ? g_present.readbackBytes : (UINT64)g_present.width * g_present.height * 4;
++	return bytes;
++}
++
++} // namespace rr_d3d12
+diff --git a/src/hardware/r_d3d12/d3d12_present.h b/src/hardware/r_d3d12/d3d12_present.h
+new file mode 100644
+index 0000000..c8467ce
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_present.h
+@@ -0,0 +1,50 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  d3d12_present.h
++/// \brief [UWP]: Shows VibeRant D3D12's frames through ANGLE, which owns the window
++
++#ifndef RR_D3D12_PRESENT_H
++#define RR_D3D12_PRESENT_H
++
++#include "d3d12_core.h"
++
++namespace rr_d3d12
++{
++
++// ANGLE's Direct3D 11 device, once its EGL display is current; null without one
++ID3D11Device *Present_AngleDevice();
++
++// Picks how frames reach ANGLE: A (a D3D12 texture ANGLE opens), B (an ANGLE texture D3D12 opens), C (either, plus a
++// copy on ANGLE's device into a legacy shared texture) or D (reading frames back), the first whose test texture
++// shows the right color. Call with ANGLE's context current; Present_Frame calls it if it couldn't run before.
++void Present_SelectPath();
++
++// Copies source (in sourceState, which it's left in) to a presentation texture, submits the frame and draws the
++// previous one to the window, a frame late so its copy has finished.
++void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height);
++
++// Wipes must reach the window before presenting stops: show the frame being copied rather than the previous one
++void Present_Immediately();
++
++// Releases the presentation textures and their EGL surfaces, then ANGLE's device. idle: the GPU has finished, so
++// D3D12 objects can go now rather than being retired.
++void Present_Shutdown(bool idle);
++
++// Last Present's copied/shown slots and source draw IDs; -1/0 if no copy/draw occurred.
++void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
++
++// Perf lines for frames since the last call; frames is at least 1
++void Present_LogPerf(double frames);
++
++// The first frames trace their submission, waits and present
++bool Present_Tracing();
++void Present_FrameDone();
++
++UINT64 Present_SlotBytes();
++
++} // namespace rr_d3d12
++#endif
 diff --git a/src/hardware/r_d3d12/d3d12_pso_probe.cpp b/src/hardware/r_d3d12/d3d12_pso_probe.cpp
 new file mode 100644
 index 0000000..be50e95
@@ -14535,6 +17286,805 @@ index 0000000..c0afb85
 +// [UWP]: Creates diagnostic objects only; never records or submits a draw.
 +PsoProbe D3D12Pso_Probe(ID3D12Device *device, const EglApi &egl);
 +} // namespace rr_d3d12
++#endif
+diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
+new file mode 100644
+index 0000000..2e86197
+--- /dev/null
++++ b/src/hardware/r_d3d12/r_d3d12.cpp
+@@ -0,0 +1,737 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++// Copyright (C) 2020 by Sonic Team Junior.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file r_d3d12.cpp
++/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented through ANGLE
++///
++/// The Direct3D 12 fork of r_d3d11.cpp, which its functions are ported from one by one. So far it has the device
++/// (d3d12_core.cpp), the screen's render target and depth buffer, clearing, and presenting through ANGLE
++/// (d3d12_present.cpp). The other driver functions only count their calls and return what draws nothing.
++///
++/// Until draws are ported, a hue that advances every frame tints the screen's clear color, and each frame starts
++/// cleared to it, so a frame shown out of order or a stale presentation texture shows up as a jump or a flash.
++
++#include "d3d12_core.h"
++#include "d3d12_present.h"
++
++#include <cmath>
++#include <cstdarg>
++#include <cstdio>
++#include <cstring>
++
++#include "SDL.h"
++
++#include "../../doomdef.h"
++#include "../../command.h"
++#include "../../i_system.h"
++#include "../../m_misc.h"
++#include "../../screen.h"
++#include "../hw_drv.h"
++#include "../hw_main.h"
++#include "r_d3d12.h"
++
++// doomdef.h's
++#undef min
++#undef max
++#undef clamp
++
++namespace
++{
++
++using namespace rr_d3d12;
++
++void Log(const char *format, ...)
++{
++	char message[2048];
++	va_list args;
++
++	va_start(args, format);
++	vsnprintf(message, sizeof message, format, args);
++	va_end(args);
++	Core_Log("%s", message);
++}
++
++// What the driver did since the last perf summary
++struct Stats
++{
++	int frames;
++	int clears;
++	// Not drawn yet: calls by driver function
++	int lines, polygons, batches, skies, models;
++	int textureSets, textureUpdates, textureDeletes, flushes;
++	int screens; // screen textures, wipes, postimg, the intermission background and the final screen
++	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
++	int portals, fadeMaps;
++	precise_t presentTime;
++};
++Stats g_stats;
++
++double PreciseToMs(precise_t t)
++{
++	return t * 1000.0 / I_GetPrecisePrecision();
++}
++
++// Diagnostic for until draws are ported (see the file's comment)
++constexpr bool kDiagnosticHue = true;
++UINT64 g_hueFrame = 0;
++
++bool g_deviceLost = false;
++bool g_shutdown = false;
++bool g_vsync = false, g_vsyncSet = false;
++
++INT32 g_screenWidth = 0, g_screenHeight = 0; // r_opengl.c's screen_width and screen_height
++float g_clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
++FBITFIELD g_currentPolyFlags = 0;
++UINT32 g_lightTableIds = 0;
++
++// ==========================================================================
++//                                                               RENDER TARGET
++// ==========================================================================
++
++constexpr DXGI_FORMAT kScreenFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // what ANGLE opens (see d3d12_present.cpp)
++
++ComPtr<ID3D12Resource> g_rt; // RENDER_TARGET, except while the present copy reads it
++ComPtr<ID3D12Resource> g_depth; // DEPTH_WRITE
++UINT g_rtWidth = 0, g_rtHeight = 0;
++
++// Whenever the list is (re)opened. D3D12 always scissors, so the scissor is the whole target.
++void BindRenderTarget()
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (!list || !g_rt)
++		return;
++	const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kRtvScreen), dsv = Core_Dsv(kDsvScreen);
++	list->OMSetRenderTargets(1, &rtv, FALSE, g_depth ? &dsv : nullptr);
++	const D3D12_VIEWPORT viewport = {0.0f, 0.0f, (float)g_rtWidth, (float)g_rtHeight, 0.0f, 1.0f};
++	const D3D12_RECT scissor = {0, 0, (LONG)g_rtWidth, (LONG)g_rtHeight};
++	list->RSSetViewports(1, &viewport);
++	list->RSSetScissorRects(1, &scissor);
++}
++
++// A full turn every 240 frames, about 1.5 degrees a frame
++void DiagnosticHue(float rgb[3])
++{
++	const float hue = (float)(g_hueFrame % 240) / 40.0f; // 0 to 6
++	const float x = 1.0f - fabsf(fmodf(hue, 2.0f) - 1.0f);
++	switch ((int)hue)
++	{
++		case 0: rgb[0] = 1.0f; rgb[1] = x; rgb[2] = 0.0f; break;
++		case 1: rgb[0] = x; rgb[1] = 1.0f; rgb[2] = 0.0f; break;
++		case 2: rgb[0] = 0.0f; rgb[1] = 1.0f; rgb[2] = x; break;
++		case 3: rgb[0] = 0.0f; rgb[1] = x; rgb[2] = 1.0f; break;
++		case 4: rgb[0] = x; rgb[1] = 0.0f; rgb[2] = 1.0f; break;
++		default: rgb[0] = 1.0f; rgb[1] = 0.0f; rgb[2] = x; break;
++	}
++}
++
++void ClearScreenColor()
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (!list || !g_rt)
++		return;
++	// The screen's alpha stays 1, as in the Direct3D 11 driver
++	float color[4] = {g_clearColor[0], g_clearColor[1], g_clearColor[2], 1.0f};
++	if (kDiagnosticHue)
++	{
++		float hue[3];
++		DiagnosticHue(hue);
++		for (int i = 0; i < 3; i++)
++			color[i] = 0.5f * color[i] + 0.5f * hue[i];
++	}
++	Core_FlushBarriers();
++	list->ClearRenderTargetView(Core_Rtv(kRtvScreen), color, 0, nullptr);
++	g_stats.clears++;
++}
++
++void ClearScreenDepth()
++{
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (!list || !g_depth)
++		return;
++	Core_FlushBarriers();
++	list->ClearDepthStencilView(Core_Dsv(kDsvScreen), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
++}
++
++bool CreateRenderTarget(UINT width, UINT height)
++{
++	if (g_rt && g_rtWidth == width && g_rtHeight == height)
++		return true;
++
++	if (g_rt)
++	{
++		// Resizing: let the GPU finish with the old targets. They're retired either way, so a timeout is safe.
++		Core_Submit("resize");
++		Core_WaitIdle(1000, "a resize");
++	}
++	Core_Retire(g_rt);
++	Core_Retire(g_depth);
++	g_rtWidth = g_rtHeight = 0;
++
++	D3D12_HEAP_PROPERTIES heap = {};
++	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++	D3D12_RESOURCE_DESC desc = {};
++	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++	desc.Width = width;
++	desc.Height = height;
++	desc.DepthOrArraySize = 1;
++	desc.MipLevels = 1;
++	desc.Format = kScreenFormat;
++	desc.SampleDesc.Count = 1;
++	desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++	desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
++	ID3D12Device *device = Core_Device();
++	if (Core_Failed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_RENDER_TARGET,
++		nullptr, IID_PPV_ARGS(&g_rt)), "CreateCommittedResource (screen)"))
++	{
++		g_rt.Reset();
++		return false;
++	}
++
++	desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
++	desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
++	D3D12_CLEAR_VALUE depthClear = {};
++	depthClear.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
++	depthClear.DepthStencil.Depth = 1.0f;
++	depthClear.DepthStencil.Stencil = 0;
++	if (Core_Failed(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE,
++		&depthClear, IID_PPV_ARGS(&g_depth)), "CreateCommittedResource (depth)"))
++	{
++		// Neither has been used on the GPU
++		g_rt.Reset();
++		g_depth.Reset();
++		return false;
++	}
++	g_rt->SetName(L"screen");
++	g_depth->SetName(L"depth");
++	device->CreateRenderTargetView(g_rt.Get(), nullptr, Core_Rtv(kRtvScreen));
++	device->CreateDepthStencilView(g_depth.Get(), nullptr, Core_Dsv(kDsvScreen));
++
++	g_rtWidth = width;
++	g_rtHeight = height;
++	BindRenderTarget();
++
++	ID3D12GraphicsCommandList *list = Core_List();
++	if (list)
++	{
++		const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
++		list->ClearRenderTargetView(Core_Rtv(kRtvScreen), black, 0, nullptr);
++	}
++	ClearScreenDepth();
++
++	Log("render target %ux%u (format %d)", width, height, (int)kScreenFormat);
++	return true;
++}
++
++// r_opengl.c's SetModelView, so far without the matrices
++void SetModelView(INT32 w, INT32 h)
++{
++	if (g_screenWidth != w || g_screenHeight != h)
++		Log("screen size %dx%d", (int)w, (int)h);
++	g_screenWidth = w;
++	g_screenHeight = h;
++	CreateRenderTarget(w, h);
++}
++
++// If gr_d3d12 is On, a broken start shouldn't repeat every launch: Software for this session, D3D11 next time
++void TurnOffAfterFailure()
++{
++	if (cv_gld3d12.string && cv_gld3d12.value != 0)
++	{
++		CV_StealthSet(&cv_gld3d12, "Off");
++		M_SaveConfig(NULL);
++	}
++	I_OutputMsg("UWP: VibeRant backend: D3D12 didn't start (gr_d3d12 -> Off, so the next launch uses D3D11)\n");
++}
++
++// ==========================================================================
++//                                                            DRIVER FUNCTIONS
++// ==========================================================================
++
++boolean D3D_Init(void)
++{
++	if (Core_Device())
++		return true;
++
++	Log("starting Legacy GL's Direct3D 12 driver (clearing and presenting only so far)");
++	Core_SetListBegin(BindRenderTarget);
++	// On the same adapter as ANGLE, which the window's frames go through
++	if (!Core_Init(Present_AngleDevice()))
++	{
++		TurnOffAfterFailure();
++		return false;
++	}
++	Present_SelectPath();
++	return true;
++}
++
++void D3D_SetPalette(RGBA_t *)
++{
++	g_stats.states++;
++}
++
++void D3D_FinishUpdate(INT32 waitvbl)
++{
++	D3D12_FinishUpdate(waitvbl);
++}
++
++void D3D_Draw2DLine(F2DCoord *, F2DCoord *, RGBA_t)
++{
++	g_stats.lines++;
++}
++
++void D3D_DrawPolygon(FSurfaceInfo *, FOutVector *, FUINT, FBITFIELD)
++{
++	g_stats.polygons++;
++}
++
++void D3D_DrawIndexedTriangles(FSurfaceInfo *, FOutVector *, FUINT, FBITFIELD, UINT32 *)
++{
++	g_stats.batches++;
++}
++
++void D3D_RenderSkyDome(gl_sky_t *)
++{
++	g_stats.skies++;
++}
++
++void D3D_SetBlend(FBITFIELD PolyFlags)
++{
++	g_currentPolyFlags = PolyFlags;
++	g_stats.states++;
++}
++
++void D3D_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *ClearColor)
++{
++	if (ColorMask && ClearColor)
++	{
++		g_clearColor[0] = ClearColor->red;
++		g_clearColor[1] = ClearColor->green;
++		g_clearColor[2] = ClearColor->blue;
++		g_clearColor[3] = ClearColor->alpha;
++	}
++
++	D3D_SetBlend(DepthMask ? PF_Occlude | g_currentPolyFlags : g_currentPolyFlags&~PF_Occlude);
++
++	if (ColorMask)
++		ClearScreenColor();
++	if (DepthMask)
++		ClearScreenDepth();
++}
++
++void D3D_SetTexture(GLMipmap_t *)
++{
++	g_stats.textureSets++;
++}
++
++void D3D_UpdateTexture(GLMipmap_t *)
++{
++	g_stats.textureUpdates++;
++}
++
++void D3D_DeleteTexture(GLMipmap_t *pTexInfo)
++{
++	g_stats.textureDeletes++;
++	if (pTexInfo)
++		pTexInfo->downloaded = 0;
++}
++
++// Nothing is drawn yet, so the screen reads as black rather than leaving the caller's memory as it was
++void D3D_ReadRect(INT32, INT32, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
++{
++	if (!dst_data || width <= 0 || height <= 0)
++		return;
++	if (dst_stride == width*3)
++		memset(dst_data, 0, (size_t)height * dst_stride);
++	else
++		memset(dst_data, 0, (size_t)width * height * sizeof *dst_data);
++}
++
++void D3D_GClipRect(INT32, INT32, INT32, INT32, float)
++{
++	g_stats.states++;
++}
++
++void D3D_ClearMipMapCache(void)
++{
++	g_stats.flushes++;
++}
++
++void D3D_SetSpecialState(hwdspecialstate_t, INT32)
++{
++	g_stats.states++;
++}
++
++void D3D_DrawModel(model_t *, INT32, float, float, INT32, FTransform *, float, float, UINT8, UINT8, FSurfaceInfo *)
++{
++	g_stats.models++;
++}
++
++void D3D_CreateModelVBOs(model_t *)
++{
++}
++
++void D3D_SetTransform(FTransform *)
++{
++	g_stats.states++;
++}
++
++INT32 D3D_GetTextureUsed(void)
++{
++	return 0;
++}
++
++void D3D_PostImgRedraw(float [SCREENVERTS][SCREENVERTS][2])
++{
++	g_stats.screens++;
++}
++
++void D3D_FlushScreenTextures(void)
++{
++}
++
++void D3D_StartScreenWipe(void)
++{
++	g_stats.screens++;
++}
++
++void D3D_EndScreenWipe(void)
++{
++	g_stats.screens++;
++}
++
++void D3D_DoScreenWipe(void)
++{
++	Present_Immediately(); // as the Direct3D 11 driver does
++	g_stats.screens++;
++}
++
++void D3D_DrawIntermissionBG(void)
++{
++	g_stats.screens++;
++}
++
++void D3D_MakeScreenTexture(void)
++{
++	g_stats.screens++;
++}
++
++void D3D_MakeScreenFinalTexture(void)
++{
++	g_stats.screens++;
++}
++
++void D3D_DrawScreenFinalTexture(int, int)
++{
++	g_stats.screens++;
++}
++
++// Succeeds, like the Direct3D 11 driver without a device, so shaders stay available
++boolean D3D_CompileShaders(void)
++{
++	return true;
++}
++
++void D3D_CleanShaders(void)
++{
++}
++
++void D3D_SetShader(int)
++{
++	g_stats.states++;
++}
++
++void D3D_UnSetShader(void)
++{
++	g_stats.states++;
++}
++
++void D3D_SetShaderInfo(hwdshaderinfo_t, INT32)
++{
++	g_stats.states++;
++}
++
++void D3D_LoadCustomShader(int, char *, size_t, boolean)
++{
++}
++
++void D3D_SetScreenPalette(RGBA_t *)
++{
++	g_stats.states++;
++}
++
++void D3D_SetPaletteLookup(UINT8 *)
++{
++	g_stats.states++;
++}
++
++// Ids are never 0, which the engine takes as none
++UINT32 D3D_CreateLightTable(RGBA_t *)
++{
++	g_stats.states++;
++	if (++g_lightTableIds == 0)
++		g_lightTableIds = 1;
++	return g_lightTableIds;
++}
++
++void D3D_UpdateLightTable(UINT32, RGBA_t *)
++{
++	g_stats.states++;
++}
++
++void D3D_ClearLightTables(void)
++{
++	g_stats.states++;
++}
++
++#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&D3D_##name)}
++const struct
++{
++	const char *name;
++	void *function;
++} kDriverFunctions[] =
++{
++	DRIVERFUNCTION(Init),
++	DRIVERFUNCTION(SetPalette),
++	DRIVERFUNCTION(FinishUpdate),
++	DRIVERFUNCTION(Draw2DLine),
++	DRIVERFUNCTION(DrawPolygon),
++	DRIVERFUNCTION(DrawIndexedTriangles),
++	DRIVERFUNCTION(RenderSkyDome),
++	DRIVERFUNCTION(SetBlend),
++	DRIVERFUNCTION(ClearBuffer),
++	DRIVERFUNCTION(SetTexture),
++	DRIVERFUNCTION(UpdateTexture),
++	DRIVERFUNCTION(DeleteTexture),
++	DRIVERFUNCTION(ReadRect),
++	DRIVERFUNCTION(GClipRect),
++	DRIVERFUNCTION(ClearMipMapCache),
++	DRIVERFUNCTION(SetSpecialState),
++	DRIVERFUNCTION(DrawModel),
++	DRIVERFUNCTION(CreateModelVBOs),
++	DRIVERFUNCTION(SetTransform),
++	DRIVERFUNCTION(GetTextureUsed),
++	DRIVERFUNCTION(PostImgRedraw),
++	DRIVERFUNCTION(FlushScreenTextures),
++	DRIVERFUNCTION(StartScreenWipe),
++	DRIVERFUNCTION(EndScreenWipe),
++	DRIVERFUNCTION(DoScreenWipe),
++	DRIVERFUNCTION(DrawIntermissionBG),
++	DRIVERFUNCTION(MakeScreenTexture),
++	DRIVERFUNCTION(MakeScreenFinalTexture),
++	DRIVERFUNCTION(DrawScreenFinalTexture),
++	DRIVERFUNCTION(CompileShaders),
++	DRIVERFUNCTION(CleanShaders),
++	DRIVERFUNCTION(SetShader),
++	DRIVERFUNCTION(UnSetShader),
++	DRIVERFUNCTION(SetShaderInfo),
++	DRIVERFUNCTION(LoadCustomShader),
++	DRIVERFUNCTION(SetScreenPalette),
++	DRIVERFUNCTION(SetPaletteLookup),
++	DRIVERFUNCTION(CreateLightTable),
++	DRIVERFUNCTION(UpdateLightTable),
++	DRIVERFUNCTION(ClearLightTables),
++};
++#undef DRIVERFUNCTION
++
++} // namespace
++
++void *D3D12_GetDriverFunction(const char *name)
++{
++	for (const auto &function : kDriverFunctions)
++	{
++		if (strcmp(function.name, name) == 0)
++			return function.function;
++	}
++	Log("no driver function %s", name);
++	return nullptr;
++}
++
++boolean D3D12_Surface(INT32 w, INT32 h)
++{
++	static bool first = true;
++
++	if (first)
++	{
++		Log("setting up a %dx%d screen", (int)w, (int)h);
++		first = false;
++	}
++
++	if (!Core_Device() || g_shutdown)
++	{
++		Log("no device to draw a %dx%d screen with", (int)w, (int)h);
++		return false;
++	}
++
++	glanisotropicmode_cons_t[1].value = 16; // the Direct3D 11 driver's kMaximumAnisotropy
++	SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
++	g_vsync = cv_vidwait.value != 0;
++	g_vsyncSet = true;
++
++	SetModelView(w, h);
++	ClearScreenColor();
++	ClearScreenDepth();
++
++	HWR_Startup();
++	return true;
++}
++
++void D3D12_FinishUpdate(INT32 waitvbl)
++{
++	const bool vsync = waitvbl != 0;
++
++	if (!g_vsyncSet || g_vsync != vsync)
++	{
++		SDL_GL_SetSwapInterval(vsync ? 1 : 0);
++		g_vsync = vsync;
++		g_vsyncSet = true;
++	}
++
++	if (!Core_Device() || !g_rt || g_deviceLost || g_shutdown)
++		return;
++
++	const bool trace = Present_Tracing();
++	if (trace)
++		Log("presenting frame %d: %d clears, %d polygons, %d batches, %d models so far (not drawn yet)", g_stats.frames,
++			g_stats.clears, g_stats.polygons, g_stats.batches, g_stats.models);
++
++	const precise_t start = I_GetPreciseTime();
++	Present_Frame(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight);
++	g_stats.presentTime += I_GetPreciseTime() - start;
++	g_stats.frames++;
++	g_hueFrame++;
++
++	if (trace)
++	{
++		Log("frame %d done: %d errors, %u command allocators, %u releases pending", g_stats.frames, Core_Errors(),
++			(unsigned)Core_Allocators(), (unsigned)Core_PendingReleases());
++		Present_FrameDone();
++	}
++
++	if (Core_DeviceRemoved())
++	{
++		g_deviceLost = true;
++		const HRESULT removed = Core_RemovedReason();
++		Core_LogDeviceRemoved();
++		I_Error("Legacy GL's Direct3D 12 device stopped working (0x%08X).\nSet Direct3D 12 (test) to Off in Video Options > Advanced if it keeps happening.",
++			(unsigned)removed);
++	}
++
++	// The next frame starts at the new hue, whether or not the game clears it
++	if (kDiagnosticHue)
++		ClearScreenColor();
++}
++
++boolean D3D12_TakeTextureFlushRequest(void)
++{
++	return false; // no textures yet
++}
++
++boolean D3D12_BeginSurfaceProbe(void)
++{
++	return false;
++}
++
++void D3D12_EndSurfaceProbe(void)
++{
++}
++
++void D3D12_SetPortalPlane(const float *)
++{
++	g_stats.portals++;
++}
++
++void D3D12_SetPortalStencil(INT32)
++{
++	g_stats.portals++;
++}
++
++// Without portal resources, the renderer keeps its fallback
++boolean D3D12_PortalsSupported(void)
++{
++	return false;
++}
++
++boolean D3D12_DrawPortalAperture(const FOutVector *, INT32, boolean)
++{
++	g_stats.portals++;
++	return false;
++}
++
++void D3D12_ResetPortalDepth(INT32)
++{
++	g_stats.portals++;
++}
++
++boolean D3D12_ApplyFadeMap(const UINT8 *, size_t, UINT32, UINT8)
++{
++	g_stats.fadeMaps++;
++	return false;
++}
++
++void D3D12_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
++{
++	Present_GetTrace(copied, shown, copyframe, showframe);
++}
++
++void D3D12_LogPerf(double seconds)
++{
++	const Stats &s = g_stats;
++	const double n = s.frames ? s.frames : 1;
++
++	if (!Core_Device())
++		return;
++
++	const CoreStats core = Core_TakeStats();
++	I_OutputMsg("UWP perf:   D3D12: %.1f frames/s; %.2f submissions per frame (mid-frame: ring %d, readback %d, upload %d, other %d); %.1f barriers per frame; %d command allocators (%d made); %u releases pending; %d errors\n",
++		s.frames / seconds, core.submissions / n, core.ringSubmissions, core.readbackSubmissions, core.uploadSubmissions,
++		core.otherSubmissions, core.barriers / n, (int)Core_Allocators(), core.allocatorsCreated,
++		(unsigned)Core_PendingReleases(), Core_Errors());
++	I_OutputMsg("UWP perf:   D3D12: fence waits %d, %.2f ms total (worst %.2f), %d timeouts; presenting %.2f ms per frame\n",
++		core.waits, core.waitMs, core.worstWaitMs, core.waitTimeouts, PreciseToMs(s.presentTime) / n);
++	Present_LogPerf(n);
++	I_OutputMsg("UWP perf:   D3D12: per frame %.1f clears; not drawn yet: %.0f polygons, %.0f batches, %.1f lines, %.1f skies, %.1f models, %.0f texture sets, %.1f updates, %.1f deletes, %d flushes, %.1f screen calls, %.0f state calls, %.1f portal calls, %d fade maps\n",
++		s.clears / n, s.polygons / n, s.batches / n, s.lines / n, s.skies / n, s.models / n, s.textureSets / n,
++		s.textureUpdates / n, s.textureDeletes / n, s.flushes, s.screens / n, s.states / n, s.portals / n, s.fadeMaps);
++
++	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
++	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
++	const bool localValid = adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
++	const UINT64 targets = (g_rt ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0) + (g_depth ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0)
++		+ Present_SlotBytes();
++	if (localValid)
++		I_OutputMsg("UWP perf:   D3D12: memory: local budget %.1f, usage %.1f MB; render targets/present slots ~%.1f MB\n",
++			local.Budget / 1048576.0, local.CurrentUsage / 1048576.0, targets / 1048576.0);
++	else
++		I_OutputMsg("UWP perf:   D3D12: memory: local unavailable; render targets/present slots ~%.1f MB\n", targets / 1048576.0);
++
++	memset(&g_stats, 0, sizeof g_stats);
++}
++
++void D3D12_Shutdown(void)
++{
++	if (g_shutdown || !Core_Device())
++		return;
++	g_shutdown = true;
++
++	// Nothing is released until the GPU has finished with it; if it doesn't finish, D3D12's objects are kept
++	const bool idle = Core_WaitIdle(2000, "shutting down");
++	Log("shutting down (GPU %s)", idle ? "idle" : "still busy");
++	Present_Shutdown(idle); // EGL surfaces, then ANGLE's textures, then D3D12's
++	if (idle)
++	{
++		g_rt.Reset();
++		g_depth.Reset();
++	}
++	else
++	{
++		Core_Retire(g_rt);
++		Core_Retire(g_depth);
++	}
++	Core_Shutdown(idle);
++}
+diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
+new file mode 100644
+index 0000000..8812bd9
+--- /dev/null
++++ b/src/hardware/r_d3d12/r_d3d12.h
+@@ -0,0 +1,50 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// Copyright (C) 2025 by Kart Krew.
++//
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file r_d3d12.h
++/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented through ANGLE
++///
++/// While both drivers ship, engine code calls the D3D11_* functions (r_d3d11.h), which forward here when gr_d3d12
++/// chose this driver at startup.
++
++#ifndef __R_D3D12_H__
++#define __R_D3D12_H__
++
++#include "../../doomtype.h"
++#include "../hw_defs.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++void *D3D12_GetDriverFunction(const char *name);
++boolean D3D12_Surface(INT32 w, INT32 h);
++void D3D12_FinishUpdate(INT32 waitvbl);
++boolean D3D12_TakeTextureFlushRequest(void);
++
++boolean D3D12_BeginSurfaceProbe(void);
++void D3D12_EndSurfaceProbe(void);
++
++void D3D12_SetPortalPlane(const float *worldPlane);
++void D3D12_SetPortalStencil(INT32 level);
++boolean D3D12_PortalsSupported(void);
++boolean D3D12_DrawPortalAperture(const FOutVector *vertices, INT32 level, boolean restore);
++void D3D12_ResetPortalDepth(INT32 level);
++
++boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength);
++void D3D12_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
++void D3D12_LogPerf(double seconds);
++
++// Waits for the GPU, then releases the presentation textures (their EGL surfaces first) and the device
++void D3D12_Shutdown(void);
++
++#ifdef __cplusplus
++} // extern "C"
++#endif
++
 +#endif
 diff --git a/src/hardware/r_opengl/r_opengl.c b/src/hardware/r_opengl/r_opengl.c
 index 900bae9..c01e80a 100644
@@ -15377,10 +18927,10 @@ index f52f929..ff724f0 100644
 +	UWP_STAGE(ps_uwp_nextframetime);
  }
 diff --git a/src/k_menu.h b/src/k_menu.h
-index d52750a..c2d4447 100644
+index d52750a..708aee4 100644
 --- a/src/k_menu.h
 +++ b/src/k_menu.h
-@@ -420,15 +420,23 @@ typedef enum
+@@ -420,15 +420,24 @@ typedef enum
  	vaopt_spacer7,
  	vaopt_spacer8,
  	vaopt_spacer9,
@@ -15399,6 +18949,7 @@ index d52750a..c2d4447 100644
 +	vaopt_bettertransparency,
 +#ifdef _UWP
 +	vaopt_batching,
++	vaopt_d3d12,
 +#endif
  	vaopt_texturequal,
  	vaopt_anisotropic,
@@ -16055,7 +19606,7 @@ index 41bc817..ccb3958 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae..700ae96 100644
+index c2e40ae..ea3ac29 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -16118,7 +19669,7 @@ index c2e40ae..700ae96 100644
  		NULL, {NULL}, 0, 0},
  
  	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",
-@@ -74,8 +103,16 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -74,8 +103,19 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
  		NULL, {.cvar = &cv_glshaders}, 0, 0},
  
@@ -16133,11 +19684,14 @@ index c2e40ae..700ae96 100644
 +#ifdef _UWP
 +	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
 +		NULL, {.cvar = &cv_glbatching}, 0, 0},
++
++	{IT_STRING | IT_CVAR, "Direct3D 12 (test)", "Unfinished: only shows a test color. Applies after restarting; Once goes back after one launch.",
++		NULL, {.cvar = &cv_gld3d12}, 0, 0},
 +#endif
  
  	{IT_STRING | IT_CVAR, "Texture Quality", "Texture depth. Higher values are recommended.",
  		NULL, {.cvar = &cv_scr_depth}, 0, 0},
-@@ -88,9 +125,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
+@@ -88,9 +128,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
  	{IT_STRING | IT_CVAR, "Anisotropic", "Lower values will improve performance at a minor quality loss.",
  		NULL, {.cvar = &cv_glanisotropicmode}, 0, 0},
  
@@ -19965,7 +23519,7 @@ index 0000000..b41da89
 +#endif
 +#endif
 diff --git a/src/sdl/i_video.cpp b/src/sdl/i_video.cpp
-index 7fa8e0c..6feb76f 100644
+index 7fa8e0c..f435922 100644
 --- a/src/sdl/i_video.cpp
 +++ b/src/sdl/i_video.cpp
 @@ -29,6 +29,12 @@
@@ -20157,6 +23711,17 @@ index 7fa8e0c..6feb76f 100644
  		glstartup = true;
  	}
  
+@@ -1704,6 +1800,10 @@ void I_ShutdownGraphics(void)
+ 	graphics_started = false;
+ 
+ #ifdef HWRENDER
++#ifdef _UWP
++	// [UWP]: The Direct3D 12 driver's EGL surfaces must go while ANGLE's context exists
++	D3D11_Shutdown();
++#endif
+ 	if (GLUhandle)
+ 		hwClose(GLUhandle);
+ 	if (sdlglcontext)
 diff --git a/src/sdl/mixer_sound.c b/src/sdl/mixer_sound.c
 index b6b9e72..4010596 100644
 --- a/src/sdl/mixer_sound.c
