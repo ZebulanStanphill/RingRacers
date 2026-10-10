@@ -1,4 +1,4 @@
-From 9cb1eed2b101a2fbf0fd390569ae294d389ad234 Mon Sep 17 00:00:00 2001
+From 08d5a2abff986f93da65852e0d9bc7c1919d672e Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -351,11 +351,12 @@ Model: claude-haiku-5-5
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
  src/CMakeLists.txt                        |   44 +-
- src/console.c                             |   28 +
+ src/console.c                             |   57 +
+ src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
  src/cvars.cpp                             |    5 +
  src/d_clisrv.c                            |   49 +
- src/d_main.cpp                            |  351 +-
+ src/d_main.cpp                            |  364 +-
  src/f_finale.c                            |    6 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
@@ -400,7 +401,7 @@ Model: claude-haiku-5-5
  src/p_lights.c                            |    9 +
  src/p_mobj.c                              |   98 +-
  src/p_mobj.h                              |   11 +
- src/p_setup.cpp                           |   44 +
+ src/p_setup.cpp                           |   47 +
  src/p_tick.h                              |   15 +
  src/r_draw.h                              |   38 +-
  src/r_draw_column.cpp                     |   18 +-
@@ -432,7 +433,7 @@ Model: claude-haiku-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 84 files changed, 13814 insertions(+), 1100 deletions(-)
+ 85 files changed, 13870 insertions(+), 1100 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -628,7 +629,7 @@ index 9eb0bcb..46543dc 100644
  
  # Setup clang-tidy
 diff --git a/src/console.c b/src/console.c
-index 1e7585f..90620e1 100644
+index 1e7585f..361e382 100644
 --- a/src/console.c
 +++ b/src/console.c
 @@ -34,6 +34,9 @@
@@ -641,7 +642,23 @@ index 1e7585f..90620e1 100644
  #include "m_misc.h"
  
  #ifdef HWRENDER
-@@ -1938,6 +1941,9 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
+@@ -1916,9 +1919,15 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
+ {
+ 	"Init zone memory...", //LOADED_ZINIT
+ 	"Init game timing...", //LOADED_ISTARTUPTIMER
++#ifdef _UWP
++	"Loading main assets...", //LOADED_ISTARTUPGRAPHICS
++	"Cache fonts...", //LOADED_HUINIT
++	"Loading maps...", //LOADED_IWAD
++#else
+ 	"Loading main assets...", //LOADED_IWAD
+ 	"Init graphics subsystem...", //LOADED_ISTARTUPGRAPHICS
+ 	"Cache fonts...", //LOADED_HUINIT
++#endif
+ 	"Loading add-ons...", //LOADED_PWAD
+ 	"Load settings...", //LOADED_CONFIG
+ 	"Cache textures...", //LOADED_INITTEXTUREDATA
+@@ -1938,6 +1947,9 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
  void CON_SetLoadingProgress(con_loadprogress_t newStep)
  {
  	const con_loadprogress_t expectedStep = con_startup_loadprogress + 1;
@@ -651,7 +668,7 @@ index 1e7585f..90620e1 100644
  
  	if (newStep != expectedStep)
  	{
-@@ -1948,7 +1954,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+@@ -1948,7 +1960,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
  	con_startup_loadprogress = newStep;
  
  	if (con_startup_loadprogress <= LOADED_ALLDONE)
@@ -677,7 +694,37 @@ index 1e7585f..90620e1 100644
  
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
-@@ -1981,6 +2005,10 @@ void CON_DrawLoadBar(void)
+@@ -1958,6 +1988,29 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+ 	I_FinishUpdate(); // page flip or blit buffer
+ }
+ 
++#ifdef _UWP
++// [UWP]: Redraw the loading screen during long startup steps (reading the map data takes 7-22 s on Xbox),
++// so the screen and the file check's skip text stay live between progress updates
++void CON_UWPLoadingKeepAlive(void)
++{
++	static precise_t lastdraw = 0;
++
++	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS || con_startup_loadprogress >= LOADED_ALLDONE)
++		return;
++
++	const precise_t now = I_GetPreciseTime();
++	if (now - lastdraw < I_GetPrecisePrecision() / 10)
++		return;
++	lastdraw = now;
++
++	W_UWPPollAssetCheck();
++	CON_DrawLoadBar();
++	I_OsPolling();
++	I_UpdateNoBlit();
++	I_FinishUpdate();
++}
++#endif
++
+ //
+ // Draws a simple white fill at the bottom of startup for load progress
+ //
+@@ -1981,6 +2034,10 @@ void CON_DrawLoadBar(void)
  
  	if (con_startup_loadprogress <= LOADED_ALLDONE)
  	{
@@ -687,6 +734,38 @@ index 1e7585f..90620e1 100644
 +#endif
  		V_DrawString(4, BASEVIDHEIGHT - (barheight + 8 + 4), V_FORCEUPPERCASE, CON_LoadingStrings[con_startup_loadprogress]);
  	}
+ 
+diff --git a/src/console.h b/src/console.h
+index 4200d4d..539e517 100644
+--- a/src/console.h
++++ b/src/console.h
+@@ -41,9 +41,16 @@ typedef enum
+ {
+ 	LOADED_ZINIT = 1,
+ 	LOADED_ISTARTUPTIMER,
++#ifdef _UWP
++	// [UWP]: Start graphics and fonts before reading the map data, so the loading screen shows text sooner
++	LOADED_ISTARTUPGRAPHICS,
++	LOADED_HUINIT,
++	LOADED_IWAD,
++#else
+ 	LOADED_IWAD,
+ 	LOADED_ISTARTUPGRAPHICS,
+ 	LOADED_HUINIT,
++#endif
+ 	LOADED_PWAD,
+ 	LOADED_CONFIG,
+ 	LOADED_INITTEXTUREDATA,
+@@ -59,6 +66,10 @@ typedef enum
+ 
+ extern con_loadprogress_t con_startup_loadprogress;
+ 
++#ifdef _UWP
++void CON_UWPLoadingKeepAlive(void);
++#endif
++
+ // top clip value for view render: do not draw part of view hidden by console
+ extern INT32 con_clipviewtop;
  
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
 index 8a434ba..0e3c54d 100644
@@ -840,7 +919,7 @@ index 1166b3c..8c31e92 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0..9d3567a 100644
+index 19fcfe0..5c214d2 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -33,8 +33,14 @@
@@ -1238,12 +1317,12 @@ index 19fcfe0..9d3567a 100644
 +#ifdef _UWP
 +			displayed = true;
 +#endif
-+		}
+ 		}
 +#ifdef _UWP
 +		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
 +		{
 +			skippedframe = true;
- 		}
++		}
 +#endif
  
  #ifdef HWRENDER
@@ -1313,11 +1392,32 @@ index 19fcfe0..9d3567a 100644
  	mainwads = num_startupiwads - musicwads;
  	D_CleanFile(startupiwads, num_startupiwads);
  	num_startupiwads = 0;
-@@ -1774,7 +2105,19 @@ void D_SRB2Main(void)
+@@ -1771,6 +2102,7 @@ void D_SRB2Main(void)
+ 	// conversion sometimes needs the palette
+ 	V_ReloadPalette();
+ 
++#ifndef _UWP // [UWP]: Done after HU_Init and CON_Init below, so the loading screen shows text sooner
  	//
  	// search for mainwad maps
  	//
+@@ -1779,6 +2111,7 @@ void D_SRB2Main(void)
+ 	basenumkartcupheaders = numkartcupheaders;
+ 
+ 	CON_SetLoadingProgress(LOADED_IWAD);
++#endif
+ 
+ 	M_PasswordInit();
+ 
+@@ -1814,6 +2147,27 @@ void D_SRB2Main(void)
+ 
+ 	CON_Init();
+ 
 +#ifdef _UWP
++	CON_SetLoadingProgress(LOADED_HUINIT);
++
++	//
++	// search for mainwad maps
++	//
 +	{
 +		const precise_t mapdatastart = I_GetPreciseTime();
 +		const precise_t logstart = i_uwplogtime;
@@ -1327,13 +1427,26 @@ index 19fcfe0..9d3567a 100644
 +			(double)(I_GetPreciseTime() - mapdatastart) / I_GetPrecisePrecision(),
 +			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
 +	}
-+#else
- 	P_InitMapData();
++	basenummapheaders = nummapheaders;
++	basenumkartcupheaders = numkartcupheaders;
++
++	CON_SetLoadingProgress(LOADED_IWAD);
 +#endif
- 	basenummapheaders = nummapheaders;
- 	basenumkartcupheaders = numkartcupheaders;
++
+ 	D_RegisterServerCommands();
+ 	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
+ 	R_RegisterEngineStuff();
+@@ -1821,7 +2175,9 @@ void D_SRB2Main(void)
  
-@@ -2014,6 +2357,10 @@ void D_SRB2Main(void)
+ 	I_RegisterSysCommands();
+ 
++#ifndef _UWP
+ 	CON_SetLoadingProgress(LOADED_HUINIT);
++#endif
+ 
+ 	CONS_Printf("W_InitMultipleFiles(): Adding external PWADs.\n");
+ 
+@@ -2014,6 +2370,10 @@ void D_SRB2Main(void)
  		}
  	}
  
@@ -1344,7 +1457,7 @@ index 19fcfe0..9d3567a 100644
  	// init all NETWORK
  	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
  	if (D_CheckNetGame())
-@@ -2323,6 +2670,8 @@ const char *D_Home(void)
+@@ -2323,6 +2683,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -15179,7 +15292,7 @@ index 02f46b5..f6f4e46 100644
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce..8441380 100644
+index e5208ce..63c5d08 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
 @@ -17,6 +17,9 @@
@@ -15276,6 +15389,16 @@ index e5208ce..8441380 100644
 +
  	// We're now done loading the level.
  	levelloading = false;
+ 
+@@ -9291,6 +9335,9 @@ UINT8 P_InitMapData(void)
+ 
+ 	for (i = 0; i < nummapheaders; ++i)
+ 	{
++#ifdef _UWP
++		CON_UWPLoadingKeepAlive();
++#endif
+ 		name = mapheaderinfo[i]->lumpname;
+ 		maplump = W_CheckNumForMap(name, (mapheaderinfo[i]->lumpnum == LUMPERROR));
  
 diff --git a/src/p_tick.h b/src/p_tick.h
 index b735d9b..5d78a91 100644
