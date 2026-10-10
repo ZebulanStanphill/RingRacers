@@ -1,4 +1,4 @@
-From 973a1deff77205a22dcbcc8cad6cad40880695db Mon Sep 17 00:00:00 2001
+From a2b01f412c333f7cfceb7f61565c8743df09bfea Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -437,6 +437,13 @@ Agent: Codex (Sol, D3D12 WARP tests)
 Model: gpt-6.1-sol
 Agent: Claude Code (Opus, review and merge)
 Model: claude-opus-5-5
+
+- [UWP]: The Direct3D 12 upload rings check a cached device-removed flag
+  instead of calling GetDeviceRemovedReason, a kernel call, on every
+  allocation; on Xbox that took a quarter of the 3D view's time.
+
+Agent: Claude Code (Opus, D3D12 profile fix)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -472,8 +479,8 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
  src/hardware/r_d3d12/allocators.h         |  116 +
- src/hardware/r_d3d12/d3d12_core.cpp       |  823 +++
- src/hardware/r_d3d12/d3d12_core.h         |  137 +
+ src/hardware/r_d3d12/d3d12_core.cpp       |  828 +++
+ src/hardware/r_d3d12/d3d12_core.h         |  140 +
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
  src/hardware/r_d3d12/d3d12_pipeline.cpp   |  173 +
@@ -540,7 +547,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 102 files changed, 20994 insertions(+), 1127 deletions(-)
+ 102 files changed, 21002 insertions(+), 1127 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -13969,10 +13976,10 @@ index 0000000..3a09325
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_core.cpp b/src/hardware/r_d3d12/d3d12_core.cpp
 new file mode 100644
-index 0000000..0a62357
+index 0000000..f53176b
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_core.cpp
-@@ -0,0 +1,823 @@
+@@ -0,0 +1,828 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -14648,6 +14655,11 @@ index 0000000..0a62357
 +	return g_removed;
 +}
 +
++bool Core_RemovalSeen()
++{
++	return g_removed;
++}
++
 +HRESULT Core_RemovedReason()
 +{
 +	return g_device ? g_device->GetDeviceRemovedReason() : S_OK;
@@ -14798,10 +14810,10 @@ index 0000000..0a62357
 +} // namespace rr_d3d12
 diff --git a/src/hardware/r_d3d12/d3d12_core.h b/src/hardware/r_d3d12/d3d12_core.h
 new file mode 100644
-index 0000000..37b1d4e
+index 0000000..4b58b03
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_core.h
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,140 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -14883,6 +14895,9 @@ index 0000000..37b1d4e
 +bool Core_WaitIdle(DWORD ms, const char *what);
 +
 +bool Core_DeviceRemoved();
++// What Core_DeviceRemoved last found, or a completed fence of UINT64_MAX showed, without asking the device: that
++// goes through the kernel, too slow for every draw
++bool Core_RemovalSeen();
 +HRESULT Core_RemovedReason();
 +void Core_LogDeviceRemoved(); // the reason and DRED's breadcrumbs and page fault, once
 +
@@ -17720,7 +17735,7 @@ index 0000000..d58584f
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_upload.cpp b/src/hardware/r_d3d12/d3d12_upload.cpp
 new file mode 100644
-index 0000000..656a360
+index 0000000..2ea8d8c
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_upload.cpp
 @@ -0,0 +1,112 @@
@@ -17780,7 +17795,7 @@ index 0000000..656a360
 +}
 +UploadAllocation UploadRing::Alloc(size_t size, size_t alignment)
 +{
-+	if (!mapped_ || !size || !alignment || Core_DeviceRemoved()) return {};
++	if (!mapped_ || !size || !alignment || Core_RemovalSeen()) return {};
 +	if (size > Capacity())
 +	{
 +		size_t capacity = Capacity();
@@ -17824,7 +17839,7 @@ index 0000000..656a360
 +bool UploadRing::Touch(const UploadAllocation &allocation, size_t size)
 +{
 +	if (!allocation || allocation.generation != generation_ || !size ||
-+		allocation.offset > Capacity() || size > Capacity() - allocation.offset || Core_DeviceRemoved()) return false;
++		allocation.offset > Capacity() || size > Capacity() - allocation.offset || Core_RemovalSeen()) return false;
 +	// The most recent consumer determines retirement, including cached constant reuses.
 +	allocator_.Touch(allocation.offset, size, Core_PendingFence());
 +	return true;
