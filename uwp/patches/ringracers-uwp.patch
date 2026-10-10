@@ -1,4 +1,4 @@
-From a2b01f412c333f7cfceb7f61565c8743df09bfea Mon Sep 17 00:00:00 2001
+From fd7d14e8ddeb4714352bf23764950982bb456d54 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -444,6 +444,23 @@ Model: claude-opus-5-5
 
 Agent: Claude Code (Opus, D3D12 profile fix)
 Model: claude-opus-5-5
+
+- [UWP]: Port models, interpolation and sky domes to the D3D12 driver,
+  backed by persistently mapped, fence-retired size-class static arenas.
+  Generate full RGBA8 mip chains on the CPU and upload all subresources.
+  Place textures in shared 16 MB heaps, with 4 KB eligible placements,
+  fence-deferred block reuse and committed fallback. Log creation time,
+  arena/heap memory and model/mip activity; expose test-only reuse counts.
+
+Agent: Codex (Sol, D3D12 S3)
+Model: gpt-6.1-sol
+Agent: Codex (Sol, S3 arena/mips)
+Model: gpt-6.1-sol
+Agent: Codex (Sol, S3 models/sky)
+Model: gpt-6.1-sol
+
+Agent: Claude Code (Opus, D3D12 S3 review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -478,11 +495,13 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/r_d3d11.cpp          | 6402 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
- src/hardware/r_d3d12/allocators.h         |  116 +
+ src/hardware/r_d3d12/allocators.h         |  196 +
+ src/hardware/r_d3d12/d3d12_arenas.inc     |   94 +
  src/hardware/r_d3d12/d3d12_core.cpp       |  828 +++
  src/hardware/r_d3d12/d3d12_core.h         |  140 +
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
+ src/hardware/r_d3d12/d3d12_models.inc     |  516 ++
  src/hardware/r_d3d12/d3d12_pipeline.cpp   |  173 +
  src/hardware/r_d3d12/d3d12_pipeline.h     |   58 +
  src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
@@ -491,9 +510,10 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_prewarm.h      |   17 +
  src/hardware/r_d3d12/d3d12_upload.cpp     |  112 +
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
+ src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2624 +++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   53 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2744 +++++++++
+ src/hardware/r_d3d12/r_d3d12.h            |   54 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
  src/hwr2/patch_atlas.cpp                  |    8 +
@@ -547,7 +567,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 102 files changed, 21002 insertions(+), 1127 deletions(-)
+ 105 files changed, 21873 insertions(+), 1127 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -556,10 +576,12 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
  create mode 100644 src/hardware/r_d3d12/allocators.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_arenas.inc
  create mode 100644 src/hardware/r_d3d12/d3d12_core.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_core.h
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_models.inc
  create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.h
  create mode 100644 src/hardware/r_d3d12/d3d12_present.cpp
@@ -568,6 +590,7 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d12/d3d12_prewarm.h
  create mode 100644 src/hardware/r_d3d12/d3d12_upload.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_upload.h
+ create mode 100644 src/hardware/r_d3d12/mips.h
  create mode 100644 src/hardware/r_d3d12/pipeline_key.h
  create mode 100644 src/hardware/r_d3d12/r_d3d12.cpp
  create mode 100644 src/hardware/r_d3d12/r_d3d12.h
@@ -13854,10 +13877,10 @@ index 0000000..0921d27
 +}
 diff --git a/src/hardware/r_d3d12/allocators.h b/src/hardware/r_d3d12/allocators.h
 new file mode 100644
-index 0000000..3a09325
+index 0000000..beb6dae
 --- /dev/null
 +++ b/src/hardware/r_d3d12/allocators.h
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,196 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -13871,6 +13894,7 @@ index 0000000..3a09325
 +#include <deque>
 +#include <map>
 +#include <vector>
++#include <utility>
 +
 +namespace rr_d3d12
 +{
@@ -13972,8 +13996,187 @@ index 0000000..3a09325
 +	std::vector<uint32_t> free_;
 +	std::multimap<uint64_t, uint32_t> pending_;
 +};
++// Chunks are bump-carved into aligned power-of-two blocks with class free lists. The GPU owner creates
++// backing storage before AddChunk/AddDedicated, and keeps chunk IDs stable.
++class SizeClassArena
++{
++public:
++	static constexpr size_t MaxClass = 4 * 1024 * 1024;
++	static constexpr uint32_t InvalidChunk = UINT32_MAX;
++	struct Block {
++		uint32_t chunk = InvalidChunk;
++		size_t offset = 0, size = 0;
++		bool dedicated = false, needsChunk = false, valid = false;
++	};
++	void Reset(size_t minClass, size_t chunkBytes, size_t maxChunks = SIZE_MAX)
++	{
++		minClass_ = minClass; chunkBytes_ = chunkBytes; maxChunks_ = maxChunks;
++		chunks_.clear(); pending_.clear(); free_.clear(); reuses_ = 0;
++		configured_ = minClass && !(minClass & (minClass - 1)) && minClass <= MaxClass
++				&& chunkBytes >= MaxClass && chunkBytes % MaxClass == 0;
++	}
++	Block Allocate(size_t bytes)
++	{
++		Block b;
++		if (!configured_ || !bytes) return b;
++		b.size = bytes; b.dedicated = bytes > MaxClass;
++		if (!b.dedicated) {
++			b.size = minClass_;
++			while (b.size < bytes) b.size *= 2;
++			auto &free = free_[b.size];
++			if (!free.empty()) { b = free.back(); free.pop_back(); ++reuses_; return b; }
++			for (size_t i = 0; i < chunks_.size(); ++i) {
++				auto &c = chunks_[i];
++				if (c.dedicated) continue;
++				const size_t padding = (b.size - c.head % b.size) % b.size;
++				if (padding > chunkBytes_ - c.head || b.size > chunkBytes_ - c.head - padding) continue;
++				b.chunk = static_cast<uint32_t>(i); b.offset = c.head + padding;
++				c.head = b.offset + b.size; b.valid = true; return b;
++			}
++		}
++		b.needsChunk = CanGrow(); return b;
++	}
++	bool AddChunk()
++	{
++		if (!configured_ || !CanGrow()) return false;
++		chunks_.push_back(Chunk{}); return true;
++	}
++	Block AddDedicated(size_t bytes)
++	{
++		Block b;
++		if (!configured_ || bytes <= MaxClass || !CanGrow()) return b;
++		Chunk c; c.blockSize = bytes; c.dedicated = true;
++		b.chunk = static_cast<uint32_t>(chunks_.size()); b.size = bytes;
++		b.dedicated = b.valid = true; chunks_.push_back(std::move(c)); return b;
++	}
++	// As with IndexFreeList, only live blocks returned by this arena may be freed,
++	// once. Backing resources for dedicated blocks can retire at this same fence.
++	void Free(const Block &b, uint64_t fence) { if (b.valid) pending_.emplace(fence, b); }
++	void Collect(uint64_t completed)
++	{
++		const auto end = pending_.upper_bound(completed);
++		for (auto it = pending_.begin(); it != end; ++it) {
++			const auto &b = it->second;
++			if (!b.dedicated) free_[b.size].push_back(b);
++		}
++		pending_.erase(pending_.begin(), end);
++	}
++	size_t Reuses() const { return reuses_; }
++	size_t ChunkCount() const { return chunks_.size(); }
++	size_t ChunkBytes() const { return chunkBytes_; }
++private:
++	struct Chunk { size_t blockSize = 0, head = 0; bool dedicated = false; };
++	bool CanGrow() const { return chunks_.size() < maxChunks_ && chunks_.size() < InvalidChunk; }
++	size_t reuses_ = 0;
++	size_t minClass_ = 0, chunkBytes_ = 0, maxChunks_ = 0;
++	bool configured_ = false;
++	std::map<size_t, std::vector<Block>> free_;
++	std::vector<Chunk> chunks_;
++	std::multimap<uint64_t, Block> pending_;
++};
++
 +}
 +#endif
+diff --git a/src/hardware/r_d3d12/d3d12_arenas.inc b/src/hardware/r_d3d12/d3d12_arenas.inc
+new file mode 100644
+index 0000000..b3b028d
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_arenas.inc
+@@ -0,0 +1,94 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++// Included by r_d3d12.cpp: GPU backing for the pure size-class allocator.
++constexpr size_t kStaticChunkBytes = 4 * 1024 * 1024;
++constexpr size_t kTextureHeapBytes = 16 * 1024 * 1024;
++SizeClassArena g_staticArena, g_textureArena;
++struct StaticChunk { ComPtr<ID3D12Resource> resource; BYTE *cpu = nullptr; bool dedicated = false; };
++std::vector<StaticChunk> g_staticChunks;
++std::vector<ComPtr<ID3D12Heap>> g_textureHeaps;
++UINT64 g_placedCreated = 0, g_committedCreated = 0, g_smallPlaced = 0, g_normalPlaced = 0;
++UINT64 g_textureHeapUsed = 0, g_textureHeapPeak = 0;
++size_t g_staticDedicated = 0;
++std::multimap<UINT64, UINT64> g_pendingTextureBytes;
++void CollectTextureBlocks()
++{
++	const auto fence = Core_CompletedFence();
++	g_textureArena.Collect(fence);
++	const auto end = g_pendingTextureBytes.upper_bound(fence);
++	for (auto it = g_pendingTextureBytes.begin(); it != end; ++it) g_textureHeapUsed -= it->second;
++	g_pendingTextureBytes.erase(g_pendingTextureBytes.begin(), end);
++}
++size_t StaticChunkCount()
++{
++	return (size_t)std::count_if(g_staticChunks.begin(), g_staticChunks.end(), [](const StaticChunk &chunk) { return chunk.resource && !chunk.dedicated; });
++}
++struct StaticAllocation
++{
++	ID3D12Resource *resource = nullptr;
++	BYTE *cpu = nullptr;
++	UINT64 offset = 0;
++	D3D12_GPU_VIRTUAL_ADDRESS gpu = 0;
++	UINT bytes = 0;
++	SizeClassArena::Block block;
++	explicit operator bool() const { return resource != nullptr; }
++};
++void InitArenas()
++{
++	g_staticArena.Reset(256, kStaticChunkBytes);
++	g_textureArena.Reset(4096, kTextureHeapBytes);
++}
++StaticAllocation AllocateStatic(const void *data, UINT bytes)
++{
++	if (!bytes || Core_RemovalSeen()) return {};
++	g_staticArena.Collect(Core_CompletedFence());
++	auto block = g_staticArena.Allocate(bytes);
++	if (block.needsChunk)
++	{
++		StaticChunk chunk; chunk.dedicated = block.dedicated;
++		D3D12_HEAP_PROPERTIES heap = {}; heap.Type = D3D12_HEAP_TYPE_UPLOAD;
++		D3D12_RESOURCE_DESC desc = {}; desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++		desc.Width = block.dedicated ? bytes : kStaticChunkBytes;
++		desc.Height = desc.DepthOrArraySize = desc.MipLevels = desc.SampleDesc.Count = 1;
++		desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++		if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&chunk.resource)), "Create static arena buffer")) return {};
++		chunk.resource->SetName(block.dedicated ? L"dedicated static upload buffer" : L"static upload arena chunk");
++		D3D12_RANGE read = {0, 0};
++		if (Core_Failed(chunk.resource->Map(0, &read, reinterpret_cast<void **>(&chunk.cpu)), "Map static arena")) return {};
++		if (block.dedicated) { block = g_staticArena.AddDedicated(bytes); ++g_staticDedicated; }
++		else { g_staticArena.AddChunk(); block = g_staticArena.Allocate(bytes); }
++		if (g_staticChunks.size() <= block.chunk) g_staticChunks.resize(block.chunk + 1);
++		g_staticChunks[block.chunk] = chunk;
++	}
++	if (!block.valid) return {};
++	auto &chunk = g_staticChunks[block.chunk];
++	StaticAllocation result = {chunk.resource.Get(), chunk.cpu + block.offset, block.offset,
++		chunk.resource->GetGPUVirtualAddress() + block.offset, bytes, block};
++	memcpy(result.cpu, data, bytes);
++	return result;
++}
++void RetireStatic(StaticAllocation &allocation)
++{
++	if (!allocation) return;
++	g_staticArena.Free(allocation.block, Core_PendingFence());
++	if (allocation.block.dedicated)
++	{
++		Core_Retire(g_staticChunks[allocation.block.chunk].resource);
++		g_staticChunks[allocation.block.chunk].cpu = nullptr;
++		--g_staticDedicated;
++	}
++	allocation = {};
++}
++void ShutdownArenas()
++{
++	for (auto &chunk : g_staticChunks) Core_Retire(chunk.resource);
++	g_staticChunks.clear();
++	// Heap retirement follows retirement of all placed resources and shares their covering fence.
++	for (auto &heap : g_textureHeaps) Core_Retire(heap);
++	g_textureHeaps.clear();
++}
 diff --git a/src/hardware/r_d3d12/d3d12_core.cpp b/src/hardware/r_d3d12/d3d12_core.cpp
 new file mode 100644
 index 0000000..f53176b
@@ -15573,6 +15776,528 @@ index 0000000..b3436f7
 +
 +} // namespace rr_d3d12
 +#endif
+diff --git a/src/hardware/r_d3d12/d3d12_models.inc b/src/hardware/r_d3d12/d3d12_models.inc
+new file mode 100644
+index 0000000..23c3fce
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_models.inc
+@@ -0,0 +1,516 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file d3d12_models.inc
++/// \brief [UWP]: Arena-backed models, mesh indices and sky dome draws
++
++// Models and sky retain upload-arena allocations; replacement is fence retired.
++struct ModelVertex
++{
++	float x, y, z, nx, ny, nz, s, t;
++};
++static_assert(sizeof(ModelVertex) == 32, "The model layout's stride is 32");
++struct StaticBuffer
++{
++	StaticAllocation allocation = {};
++	UINT bytes = 0;
++	explicit operator bool() const { return allocation.resource != nullptr; }
++};
++StaticBuffer g_fanIndices, g_skyBuffer;
++constexpr UINT kMaxFanVertices = 65535;
++std::unordered_map<unsigned int, StaticBuffer> g_modelBuffers;
++unsigned int g_nextModelBuffer = 1;
++std::unordered_map<const void*, StaticBuffer> g_meshIndexBuffers;
++std::vector<ModelVertex> g_modelVertices;
++
++bool CreateStaticBuffer(const void* data, UINT bytes, StaticBuffer& buffer)
++{
++	RetireStatic(buffer.allocation);
++	buffer = {};
++	if (!bytes || !data)
++		return false;
++	buffer.allocation = AllocateStatic(data, bytes);
++	if (!buffer)
++		return false;
++	buffer.bytes = bytes;
++	return true;
++}
++
++bool EnsureFanIndices()
++{
++	if (g_fanIndices)
++		return true;
++	std::vector<UINT16> fan;
++	fan.reserve((kMaxFanVertices - 2) * 3);
++	for (UINT i = 1; i + 1 < kMaxFanVertices; ++i)
++	{
++		fan.push_back(0);
++		fan.push_back((UINT16) i);
++		fan.push_back((UINT16) (i + 1));
++	}
++	return CreateStaticBuffer(fan.data(), (UINT) (fan.size() * sizeof(UINT16)), g_fanIndices);
++}
++
++StaticBuffer* GetMeshIndices(const mesh_t* mesh)
++{
++	if (!mesh->indices)
++		return nullptr;
++	auto it = g_meshIndexBuffers.find(mesh->indices);
++	if (it != g_meshIndexBuffers.end())
++		return &it->second;
++	StaticBuffer buffer;
++	if (!CreateStaticBuffer(mesh->indices, mesh->numTriangles * 3 * sizeof(UINT16), buffer))
++		return nullptr;
++	return &g_meshIndexBuffers.emplace(mesh->indices, buffer).first->second;
++}
++
++void ReleaseModelBuffers()
++{
++	RetireStatic(g_fanIndices.allocation);
++	g_fanIndices = {};
++	RetireStatic(g_skyBuffer.allocation);
++	g_skyBuffer = {};
++	for (auto& entry : g_modelBuffers)
++		RetireStatic(entry.second.allocation);
++	for (auto& entry : g_meshIndexBuffers)
++		RetireStatic(entry.second.allocation);
++	g_modelBuffers.clear();
++	g_meshIndexBuffers.clear();
++	g_modelVertices.clear();
++}
++
++void FillVertices(int count, const float* vertices, const float* normals, const float* uvs)
++{
++	g_modelVertices.resize(count);
++	for (int i = 0; i < count; i++)
++	{
++		ModelVertex& v = g_modelVertices[i];
++		v.x = vertices[i * 3];
++		v.y = vertices[i * 3 + 1];
++		v.z = vertices[i * 3 + 2];
++		v.nx = normals ? normals[i * 3] : 0.0f;
++		v.ny = normals ? normals[i * 3 + 1] : 0.0f;
++		v.nz = normals ? normals[i * 3 + 2] : 1.0f;
++		v.s = uvs ? uvs[i * 2] : 0.0f;
++		v.t = uvs ? uvs[i * 2 + 1] : 0.0f;
++	}
++}
++
++void FillTinyVertices(int count, const short* vertices, const char* normals, const float* uvs)
++{
++	g_modelVertices.resize(count);
++	for (int i = 0; i < count; i++)
++	{
++		ModelVertex& v = g_modelVertices[i];
++		v.x = vertices[i * 3];
++		v.y = vertices[i * 3 + 1];
++		v.z = vertices[i * 3 + 2];
++		v.nx = normals ? normals[i * 3] : 0.0f;
++		v.ny = normals ? normals[i * 3 + 1] : 0.0f;
++		v.nz = normals ? normals[i * 3 + 2] : 1.0f;
++		v.s = uvs ? uvs[i * 2] : 0.0f;
++		v.t = uvs ? uvs[i * 2 + 1] : 0.0f;
++	}
++}
++
++// Upload fallback vertices before applying state: either allocation can submit a list.
++void DrawMesh(const StaticBuffer* buffer, const mesh_t* mesh, bool indexed, UINT count)
++{
++	if (!CanDraw() || !count)
++		return;
++	StaticBuffer* indices = indexed ? GetMeshIndices(mesh) : nullptr;
++	if (indexed && !indices)
++		return;
++	UploadAllocation upload = {};
++	D3D12_VERTEX_BUFFER_VIEW vb = {};
++	if (buffer)
++		vb = {buffer->allocation.gpu, buffer->bytes, sizeof(ModelVertex)};
++	else
++	{
++		const size_t bytes = g_modelVertices.size() * sizeof(ModelVertex);
++		upload = g_vertexRing.Alloc(bytes, sizeof(ModelVertex));
++		if (!upload.cpu)
++			return;
++		memcpy(upload.cpu, g_modelVertices.data(), bytes);
++		vb = {upload.gpu, (UINT) bytes, sizeof(ModelVertex)};
++	}
++	if (!ApplyState(LAYOUT_MODEL, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST))
++		return;
++	if (!buffer && !g_vertexRing.Touch(upload, vb.SizeInBytes))
++		return;
++	if (!g_constantRing.Touch(g_constantAllocation, 512))
++		return;
++	Core_List()->IASetVertexBuffers(0, 1, &vb);
++	if (indexed)
++	{
++		const D3D12_INDEX_BUFFER_VIEW ib = {indices->allocation.gpu, indices->bytes, DXGI_FORMAT_R16_UINT};
++		Core_List()->IASetIndexBuffer(&ib);
++	}
++	Core_FlushBarriers();
++	if (indexed)
++	{
++		Core_List()->DrawIndexedInstanced(count, 1, 0, 0, 0);
++		g_stats.indices += count;
++	}
++	else
++	{
++		Core_List()->DrawInstanced(count, 1, 0, 0);
++		g_stats.vertices += count;
++	}
++	g_stats.draws++;
++}
++
++void D3D_DrawModel(
++	model_t* model,
++	INT32 frameIndex,
++	float duration,
++	float tics,
++	INT32 nextFrameIndex,
++	FTransform* pos,
++	float hscale,
++	float vscale,
++	UINT8 flipped,
++	UINT8 hflipped,
++	FSurfaceInfo* Surface
++)
++{
++	static float poly[4] = {0, 0, 0, 0};
++	static float tint[4] = {0, 0, 0, 0};
++	static float fade[4] = {0, 0, 0, 0};
++
++	float pol = 0.0f;
++	bool lit = false;
++
++	if (!CanDraw() || model->numMeshes <= 0)
++		return;
++
++	// Affect input model scaling
++	hscale *= 0.5f;
++	vscale *= 0.5f;
++	float scalex = hscale;
++	float scaley = vscale;
++	float scalez = hscale;
++
++	if (duration > 0.0 && tics >= 0.0) // don't interpolate if instantaneous or infinite in length
++	{
++		float newtime = (duration - tics); // + 1;
++
++		pol = newtime / duration;
++
++		if (pol > 1.0f)
++			pol = 1.0f;
++
++		if (pol < 0.0f)
++			pol = 0.0f;
++	}
++
++	poly[0] = Surface->PolyColor.s.red / 255.0f;
++	poly[1] = Surface->PolyColor.s.green / 255.0f;
++	poly[2] = Surface->PolyColor.s.blue / 255.0f;
++	poly[3] = Surface->PolyColor.s.alpha / 255.0f;
++
++	if (g_modelLighting)
++	{
++		if (!g_shadersEnabled)
++		{
++			// Because otherwise, scaling the screen negatively vertically breaks the lighting:
++			// GL_LIGHT0 at (0, 1, 0, 0), a direction, which the modelview matrix takes to eye space
++			const Mat4& modelview = g_modelview.back();
++			float x = modelview.m[4], y = modelview.m[5], z = modelview.m[6];
++			const float length = sqrtf(x * x + y * y + z * z);
++
++			if (length > 0.0f)
++			{
++				x /= length;
++				y /= length;
++				z /= length;
++			}
++			g_gl.lightDir[0] = x;
++			g_gl.lightDir[1] = y;
++			g_gl.lightDir[2] = z;
++			memcpy(g_gl.material, poly, sizeof g_gl.material);
++			g_gl.lighting = lit = true;
++		}
++	}
++	else
++		SetColor(&Surface->PolyColor.s.red);
++
++	tint[0] = Surface->TintColor.s.red / 255.0f;
++	tint[1] = Surface->TintColor.s.green / 255.0f;
++	tint[2] = Surface->TintColor.s.blue / 255.0f;
++	tint[3] = Surface->TintColor.s.alpha / 255.0f;
++
++	fade[0] = Surface->FadeColor.s.red / 255.0f;
++	fade[1] = Surface->FadeColor.s.green / 255.0f;
++	fade[2] = Surface->FadeColor.s.blue / 255.0f;
++	fade[3] = Surface->FadeColor.s.alpha / 255.0f;
++
++	FBITFIELD flags = (Surface->PolyFlags | PF_Modulated);
++	if (Surface->PolyFlags & (PF_Additive | PF_Subtractive | PF_ReverseSubtract | PF_Multiplicative))
++		flags |= PF_Occlude;
++	else if (Surface->PolyColor.s.alpha == 0xFF)
++		flags |= (PF_Occlude | PF_Masked);
++
++	D3D_SetBlend(flags);
++	SetUniforms(Surface, poly, tint, fade);
++	SetLightTable(Surface->LightTableId);
++
++	g_gl.cullFace = true;
++
++	// flipped is if the object is vertically flipped
++	// hflipped is if the object is horizontally flipped
++	// pos->flip is if the screen is flipped vertically
++	// pos->mirror is if the screen is flipped horizontally
++	// XOR all the flips together to figure out what culling to use!
++	g_gl.cullFront = (flipped ^ hflipped ^ pos->flip ^ pos->mirror) != 0;
++
++	MatPush(); // should be the same as glLoadIdentity
++	MatTranslate(pos->x, pos->z, pos->y);
++	if (flipped)
++		scaley = -scaley;
++	if (hflipped)
++		scalez = -scalez;
++
++	MatRotate(pos->anglez, 0.0f, 0.0f, -1.0f);
++	MatRotate(pos->anglex, 1.0f, 0.0f, 0.0f);
++	MatRotate(pos->angley, 0.0f, -1.0f, 0.0f);
++
++	if (pos->roll)
++	{
++		MatTranslate(pos->centerx, pos->centery, 0);
++		MatRotate(pos->rollangle, pos->rollx, 0.0f, pos->rollz);
++		MatTranslate(-pos->centerx, -pos->centery, 0);
++	}
++
++	MatScale(scalex, scaley, scalez);
++
++	const bool useTinyFrames = model->meshes[0].tinyframes != NULL;
++
++	if (useTinyFrames)
++		MatScale(1 / 64.0f, 1 / 64.0f, 1 / 64.0f);
++
++	// Don't use the VBO if it does not have the correct texture coordinates.
++	// (Can happen when model uses a sprite as a texture and the sprite changes)
++	const bool useVBO = memcmp(&(model->vbo_max_s), &(model->max_s), sizeof(model->max_s)) == 0 &&
++						memcmp(&(model->vbo_max_t), &(model->max_t), sizeof(model->max_t)) == 0;
++
++	for (int i = 0; i < model->numMeshes; i++)
++	{
++		mesh_t* mesh = &model->meshes[i];
++
++		if (mesh->numFrames <= 0)
++			continue;
++
++		if (useTinyFrames)
++		{
++			tinyframe_t* frame = &mesh->tinyframes[frameIndex % mesh->numFrames];
++			tinyframe_t* nextframe = NULL;
++
++			if (nextFrameIndex != -1)
++				nextframe = &mesh->tinyframes[nextFrameIndex % mesh->numFrames];
++
++			if (!nextframe || pol == 0.0f)
++			{
++				auto buffer = useVBO ? g_modelBuffers.find(frame->vboID) : g_modelBuffers.end();
++				if (buffer != g_modelBuffers.end() && buffer->second)
++					DrawMesh(&buffer->second, mesh, true, mesh->numTriangles * 3);
++				else
++				{
++					g_stats.modelFallbacks++;
++					FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs);
++					DrawMesh(nullptr, mesh, true, mesh->numTriangles * 3);
++				}
++			}
++			else
++			{
++				g_stats.modelLerps++;
++				g_modelVertices.resize(mesh->numVertices);
++				for (int j = 0; j < mesh->numVertices; j++)
++				{
++					ModelVertex& v = g_modelVertices[j];
++					float* position = &v.x;
++					float* normal = &v.nx;
++
++					for (int k = 0; k < 3; k++)
++					{
++						const int c = j * 3 + k;
++						// Interpolate
++						position[k] =
++							(short) (frame->vertices[c] + (pol * (nextframe->vertices[c] - frame->vertices[c])));
++						normal[k] = (char) (frame->normals[c] + (pol * (nextframe->normals[c] - frame->normals[c])));
++					}
++					v.s = mesh->uvs[j * 2];
++					v.t = mesh->uvs[j * 2 + 1];
++				}
++				DrawMesh(nullptr, mesh, true, mesh->numTriangles * 3);
++			}
++		}
++		else
++		{
++			mdlframe_t* frame = &mesh->frames[frameIndex % mesh->numFrames];
++			mdlframe_t* nextframe = NULL;
++
++			if (nextFrameIndex != -1)
++				nextframe = &mesh->frames[nextFrameIndex % mesh->numFrames];
++
++			if (!nextframe || pol == 0.0f)
++			{
++				auto buffer = useVBO ? g_modelBuffers.find(frame->vboID) : g_modelBuffers.end();
++				if (buffer != g_modelBuffers.end() && buffer->second)
++					DrawMesh(&buffer->second, mesh, false, mesh->numTriangles * 3);
++				else
++				{
++					g_stats.modelFallbacks++;
++					FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs);
++					DrawMesh(nullptr, mesh, false, mesh->numTriangles * 3);
++				}
++			}
++			else
++			{
++				g_stats.modelLerps++;
++				g_modelVertices.resize(mesh->numVertices);
++				for (int j = 0; j < mesh->numVertices; j++)
++				{
++					ModelVertex& v = g_modelVertices[j];
++					float* position = &v.x;
++					float* normal = &v.nx;
++
++					for (int k = 0; k < 3; k++)
++					{
++						const int c = j * 3 + k;
++						// Interpolate
++						position[k] = frame->vertices[c] + (pol * (nextframe->vertices[c] - frame->vertices[c]));
++						normal[k] = frame->normals[c] + (pol * (nextframe->normals[c] - frame->normals[c]));
++					}
++					v.s = mesh->uvs[j * 2];
++					v.t = mesh->uvs[j * 2 + 1];
++				}
++				DrawMesh(nullptr, mesh, false, mesh->numVertices);
++			}
++		}
++	}
++
++	MatPop(); // should be the same as glLoadIdentity
++	g_gl.cullFace = false;
++
++	if (lit)
++		g_gl.lighting = false;
++
++	g_stats.models++;
++}
++
++void D3D_CreateModelVBOs(model_t* model)
++{
++	int buffers = 0;
++
++	if (!Core_Device())
++		return;
++
++	for (int i = 0; i < model->numMeshes; i++)
++	{
++		mesh_t* mesh = &model->meshes[i];
++
++		for (int j = 0; j < mesh->numFrames; j++)
++		{
++			unsigned int* vboID;
++
++			if (mesh->frames)
++			{
++				mdlframe_t* frame = &mesh->frames[j];
++				FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs);
++				vboID = &frame->vboID;
++			}
++			else if (mesh->tinyframes)
++			{
++				tinyframe_t* frame = &mesh->tinyframes[j];
++				FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs);
++				vboID = &frame->vboID;
++			}
++			else
++				break;
++
++			if (*vboID)
++			{
++				auto old = g_modelBuffers.find(*vboID);
++				if (old != g_modelBuffers.end())
++				{
++					RetireStatic(old->second.allocation);
++					g_modelBuffers.erase(old);
++				}
++			}
++			*vboID = 0;
++
++			StaticBuffer buffer;
++			if (CreateStaticBuffer(
++					g_modelVertices.data(),
++					(UINT) (g_modelVertices.size() * sizeof(ModelVertex)),
++					buffer
++				))
++			{
++				*vboID = g_nextModelBuffer++;
++				g_modelBuffers[*vboID] = buffer;
++				buffers++;
++			}
++		}
++	}
++
++	Log("made %d vertex buffers for model %s", buffers, model->mdlFilename ? model->mdlFilename : "?");
++}
++
++void D3D_RenderSkyDome(gl_sky_t* sky)
++{
++	SetUniforms(nullptr, nullptr, nullptr, nullptr);
++	if (!CanDraw())
++		return;
++	if (sky->rebuild || !g_skyBuffer)
++	{
++		if (!CreateStaticBuffer(sky->data, (UINT) (sky->vertex_count * sizeof(sky->data[0])), g_skyBuffer))
++			return;
++		sky->vbo = 1;
++		sky->rebuild = false;
++		g_stats.skyBuilds++;
++		D3D12_LOG_ONCE("built a sky dome of %d vertices in %d loops", sky->vertex_count, sky->loopcount);
++	}
++	MatScale(1.0f, (float) sky->height / 200.0f, 1.0f);
++	MatRotate(270.0f, 0.0f, 1.0f, 0.0f);
++	for (int j = 0; j < 2; ++j)
++		for (int i = 0; i < sky->loopcount; ++i)
++		{
++			const gl_skyloopdef_t* loop = &sky->loops[i];
++			if (j == 0 ? loop->use_texture : !loop->use_texture)
++				continue;
++			const bool fan = loop->mode == HWD_SKYLOOP_FAN;
++			if (fan ? (loop->vertexcount < 3 || (UINT) loop->vertexcount > kMaxFanVertices)
++					: loop->mode != HWD_SKYLOOP_STRIP)
++				continue;
++			if (fan && !EnsureFanIndices())
++				continue;
++			if (!ApplyState(
++					LAYOUT_SKY,
++					fan ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST : D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP
++				))
++				continue;
++			if (!g_constantRing.Touch(g_constantAllocation, 512))
++				continue;
++			const D3D12_VERTEX_BUFFER_VIEW vb = {g_skyBuffer.allocation.gpu, g_skyBuffer.bytes, sizeof(gl_skyvertex_t)};
++			Core_List()->IASetVertexBuffers(0, 1, &vb);
++			if (fan)
++			{
++				const D3D12_INDEX_BUFFER_VIEW ib =
++					{g_fanIndices.allocation.gpu, g_fanIndices.bytes, DXGI_FORMAT_R16_UINT};
++				Core_List()->IASetIndexBuffer(&ib);
++			}
++			Core_FlushBarriers();
++			if (fan)
++				Core_List()->DrawIndexedInstanced((loop->vertexcount - 2) * 3, 1, 0, loop->vertexindex, 0);
++			else
++				Core_List()->DrawInstanced(loop->vertexcount, 1, loop->vertexindex, 0);
++			g_stats.draws++;
++			g_stats.vertices += loop->vertexcount;
++		}
++	SetColor(kWhite);
++	g_stats.skies++;
++}
 diff --git a/src/hardware/r_d3d12/d3d12_pipeline.cpp b/src/hardware/r_d3d12/d3d12_pipeline.cpp
 new file mode 100644
 index 0000000..c44989b
@@ -17911,6 +18636,72 @@ index 0000000..4171b1c
 +};
 +}
 +#endif
+diff --git a/src/hardware/r_d3d12/mips.h b/src/hardware/r_d3d12/mips.h
+new file mode 100644
+index 0000000..67884d1
+--- /dev/null
++++ b/src/hardware/r_d3d12/mips.h
+@@ -0,0 +1,60 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++#ifndef RR_D3D12_MIPS_H
++#define RR_D3D12_MIPS_H
++#include <algorithm>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++#include <vector>
++#include <utility>
++namespace rr_d3d12
++{
++struct MipLevelRGBA8 { uint32_t width = 0, height = 0; std::vector<uint8_t> pixels; };
++// Linear UNORM box filtering, independently per channel (including alpha).
++// Area weighting includes every odd-edge texel rather than discarding it.
++// Invalid dimensions/stride return an empty chain. Input includes row padding.
++inline std::vector<MipLevelRGBA8> GenerateMipChainRGBA8(const uint8_t *data,
++ uint32_t width, uint32_t height, size_t rowPitch = 0)
++{
++ std::vector<MipLevelRGBA8> chain;
++ if (!data || !width || !height) return chain;
++ if (uint64_t(width) * height > UINT64_MAX / 255) return chain;
++ if (uint64_t(width) * 4 > std::numeric_limits<size_t>::max()) return chain;
++ const size_t rowBytes = size_t(width) * 4;
++ if (!rowPitch) rowPitch = rowBytes;
++ if (rowPitch < rowBytes || height > SIZE_MAX / rowPitch || height > SIZE_MAX / rowBytes) return chain;
++ MipLevelRGBA8 base; base.width = width; base.height = height; base.pixels.resize(rowBytes * height);
++ for (uint32_t y = 0; y < height; ++y) std::memcpy(base.pixels.data() + size_t(y) * rowBytes, data + size_t(y) * rowPitch, rowBytes);
++ chain.push_back(std::move(base));
++ while (width > 1 || height > 1) {
++  const auto &src = chain.back();
++  MipLevelRGBA8 dst; dst.width = std::max(1u, width / 2); dst.height = std::max(1u, height / 2);
++  dst.pixels.resize(size_t(dst.width) * dst.height * 4);
++  // Integer coordinates in units of 1/dst dimension make overlap exact.
++  for (uint32_t y = 0; y < dst.height; ++y) for (uint32_t x = 0; x < dst.width; ++x) {
++   const uint64_t left = uint64_t(x) * width, right = uint64_t(x + 1) * width;
++   const uint64_t top = uint64_t(y) * height, bottom = uint64_t(y + 1) * height;
++   for (unsigned channel = 0; channel < 4; ++channel) {
++    uint64_t sum = 0;
++    for (uint32_t sy = uint32_t(top / dst.height); sy < (bottom + dst.height - 1) / dst.height; ++sy) {
++     const uint64_t wy = std::min(bottom, uint64_t(sy + 1) * dst.height) - std::max(top, uint64_t(sy) * dst.height);
++     for (uint32_t sx = uint32_t(left / dst.width); sx < (right + dst.width - 1) / dst.width; ++sx) {
++      const uint64_t wx = std::min(right, uint64_t(sx + 1) * dst.width) - std::max(left, uint64_t(sx) * dst.width);
++      sum += src.pixels[(size_t(sy) * width + sx) * 4 + channel] * wx * wy;
++     }
++    }
++    const uint64_t weight = uint64_t(width) * height;
++    dst.pixels[(size_t(y) * dst.width + x) * 4 + channel] = uint8_t((sum + weight / 2) / weight);
++   }
++  }
++  width = dst.width; height = dst.height; chain.push_back(std::move(dst));
++ }
++ return chain;
++}
++}
++#endif
 diff --git a/src/hardware/r_d3d12/pipeline_key.h b/src/hardware/r_d3d12/pipeline_key.h
 new file mode 100644
 index 0000000..736f77d
@@ -17970,10 +18761,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..ac02306
+index 0000000..1ff7cb3
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2624 @@
+@@ -0,0 +1,2744 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -17995,6 +18786,7 @@ index 0000000..ac02306
 +#include "d3d12_pipeline.h"
 +#include "d3d12_prewarm.h"
 +#include "d3d12_upload.h"
++#include "mips.h"
 +#include "r_d3d12_shaders/RootSignature.h"
 +
 +#include <cmath>
@@ -18016,6 +18808,7 @@ index 0000000..ac02306
 +#include "../hw_drv.h"
 +#include "../hw_main.h"
 +#include "../hw_glob.h"
++#include "../hw_md2.h"
 +#include "../../m_fixed.h"
 +#include "r_d3d12.h"
 +
@@ -18050,6 +18843,9 @@ index 0000000..ac02306
 +	int lines, polygons, batches, skies, models;
 +	UINT64 texturesCreated, textureUploads, textureUploadBytes, texturesDeleted;
 +	int flushes;
++	int skyBuilds, modelFallbacks, modelLerps;
++	UINT64 mipsGenerated;
++	double mipMs, textureCreateMs;
 +	int screens; // screen textures, wipes, postimg, the intermission background and the final screen
 +	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
 +	int portals, fadeMaps;
@@ -18405,6 +19201,8 @@ index 0000000..ac02306
 +
 +enum Filter : UINT8 { FILTER_NEAREST, FILTER_LINEAR, FILTER_LINEAR_MIPMAP_LINEAR, FILTER_NEAREST_MIPMAP_LINEAR };
 +
++#include "d3d12_arenas.inc"
++
 +struct GpuTexture
 +{
 +	ComPtr<ID3D12Resource> res;
@@ -18413,8 +19211,11 @@ index 0000000..ac02306
 +	UINT width = 0, height = 0, mips = 1;
 +	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 +	UINT64 bytes = 0, allocatedBytes = 0;
++	SizeClassArena::Block heapBlock;
 +};
 +IndexFreeList g_srvIndices;
++UINT g_srvHighWater = 4;
++UINT64 g_srvReuses = 0;
 +UINT64 g_textureAllocatedBytes = 0;
 +bool g_textureFlushRequested = false, g_budgetTextureFlush = false, g_textureFlushed = false;
 +precise_t g_lastTextureFlush = 0;
@@ -18732,6 +19533,12 @@ index 0000000..ac02306
 +	if (!texture.res) return;
 +	// Both the resource and its descriptor cover all work recorded so far, including this open list.
 +	Core_Retire(texture.res);
++	if (texture.heapBlock.valid)
++	{
++		g_textureArena.Free(texture.heapBlock, Core_PendingFence());
++		g_pendingTextureBytes.emplace(Core_PendingFence(), texture.heapBlock.size);
++		texture.heapBlock = {};
++	}
 +	if (texture.srv >= 4 && texture.srv != UINT32_MAX)
 +		g_srvIndices.Free(texture.srv, Core_PendingFence());
 +	g_textureBytes -= texture.bytes;
@@ -18739,38 +19546,108 @@ index 0000000..ac02306
 +	texture.srv = UINT32_MAX;
 +	texture.bytes = texture.allocatedBytes = 0;
 +}
++UINT FullMipCount(UINT width, UINT height)
++{
++	UINT count = 1;
++	while (width > 1 || height > 1) { width = std::max(1u, width / 2); height = std::max(1u, height / 2); ++count; }
++	return count;
++}
 +bool UploadTexture(GpuTexture &texture, const void *data)
 +{
++	std::vector<MipLevelRGBA8> chain;
++	if (texture.mips > 1)
++	{
++		LARGE_INTEGER frequency, begin, end;
++		QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
++		chain = GenerateMipChainRGBA8(static_cast<const uint8_t *>(data), texture.width, texture.height);
++		QueryPerformanceCounter(&end);
++		g_stats.mipMs += (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart;
++		g_stats.mipsGenerated += chain.size() - 1;
++	}
 +	const auto desc = texture.res->GetDesc();
-+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
-+	UINT rows = 0;
-+	UINT64 rowBytes = 0, bytes = 0;
-+	Core_Device()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rows, &rowBytes, &bytes);
-+	// Alloc can submit/reopen the list. Do it before taking a list pointer or recording transitions.
++	std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(texture.mips);
++	std::vector<UINT> rows(texture.mips);
++	std::vector<UINT64> rowBytes(texture.mips);
++	UINT64 bytes = 0;
++	Core_Device()->GetCopyableFootprints(&desc, 0, texture.mips, 0, footprints.data(), rows.data(), rowBytes.data(), &bytes);
++	// Alloc can submit/reopen the list. Do it before recording transitions.
 +	auto allocation = g_textureRing.Alloc((size_t)bytes, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
 +	if (!allocation) return false;
 +	auto *dst = static_cast<UINT8 *>(allocation.cpu);
-+	const auto *src = static_cast<const UINT8 *>(data);
-+	for (UINT row = 0; row < rows; ++row)
-+		memcpy(dst + footprint.Offset + (size_t)row * footprint.Footprint.RowPitch,
-+			src + (size_t)row * rowBytes, (size_t)rowBytes);
-+	footprint.Offset += allocation.offset;
++	for (UINT mip = 0; mip < texture.mips; ++mip)
++	{
++		const auto *src = chain.empty() ? static_cast<const UINT8 *>(data) : chain[mip].pixels.data();
++		for (UINT row = 0; row < rows[mip]; ++row)
++			memcpy(dst + footprints[mip].Offset + (size_t)row * footprints[mip].Footprint.RowPitch,
++				src + (size_t)row * rowBytes[mip], (size_t)rowBytes[mip]);
++		footprints[mip].Offset += allocation.offset;
++	}
 +	Transition(texture, D3D12_RESOURCE_STATE_COPY_DEST);
 +	Core_FlushBarriers();
-+	D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
-+	from.pResource = g_textureRing.Resource();
-+	from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-+	from.PlacedFootprint = footprint;
-+	to.pResource = texture.res.Get();
-+	to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-+	Core_List()->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
++	for (UINT mip = 0; mip < texture.mips; ++mip)
++	{
++		D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
++		from.pResource = g_textureRing.Resource(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++		from.PlacedFootprint = footprints[mip];
++		to.pResource = texture.res.Get(); to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; to.SubresourceIndex = mip;
++		Core_List()->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
++	}
 +	Transition(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++	return true;
++}
++// Heaps remain alive until shutdown, including while freed blocks await a fence.
++bool CreateTextureResource(GpuTexture &texture, D3D12_RESOURCE_DESC desc)
++{
++	CollectTextureBlocks();
++	desc.Alignment = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
++	auto info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc);
++	const bool smallPlacement = info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT && info.SizeInBytes != UINT64_MAX;
++	if (!smallPlacement) { desc.Alignment = 0; info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc); }
++	if (info.SizeInBytes <= 4 * 1024 * 1024)
++	{
++		auto block = g_textureArena.Allocate((size_t)info.SizeInBytes);
++		if (block.needsChunk)
++		{
++			D3D12_HEAP_DESC heapDesc = {}; heapDesc.SizeInBytes = kTextureHeapBytes;
++			heapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
++			heapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
++			ComPtr<ID3D12Heap> heap;
++			const HRESULT hr = Core_Device()->CreateHeap(&heapDesc, IID_PPV_ARGS(&heap));
++			if (SUCCEEDED(hr))
++			{
++				heap->SetName(L"shared texture placement heap");
++				g_textureArena.AddChunk();
++				g_textureHeaps.push_back(heap);
++				Log("texture heap #%u (16 MB)", (unsigned)g_textureHeaps.size());
++				block = g_textureArena.Allocate((size_t)info.SizeInBytes);
++			}
++		}
++		if (block.valid)
++		{
++			const HRESULT hr = Core_Device()->CreatePlacedResource(g_textureHeaps[block.chunk].Get(), block.offset, &desc,
++				D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture.res));
++			if (SUCCEEDED(hr))
++			{
++				texture.heapBlock = block; texture.allocatedBytes = block.size;
++				g_textureHeapUsed += block.size; g_textureHeapPeak = std::max(g_textureHeapPeak, g_textureHeapUsed);
++				++g_placedCreated; if (smallPlacement) ++g_smallPlaced; else ++g_normalPlaced;
++				return true;
++			}
++			g_textureArena.Free(block, Core_CompletedFence());
++		}
++	}
++	// Large resources or failed placement fall back to committed storage.
++	desc.Alignment = 0;
++	D3D12_HEAP_PROPERTIES heap = {}; heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture.res)), "Create committed texture")) return false;
++	texture.allocatedBytes = Core_Device()->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
++	++g_committedCreated;
 +	return true;
 +}
 +bool CreateTextureStorage(GpuTexture *texture, UINT id, UINT width, UINT height, DXGI_FORMAT format,
 +	bool mipmapped, const void *data, bool black = false)
 +{
-+	(void)mipmapped; // S3 supplies the mip chain; storage always has one level for now.
 +	g_srvIndices.Collect(Core_CompletedFence());
 +	const UINT index = black ? 3 : g_srvIndices.Allocate();
 +	if (index == UINT32_MAX)
@@ -18779,45 +19656,58 @@ index 0000000..ac02306
 +		g_textureFlushRequested = true;
 +		return false;
 +	}
++	if (!black)
++	{
++		if (index < g_srvHighWater) ++g_srvReuses;
++		g_srvHighWater = std::max(g_srvHighWater, index + 1);
++	}
 +	D3D12_RESOURCE_DESC desc = {};
 +	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-+	desc.Width = width; desc.Height = height;
-+	desc.DepthOrArraySize = desc.MipLevels = 1;
-+	desc.Format = format;
-+	desc.SampleDesc.Count = 1;
-+	D3D12_HEAP_PROPERTIES heap = {};
-+	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-+	GpuTexture replacement;
-+	replacement.srv = index;
-+	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-+		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&replacement.res)), "Create texture"))
++	desc.Width = width; desc.Height = height; desc.DepthOrArraySize = 1;
++	desc.MipLevels = (UINT16)(mipmapped ? FullMipCount(width, height) : 1);
++	desc.Format = format; desc.SampleDesc.Count = 1;
++	GpuTexture replacement; replacement.srv = index; replacement.mips = desc.MipLevels;
++	LARGE_INTEGER frequency, begin, end;
++	QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
++	if (!CreateTextureResource(replacement, desc))
 +	{
-+		if (!black) g_srvIndices.Free(index, Core_PendingFence());
++		if (!black)
++			g_srvIndices.Free(index, Core_PendingFence());
 +		return false;
 +	}
-+	wchar_t name[64];
-+	swprintf(name, sizeof name / sizeof *name, L"texture %u", id);
++	wchar_t name[64]; swprintf(name, sizeof name / sizeof *name, L"texture %u", id);
 +	replacement.res->SetName(name);
++	if (replacement.heapBlock.valid)
++	{
++		Core_FlushBarriers();
++		D3D12_RESOURCE_BARRIER alias = {}; alias.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
++		alias.Aliasing.pResourceAfter = replacement.res.Get();
++		Core_List()->ResourceBarrier(1, &alias);
++	}
 +	replacement.width = width; replacement.height = height; replacement.format = format;
-+	replacement.bytes = (UINT64)width * height * 4;
-+	replacement.allocatedBytes = Core_Device()->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
++	for (UINT mip = 0, w = width, h = height; mip < replacement.mips; ++mip, w = std::max(1u, w / 2), h = std::max(1u, h / 2))
++		replacement.bytes += (UINT64)w * h * 4;
++	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
++	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; srv.Format = format;
++	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srv.Texture2D.MipLevels = replacement.mips;
++	Core_Device()->CreateShaderResourceView(replacement.res.Get(), &srv, SrvCpu(index));
++	QueryPerformanceCounter(&end);
++	g_stats.textureCreateMs += (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart;
 +	if (data && !UploadTexture(replacement, data))
 +	{
 +		Core_Retire(replacement.res);
-+		if (!black) g_srvIndices.Free(index, Core_PendingFence());
++		if (replacement.heapBlock.valid)
++		{
++			g_textureArena.Free(replacement.heapBlock, Core_PendingFence());
++			g_pendingTextureBytes.emplace(Core_PendingFence(), replacement.heapBlock.size);
++		}
++		if (!black)
++			g_srvIndices.Free(index, Core_PendingFence());
 +		return false;
 +	}
 +	if (!data) Transition(replacement, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-+	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
-+	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-+	srv.Format = format;
-+	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-+	srv.Texture2D.MipLevels = 1;
-+	Core_Device()->CreateShaderResourceView(replacement.res.Get(), &srv, SrvCpu(index));
-+	RetireTexture(*texture);
-+	*texture = replacement;
-+	g_textureBytes += texture->bytes;
-+	g_textureAllocatedBytes += texture->allocatedBytes;
++	RetireTexture(*texture); *texture = replacement;
++	g_textureBytes += texture->bytes; g_textureAllocatedBytes += texture->allocatedBytes;
 +	g_stats.texturesCreated++;
 +	return true;
 +}
@@ -18999,10 +19889,10 @@ index 0000000..ac02306
 +	if (ptex)
 +	{
 +		const bool mipmapped = g_mipmap;
-+		if (mipmapped) D3D12_LOG_ONCE("mipmaps not made yet (S3); textures use level 0");
 +
 +		bool uploaded;
-+		if (texture->res && texture->width == (UINT)w && texture->height == (UINT)h)
++		if (texture->res && texture->width == (UINT)w && texture->height == (UINT)h
++			&& texture->mips == (mipmapped ? FullMipCount(w, h) : 1))
 +			uploaded = UploadTexture(*texture, ptex);
 +		else
 +			uploaded = CreateTextureStorage(texture, texture->id, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, mipmapped, ptex);
@@ -19010,7 +19900,7 @@ index 0000000..ac02306
 +		if (uploaded)
 +		{
 +			g_stats.textureUploads++;
-+			g_stats.textureUploadBytes += (INT64)w * h * 4;
++			g_stats.textureUploadBytes += texture->bytes;
 +		}
 +
 +		if (mipmapped)
@@ -19139,6 +20029,7 @@ index 0000000..ac02306
 +	srv.Texture2D.MipLevels = 1;
 +	device->CreateShaderResourceView(nullptr, &srv, handle);
 +	g_srvIndices.Reset(4, 65536 - 4);
++	InitArenas();
 +	g_samplers.clear(); g_nextSampler = 1;
 +	D3D12_SAMPLER_DESC sampler = {};
 +	sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
@@ -19363,22 +20254,15 @@ index 0000000..ac02306
 +	return true;
 +}
 +
++void DrawFanUploaded(Layout layout, const void *vertices, UINT count, bool wipe);
++
 +void DrawArrays(Layout layout, Primitive primitive, const void *vertices, UINT count, bool wipe = false)
 +{
 +	if (primitive == PRIM_FAN)
 +	{
 +		if (count < 3) return;
-+		if (count <= 65535) // D3D11's kMaxFanVertices/R16 path.
-+		{
-+			std::vector<UINT16> indices;
-+			indices.reserve((size_t)(count - 2) * 3);
-+			for (UINT i = 1; i + 1 < count; i++)
-+			{
-+				indices.push_back(0); indices.push_back((UINT16)i); indices.push_back((UINT16)(i + 1));
-+			}
-+			DrawUploaded(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, count,
-+				indices.data(), (UINT)indices.size(), wipe, DXGI_FORMAT_R16_UINT);
-+		}
++		if (count <= 65535)
++			DrawFanUploaded(layout, vertices, count, wipe);
 +		else
 +		{
 +			std::vector<UINT32> indices;
@@ -19395,11 +20279,33 @@ index 0000000..ac02306
 +		vertices, primitive == PRIM_LINES ? count & ~1u : count, nullptr, 0, wipe);
 +}
 +
++#include "d3d12_models.inc"
++
++void DrawFanUploaded(Layout layout, const void *vertices, UINT count, bool wipe)
++{
++	if (!CanDraw() || !EnsureFanIndices()) return;
++	const UINT strides[] = {sizeof(FOutVector), sizeof(gl_skyvertex_t), sizeof(ModelVertex)};
++	const UINT stride = strides[layout];
++	auto vb = g_vertexRing.Alloc((size_t)count * stride, stride);
++	if (!vb) return;
++	memcpy(vb.cpu, vertices, (size_t)count * stride);
++	if (!ApplyState(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, wipe)) return;
++	if (!g_vertexRing.Touch(vb, (size_t)count * stride) || !g_constantRing.Touch(g_constantAllocation, 512)) return;
++	const D3D12_VERTEX_BUFFER_VIEW view = {vb.gpu, count * stride, stride};
++	const D3D12_INDEX_BUFFER_VIEW indices = {g_fanIndices.allocation.gpu, g_fanIndices.bytes, DXGI_FORMAT_R16_UINT};
++	Core_List()->IASetVertexBuffers(0, 1, &view); Core_List()->IASetIndexBuffer(&indices);
++	Core_FlushBarriers();
++	Core_List()->DrawIndexedInstanced((count - 2) * 3, 1, 0, 0, 0);
++	g_stats.draws++; g_stats.vertices += count; g_stats.indices += (count - 2) * 3;
++}
++
 +// Whenever the list is (re)opened: restore every root argument and dynamic binding.
 +void BindRenderTarget()
 +{
 +	memset(g_boundTables, 0, sizeof g_boundTables);
 +	g_srvIndices.Collect(Core_CompletedFence());
++	g_staticArena.Collect(Core_CompletedFence());
++	CollectTextureBlocks();
 +	ID3D12GraphicsCommandList *list = Core_List();
 +	if (!list || !g_rt)
 +		return;
@@ -19739,11 +20645,7 @@ index 0000000..ac02306
 +	DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, vertexCount, indices, count);
 +}
 +
-+void D3D_RenderSkyDome(gl_sky_t *)
-+{
-+	D3D12_LOG_ONCE("sky dome not drawn yet (S3)");
-+	g_stats.skies++;
-+}
++
 +
 +void D3D_SetBlend(FBITFIELD PolyFlags)
 +{
@@ -20025,16 +20927,6 @@ index 0000000..ac02306
 +		default:
 +			break;
 +	}
-+}
-+
-+void D3D_DrawModel(model_t *, INT32, float, float, INT32, FTransform *, float, float, UINT8, UINT8, FSurfaceInfo *)
-+{
-+	D3D12_LOG_ONCE("models not drawn yet (S3)");
-+	g_stats.models++;
-+}
-+
-+void D3D_CreateModelVBOs(model_t *)
-+{
 +}
 +
 +void D3D_SetTransform(FTransform *stransform)
@@ -20534,8 +21426,20 @@ index 0000000..ac02306
 +			[](const auto &entry) { return !!entry.second.res; }),
 +		g_srvIndices.Used() + 4, g_nextSampler, g_textureAllocatedBytes / 1048576.0, g_textureBytes / 1048576.0,
 +		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
-+	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f skies, %.1f models, %.1f screen calls, %.1f portal calls, %d fade maps; palettes, light tables, fog/water captures, custom shaders\n",
-+		s.skies / n, s.models / n, s.screens / n, s.portals / n, s.fadeMaps);
++	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f screen calls, %.1f portal calls, %d fade maps; palettes, light tables, fog/water captures, custom shaders\n",
++		s.screens / n, s.portals / n, s.fadeMaps);
++
++	I_OutputMsg("UWP perf:   D3D12: models %.1f/frame, skies %.1f/frame; fallbacks %d, lerps %d, sky rebuilds %d; static arena %u chunks (%.2f MB), %u dedicated buffers; mips %llu generated (%.2f CPU ms)\n",
++		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
++		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
++		(unsigned)g_staticDedicated, (unsigned long long)s.mipsGenerated, s.mipMs);
++#ifdef _UWP
++	I_OutputMsg("UWP perf:   D3D12: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
++#endif
++	I_OutputMsg("UWP perf:   D3D12: texture heaps: %llu placed, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
++		(unsigned long long)g_placedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
++		g_textureHeapUsed / 1048576.0, g_textureHeaps.size() * kTextureHeapBytes / 1048576.0, g_textureHeapPeak / 1048576.0,
++		(unsigned long long)g_smallPlaced, (unsigned long long)g_normalPlaced, s.textureCreateMs);
 +
 +	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
 +	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
@@ -20549,6 +21453,11 @@ index 0000000..ac02306
 +		I_OutputMsg("UWP perf:   D3D12: memory: local unavailable; render targets/present slots ~%.1f MB\n", targets / 1048576.0);
 +
 +	memset(&g_stats, 0, sizeof g_stats);
++}
++
++void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs)
++{
++	*placed = g_placedCreated; *blocks = g_textureArena.Reuses(); *srvs = g_srvReuses;
 +}
 +
 +void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant)
@@ -20596,14 +21505,16 @@ index 0000000..ac02306
 +	for (auto &pipeline : g_pipelines) Core_Retire(pipeline.second);
 +	g_pipelines.clear(); g_lastPipeline = g_boundPipeline = nullptr;
 +	Core_Retire(g_root); Core_Retire(g_srvHeap); Core_Retire(g_samplerHeap); Core_Retire(g_zeroConstants);
++	ReleaseModelBuffers();
++	ShutdownArenas();
 +	Core_Shutdown(idle);
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
 new file mode 100644
-index 0000000..fcc2dcd
+index 0000000..0d42bd2
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.h
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,54 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -20629,6 +21540,7 @@ index 0000000..fcc2dcd
 +#endif
 +
 +// Test hook: set before initialization; zero keeps the production ring size.
++void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs);
 +void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant);
 +
 +void *D3D12_GetDriverFunction(const char *name);

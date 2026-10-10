@@ -155,7 +155,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fence blocking with the highest overlapping fence, `Collect` and `Touch`
   retirement, same-submission wrap into retired space, zero, exact-capacity and
   SIZE_MAX limits. `PipelineKey` equality and hashing are checked for each field and
-  across a deterministic 65,536-key sample.
+  across a deterministic 65,536-key sample. `SizeClassArena` checks fenced reuse
+  through `Free` and `Collect`, chunk growth with `AddChunk`, dedicated allocations
+  above `MaxClass`, and exhaustion once no chunk can be added. The CPU mip generator
+  is checked against a scalar oracle for odd sizes and 1×N textures.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
@@ -194,6 +197,13 @@ a missing or mismatched optimized render-target clear value: the runtime guarant
 the requested clear color, which the pixel oracle checks. It only affects clear
 performance. Scenes cover clears, blends, depth, indexed
 triangles, 2D lines and a tiny-ring stress test, and negative controls must fail.
+New texture, model and sky scenes cover texture creation, point sampling, reuploads,
+delete-and-recreate, mip chains, sky fan-strip rebuilds, and model buffered/lerped
+UV fallback. Their negative controls are `texture`, `texture-update`,
+`texture-reuse`, `mips`, `sky`, `model-buffered`, `model-lerped` and `model-fallback`;
+each must be rejected by its own oracle. Tiny models, lit models and textured sky
+aren't exercised, so they remain untested here. WARP doesn't measure Xbox performance;
+texture creation time, heap behavior and frame rate need an Xbox run.
 The inversion oracle caught the upstream `PF_Invert`/`PF_Occlude` bit collision;
 `PF_Invert` now uses its own blend bit, so it survives the blend mask. If the Graphics
 Tools feature is missing, the script retries its install and then fails loudly
