@@ -1,4 +1,4 @@
-From ae11be808f865c94dbf9fe8e5016ccf8af69ce0e Mon Sep 17 00:00:00 2001
+From f4e20d17db87361ea9cb5fc1f8bc5a0ae837c74a Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -406,6 +406,18 @@ Agent: Claude (Haiku, D3D12 drawing documentation)
 Model: claude-haiku-5-5
 Agent: Claude Code (Opus, D3D12 drawing review)
 Model: claude-opus-5-5
+
+- [UWP]: Textures in VibeRant's Direct3D 12 driver: texture objects,
+  uploads through a fence-tracked staging ring, persistent SRVs freed only
+  after their fence, cached samplers, the black texture and brightmap unit,
+  and Flush. Mipmaps and palette resources come later.
+
+Agent: Codex (Sol, D3D12 textures)
+Model: gpt-6.1-sol
+Agent: Claude (Haiku, D3D12 allocator and documentation help)
+Model: claude-haiku-5-5
+Agent: Claude Code (Opus, D3D12 textures review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -440,7 +452,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/r_d3d11.cpp          | 6402 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
- src/hardware/r_d3d12/allocators.h         |   69 +
+ src/hardware/r_d3d12/allocators.h         |  116 +
  src/hardware/r_d3d12/d3d12_core.cpp       |  811 +++
  src/hardware/r_d3d12/d3d12_core.h         |  134 +
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
@@ -454,7 +466,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_upload.cpp     |  112 +
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 1936 +++++++
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2534 ++++++++
  src/hardware/r_d3d12/r_d3d12.h            |   50 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -509,7 +521,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 102 files changed, 20240 insertions(+), 1126 deletions(-)
+ 102 files changed, 20885 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -13807,10 +13819,10 @@ index 0000000..0921d27
 +}
 diff --git a/src/hardware/r_d3d12/allocators.h b/src/hardware/r_d3d12/allocators.h
 new file mode 100644
-index 0000000..116cccd
+index 0000000..3a09325
 --- /dev/null
 +++ b/src/hardware/r_d3d12/allocators.h
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,116 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -13822,6 +13834,8 @@ index 0000000..116cccd
 +#include <cstddef>
 +#include <cstdint>
 +#include <deque>
++#include <map>
++#include <vector>
 +
 +namespace rr_d3d12
 +{
@@ -13877,6 +13891,51 @@ index 0000000..116cccd
 +	struct Span { size_t begin, end; uint64_t fence; };
 +	size_t capacity_ = 0, head_ = 0;
 +	std::deque<Span> spans_;
++};
++
++// Hands out indices from [first, first + count). A freed index is held until its fence completes,
++// so the GPU never sees it reused. Frees may come in any fence order.
++class IndexFreeList
++{
++public:
++	static constexpr uint32_t Exhausted = UINT32_MAX;
++	void Reset(uint32_t first, uint32_t count)
++	{
++		first_ = first;
++		count_ = count;
++		next_ = first;
++		free_.clear();
++		pending_.clear();
++	}
++	uint32_t Allocate()
++	{
++		if (!free_.empty())
++		{
++			const uint32_t index = free_.back();
++			free_.pop_back();
++			return index;
++		}
++		if (next_ - first_ >= count_) return Exhausted;
++		return next_++;
++	}
++	// The index must come from Allocate() and be freed once. Indices outside the range are ignored.
++	void Free(uint32_t index, uint64_t fence)
++	{
++		if (index - first_ >= count_) return;
++		pending_.emplace(fence, index);
++	}
++	void Collect(uint64_t completed)
++	{
++		const auto end = pending_.upper_bound(completed);
++		for (auto it = pending_.begin(); it != end; ++it) free_.push_back(it->second);
++		pending_.erase(pending_.begin(), end);
++	}
++	// Live indices plus those waiting on a fence
++	uint32_t Used() const { return (next_ - first_) - static_cast<uint32_t>(free_.size()); }
++private:
++	uint32_t first_ = 0, count_ = 0, next_ = 0;
++	std::vector<uint32_t> free_;
++	std::multimap<uint64_t, uint32_t> pending_;
 +};
 +}
 +#endif
@@ -17853,10 +17912,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..6ae8d90
+index 0000000..642f286
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,1936 @@
+@@ -0,0 +1,2534 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -17869,8 +17928,8 @@ index 0000000..6ae8d90
 +/// \file r_d3d12.cpp
 +/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented through ANGLE
 +///
-+/// GL-state emulation and untextured polygon/line draws ported from r_d3d11.cpp, using fence-retired
-+/// upload rings and cached pipeline states. Textures and advanced passes arrive in later steps.
++/// GL-state emulation and textured polygon/line draws ported from r_d3d11.cpp, using fence-retired
++/// upload rings, persistent texture descriptors and cached pipeline states. Advanced passes arrive in later steps.
 +/// The S1 diagnostic hue is retained, disabled, for future presentation diagnostics.
 +
 +#include "d3d12_core.h"
@@ -17931,7 +17990,8 @@ index 0000000..6ae8d90
 +	UINT64 draws, vertices, indices, constantUpdates, psoChanges, rootSets, tableSets;
 +	// Not drawn yet: calls by driver function
 +	int lines, polygons, batches, skies, models;
-+	int textureSets, textureUpdates, textureDeletes, flushes;
++	UINT64 texturesCreated, textureUploads, textureUploadBytes, texturesDeleted;
++	int flushes;
 +	int screens; // screen textures, wipes, postimg, the intermission background and the final screen
 +	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
 +	int portals, fadeMaps;
@@ -18287,19 +18347,139 @@ index 0000000..6ae8d90
 +
 +enum Filter : UINT8 { FILTER_NEAREST, FILTER_LINEAR, FILTER_LINEAR_MIPMAP_LINEAR, FILTER_NEAREST_MIPMAP_LINEAR };
 +
++struct GpuTexture
++{
++	ComPtr<ID3D12Resource> res;
++	D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COPY_DEST;
++	UINT srv = UINT32_MAX;
++	UINT width = 0, height = 0, mips = 1;
++	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
++	UINT64 bytes = 0, allocatedBytes = 0;
++};
++IndexFreeList g_srvIndices;
++UINT64 g_textureAllocatedBytes = 0;
++bool g_textureFlushRequested = false, g_budgetTextureFlush = false, g_textureFlushed = false;
++precise_t g_lastTextureFlush = 0;
++DXGI_QUERY_VIDEO_MEMORY_INFO g_localMemory = {};
++bool g_localMemoryValid = false;
++void RetireTexture(GpuTexture &texture);
++
++// An OpenGL texture object
++struct Texture : GpuTexture
++{
++	UINT32 id = 0;
++	char probeName[9] = {}; // filled only during a requested surface probe
++
++	// Its parameters, with OpenGL's defaults
++	UINT8 minFilter = FILTER_NEAREST_MIPMAP_LINEAR, magFilter = FILTER_LINEAR;
++	bool repeatS = true, repeatT = true;
++	float maxLod = 1000.0f;
++	int anisotropy = 1;
++	UINT sampler = UINT32_MAX; // shared cache index; UINT32_MAX to look up again
++
++	// In r_opengl.c's list of textures (TexCacheHead), which Flush deletes
++	bool listed = false;
++	GLMipmap_t *mipmap = nullptr;
++	UINT32 listFormat = 0, listWidth = 0, listHeight = 0;
++};
++
++// Keyed by name, as in OpenGL. Pointers to them stay valid until they're erased.
++std::unordered_map<UINT32, Texture> g_textures;
++UINT32 g_nextTextureName = 1;
++UINT64 g_textureBytes = 0;
++
++// r_opengl.c's NOTEXTURE_NUM, the texture bound to stop texturing (it never gets any data)
++constexpr UINT32 kNoTexture = 0xFFFFFFFFu;
++
++UINT32 g_texDownloaded = 0; // r_opengl.c's tex_downloaded
++Texture *g_units[2] = {nullptr, nullptr}; // what's bound to texture units 0 and 1
++
 +// Legacy GL's settings for new textures
 +UINT8 g_minFilter = FILTER_LINEAR, g_magFilter = FILTER_LINEAR;
 +bool g_mipmap = false;
 +int g_anisotropicFilter = 0;
 +constexpr int kMaximumAnisotropy = 16;
 +
-+bool g_paletteRendering = false;
-+void Flush() { g_stats.flushes++; }
-+void SetWaterSurface(INT32) { D3D12_LOG_ONCE("water capture not drawn yet (S6)"); }
++std::vector<RGBA_t> g_textureBuffer;
 +
-+void SetRepeatS(bool) {} // Texture objects arrive in S2b.
-+void SetRepeatT(bool) {}
-+void SetNoTexture(int) {}
++Texture *FindTexture(UINT32 name)
++{
++	auto it = g_textures.find(name);
++	return it == g_textures.end() ? nullptr : &it->second;
++}
++
++UINT32 GenTexture()
++{
++	UINT32 name;
++
++	do
++	{
++		name = g_nextTextureName++;
++		if (g_nextTextureName == kNoTexture)
++			g_nextTextureName = 1;
++	} while (name == 0 || name == kNoTexture || g_textures.count(name));
++
++	g_textures[name].id = name;
++	return name;
++}
++
++void BindTexture(int unit, UINT32 name)
++{
++	g_units[unit] = (name == 0 || name == kNoTexture) ? nullptr : FindTexture(name);
++}
++
++// glDeleteTextures: what it's bound to reverts to no texture
++void DeleteTextureObject(UINT32 name)
++{
++	auto it = g_textures.find(name);
++
++	if (it == g_textures.end())
++		return;
++
++	for (Texture *&unit : g_units)
++	{
++		if (unit == &it->second)
++			unit = nullptr;
++	}
++
++	if (it->second.res)
++		g_stats.texturesDeleted++;
++	RetireTexture(it->second);
++	g_textures.erase(it);
++}
++
++void SetNoTexture(int unit)
++{
++	if (g_texDownloaded != kNoTexture)
++	{
++		BindTexture(unit, kNoTexture);
++		g_texDownloaded = kNoTexture;
++	}
++}
++
++// glTexParameteri on unit 0's texture
++void SetRepeatS(bool repeat)
++{
++	if (g_units[0] && g_units[0]->repeatS != repeat)
++	{
++		g_units[0]->repeatS = repeat;
++		g_units[0]->sampler = UINT32_MAX;
++	}
++}
++
++void SetRepeatT(bool repeat)
++{
++	if (g_units[0] && g_units[0]->repeatT != repeat)
++	{
++		g_units[0]->repeatT = repeat;
++		g_units[0]->sampler = UINT32_MAX;
++	}
++}
++
++
++bool g_paletteRendering = false;
++void Flush();
++void SetWaterSurface(INT32) { D3D12_LOG_ONCE("water capture not drawn yet (S6)"); }
 +void SetLightTable(UINT32) {}
 +struct CustomProgram {};
 +const CustomProgram *CustomDrawProgram(Layout) { return nullptr; }
@@ -18447,6 +18627,12 @@ index 0000000..6ae8d90
 +ComPtr<ID3D12DescriptorHeap> g_srvHeap, g_samplerHeap;
 +ComPtr<ID3D12Resource> g_zeroConstants;
 +UploadRing g_vertexRing, g_indexRing, g_constantRing;
++UploadRing g_textureRing;
++GpuTexture g_blackTexture;
++std::unordered_map<UINT32, UINT> g_samplers;
++UINT g_nextSampler = 1;
++UINT g_srvStep = 0, g_samplerStep = 0;
++UINT64 g_boundTables[4] = {};
 +Constants g_lastConstants = {};
 +bool g_constantsValid = false;
 +UploadAllocation g_constantAllocation;
@@ -18455,6 +18641,401 @@ index 0000000..6ae8d90
 +ID3D12PipelineState *g_lastPipeline = nullptr, *g_boundPipeline = nullptr;
 +UINT64 g_psoCreated = 0;
 +double g_psoMs = 0, g_psoWorstMs = 0;
++
++D3D12_CPU_DESCRIPTOR_HANDLE SrvCpu(UINT index)
++{
++	auto handle = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
++	handle.ptr += (SIZE_T)index * g_srvStep;
++	return handle;
++}
++D3D12_GPU_DESCRIPTOR_HANDLE SrvGpu(UINT index)
++{
++	auto handle = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
++	handle.ptr += (UINT64)index * g_srvStep;
++	return handle;
++}
++D3D12_GPU_DESCRIPTOR_HANDLE SamplerGpu(UINT index)
++{
++	auto handle = g_samplerHeap->GetGPUDescriptorHandleForHeapStart();
++	handle.ptr += (UINT64)index * g_samplerStep;
++	return handle;
++}
++void Transition(GpuTexture &texture, D3D12_RESOURCE_STATES state)
++{
++	if (texture.state == state) return;
++	Core_Transition(texture.res.Get(), texture.state, state);
++	texture.state = state;
++}
++void RetireTexture(GpuTexture &texture)
++{
++	if (!texture.res) return;
++	// Both the resource and its descriptor cover all work recorded so far, including this open list.
++	Core_Retire(texture.res);
++	if (texture.srv >= 4 && texture.srv != UINT32_MAX)
++		g_srvIndices.Free(texture.srv, Core_PendingFence());
++	g_textureBytes -= texture.bytes;
++	g_textureAllocatedBytes -= texture.allocatedBytes;
++	texture.srv = UINT32_MAX;
++	texture.bytes = texture.allocatedBytes = 0;
++}
++bool UploadTexture(GpuTexture &texture, const void *data)
++{
++	const auto desc = texture.res->GetDesc();
++	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
++	UINT rows = 0;
++	UINT64 rowBytes = 0, bytes = 0;
++	Core_Device()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rows, &rowBytes, &bytes);
++	// Alloc can submit/reopen the list. Do it before taking a list pointer or recording transitions.
++	auto allocation = g_textureRing.Alloc((size_t)bytes, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
++	if (!allocation) return false;
++	auto *dst = static_cast<UINT8 *>(allocation.cpu);
++	const auto *src = static_cast<const UINT8 *>(data);
++	for (UINT row = 0; row < rows; ++row)
++		memcpy(dst + footprint.Offset + (size_t)row * footprint.Footprint.RowPitch,
++			src + (size_t)row * rowBytes, (size_t)rowBytes);
++	footprint.Offset += allocation.offset;
++	Transition(texture, D3D12_RESOURCE_STATE_COPY_DEST);
++	Core_FlushBarriers();
++	D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
++	from.pResource = g_textureRing.Resource();
++	from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++	from.PlacedFootprint = footprint;
++	to.pResource = texture.res.Get();
++	to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++	Core_List()->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
++	Transition(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++	return true;
++}
++bool CreateTextureStorage(GpuTexture *texture, UINT id, UINT width, UINT height, DXGI_FORMAT format,
++	bool mipmapped, const void *data, bool black = false)
++{
++	(void)mipmapped; // S3 supplies the mip chain; storage always has one level for now.
++	g_srvIndices.Collect(Core_CompletedFence());
++	const UINT index = black ? 3 : g_srvIndices.Allocate();
++	if (index == UINT32_MAX)
++	{
++		D3D12_LOG_ONCE("persistent SRV heap exhausted; requesting Legacy GL texture flush");
++		g_textureFlushRequested = true;
++		return false;
++	}
++	D3D12_RESOURCE_DESC desc = {};
++	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++	desc.Width = width; desc.Height = height;
++	desc.DepthOrArraySize = desc.MipLevels = 1;
++	desc.Format = format;
++	desc.SampleDesc.Count = 1;
++	D3D12_HEAP_PROPERTIES heap = {};
++	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++	GpuTexture replacement;
++	replacement.srv = index;
++	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&replacement.res)), "Create texture"))
++	{
++		if (!black) g_srvIndices.Free(index, Core_PendingFence());
++		return false;
++	}
++	wchar_t name[64];
++	swprintf(name, sizeof name / sizeof *name, L"texture %u", id);
++	replacement.res->SetName(name);
++	replacement.width = width; replacement.height = height; replacement.format = format;
++	replacement.bytes = (UINT64)width * height * 4;
++	replacement.allocatedBytes = Core_Device()->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
++	if (data && !UploadTexture(replacement, data))
++	{
++		Core_Retire(replacement.res);
++		if (!black) g_srvIndices.Free(index, Core_PendingFence());
++		return false;
++	}
++	if (!data) Transition(replacement, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
++	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++	srv.Format = format;
++	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++	srv.Texture2D.MipLevels = 1;
++	Core_Device()->CreateShaderResourceView(replacement.res.Get(), &srv, SrvCpu(index));
++	RetireTexture(*texture);
++	*texture = replacement;
++	g_textureBytes += texture->bytes;
++	g_textureAllocatedBytes += texture->allocatedBytes;
++	g_stats.texturesCreated++;
++	return true;
++}
++
++UINT GetSampler(Texture *texture)
++{
++	if (texture->sampler != UINT32_MAX)
++		return texture->sampler;
++
++	const UINT32 lod = texture->maxLod >= 15.0f ? 15 : (UINT32)texture->maxLod;
++	const UINT32 anisotropy = (UINT32)std::min(std::max(texture->anisotropy, 1), kMaximumAnisotropy);
++	const UINT32 key = texture->minFilter | (texture->magFilter << 2) | (texture->repeatS ? 1 << 4 : 0)
++		| (texture->repeatT ? 1 << 5 : 0) | (lod << 6) | (anisotropy << 10);
++
++	auto it = g_samplers.find(key);
++	if (it != g_samplers.end())
++		return texture->sampler = it->second;
++
++	const bool mipmap = texture->minFilter == FILTER_LINEAR_MIPMAP_LINEAR || texture->minFilter == FILTER_NEAREST_MIPMAP_LINEAR;
++	const bool minLinear = texture->minFilter == FILTER_LINEAR || texture->minFilter == FILTER_LINEAR_MIPMAP_LINEAR;
++	const bool magLinear = texture->magFilter == FILTER_LINEAR;
++	D3D12_SAMPLER_DESC desc = {};
++
++	if (anisotropy > 1 && texture->minFilter != FILTER_NEAREST)
++	{
++		desc.Filter = D3D12_FILTER_ANISOTROPIC;
++		desc.MaxAnisotropy = anisotropy;
++	}
++	else
++	{
++		static const D3D12_FILTER filters[2][2][2] = // [minLinear][magLinear][mipmap]
++		{
++			{
++				{D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR},
++				{D3D12_FILTER_MIN_POINT_MAG_LINEAR_MIP_POINT, D3D12_FILTER_MIN_POINT_MAG_MIP_LINEAR},
++			},
++			{
++				{D3D12_FILTER_MIN_LINEAR_MAG_MIP_POINT, D3D12_FILTER_MIN_LINEAR_MAG_POINT_MIP_LINEAR},
++				{D3D12_FILTER_MIN_MAG_LINEAR_MIP_POINT, D3D12_FILTER_MIN_MAG_MIP_LINEAR},
++			},
++		};
++		desc.Filter = filters[minLinear][magLinear][mipmap];
++		desc.MaxAnisotropy = 1;
++	}
++
++	desc.AddressU = texture->repeatS ? D3D12_TEXTURE_ADDRESS_MODE_WRAP : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++	desc.AddressV = texture->repeatT ? D3D12_TEXTURE_ADDRESS_MODE_WRAP : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++	desc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++	desc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
++	desc.MinLOD = 0.0f;
++	// Without a mipmap filter, OpenGL samples only the base level
++	desc.MaxLOD = mipmap ? (float)lod : 0.0f;
++	if (mipmap && lod == 15)
++		desc.MaxLOD = D3D12_FLOAT32_MAX;
++
++	if (g_nextSampler >= 2048)
++	{
++		D3D12_LOG_ONCE("persistent sampler heap exhausted; using default sampler");
++		return 0;
++	}
++	const UINT index = g_nextSampler++;
++	auto handle = g_samplerHeap->GetCPUDescriptorHandleForHeapStart();
++	handle.ptr += (SIZE_T)index * g_samplerStep;
++	Core_Device()->CreateSampler(&desc, handle);
++	g_samplers[key] = index;
++	return texture->sampler = index;
++}
++
++// r_opengl.c's UpdateTexture
++void UpdateTextureInternal(GLMipmap_t *pTexInfo)
++{
++	UINT32 num = pTexInfo->downloaded;
++	const INT32 w = pTexInfo->width, h = pTexInfo->height;
++	const UINT8 *pImgData = (const UINT8 *)pTexInfo->data;
++	const void *ptex = NULL;
++
++	// Generate a new texture name.
++	if (!num || !FindTexture(num))
++	{
++		num = GenTexture();
++		pTexInfo->downloaded = num;
++	}
++
++	if (w > 0 && h > 0 && pImgData)
++	{
++		if ((pTexInfo->format == GL_TEXFMT_P_8) || (pTexInfo->format == GL_TEXFMT_AP_88))
++		{
++			g_textureBuffer.resize((size_t)w * h);
++			RGBA_t *tex = g_textureBuffer.data();
++			ptex = tex;
++
++			for (INT32 j = 0; j < h; j++)
++			{
++				for (INT32 i = 0; i < w; i++)
++				{
++					if ((*pImgData == HWR_PATCHES_CHROMAKEY_COLORINDEX) && (pTexInfo->flags & TF_CHROMAKEYED))
++					{
++						tex[w*j+i].rgba = 0;
++						pTexInfo->flags |= TF_TRANSPARENT; // there is a hole in it
++					}
++					else
++						tex[w*j+i] = g_palette[*pImgData];
++
++					pImgData++;
++
++					if (pTexInfo->format == GL_TEXFMT_AP_88)
++					{
++						if (!(pTexInfo->flags & TF_CHROMAKEYED))
++							tex[w*j+i].s.alpha = *pImgData;
++						pImgData++;
++					}
++				}
++			}
++		}
++		else if (pTexInfo->format == GL_TEXFMT_RGBA)
++		{
++			// Directly upload the texture data without any kind of conversion.
++			ptex = pImgData;
++		}
++		else if (pTexInfo->format == GL_TEXFMT_ALPHA_INTENSITY_88)
++		{
++			g_textureBuffer.resize((size_t)w * h);
++			RGBA_t *tex = g_textureBuffer.data();
++			ptex = tex;
++
++			for (INT32 j = 0; j < h; j++)
++			{
++				for (INT32 i = 0; i < w; i++)
++				{
++					tex[w*j+i].s.red = tex[w*j+i].s.green = tex[w*j+i].s.blue = *pImgData++;
++					tex[w*j+i].s.alpha = *pImgData++;
++				}
++			}
++		}
++		else if (pTexInfo->format == GL_TEXFMT_ALPHA_8) // Used for fade masks
++		{
++			g_textureBuffer.resize((size_t)w * h);
++			RGBA_t *tex = g_textureBuffer.data();
++			ptex = tex;
++
++			for (INT32 j = 0; j < h; j++)
++			{
++				for (INT32 i = 0; i < w; i++)
++				{
++					// 255 because the fade mask is modulated with the screen texture, so alpha affects it while the colours don't
++					tex[w*j+i].s.red = tex[w*j+i].s.green = tex[w*j+i].s.blue = 255;
++					tex[w*j+i].s.alpha = *pImgData++;
++				}
++			}
++		}
++		else
++			D3D12_LOG_ONCE("UpdateTexture: bad format %d (logged once)", (int)pTexInfo->format);
++	}
++
++	if (!(pTexInfo->flags & TF_BRIGHTMAP))
++	{
++		g_texDownloaded = 0; // force update
++		SetNoTexture(1); // will be assigned later, if needed
++	}
++
++	const int unit = (pTexInfo->flags & TF_BRIGHTMAP) ? 1 : 0;
++	BindTexture(unit, num);
++	g_texDownloaded = num;
++
++	Texture *texture = FindTexture(num);
++
++	// disable texture filtering on any texture that has holes so there's no dumb borders or blending issues
++	if (pTexInfo->flags & TF_TRANSPARENT)
++	{
++		texture->magFilter = FILTER_NEAREST;
++		texture->minFilter = FILTER_NEAREST;
++	}
++	else
++	{
++		texture->magFilter = g_magFilter;
++		texture->minFilter = g_minFilter;
++	}
++
++	if (ptex)
++	{
++		const bool mipmapped = g_mipmap;
++		if (mipmapped) D3D12_LOG_ONCE("mipmaps not made yet (S3); textures use level 0");
++
++		bool uploaded;
++		if (texture->res && texture->width == (UINT)w && texture->height == (UINT)h)
++			uploaded = UploadTexture(*texture, ptex);
++		else
++			uploaded = CreateTextureStorage(texture, texture->id, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, mipmapped, ptex);
++
++		if (uploaded)
++		{
++			g_stats.textureUploads++;
++			g_stats.textureUploadBytes += (INT64)w * h * 4;
++		}
++
++		if (mipmapped)
++		{
++			if (pTexInfo->flags & TF_TRANSPARENT)
++				texture->maxLod = 0.0f; // No mippmaps on transparent stuff
++			else
++				texture->maxLod = (pTexInfo->format == GL_TEXFMT_ALPHA_INTENSITY_88 || pTexInfo->format == GL_TEXFMT_ALPHA_8) ? 4.0f : 5.0f;
++		}
++	}
++
++	texture->repeatS = (pTexInfo->flags & TF_WRAPX) != 0;
++	texture->repeatT = (pTexInfo->flags & TF_WRAPY) != 0;
++	texture->anisotropy = g_anisotropicFilter;
++	texture->sampler = UINT32_MAX;
++}
++
++// r_opengl.c's SetTexture
++void SetTextureInternal(GLMipmap_t *pTexInfo)
++{
++	if (!pTexInfo)
++	{
++		SetNoTexture(0);
++		return;
++	}
++	else if (pTexInfo->downloaded)
++	{
++		if (pTexInfo->downloaded != g_texDownloaded)
++		{
++			if (!(pTexInfo->flags & TF_BRIGHTMAP))
++			{
++				g_texDownloaded = 0; // force update
++				SetNoTexture(1); // will be assigned later, if needed
++			}
++
++			BindTexture((pTexInfo->flags & TF_BRIGHTMAP) ? 1 : 0, pTexInfo->downloaded);
++			g_texDownloaded = pTexInfo->downloaded;
++		}
++	}
++	else
++	{
++		UpdateTextureInternal(pTexInfo);
++
++		Texture *texture = FindTexture(pTexInfo->downloaded);
++		if (texture)
++		{
++			texture->listed = true;
++			texture->mipmap = pTexInfo;
++			texture->listFormat = pTexInfo->format;
++			texture->listWidth = pTexInfo->width;
++			texture->listHeight = pTexInfo->height;
++		}
++	}
++}
++
++// r_opengl.c's Flush
++void Flush()
++{
++	std::vector<UINT32> names;
++
++	for (auto &entry : g_textures)
++	{
++		if (entry.second.listed)
++			names.push_back(entry.first);
++	}
++
++	for (UINT32 name : names)
++	{
++		Texture *texture = FindTexture(name);
++		if (texture->mipmap)
++			texture->mipmap->downloaded = 0;
++		DeleteTextureObject(name);
++	}
++
++	g_texDownloaded = 0;
++	g_textureBuffer.clear();
++	g_textureBuffer.shrink_to_fit();
++	g_stats.flushes++;
++	if (g_budgetTextureFlush)
++	{
++		Log("over the video memory budget (usage %.1f MB, budget %.1f MB); flushed Legacy GL's textures",
++			g_localMemory.CurrentUsage / 1048576.0, g_localMemory.Budget / 1048576.0);
++		g_budgetTextureFlush = false;
++	}
++}
++
 +
 +bool InitDrawing()
 +{
@@ -18472,13 +19053,15 @@ index 0000000..6ae8d90
 +	heap.NumDescriptors = 2048;
 +	if (Core_Failed(device->CreateDescriptorHeap(&heap, IID_PPV_ARGS(&g_samplerHeap)), "Create sampler heap")) return false;
 +	g_samplerHeap->SetName(L"persistent sampler heap");
++	g_srvStep = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++	g_samplerStep = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 +	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
 +	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 +	srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 +	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 +	srv.Texture2D.MipLevels = 1;
 +	auto handle = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
-+	const UINT step = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++	const UINT step = g_srvStep;
 +	device->CreateShaderResourceView(nullptr, &srv, handle);
 +	handle.ptr += step;
 +	srv = {};
@@ -18494,7 +19077,8 @@ index 0000000..6ae8d90
 +	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 +	srv.Texture2D.MipLevels = 1;
 +	device->CreateShaderResourceView(nullptr, &srv, handle);
-+	// Slot 3 is reserved for S2b's black texture.
++	g_srvIndices.Reset(4, 65536 - 4);
++	g_samplers.clear(); g_nextSampler = 1;
 +	D3D12_SAMPLER_DESC sampler = {};
 +	sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
 +	sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -18518,6 +19102,9 @@ index 0000000..6ae8d90
 +	if (Core_Failed(g_zeroConstants->Map(0, &none, &cpu), "Map zero constants")) return false;
 +	memset(cpu, 0, 1024);
 +	g_zeroConstants->Unmap(0, nullptr);
++	if (!g_textureRing.Init(32 << 20, L"texture staging ring")) return false;
++	const UINT32 black = 0xFF000000; // OpenGL's incomplete texture: (0, 0, 0, 1)
++	if (!CreateTextureStorage(&g_blackTexture, 0, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, false, &black, true)) return false;
 +	return g_vertexRing.Init(16 << 20, L"vertex ring") && g_indexRing.Init(8 << 20, L"index ring")
 +		&& g_constantRing.Init(4 << 20, L"constant ring");
 +}
@@ -18559,7 +19146,8 @@ index 0000000..6ae8d90
 +	else for (int i = 0; i < 4; i++) c.color[i] = g_gl.color[i] / 255.0f;
 +	c.alphaFunc = g_gl.alphaTest ? g_gl.alphaFunc : AF_ALWAYS;
 +	c.alphaRef = g_gl.alphaRef;
-+	c.texMode = 0;
++	c.texMode = g_gl.texture2D && g_units[0] && g_units[0]->res
++		? (g_gl.texEnv == TE_MODULATE ? 1 : 2) : 0;
 +	c.palette = 0; // No LUT or light tables until S4, as in D3D11 without those resources.
 +	if (!g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
 +		|| memcmp(&c, &g_lastConstants, sizeof c) != 0)
@@ -18654,6 +19242,21 @@ index 0000000..6ae8d90
 +	{
 +		Core_List()->SetPipelineState(pso); g_boundPipeline = pso; g_stats.psoChanges++;
 +	}
++	for (int unit = 0; unit < 2; ++unit)
++	{
++		Texture *texture = g_units[unit];
++		const bool valid = texture && texture->res;
++		const D3D12_GPU_DESCRIPTOR_HANDLE handles[] = {
++			SrvGpu(valid ? texture->srv : 3), SamplerGpu(valid ? GetSampler(texture) : 0)};
++		for (int kind = 0; kind < 2; ++kind)
++		{
++			const int slot = unit * 2 + kind;
++			if (g_boundTables[slot] == handles[kind].ptr) continue;
++			Core_List()->SetGraphicsRootDescriptorTable(1 + slot, handles[kind]);
++			g_boundTables[slot] = handles[kind].ptr;
++			g_stats.tableSets++;
++		}
++	}
 +	Core_List()->IASetPrimitiveTopology(topology);
 +	Core_List()->OMSetStencilRef(g_gl.stencilRef);
 +	BindViewport();
@@ -18734,6 +19337,8 @@ index 0000000..6ae8d90
 +// Whenever the list is (re)opened: restore every root argument and dynamic binding.
 +void BindRenderTarget()
 +{
++	memset(g_boundTables, 0, sizeof g_boundTables);
++	g_srvIndices.Collect(Core_CompletedFence());
 +	ID3D12GraphicsCommandList *list = Core_List();
 +	if (!list || !g_rt)
 +		return;
@@ -18746,10 +19351,11 @@ index 0000000..6ae8d90
 +		list->SetGraphicsRootSignature(g_root.Get());
 +		const auto base = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
 +		const auto sampler = g_samplerHeap->GetGPUDescriptorHandleForHeapStart();
-+		const UINT step = Core_Device()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++		const UINT step = g_srvStep;
 +		for (UINT param = 1; param <= 13; param++)
 +		{
 +			auto handle = base;
++			if (param == 1 || param == 3) handle.ptr += 3 * step;
 +			if (param == 6) handle.ptr += step; // t2: Texture3D R8
 +			if (param == 13) handle.ptr += 2 * step; // t10: Texture2D R32_SINT
 +			list->SetGraphicsRootDescriptorTable(param, param == 2 || param == 4 ? sampler : handle);
@@ -18926,7 +19532,7 @@ index 0000000..6ae8d90
 +	if (Core_Device())
 +		return true;
 +
-+	Log("starting Legacy GL's Direct3D 12 driver (drawing without textures)");
++	Log("starting Legacy GL's Direct3D 12 driver (drawing with textures)");
 +	Core_SetListBegin(BindRenderTarget);
 +	// On the same adapter as ANGLE, which the window's frames go through
 +	if (!Core_Init(Present_AngleDevice()))
@@ -18951,7 +19557,7 @@ index 0000000..6ae8d90
 +	if (palette && memcmp(g_palette, palette, sizeof g_palette))
 +	{
 +		memcpy(g_palette, palette, sizeof g_palette);
-+		g_stats.flushes++;
++		Flush();
 +	}
 +}
 +
@@ -19159,21 +19765,24 @@ index 0000000..6ae8d90
 +		ClearScreenDepth();
 +}
 +
-+void D3D_SetTexture(GLMipmap_t *)
++void D3D_SetTexture(GLMipmap_t *texture)
 +{
-+	g_stats.textureSets++;
++	SetTextureInternal(texture);
 +}
 +
-+void D3D_UpdateTexture(GLMipmap_t *)
++void D3D_UpdateTexture(GLMipmap_t *texture)
 +{
-+	g_stats.textureUpdates++;
++	UpdateTextureInternal(texture);
 +}
 +
 +void D3D_DeleteTexture(GLMipmap_t *pTexInfo)
 +{
-+	g_stats.textureDeletes++;
-+	if (pTexInfo)
-+		pTexInfo->downloaded = 0;
++	if (!pTexInfo)
++		return;
++	else if (pTexInfo->downloaded)
++		DeleteTextureObject(pTexInfo->downloaded);
++
++	pTexInfo->downloaded = 0;
 +}
 +
 +// Readback arrives in S9; initialize the caller's output while it remains a stub.
@@ -19201,7 +19810,7 @@ index 0000000..6ae8d90
 +
 +void D3D_ClearMipMapCache(void)
 +{
-+	g_stats.flushes++;
++	Flush();
 +}
 +
 +void D3D_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
@@ -19354,7 +19963,30 @@ index 0000000..6ae8d90
 +
 +INT32 D3D_GetTextureUsed(void)
 +{
-+	return 0;
++	INT32 res = 0;
++
++	for (const auto &entry : g_textures)
++	{
++		const Texture &texture = entry.second;
++
++		if (!texture.listed)
++			continue;
++
++		// Figure out the correct bytes-per-pixel for this texture
++		// I don't know which one the game actually _uses_ but this
++		// follows format2bpp in hw_cache.c
++		int bpp = 1;
++		const UINT32 format = texture.listFormat;
++		if (format == GL_TEXFMT_RGBA)
++			bpp = 4;
++		else if (format == GL_TEXFMT_ALPHA_INTENSITY_88 || format == GL_TEXFMT_AP_88)
++			bpp = 2;
++
++		// Add it up!
++		res += texture.listHeight*texture.listWidth*bpp;
++	}
++
++	return res;
 +}
 +
 +void D3D_PostImgRedraw(float [SCREENVERTS][SCREENVERTS][2])
@@ -19644,6 +20276,10 @@ index 0000000..6ae8d90
 +	g_stats.presentTime += I_GetPreciseTime() - start;
 +	g_stats.frames++;
 +	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
++	g_textureRing.EndFrame();
++	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
++	g_localMemoryValid = adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &g_localMemory));
++	if (g_localMemoryValid && g_localMemory.CurrentUsage > g_localMemory.Budget) g_textureFlushRequested = true;
 +	g_hueFrame++;
 +
 +	if (trace)
@@ -19669,7 +20305,18 @@ index 0000000..6ae8d90
 +
 +boolean D3D12_TakeTextureFlushRequest(void)
 +{
-+	return false; // no textures yet
++	const bool requested = g_textureFlushRequested;
++	g_textureFlushRequested = false;
++	if (!requested)
++		return false;
++	const precise_t now = I_GetPreciseTime();
++	if (g_textureFlushed && now - g_lastTextureFlush < 5 * I_GetPrecisePrecision())
++		return false;
++	g_lastTextureFlush = now;
++	g_textureFlushed = true;
++	g_budgetTextureFlush = g_localMemoryValid && g_localMemory.CurrentUsage > g_localMemory.Budget;
++	// Descriptor exhaustion already logged its reason; only budget requests use Flush's budget message.
++	return true;
 +}
 +
 +boolean D3D12_BeginSurfaceProbe(void)
@@ -19747,9 +20394,15 @@ index 0000000..6ae8d90
 +		vertex.peakBytes / 1048576.0, index.peakBytes / 1048576.0, constants.peakBytes / 1048576.0,
 +		vertex.wraps, index.wraps, constants.wraps, vertex.stalls + index.stalls + constants.stalls,
 +		vertex.stallMs + index.stallMs + constants.stallMs, vertex.grows + index.grows + constants.grows);
-+	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f skies, %.1f models, %.0f texture sets, %.1f updates, %.1f deletes, %d flushes, %.1f screen calls, %.1f portal calls, %d fade maps; palettes, light tables, fog/water captures, ReadRect, custom shaders\n",
-+		s.skies / n, s.models / n, s.textureSets / n, s.textureUpdates / n, s.textureDeletes / n,
-+		s.flushes, s.screens / n, s.portals / n, s.fadeMaps);
++	const RingStats staging = g_textureRing.TakeStats();
++	I_OutputMsg("UWP perf:   D3D12: textures: %llu created, %llu uploads (%.2f MB), %llu deleted, %d flushes, %u alive; SRVs used %u/65536, samplers %u/2048; allocated %.2f MB vs requested %.2f MB; staging ring peak %.2f MB, %u wraps, %u stalls (%.2f ms), %u grows\n",
++		(unsigned long long)s.texturesCreated, (unsigned long long)s.textureUploads, s.textureUploadBytes / 1048576.0,
++		(unsigned long long)s.texturesDeleted, s.flushes, (unsigned)std::count_if(g_textures.begin(), g_textures.end(),
++			[](const auto &entry) { return !!entry.second.res; }),
++		g_srvIndices.Used() + 4, g_nextSampler, g_textureAllocatedBytes / 1048576.0, g_textureBytes / 1048576.0,
++		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
++	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f skies, %.1f models, %.1f screen calls, %.1f portal calls, %d fade maps; palettes, light tables, fog/water captures, ReadRect, custom shaders\n",
++		s.skies / n, s.models / n, s.screens / n, s.portals / n, s.fadeMaps);
 +
 +	DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
 +	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
@@ -19788,6 +20441,10 @@ index 0000000..6ae8d90
 +	}
 +	Core_SetListBegin(nullptr);
 +	g_vertexRing.Shutdown(); g_indexRing.Shutdown(); g_constantRing.Shutdown();
++	g_textureRing.Shutdown();
++	while (!g_textures.empty()) DeleteTextureObject(g_textures.begin()->first);
++	RetireTexture(g_blackTexture);
++	g_samplers.clear();
 +	for (auto &pipeline : g_pipelines) Core_Retire(pipeline.second);
 +	g_pipelines.clear(); g_lastPipeline = g_boundPipeline = nullptr;
 +	Core_Retire(g_root); Core_Retire(g_srvHeap); Core_Retire(g_samplerHeap); Core_Retire(g_zeroConstants);
