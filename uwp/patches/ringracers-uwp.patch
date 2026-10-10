@@ -1,4 +1,4 @@
-From 3e0f95297035559e18c87ee886e665ba3ee6e175 Mon Sep 17 00:00:00 2001
+From 8e48277d20475c59b68f3fdcdd9210e745cc83cb Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -407,7 +407,7 @@ Model: claude-opus-5-5
  src/hwr2/patch_atlas.cpp                  |    8 +
  src/hwr2/resource_management.cpp          |  105 +-
  src/hwr2/resource_management.hpp          |   31 +-
- src/i_system.h                            |   70 +
+ src/i_system.h                            |   74 +
  src/i_video_common.cpp                    |   60 +-
  src/k_menu.h                              |   12 +-
  src/k_menufunc.c                          |    2 +-
@@ -443,8 +443,8 @@ Model: claude-opus-5-5
  src/sdl/hwsym_sdl.c                       |    7 +
  src/sdl/i_main.cpp                        |   11 +-
  src/sdl/i_system.cpp                      |   99 +-
- src/sdl/i_uwpd3d12.cpp                    |  112 +
- src/sdl/i_uwpprofile.cpp                  |  863 +++
+ src/sdl/i_uwpd3d12.cpp                    |  122 +
+ src/sdl/i_uwpprofile.cpp                  |  886 +++
  src/sdl/i_uwptrace.h                      |   25 +
  src/sdl/i_video.cpp                       |   98 +-
  src/sdl/mixer_sound.c                     |    4 +-
@@ -455,7 +455,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 88 files changed, 14674 insertions(+), 1126 deletions(-)
+ 88 files changed, 14711 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -793,7 +793,7 @@ index 4200d4d..539e517 100644
  extern INT32 con_clipviewtop;
  
 diff --git a/src/core/thread_pool.cpp b/src/core/thread_pool.cpp
-index 8a434ba..0e3c54d 100644
+index 8a434ba..b4518d0 100644
 --- a/src/core/thread_pool.cpp
 +++ b/src/core/thread_pool.cpp
 @@ -24,6 +24,11 @@
@@ -813,7 +813,7 @@ index 8a434ba..0e3c54d 100644
  	SRB2_ASSERT(g_main_threadpool == nullptr);
  	size_t thread_count = std::min(static_cast<unsigned int>(9), std::thread::hardware_concurrency());
 +#ifdef _UWP
-+	// [UWP]: Limit workers when Xbox marks processors as the game's own. Some launches don't mark any, so keep the
++	// [UWP]: Limit workers when Xbox marks processors as the game's own. As an app it marks none, so keep the
 +	// upstream hardware count then; counting only the unallocated processors picked the system's two cores.
 +	const unsigned int usable = I_UWPUsableProcessors();
 +	if (usable)
@@ -14780,10 +14780,10 @@ index 3fd6666..3cfcb18 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e..740d9a5 100644
+index 56d507e..097d6b3 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,8 +313,78 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,82 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
@@ -14798,12 +14798,11 @@ index 56d507e..740d9a5 100644
 +// [UWP]: Poll the gamepads directly, including while startup is busy on the main thread.
 +int I_UWPIsSkipButtonDown(void);
 +
-+// [UWP]: Logs the process budget, which distinguishes Xbox App/Game resources.
-+// GlobalMemoryStatusEx reports physical memory, not this budget.
++// [UWP]: Logs the process budget. GlobalMemoryStatusEx reports physical memory, not this budget.
 +void I_UWPLogMemoryLimit(void);
 +
-+// [UWP]: Exits with a pop-up explaining how to set the app type to Game if Direct3D 12 hardware isn't available,
-+// which on Xbox One means the game was started as an app (sdl/i_uwpd3d12.cpp).
++// [UWP]: Exits with a pop-up explaining how to set the app type to Game if Xbox runs the game as an app (see
++// I_UWPCpuSetMode) or Direct3D 12 hardware isn't available (sdl/i_uwpd3d12.cpp).
 +void I_UWPRequireGameMode(void);
 +
 +// [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
@@ -14820,6 +14819,11 @@ index 56d507e..740d9a5 100644
 +// [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
 +// doesn't mark any
 +unsigned int I_UWPUsableProcessors(void);
++
++// [UWP]: How Xbox has given out processors: 1 if some are the game's own (Game resources), 0 if it holds some for
++// another process and none for the game (App resources: seen on Xbox One X every time the app type was App), or -1
++// if it doesn't say
++int I_UWPCpuSetMode(void);
 +
 +// [UWP]: Logs crashes, with their call stacks, to the log, which the game's signal handler misses on Xbox.
 +// Call from the main thread.
@@ -18551,10 +18555,10 @@ index 827f493..633c62f 100644
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
 diff --git a/src/sdl/i_uwpd3d12.cpp b/src/sdl/i_uwpd3d12.cpp
 new file mode 100644
-index 0000000..e13c786
+index 0000000..43b7a6a
 --- /dev/null
 +++ b/src/sdl/i_uwpd3d12.cpp
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,122 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -18562,8 +18566,7 @@ index 0000000..e13c786
 +// See the 'LICENSE' file for more details.
 +//-----------------------------------------------------------------------------
 +/// \file  i_uwpd3d12.cpp
-+/// \brief [UWP]: Checks that Direct3D 12 hardware is available, which on Xbox One only exists when the app type is
-+///        Game
++/// \brief [UWP]: Checks that Xbox runs the game with the app type Game, and that Direct3D 12 hardware is available
 +
 +#include <cstdio>
 +#include <cstdlib>
@@ -18647,12 +18650,23 @@ index 0000000..e13c786
 +
 +void I_UWPRequireGameMode(void)
 +{
-+	if (HasD3D12Hardware())
++	// Xbox One X offers hardware Direct3D 12 and a 5120 MB budget with either app type, so the processors are what
++	// tell an app apart: Xbox marks none of them as the app's own
++	UINT64 limit = 0, usage = 0;
++	int isXbox = 0;
++	I_UWPGetMemoryBudget(&limit, &usage, &isXbox);
++	const int cpusetmode = I_UWPCpuSetMode();
++	const bool app = isXbox && cpusetmode == 0;
++	I_OutputMsg("UWP: app type check: %s (Xbox %s, processors: %s)\n", app ? "App" : "Game or not Xbox",
++		isXbox ? "yes" : "no",
++		cpusetmode == 1 ? "some are the game's" : cpusetmode == 0 ? "none are the game's" : "not reported");
++
++	if (!app && HasD3D12Hardware())
 +		return;
 +
 +	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
 +		"Dr. Robotnik's Ring Racers " VERSIONSTRING,
-+		"The game is running as an app, which has no access to the full GPU.\n"
++		"The game is running as an app, which gets fewer CPU cores and less of the GPU.\n"
 +		"\n"
 +		"In Dev Home, set the app type to \"Game\":\n"
 +		"1. Under \"Games and Apps\", highlight \"Ring Racers\".\n"
@@ -18669,10 +18683,10 @@ index 0000000..e13c786
 +}
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
-index 0000000..24cc8f4
+index 0000000..4fd422b
 --- /dev/null
 +++ b/src/sdl/i_uwpprofile.cpp
-@@ -0,0 +1,863 @@
+@@ -0,0 +1,886 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -19311,8 +19325,8 @@ index 0000000..24cc8f4
 +{
 +	unsigned int ours = 0;
 +
-+	// Only trusted when some processors are marked as the game's: Xbox often marks none, listing the processors it
-+	// keeps for games as allocated to someone else, and the system's as free
++	// Only trusted when some processors are marked as the game's. As an app, Xbox marks none: it lists the
++	// processors it keeps for games as allocated to someone else, and the system's as free
 +	for (const CpuSet& set : ReadCpuSets(false))
 +	{
 +		if (set.flags & kCpuSetAllocatedToUs)
@@ -19321,6 +19335,29 @@ index 0000000..24cc8f4
 +		}
 +	}
 +	return ours >= 2 ? ours : 0;
++}
++
++int I_UWPCpuSetMode(void)
++{
++	unsigned int ours = 0, others = 0;
++
++	for (const CpuSet& set : ReadCpuSets(false))
++	{
++		if (set.flags & kCpuSetAllocatedToUs)
++		{
++			ours++;
++		}
++		else if (set.flags & kCpuSetAllocated)
++		{
++			others++;
++		}
++	}
++
++	if (ours)
++	{
++		return 1;
++	}
++	return others ? 0 : -1;
 +}
 +
 +void I_UWPLogCpuSets(void)
