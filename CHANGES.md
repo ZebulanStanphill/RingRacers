@@ -55,6 +55,7 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
   - The game renders at the size of ANGLE's window surface, which can be smaller than the HDMI display mode.
   - The window is always fullscreen, which fixes a tiny loading screen.
 - **VibeRant D3D11.**
+  - It's the default renderer *(untested)*, since it runs faster than Software on the Xbox. Configs keep their saved renderer, so this applies to new configs. The game still starts in Software and switches after loading the config, as it does when VibeRant D3D11 is saved.
   - Legacy GL needs desktop OpenGL, which ANGLE doesn't provide. So its hardware renderer draws through a new Direct3D 11 driver (`src/hardware/r_d3d11/`) instead of `r_opengl.c`.
   - The driver follows `r_opengl.c` call for call, and its GLSL shaders are ported to HLSL.
   - It renders with its own Direct3D 11 device. Each frame is copied to a texture shared with ANGLE, which draws it to the window a frame later. If ANGLE can't open the shared texture, the frame is read back instead.

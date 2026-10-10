@@ -1,4 +1,4 @@
-From ccc6e26faecf01fedc6f470d80d15a4d0daf812c Mon Sep 17 00:00:00 2001
+From 1e232bd6dcd40eb90761e684bd9ef1c15f6af9eb Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -354,7 +354,7 @@ Model: claude-haiku-5-5
  src/console.c                             |   57 +
  src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
- src/cvars.cpp                             |    5 +
+ src/cvars.cpp                             |    9 +
  src/d_clisrv.c                            |   49 +
  src/d_main.cpp                            |  364 +-
  src/f_finale.c                            |    6 +
@@ -433,7 +433,7 @@ Model: claude-haiku-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 85 files changed, 13862 insertions(+), 1101 deletions(-)
+ 85 files changed, 13866 insertions(+), 1101 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -812,10 +812,22 @@ index 8a434ba..0e3c54d 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33..b79d189 100644
+index d589b33..de2505c 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
-@@ -1478,6 +1478,11 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+@@ -431,7 +431,11 @@ consvar_t cv_bgaudio = Player("bgaudio", "Nothing").onchange_noinit(BGAudio_OnCh
+ consvar_t cv_pauseifunfocused = Player("pauseifunfocused", "Yes").yes_no();
+ 
+ extern CV_PossibleValue_t cv_renderer_t[];
++#if defined(HWRENDER) && defined(_UWP) // [UWP]: Default to VibeRant D3D11, which runs faster than Software on Xbox
++consvar_t cv_renderer = Player("renderer", "VibeRant D3D11").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
++#else
+ consvar_t cv_renderer = Player("renderer", "Software").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
++#endif
+ consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
+ 
+ consvar_t cv_renderview = Player("renderview", "On").values({{0, "Off"}, {1, "On"}, {2, "Force"}}).dont_save();
+@@ -1478,6 +1482,11 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
  	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
  
  	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
