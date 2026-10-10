@@ -12,7 +12,7 @@ Coding agents were used heavily in the development of this port.
 2. Create a folder named `ringracers` at the root of the drive.
 3. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [official v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) into `E:\ringracers` (so you have e.g. `E:\ringracers\bios.pk3` and `E:\ringracers\data\`). Files from other versions won't load.
 4. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup). Builds come from [GitHub Actions](#github-actions) or a [local build](#local).
-5. In Dev Home, set the app type to "Game": under Games and Apps, highlight Ring Racers, press the View button (the small one left of the Xbox button), choose "View details", and change "App type" from "App" to "Game". As an app, it shares CPU cores with the system and gets only part of the GPU; as a game, it gets 6 CPU cores of its own and the whole GPU. Reinstalling resets this, so check it after each install.
+5. Leave Dev Home's "App type" as it is. The package declares the `expandedResources` capability, which gives it a game's resources (Direct3D 12 and 5 GB of memory) either way; on an Xbox One X, races ran at the same speed with App type App and Game.
 
 > [!WARNING]
 > Unplug the USB drive before switching the Xbox to Retail mode. If the drive is plugged in when the console boots into Retail mode, the files on it can end up with attributes or permissions that stop the game from writing to them: `latest-log.txt` stops updating, and settings and saves may not be kept. To fix this, connect the drive to a Windows PC and reset the folder's attributes and permissions, for example (with the drive at `E:`):
