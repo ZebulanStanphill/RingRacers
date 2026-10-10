@@ -2,6 +2,7 @@
 #include "hardware/r_d3d12/allocators.h"
 #include "hardware/r_d3d12/pipeline_key.h"
 #include "hardware/r_d3d12/mips.h"
+#include "hardware/r_d3d12/texture_repack.h"
 #include <cmath>
 #include <random>
 #include <cassert>
@@ -253,11 +254,29 @@ static void mipTests()
  assert(GenerateMipChainRGBA8(odd.data(), 3, 1)[1].pixels[0] == 85);
 }
 
+static void repackTests()
+{
+    // Rows are padded to a pitch, slices have a fixed row count, and the padding is left as it was.
+    constexpr size_t rowBytes = 5, rows = 4, depth = 3, pitch = 8;
+    std::vector<uint8_t> source(rowBytes * rows * depth), destination(pitch * rows * depth, 0xEE);
+    for (size_t i = 0; i < source.size(); ++i) source[i] = uint8_t(i + 1);
+    rr_d3d12::RepackTexture3D(destination.data(), source.data(), rowBytes, rows, depth, pitch);
+    for (size_t z = 0; z < depth; ++z) for (size_t y = 0; y < rows; ++y) for (size_t x = 0; x < pitch; ++x)
+        assert(destination[(z * rows + y) * pitch + x] == (x < rowBytes ? source[(z * rows + y) * rowBytes + x] : 0xEE));
+    // The palette lookup's shape: 64 bytes a row in 256-byte pitch, red fastest
+    std::vector<uint8_t> lut(64 * 64 * 64), staged(256 * 64 * 64);
+    for (size_t i = 0; i < lut.size(); ++i) lut[i] = uint8_t(i * 7 + (i >> 8));
+    rr_d3d12::RepackTexture3D(staged.data(), lut.data(), 64, 64, 64, 256);
+    for (size_t b = 0; b < 64; b += 21) for (size_t g = 0; g < 64; g += 9) for (size_t r = 0; r < 64; r += 5)
+        assert(staged[(b * 64 + g) * 256 + r] == lut[(b * 64 + g) * 64 + r]);
+}
+
 int main()
 {
     ringTests();
     keyTests();
     arenaTests();
     mipTests();
+    repackTests();
     std::cout << "D3D12 allocator and pipeline key regressions passed\n";
 }

@@ -34,7 +34,7 @@ if ($LASTEXITCODE -eq 77) {
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
 # Each oracle must prove it rejects incorrect pixels. Failure is the required outcome.
-foreach ($Scene in @('clear','readrect','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','depth','nodepth','noocclude','indexed','line','rings','growth','shutdown','texture','texture-update','texture-reuse','mips','sky','model-buffered','model-lerped','model-fallback')) {
+foreach ($Scene in @('clear','readrect','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','depth','nodepth','noocclude','indexed','line','rings','growth','shutdown','texture','texture-update','texture-reuse','mips','palette','palette-post','light-table-update','light-table-update-post','light-table-clear','screen-palette','palette-off','sky','model-buffered','model-lerped','model-fallback')) {
     $ErrorActionPreference = "Continue"
     $NegativeLog = (& $Exe --negative-control $Scene 2>&1 | Out-String)
     $NegativeExit = $LASTEXITCODE

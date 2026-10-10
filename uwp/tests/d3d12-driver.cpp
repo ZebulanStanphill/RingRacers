@@ -37,6 +37,7 @@ UINT32 HWR_UWPTakeLazyModelLoads(void) { return 0; }
 precise_t I_GetPreciseTime() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 UINT64 I_GetPrecisePrecision() { LARGE_INTEGER n; QueryPerformanceFrequency(&n); return n.QuadPart; }
 void I_OutputMsg(const char *fmt, ...) { char b[8192]; va_list ap; va_start(ap,fmt); vsnprintf(b,sizeof b,fmt,ap); va_end(ap); logs += b; fputs(b,stdout); }
+RGBA_t *pMasterPalette = nullptr;
 void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stderr,fmt,ap); va_end(ap); exit(1); }
 }
 namespace rr_d3d12 {
@@ -72,6 +73,8 @@ static std::vector<FOutVector> quad(float z=1) { return {{-.8f*z,-.8f*z,z,0,0},{
 static void draw(RGB c,FBITFIELD flags=0,float z=1,int alpha=255) { auto v=quad(z); auto s=surface(c,alpha); flags |= PF_Modulated|PF_NoTexture; blend(flags); polygon(&s,v.data(),(FUINT)v.size(),flags); }
 static std::vector<UINT8> pixels() { std::vector<UINT8> p(W*H*3,0xcd); readrect(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
 static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
+// Palette rendering's last step, read like expect reads the screen. scene names its own negative control.
+static void expectPost(const char *scene,RGB want,int x=32,int y=32) { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); validate(validationQueue); if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: palette pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("palette pixel oracle failed"); } }
 static void validate(ID3D12InfoQueue *queue)
 {
     bool failed = false;
@@ -177,6 +180,88 @@ int main(int argc,char **argv) {
         special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_TRILINEAR);
         reset(); texture(&tex); textured(-.125f,.125f,.125f); expect("mips",{72,72,72});
         deleteTexture(&tex); special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_POINTSAMPLED);
+        // Palette rendering. The lookup table maps a color to index 7 only when red is below 32 and green and blue aren't,
+        // otherwise 19, so a lookup upload that swaps axes or misplaces rows or slices picks the wrong index.
+        {
+            auto setLookup=function<void (*)(UINT8 *)>("SetPaletteLookup");
+            auto setScreenPalette=function<void (*)(RGBA_t *)>("SetScreenPalette");
+            auto createLightTable=function<UINT32 (*)(RGBA_t *)>("CreateLightTable");
+            auto updateLightTable=function<void (*)(UINT32,RGBA_t *)>("UpdateLightTable");
+            auto clearLightTables=function<void (*)()>("ClearLightTables");
+            auto setShader=function<void (*)(int)>("SetShader");
+            constexpr int lutSize=HWR_PALETTE_LUT_SIZE;
+            std::vector<UINT8> lut(lutSize*lutSize*lutSize);
+            for(int b=0;b<lutSize;b++) for(int g=0;g<lutSize;g++) for(int r=0;r<lutSize;r++) lut[(b*lutSize+g)*lutSize+r]=(r<lutSize/2 && g>=lutSize/2 && b>=lutSize/2)?7:19;
+            auto rgba=[](RGB c) { RGBA_t v={}; v.s.red=(UINT8)c[0]; v.s.green=(UINT8)c[1]; v.s.blue=(UINT8)c[2]; v.s.alpha=255; return v; };
+            const RGB oldColor={180,60,80}, newColor={32,180,200}; // lit colors: lookup index 19, then 7
+            const RGB index7={40,216,104}, index19={232,152,24};
+            std::array<RGBA_t,256> screenPalette,masterPalette;
+            screenPalette.fill(rgba({248,8,240})); screenPalette[7]=rgba(index7); screenPalette[19]=rgba(index19);
+            masterPalette.fill(rgba({8,8,8}));
+            // Every other level and index is magenta-ish, so a wrong light level or index fails
+            std::vector<RGBA_t> lightTable(256*33,rgba({252,12,244}));
+            lightTable[7]=rgba(oldColor);
+            pMasterPalette=masterPalette.data();
+            setLookup(lut.data()); setScreenPalette(screenPalette.data());
+            special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON);
+            special(HWD_SET_PALETTE_RENDERING,1); setShader(SHADER_FLOOR);
+            std::array<UINT8,4> paletteTexel={24,180,220,255}; // index 7
+            GLMipmap_t paletteTexture={}; paletteTexture.format=GL_TEXFMT_RGBA; paletteTexture.width=paletteTexture.height=1; paletteTexture.data=paletteTexel.data();
+            texture(&paletteTexture);
+            auto paletteDraw=[&](UINT32 id,float left=-.8f,float right=.8f) {
+                auto q=quad(); q[0].x=q[3].x=left; q[1].x=q[2].x=right;
+                auto white=surface({255,255,255}); white.LightTableId=id; white.LightInfo.light_level=255;
+                const FBITFIELD flags=PF_Modulated|PF_ColorMapped|PF_NoDepthTest;
+                blend(flags); polygon(&white,q.data(),4,flags);
+            };
+            UINT32 lightId=createLightTable(lightTable.data());
+            if(!lightId) throw std::runtime_error("CreateLightTable failed");
+            reset(); paletteDraw(lightId);
+            // The screen holds the light table's color; the finished frame holds the screen palette's color for its index.
+            expect("palette",oldColor); expectPost("palette-post",index19);
+            // Presenting again repeats the pass on the same screen
+            D3D12_FinishUpdate(0);
+            // b) One frame, no readback between the draws: the first keeps the old table, the second gets the new one.
+            reset(); paletteDraw(lightId,-.8f,-.1f);
+            lightTable[7]=rgba(newColor); updateLightTable(lightId,lightTable.data());
+            paletteDraw(lightId,.1f,.8f);
+            expect("light-table-update",oldColor,18,32); expect("light-table-update",newColor,46,32);
+            expectPost("light-table-update-post",index19,18,32); expectPost("light-table-update-post",index7,46,32);
+            D3D12_FinishUpdate(0);
+            // c) Clear and remake the table every frame, so its views and resources are retired while recorded work uses them,
+            // and descriptors come back after the fence.
+            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; D3D12_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
+            for(int frame=0;frame<96;frame++) {
+                const RGB lit=(frame&1)?oldColor:newColor;
+                lightTable[7]=rgba(lit); clearLightTables();
+                lightId=createLightTable(lightTable.data());
+                if(!lightId) throw std::runtime_error("recreating a light table failed");
+                reset(); paletteDraw(lightId); clearLightTables();
+                expect("light-table-clear",lit); expectPost("light-table-clear",(frame&1)?index19:index7);
+                D3D12_FinishUpdate(0);
+            }
+            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; D3D12_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
+            if(srvsAfter<=srvsBefore) throw std::runtime_error("light table SRV reuse was not exercised");
+            // d) The screen palette changes between frames and recolors the same screen
+            lightTable[7]=rgba(oldColor); lightId=createLightTable(lightTable.data());
+            for(int frame=0;frame<4;frame++) {
+                const RGB flash=(frame&1)?RGB{16,196,232}:index19;
+                screenPalette[19]=rgba(flash); setScreenPalette(screenPalette.data());
+                reset(); paletteDraw(lightId);
+                expect("screen-palette",oldColor); expectPost("screen-palette",flash);
+                D3D12_FinishUpdate(0);
+            }
+            // With palette rendering off, there is no last step to read
+            special(HWD_SET_PALETTE_RENDERING,0);
+            { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data()));
+              bool untouched=true; for(auto c:p) untouched=untouched && c==0xcd; if(negative=="palette-off") untouched=false;
+              if(!untouched) { negativeRejected=negative=="palette-off"; throw std::runtime_error("palette step ran with palette rendering off"); } }
+            D3D12_FinishUpdate(0);
+            pMasterPalette=nullptr; setLookup(lut.data()); // without a master palette, it goes
+            clearLightTables(); deleteTexture(&paletteTexture);
+            function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
+            validate(validationQueue);
+        }
         // Inverse of the sky's 270-degree Y rotation; height 200 keeps its Y scale at one.
         std::array<gl_skyvertex_t,4> skyVertices={{{1,-.8f,.8f,0,0,64,176,224,255},{1,-.8f,-.8f,1,0,64,176,224,255},{1,.8f,-.8f,1,1,64,176,224,255},{1,.8f,.8f,0,1,64,176,224,255}}};
         gl_skyloopdef_t skyLoop={HWD_SKYLOOP_FAN,4,0,false}; gl_sky_t sky={};
@@ -215,6 +300,10 @@ int main(int argc,char **argv) {
         reset(); std::vector<FOutVector> huge(400,quad()[0]); huge[0]=quad()[0]; huge[1]=quad()[1]; huge[2]=quad()[2]; huge[3]=quad()[3]; auto hs=surface({32,220,96}); polygon(&hs,huge.data(),(FUINT)huge.size(),PF_Modulated|PF_NoTexture|PF_NoDepthTest); expect("growth",{32,220,96});
         D3D12_FinishUpdate(0); D3D12_LogPerf(1);
         if(logs.find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
+        { unsigned alive=9,uploads=0; int created=0,updated=0; double passes=0,ms=0; auto pp=logs.find("UWP perf:   D3D12: palette: rendering ");
+          if(pp==std::string::npos) throw std::runtime_error("missing palette perf line");
+          if(sscanf(logs.c_str()+pp,"UWP perf:   D3D12: palette: rendering %*s %u light tables alive, %d created, %d updated; %u LUT/palette uploads; %lf post passes per frame, %lf ms per frame",&alive,&created,&updated,&uploads,&passes,&ms)!=6
+             || alive!=0 || created!=98 || updated!=1 || uploads<6 || passes<=0) throw std::runtime_error("palette perf counters are wrong"); }
         unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=logs.find("; wraps "); if(pos==std::string::npos || sscanf(logs.c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=logs.find("; grows ",pos); if(gp==std::string::npos || sscanf(logs.c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
         unsigned ringSubmissions=0; auto rp=logs.find("mid-frame: ring "); if(rp==std::string::npos || sscanf(logs.c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(queue.Get());

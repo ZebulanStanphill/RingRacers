@@ -1,4 +1,4 @@
-From 13a6d85a3021b72e1257f7840c1626b1411404d7 Mon Sep 17 00:00:00 2001
+From c5d34d7ae151612812ea5811a0df5b7566ee360f Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -467,6 +467,23 @@ Model: claude-opus-5-5
 
 Agent: Claude Code (Opus, D3D12 per-draw state)
 Model: claude-opus-5-5
+
+- [UWP]: Port palette rendering to the D3D12 driver: the 64-cubed lookup
+  table as a 3D texture (rows repacked to the copy footprint's 256-byte
+  pitch), light tables, the screen and master palettes, c.palette, the
+  t2/t3 bindings and the postprocess pass into its own target, which is
+  what gets presented. Updates are recorded in order with the draws around
+  them; clearing, replacing and resizing retire resources and descriptors
+  with the fence. Adds a palette perf line and a test-only read of the
+  postprocessed frame.
+
+Agent: Codex (Sol, partial S4)
+Model: gpt-6.1-sol
+Agent: Claude Code (Sonnet, D3D12 S4)
+Model: claude-sonnet-5-5
+
+Agent: Claude Code (Opus, D3D12 S4 review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -508,6 +525,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
  src/hardware/r_d3d12/d3d12_models.inc     |  516 ++
+ src/hardware/r_d3d12/d3d12_palette.inc    |  294 +
  src/hardware/r_d3d12/d3d12_pipeline.cpp   |  173 +
  src/hardware/r_d3d12/d3d12_pipeline.h     |   58 +
  src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
@@ -518,8 +536,9 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2764 +++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   54 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2815 +++++++++
+ src/hardware/r_d3d12/r_d3d12.h            |   56 +
+ src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
  src/hwr2/patch_atlas.cpp                  |    8 +
@@ -573,7 +592,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 105 files changed, 21893 insertions(+), 1127 deletions(-)
+ 107 files changed, 22276 insertions(+), 1127 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -588,6 +607,7 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.h
  create mode 100644 src/hardware/r_d3d12/d3d12_models.inc
+ create mode 100644 src/hardware/r_d3d12/d3d12_palette.inc
  create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.h
  create mode 100644 src/hardware/r_d3d12/d3d12_present.cpp
@@ -600,6 +620,7 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d12/pipeline_key.h
  create mode 100644 src/hardware/r_d3d12/r_d3d12.cpp
  create mode 100644 src/hardware/r_d3d12/r_d3d12.h
+ create mode 100644 src/hardware/r_d3d12/texture_repack.h
  create mode 100644 src/sdl/i_uwpd3d12.cpp
  create mode 100644 src/sdl/i_uwpprofile.cpp
  create mode 100644 src/sdl/i_uwptrace.h
@@ -16304,6 +16325,306 @@ index 0000000..23c3fce
 +	SetColor(kWhite);
 +	g_stats.skies++;
 +}
+diff --git a/src/hardware/r_d3d12/d3d12_palette.inc b/src/hardware/r_d3d12/d3d12_palette.inc
+new file mode 100644
+index 0000000..5578b0b
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_palette.inc
+@@ -0,0 +1,294 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file d3d12_palette.inc
++/// \brief [UWP]: Palette rendering's lookup table, light tables, palettes and last step
++
++// Included by r_d3d12.cpp. These are ordinary persistent SRVs and staging-ring uploads, so replacing, updating or
++// clearing one follows the texture rules: an update is recorded in order with the draws around it, and a resource,
++// heap block or SRV index retires with the fence of the work recorded so far.
++
++void RetireScreenSrv()
++{
++	if (g_screenSrv != UINT32_MAX)
++		g_srvIndices.Free(g_screenSrv, Core_PendingFence());
++	g_screenSrv = UINT32_MAX;
++}
++
++// The master palette's view, or the null one, for fade maps
++[[maybe_unused]] UINT MasterPaletteSrv()
++{
++	return g_masterPalette.res ? g_masterPalette.srv : 0;
++}
++
++// Replaces a palette's colors, creating it if need be
++bool StorePalette(GpuTexture &palette, const wchar_t *name, const RGBA_t *colors)
++{
++	bool stored;
++
++	if (palette.res)
++		stored = UploadTexture(palette, colors);
++	else
++	{
++		stored = CreateTextureStorage(&palette, 0, 256, 1, DXGI_FORMAT_R8G8B8A8_UNORM, false, colors);
++		if (stored)
++			palette.res->SetName(name);
++	}
++	if (stored)
++		g_stats.paletteUploads++;
++	return stored;
++}
++
++// The 64x64x64 lookup table's one subresource, through the staging ring. Its rows are 256 bytes apart.
++bool UploadPaletteLookup(const UINT8 *lut)
++{
++	const D3D12_RESOURCE_DESC desc = g_paletteLookup.res->GetDesc();
++	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
++	UINT rows;
++	UINT64 rowBytes, bytes;
++
++	Core_Device()->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &rows, &rowBytes, &bytes);
++	// Alloc can submit and reopen the list: do it before recording the transition
++	UploadAllocation allocation = g_textureRing.Alloc((size_t)bytes, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
++	if (!allocation)
++		return false;
++	RepackTexture3D(static_cast<UINT8 *>(allocation.cpu) + footprint.Offset, lut, (size_t)rowBytes, rows,
++		footprint.Footprint.Depth, footprint.Footprint.RowPitch);
++	footprint.Offset += allocation.offset;
++
++	D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
++	from.pResource = g_textureRing.Resource();
++	from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++	from.PlacedFootprint = footprint;
++	to.pResource = g_paletteLookup.res.Get();
++	to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++	Transition(g_paletteLookup, D3D12_RESOURCE_STATE_COPY_DEST);
++	Core_FlushBarriers();
++	Core_List()->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
++	Transition(g_paletteLookup, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++	return true;
++}
++
++// Created once, so it's a committed resource rather than a heap placement
++bool CreatePaletteLookup()
++{
++	constexpr UINT size = HWR_PALETTE_LUT_SIZE;
++	const UINT index = AllocateSrv();
++
++	if (index == UINT32_MAX)
++		return false;
++
++	D3D12_RESOURCE_DESC desc = {};
++	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
++	desc.Width = desc.Height = desc.DepthOrArraySize = size;
++	desc.MipLevels = 1;
++	desc.Format = DXGI_FORMAT_R8_UNORM;
++	desc.SampleDesc.Count = 1;
++	D3D12_HEAP_PROPERTIES heap = {};
++	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++	GpuTexture lookup;
++	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&lookup.res)), "CreateCommittedResource (palette lookup)"))
++	{
++		g_srvIndices.Free(index, Core_PendingFence());
++		return false;
++	}
++	lookup.res->SetName(L"palette lookup table");
++	lookup.srv = index;
++	lookup.width = lookup.height = size;
++	lookup.format = desc.Format;
++	lookup.bytes = (UINT64)size * size * size;
++	lookup.allocatedBytes = Core_Device()->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
++	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
++	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++	srv.Format = desc.Format;
++	srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
++	srv.Texture3D.MipLevels = 1;
++	Core_Device()->CreateShaderResourceView(lookup.res.Get(), &srv, SrvCpu(index));
++	g_paletteLookup = lookup;
++	g_textureBytes += lookup.bytes;
++	g_textureAllocatedBytes += lookup.allocatedBytes;
++	g_stats.texturesCreated++;
++	return true;
++}
++
++void D3D_SetScreenPalette(RGBA_t *palette)
++{
++	if (!Core_Device() || !palette
++		|| (g_screenPalette.res && !memcmp(g_screenPaletteColors, palette, sizeof g_screenPaletteColors)))
++		return;
++
++	if (StorePalette(g_screenPalette, L"screen palette", palette))
++		memcpy(g_screenPaletteColors, palette, sizeof g_screenPaletteColors);
++}
++
++void D3D_SetPaletteLookup(UINT8 *lut)
++{
++	if (!Core_Device() || !lut)
++		return;
++
++	if (!g_paletteLookup.res && !CreatePaletteLookup())
++		return;
++
++	// Indexed [b][g][r], so r is x
++	if (!UploadPaletteLookup(lut))
++		return;
++	g_stats.paletteUploads++;
++	Log("palette lookup table updated");
++
++	// HWR_SetMapPalette calls this with a lookup built from pMasterPalette whenever
++	// the palette lump changes, including V_SetPaletteLump. R_ReInitColormaps only
++	// changes light tables. Never use D3D_SetScreenPalette's flash/corrected colors.
++	if (!pMasterPalette)
++	{
++		RetireTexture(g_masterPalette);
++		return;
++	}
++	if (StorePalette(g_masterPalette, L"master palette", pMasterPalette))
++	{
++		g_stats.textureUploads++;
++		g_stats.textureUploadBytes += 256 * sizeof(RGBA_t);
++	}
++}
++
++UINT32 D3D_CreateLightTable(RGBA_t *hw_lighttable)
++{
++	if (!Core_Device() || !hw_lighttable)
++		return 0;
++
++	const UINT32 id = g_nextLightTableId;
++	GpuTexture table;
++	// 32 light levels, then the base colormap's full-bright level for brightmaps
++	if (!CreateTextureStorage(&table, id, 256, 33, DXGI_FORMAT_R8G8B8A8_UNORM, false, hw_lighttable))
++		return 0;
++
++	wchar_t name[64];
++	swprintf(name, sizeof name / sizeof *name, L"light table %u", id);
++	table.res->SetName(name);
++	g_nextLightTableId++;
++	g_lightTables[id] = table;
++	g_stats.lightTablesCreated++;
++	return id;
++}
++
++void D3D_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
++{
++	auto it = g_lightTables.find(id);
++	if (it == g_lightTables.end() || !hw_lighttable)
++		return;
++	// In order with the draws around it: those recorded before it keep the old colors
++	if (UploadTexture(it->second, hw_lighttable))
++		g_stats.lightTablesUpdated++;
++}
++
++void D3D_ClearLightTables(void)
++{
++	// The lists in flight keep using them; their resources and views go when the fence says so
++	memset(g_boundPaletteTables, 0, sizeof g_boundPaletteTables);
++	g_currentLightTable = nullptr;
++	if (!g_lightTables.empty())
++		Log("cleared %d light tables", (int)g_lightTables.size());
++	for (auto &table : g_lightTables)
++		RetireTexture(table.second);
++	g_lightTables.clear();
++}
++
++// g_postTexture at the screen's size, and a view of the screen to read it with
++bool PreparePaletteTargets()
++{
++	if (!g_postTexture.res || g_postTexture.width != g_rtWidth || g_postTexture.height != g_rtHeight)
++	{
++		RetireTexture(g_postTexture);
++		const D3D12_RESOURCE_DESC desc = g_rt->GetDesc();
++		D3D12_HEAP_PROPERTIES heap = {};
++		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++		if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++			D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&g_postTexture.res)), "CreateCommittedResource (palette)"))
++		{
++			g_postTexture.res.Reset();
++			return false;
++		}
++		g_postTexture.res->SetName(L"palette post");
++		g_postTexture.state = D3D12_RESOURCE_STATE_RENDER_TARGET;
++		g_postTexture.width = g_rtWidth;
++		g_postTexture.height = g_rtHeight;
++		g_postTexture.format = desc.Format;
++		Core_Device()->CreateRenderTargetView(g_postTexture.res.Get(), nullptr, Core_Rtv(kRtvPost));
++		Log("made a %ux%u texture for palette rendering's last step", g_rtWidth, g_rtHeight);
++	}
++
++	if (g_screenSrv == UINT32_MAX)
++	{
++		const UINT index = AllocateSrv();
++		if (index == UINT32_MAX)
++			return false;
++		D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
++		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++		srv.Format = kScreenFormat;
++		srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++		srv.Texture2D.MipLevels = 1;
++		Core_Device()->CreateShaderResourceView(g_rt.Get(), &srv, SrvCpu(index));
++		g_screenSrv = index;
++	}
++	return true;
++}
++
++// Turns the finished frame into the screen's palette, in g_postTexture. Returns whether it did.
++// g_postTexture stays in RENDER_TARGET for the present copy, and g_rt returns to it for drawing.
++bool PalettePostprocess()
++{
++	if (!CanDraw() || !g_paletteRendering || !g_paletteLookup.res || !g_screenPalette.res)
++		return false;
++
++	const precise_t start = I_GetPreciseTime();
++	bool done = false;
++
++	PipelineKey key = {};
++	key.vs = VS_FULLSCREEN;
++	key.ps = PS_PALETTEPOST;
++	key.layout = LAYOUT_NONE;
++	key.topologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++	key.rtFormat = kScreenFormat;
++	key.dsvFormat = DXGI_FORMAT_UNKNOWN; // no depth buffer is bound
++	key.blend = 1 << 15; // opaque, all channels
++	// Neither depth nor stencil, with valid fixed-function values like the prewarmed pipelines
++	key.depth = 2ULL | (8ULL << 4) | (1ULL << 8) | (1ULL << 12) | (1ULL << 16) | (255ULL << 20) | (255ULL << 28);
++	ID3D12PipelineState *pso = PreparePaletteTargets() ? FindOrCreatePipeline(key) : nullptr;
++	if (pso)
++	{
++		ID3D12GraphicsCommandList *list = Core_List();
++		const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kRtvPost);
++		const D3D12_VIEWPORT viewport = {0.0f, 0.0f, (float)g_rtWidth, (float)g_rtHeight, 0.0f, 1.0f};
++		const D3D12_RECT scissor = {0, 0, (LONG)g_rtWidth, (LONG)g_rtHeight};
++
++		Transition(g_postTexture, D3D12_RESOURCE_STATE_RENDER_TARGET);
++		Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++		Core_FlushBarriers();
++		list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
++		list->SetPipelineState(pso);
++		// VSFullscreen reads b0's depth; a draw's constants may not be the ones bound
++		list->SetGraphicsRootConstantBufferView(0, g_zeroConstants->GetGPUVirtualAddress());
++		list->SetGraphicsRootDescriptorTable(1, SrvGpu(g_screenSrv)); // t0: the finished frame
++		list->SetGraphicsRootDescriptorTable(6, SrvGpu(g_paletteLookup.srv)); // t2
++		list->SetGraphicsRootDescriptorTable(7, SrvGpu(g_screenPalette.srv)); // t4
++		list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++		list->RSSetViewports(1, &viewport);
++		list->RSSetScissorRects(1, &scissor);
++		list->DrawInstanced(3, 1, 0, 0);
++		g_stats.psoChanges++;
++		g_stats.rootSets++;
++		g_stats.tableSets += 3;
++
++		// Back to drawing the screen: everything this pass set, and the caches of it, is stale
++		Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
++		Core_FlushBarriers();
++		BindRenderTarget();
++		g_stats.paletteSteps++;
++		done = true;
++	}
++	g_stats.paletteTime += I_GetPreciseTime() - start;
++	return done;
++}
 diff --git a/src/hardware/r_d3d12/d3d12_pipeline.cpp b/src/hardware/r_d3d12/d3d12_pipeline.cpp
 new file mode 100644
 index 0000000..c44989b
@@ -18767,10 +19088,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..d6a1880
+index 0000000..9178a46
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2764 @@
+@@ -0,0 +1,2815 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -18793,6 +19114,7 @@ index 0000000..d6a1880
 +#include "d3d12_prewarm.h"
 +#include "d3d12_upload.h"
 +#include "mips.h"
++#include "texture_repack.h"
 +#include "r_d3d12_shaders/RootSignature.h"
 +
 +#include <cmath>
@@ -18822,6 +19144,9 @@ index 0000000..d6a1880
 +#undef min
 +#undef max
 +#undef clamp
++
++// v_video.h's, which this driver doesn't otherwise need
++extern "C" RGBA_t *pMasterPalette;
 +
 +namespace
 +{
@@ -18855,6 +19180,8 @@ index 0000000..d6a1880
 +	int screens; // screen textures, wipes, postimg, the intermission background and the final screen
 +	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
 +	int portals, fadeMaps;
++	int lightTablesCreated, lightTablesUpdated, paletteUploads, paletteSteps;
++	precise_t paletteTime;
 +	precise_t presentTime;
 +};
 +Stats g_stats;
@@ -18873,8 +19200,6 @@ index 0000000..d6a1880
 +bool g_vsync = false, g_vsyncSet = false;
 +
 +INT32 g_screenWidth = 0, g_screenHeight = 0; // r_opengl.c's screen_width and screen_height
-+
-+UINT32 g_lightTableIds = 0;
 +
 +// Column-major, like OpenGL's
 +struct Mat4
@@ -19342,10 +19667,32 @@ index 0000000..d6a1880
 +}
 +
 +
++// Palette rendering, from SRB2: shaders turn texels back into palette indices with a lookup table, light them through
++// the surface's light table, and the finished frame is turned into the screen's palette
 +bool g_paletteRendering = false;
++GpuTexture g_paletteLookup; // Texture3D, indexed [b][g][r]
++GpuTexture g_screenPalette; // 256x1: the palette the finished frame is shown in
++GpuTexture g_masterPalette; // 256x1: uncorrected colors, for fade maps (S5)
++RGBA_t g_screenPaletteColors[256];
++std::unordered_map<UINT32, GpuTexture> g_lightTables;
++// Unlikely values for the uninitialized LightTableIds of surfaces that never get one
++constexpr UINT32 kFirstLightTableId = 0x4C540001;
++UINT32 g_nextLightTableId = kFirstLightTableId;
++GpuTexture *g_currentLightTable = nullptr;
++// Where the finished frame is turned into the screen's palette, keeping the screen as drawn
++GpuTexture g_postTexture;
++UINT g_screenSrv = UINT32_MAX; // g_rt as a shader resource, for that last step
++// The lookup table and light table last set at t2 and t3 on the open list, as descriptor handles
++UINT64 g_boundPaletteTables[2] = {};
 +void Flush();
 +void SetWaterSurface(INT32) { D3D12_LOG_ONCE("water capture not drawn yet (S6)"); }
-+void SetLightTable(UINT32) {}
++void SetLightTable(UINT32 id)
++{
++	if (!id)
++		return;
++	auto it = g_lightTables.find(id);
++	g_currentLightTable = it != g_lightTables.end() ? &it->second : nullptr;
++}
 +struct CustomProgram {};
 +const CustomProgram *CustomDrawProgram(Layout) { return nullptr; }
 +void SetBlendMode(FBITFIELD flags)
@@ -19656,22 +20003,27 @@ index 0000000..d6a1880
 +	++g_committedCreated;
 +	return true;
 +}
-+bool CreateTextureStorage(GpuTexture *texture, UINT id, UINT width, UINT height, DXGI_FORMAT format,
-+	bool mipmapped, const void *data, bool black = false)
++// A persistent SRV index, or UINT32_MAX (after asking for a texture flush) if there are none
++UINT AllocateSrv()
 +{
 +	g_srvIndices.Collect(Core_CompletedFence());
-+	const UINT index = black ? 3 : g_srvIndices.Allocate();
++	const UINT index = g_srvIndices.Allocate();
 +	if (index == UINT32_MAX)
 +	{
 +		D3D12_LOG_ONCE("persistent SRV heap exhausted; requesting Legacy GL texture flush");
 +		g_textureFlushRequested = true;
++		return index;
++	}
++	if (index < g_srvHighWater) ++g_srvReuses;
++	g_srvHighWater = std::max(g_srvHighWater, index + 1);
++	return index;
++}
++bool CreateTextureStorage(GpuTexture *texture, UINT id, UINT width, UINT height, DXGI_FORMAT format,
++	bool mipmapped, const void *data, bool black = false)
++{
++	const UINT index = black ? 3 : AllocateSrv();
++	if (index == UINT32_MAX)
 +		return false;
-+	}
-+	if (!black)
-+	{
-+		if (index < g_srvHighWater) ++g_srvReuses;
-+		g_srvHighWater = std::max(g_srvHighWater, index + 1);
-+	}
 +	D3D12_RESOURCE_DESC desc = {};
 +	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 +	desc.Width = width; desc.Height = height; desc.DepthOrArraySize = 1;
@@ -20111,7 +20463,7 @@ index 0000000..d6a1880
 +	c.alphaRef = g_gl.alphaRef;
 +	c.texMode = g_gl.texture2D && g_units[0] && g_units[0]->res
 +		? (g_gl.texEnv == TE_MODULATE ? 1 : 2) : 0;
-+	c.palette = 0; // No LUT or light tables until S4, as in D3D11 without those resources.
++	c.palette = (g_paletteRendering && g_paletteLookup.res && g_currentLightTable) ? 1 : 0;
 +	if (!g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
 +		|| memcmp(&c, &g_lastConstants, sizeof c) != 0)
 +	{
@@ -20127,6 +20479,31 @@ index 0000000..d6a1880
 +	Core_List()->SetGraphicsRootConstantBufferView(0, g_constantAllocation.gpu);
 +	g_stats.rootSets++;
 +	return true;
++}
++
++// The pipeline for key, made on first use. A failure is cached too, so it isn't retried every draw.
++ID3D12PipelineState *FindOrCreatePipeline(const PipelineKey &key)
++{
++	auto found = g_pipelines.find(key);
++	if (found == g_pipelines.end())
++	{
++		const auto desc = BuildPipelineDesc(g_root.Get(), key);
++		ComPtr<ID3D12PipelineState> created;
++		LARGE_INTEGER frequency = {}, begin = {}, end = {};
++		QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
++		const HRESULT hr = Core_Device()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&created));
++		QueryPerformanceCounter(&end);
++		const double ms = frequency.QuadPart > 0 ? (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart : 0;
++		g_psoCreated++; g_psoMs += ms; g_psoWorstMs = std::max(g_psoWorstMs, ms);
++		if (g_psoCreated <= 64)
++			Log("PSO #%u %s+%s layout %u topology %u blend 0x%X depth 0x%llX raster 0x%X: %.1f ms (prewarm %s)",
++				(unsigned)g_psoCreated, ShaderName((VSKind)key.vs), ShaderName((PSKind)key.ps), key.layout, key.topologyType,
++				key.blend, (unsigned long long)key.depth, key.raster, ms, Prewarm_Done() ? "done" : "running");
++		if (Core_Failed(hr, "CreateGraphicsPipelineState")) created.Reset();
++		else created->SetName(L"Legacy GL cached pipeline");
++		found = g_pipelines.emplace(key, created).first;
++	}
++	return found->second.Get();
 +}
 +
 +// Same built-in shader selector as D3D11; custom shaders remain S8.
@@ -20175,27 +20552,7 @@ index 0000000..d6a1880
 +	if (g_lastPipeline && key == g_lastKey) pso = g_lastPipeline;
 +	else
 +	{
-+		auto found = g_pipelines.find(key);
-+		if (found == g_pipelines.end())
-+		{
-+			const auto desc = BuildPipelineDesc(g_root.Get(), key);
-+			ComPtr<ID3D12PipelineState> created;
-+			LARGE_INTEGER frequency = {}, begin = {}, end = {};
-+			QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
-+			const HRESULT hr = Core_Device()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&created));
-+			QueryPerformanceCounter(&end);
-+			const double ms = frequency.QuadPart > 0 ? (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart : 0;
-+			g_psoCreated++; g_psoMs += ms; g_psoWorstMs = std::max(g_psoWorstMs, ms);
-+			if (g_psoCreated <= 64)
-+				Log("PSO #%u %s+%s layout %u topology %u blend 0x%X depth 0x%llX raster 0x%X: %.1f ms (prewarm %s)",
-+					(unsigned)g_psoCreated, ShaderName(vs), ShaderName(ps), key.layout, key.topologyType, key.blend,
-+					(unsigned long long)key.depth, key.raster, ms, Prewarm_Done() ? "done" : "running");
-+			// A failure is cached too, so it isn't retried every draw
-+			if (Core_Failed(hr, "CreateGraphicsPipelineState")) created.Reset();
-+			else created->SetName(L"Legacy GL cached pipeline");
-+			found = g_pipelines.emplace(key, created).first;
-+		}
-+		pso = found->second.Get();
++		pso = FindOrCreatePipeline(key);
 +		if (!pso) return false;
 +		g_lastKey = key; g_lastPipeline = pso;
 +	}
@@ -20217,6 +20574,20 @@ index 0000000..d6a1880
 +			if (g_boundTables[slot] == handles[kind].ptr) continue;
 +			Core_List()->SetGraphicsRootDescriptorTable(1 + slot, handles[kind]);
 +			g_boundTables[slot] = handles[kind].ptr;
++			g_stats.tableSets++;
++		}
++	}
++	if (g_paletteRendering)
++	{
++		// The lookup table at t2 and light table at t3; without them, the null views a list begins with
++		const D3D12_GPU_DESCRIPTOR_HANDLE handles[2] = {
++			SrvGpu(g_paletteLookup.res ? g_paletteLookup.srv : 1), SrvGpu(g_currentLightTable ? g_currentLightTable->srv : 0)};
++		const UINT parameters[2] = {6, 5};
++		for (int slot = 0; slot < 2; ++slot)
++		{
++			if (g_boundPaletteTables[slot] == handles[slot].ptr) continue;
++			Core_List()->SetGraphicsRootDescriptorTable(parameters[slot], handles[slot]);
++			g_boundPaletteTables[slot] = handles[slot].ptr;
 +			g_stats.tableSets++;
 +		}
 +	}
@@ -20328,6 +20699,7 @@ index 0000000..d6a1880
 +void BindRenderTarget()
 +{
 +	memset(g_boundTables, 0, sizeof g_boundTables);
++	memset(g_boundPaletteTables, 0, sizeof g_boundPaletteTables);
 +	g_srvIndices.Collect(Core_CompletedFence());
 +	g_staticArena.Collect(Core_CompletedFence());
 +	CollectTextureBlocks();
@@ -20365,6 +20737,8 @@ index 0000000..d6a1880
 +	// ApplyConstants always rebinds b0; each draw retags the cached slot for its pending fence.
 +
 +}
++
++#include "d3d12_palette.inc"
 +
 +// A full turn every 240 frames, about 1.5 degrees a frame
 +void DiagnosticHue(float rgb[3])
@@ -20421,6 +20795,9 @@ index 0000000..d6a1880
 +		Core_Submit("resize");
 +		Core_WaitIdle(1000, "a resize");
 +	}
++	// The view of the old screen goes with it. The palette step's target is remade at the new size when next needed.
++	RetireScreenSrv();
++	RetireTexture(g_postTexture);
 +	Core_Retire(g_rt);
 +	Core_Retire(g_depth);
 +	g_rtWidth = g_rtHeight = 0;
@@ -20774,7 +21151,8 @@ index 0000000..d6a1880
 +	pTexInfo->downloaded = 0;
 +}
 +
-+void D3D_ReadRect(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
++// Reads from the screen or, for the tests, the palette step's target; both rest in RENDER_TARGET
++void ReadRectFrom(ID3D12Resource *screen, INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
 +{
 +	if (!CanDraw() || !dst_data || width <= 0 || height <= 0)
 +		return;
@@ -20814,17 +21192,17 @@ index 0000000..d6a1880
 +	}
 +
 +	D3D12_TEXTURE_COPY_LOCATION source = {};
-+	source.pResource = g_rt.Get();
++	source.pResource = screen;
 +	source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 +	D3D12_TEXTURE_COPY_LOCATION destination = {};
 +	destination.pResource = g_readRectBuffer.Get();
 +	destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 +	destination.PlacedFootprint.Footprint = {kScreenFormat, (UINT)width, (UINT)height, 1, pitch};
 +	const D3D12_BOX box = {(UINT)x, (UINT)top, 0, (UINT)(x + width), (UINT)(top + height), 1};
-+	Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
++	Core_Transition(screen, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
 +	Core_FlushBarriers();
 +	Core_List()->CopyTextureRegion(&destination, 0, 0, 0, &source, &box);
-+	Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
++	Core_Transition(screen, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 +	g_readRectFence = Core_Submit("readback");
 +	if (!g_readRectFence || !Core_Wait(g_readRectFence, 500, "ReadRect"))
 +		return;
@@ -20856,6 +21234,11 @@ index 0000000..d6a1880
 +	}
 +	const D3D12_RANGE written = {0, 0};
 +	g_readRectBuffer->Unmap(0, &written);
++}
++
++void D3D_ReadRect(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
++{
++	ReadRectFrom(g_rt.Get(), x, y, width, height, dst_stride, dst_data);
 +}
 +
 +void D3D_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)
@@ -20939,7 +21322,7 @@ index 0000000..d6a1880
 +			if (g_paletteRendering != (Value != 0))
 +				Log("palette rendering %s", Value ? "on" : "off");
 +			g_paletteRendering = Value != 0;
-+			D3D12_LOG_ONCE("palette rendering not drawn yet (S4)");
++			memset(g_boundPaletteTables, 0, sizeof g_boundPaletteTables);
 +			break;
 +
 +		case HWD_SET_TEXTUREANISOTROPICMODE:
@@ -21180,35 +21563,6 @@ index 0000000..d6a1880
 +	D3D12_LOG_ONCE("custom shaders not drawn yet (S8); keeping built-ins");
 +}
 +
-+void D3D_SetScreenPalette(RGBA_t *)
-+{
-+	g_stats.states++;
-+}
-+
-+void D3D_SetPaletteLookup(UINT8 *)
-+{
-+	g_stats.states++;
-+}
-+
-+// Ids are never 0, which the engine takes as none
-+UINT32 D3D_CreateLightTable(RGBA_t *)
-+{
-+	g_stats.states++;
-+	if (++g_lightTableIds == 0)
-+		g_lightTableIds = 1;
-+	return g_lightTableIds;
-+}
-+
-+void D3D_UpdateLightTable(UINT32, RGBA_t *)
-+{
-+	g_stats.states++;
-+}
-+
-+void D3D_ClearLightTables(void)
-+{
-+	g_stats.states++;
-+}
-+
 +#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&D3D_##name)}
 +const struct
 +{
@@ -21322,8 +21676,10 @@ index 0000000..d6a1880
 +		Log("presenting frame %d: %d clears, %d polygons, %d batches, %d models so far", g_stats.frames,
 +			g_stats.clears, g_stats.polygons, g_stats.batches, g_stats.models);
 +
++	// With palette rendering, the screen shown is the finished frame turned into the screen's palette
++	const bool palette = PalettePostprocess();
 +	const precise_t start = I_GetPreciseTime();
-+	Present_Frame(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight);
++	Present_Frame(palette ? g_postTexture.res.Get() : g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight);
 +	g_stats.presentTime += I_GetPreciseTime() - start;
 +	g_stats.frames++;
 +	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
@@ -21452,9 +21808,13 @@ index 0000000..d6a1880
 +			[](const auto &entry) { return !!entry.second.res; }),
 +		g_srvIndices.Used() + 4, g_nextSampler, g_textureAllocatedBytes / 1048576.0, g_textureBytes / 1048576.0,
 +		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
-+	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f screen calls, %.1f portal calls, %d fade maps; palettes, light tables, fog/water captures, custom shaders\n",
++	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f screen calls, %.1f portal calls, %d fade maps; fog/water captures, custom shaders\n",
 +		s.screens / n, s.portals / n, s.fadeMaps);
 +
++	if (g_paletteRendering || s.lightTablesCreated || s.lightTablesUpdated || s.paletteUploads)
++		I_OutputMsg("UWP perf:   D3D12: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
++			g_paletteRendering ? "on" : "off", (unsigned)g_lightTables.size(), s.lightTablesCreated, s.lightTablesUpdated,
++			s.paletteUploads, s.paletteSteps / n, PreciseToMs(s.paletteTime) / n);
 +	I_OutputMsg("UWP perf:   D3D12: models %.1f/frame, skies %.1f/frame; fallbacks %d, lerps %d, sky rebuilds %d; static arena %u chunks (%.2f MB), %u dedicated buffers; mips %llu generated (%.2f CPU ms)\n",
 +		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
 +		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
@@ -21471,7 +21831,7 @@ index 0000000..d6a1880
 +	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
 +	const bool localValid = adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
 +	const UINT64 targets = (g_rt ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0) + (g_depth ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0)
-+		+ Present_SlotBytes();
++		+ (g_postTexture.res ? (UINT64)g_postTexture.width * g_postTexture.height * 4 : 0) + Present_SlotBytes();
 +	if (localValid)
 +		I_OutputMsg("UWP perf:   D3D12: memory: local budget %.1f, usage %.1f MB; render targets/present slots ~%.1f MB\n",
 +			local.Budget / 1048576.0, local.CurrentUsage / 1048576.0, targets / 1048576.0);
@@ -21484,6 +21844,12 @@ index 0000000..d6a1880
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs)
 +{
 +	*placed = g_placedCreated; *blocks = g_textureArena.Reuses(); *srvs = g_srvReuses;
++}
++
++void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
++{
++	if (PalettePostprocess())
++		ReadRectFrom(g_postTexture.res.Get(), x, y, width, height, dst_stride, dst_data);
 +}
 +
 +void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant)
@@ -21526,6 +21892,12 @@ index 0000000..d6a1880
 +	g_vertexRing.Shutdown(); g_indexRing.Shutdown(); g_constantRing.Shutdown();
 +	g_textureRing.Shutdown();
 +	while (!g_textures.empty()) DeleteTextureObject(g_textures.begin()->first);
++	D3D_ClearLightTables();
++	RetireTexture(g_paletteLookup);
++	RetireTexture(g_screenPalette);
++	RetireTexture(g_masterPalette);
++	RetireTexture(g_postTexture);
++	RetireScreenSrv();
 +	RetireTexture(g_blackTexture);
 +	g_samplers.clear();
 +	for (auto &pipeline : g_pipelines) Core_Retire(pipeline.second);
@@ -21537,10 +21909,10 @@ index 0000000..d6a1880
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
 new file mode 100644
-index 0000000..0d42bd2
+index 0000000..843cf5e
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,56 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -21568,6 +21940,8 @@ index 0000000..0d42bd2
 +// Test hook: set before initialization; zero keeps the production ring size.
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs);
 +void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant);
++// Runs palette rendering's last step and reads its result like ReadRect reads the screen; nothing is read without it
++void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data);
 +
 +void *D3D12_GetDriverFunction(const char *name);
 +boolean D3D12_Surface(INT32 w, INT32 h);
@@ -21594,6 +21968,48 @@ index 0000000..0d42bd2
 +} // extern "C"
 +#endif
 +
++#endif
+diff --git a/src/hardware/r_d3d12/texture_repack.h b/src/hardware/r_d3d12/texture_repack.h
+new file mode 100644
+index 0000000..13a8372
+--- /dev/null
++++ b/src/hardware/r_d3d12/texture_repack.h
+@@ -0,0 +1,36 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  texture_repack.h
++/// \brief [UWP]: Copies tightly packed 3D texture data into the rows and slices GetCopyableFootprints describes
++
++#ifndef RR_D3D12_TEXTURE_REPACK_H
++#define RR_D3D12_TEXTURE_REPACK_H
++
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++namespace rr_d3d12
++{
++
++// source holds depth slices of rows tightly packed; destination has rowPitch bytes between rows and rows rows in
++// each slice, the footprint's RowPitch and Height. The padding in each row is left alone, since it's never sampled.
++inline void RepackTexture3D(void *destination, const void *source, size_t rowBytes, size_t rows, size_t depth,
++	size_t rowPitch)
++{
++	auto *dst = static_cast<uint8_t *>(destination);
++	const auto *src = static_cast<const uint8_t *>(source);
++
++	for (size_t slice = 0; slice < depth; ++slice)
++	{
++		for (size_t row = 0; row < rows; ++row)
++			memcpy(dst + (slice * rows + row) * rowPitch, src + (slice * rows + row) * rowBytes, rowBytes);
++	}
++}
++
++} // namespace rr_d3d12
 +#endif
 diff --git a/src/hardware/r_opengl/r_opengl.c b/src/hardware/r_opengl/r_opengl.c
 index 900bae9..c01e80a 100644

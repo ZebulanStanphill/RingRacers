@@ -158,7 +158,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   across a deterministic 65,536-key sample. `SizeClassArena` checks fenced reuse
   through `Free` and `Collect`, chunk growth with `AddChunk`, dedicated allocations
   above `MaxClass`, and exhaustion once no chunk can be added. The CPU mip generator
-  is checked against a scalar oracle for odd sizes and 1×N textures.
+  is checked against a scalar oracle for odd sizes and 1×N textures. The 3D texture
+repack used for the palette lookup table is checked for row pitch, slice order and
+untouched padding.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
@@ -204,6 +206,20 @@ UV fallback. Their negative controls are `texture`, `texture-update`,
 each must be rejected by its own oracle. Tiny models, lit models and textured sky
 aren't exercised, so they remain untested here. WARP doesn't measure Xbox performance;
 texture creation time, heap behavior and frame rate need an Xbox run.
+Palette scenes turn Palette Rendering on with a known 64³ lookup table (index 7 only
+where red is low and green and blue are high, otherwise 19), a light table and a screen
+palette. A colormapped textured polygon must read the light table's color from the screen
+(`palette`), and the palette step, read back through a test-only entry point, must
+turn that into the screen palette's color for its lookup index (`palette-post`).
+`light-table-update` and `light-table-update-post` update a light table between two draws
+of one frame, with no readback between: the first must keep the old color and the second
+get the new one. `light-table-clear` clears and recreates the table for 96 frames while
+recorded draws still use it, and requires descriptors to be reused after their fences.
+`screen-palette` changes the screen palette between frames, and `palette-off` checks that
+the last step doesn't run with Palette Rendering off. The master palette's creation and
+removal run under GPU-based validation, and the `palette:` perf line's counters are
+checked; nothing reads the master palette until fade maps are drawn. Fade maps, fog and
+water with palette rendering, and Xbox colors remain untested here.
 The inversion oracle caught the upstream `PF_Invert`/`PF_Occlude` bit collision;
 `PF_Invert` now uses its own blend bit, so it survives the blend mask. If the Graphics
 Tools feature is missing, the script retries its install and then fails loudly
