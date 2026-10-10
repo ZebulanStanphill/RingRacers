@@ -48,6 +48,17 @@ Every push first runs the native regression tests on Linux, then builds the app 
 4. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup).
 5. In Dev Home, set the app type to "Game": under Games and Apps, highlight Ring Racers, press the View button (the small one to the left of the Xbox logo button on a standard Xbox controller), choose "View details", and change "App type" from "App" to "Game". As an app, it shares 2 to 4 CPU cores with the system and gets 1 GB of memory and part of the GPU; as a game, it gets 4 dedicated CPU cores plus 2 shared, 5 GB of memory, and the whole GPU. Reinstalling resets this, and the game can't tell which type it's running as, so check it after each install.
 
+> [!WARNING]
+> Unplug the USB drive before switching the Xbox to Retail mode. If the drive is plugged in when the console boots into Retail mode, the files on it can end up with attributes or permissions that stop the game from writing to them: `latest-log.txt` stops updating (it keeps an older session's log), and settings and saves may not be kept. To fix this, connect the drive to a Windows PC and reset the folder's attributes and permissions, for example (with the drive at `E:`):
+>
+> ```
+> attrib -s -h -r E:\ringracers\* /s /d
+> icacls E:\ringracers /reset /t /c
+> icacls E:\ringracers /grant "*S-1-15-2-1:(OI)(CI)F" /t /c
+> ```
+>
+> `S-1-15-2-1` is "ALL APPLICATION PACKAGES", which the game needs in order to write there.
+
 ## Untested changes
 
 These are in the latest build but haven't yet been confirmed by a human to actually work:
