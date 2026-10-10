@@ -1,4 +1,4 @@
-From fd309ad6f36949cd89be8ba2c15a726813cb2fda Mon Sep 17 00:00:00 2001
+From a7bdfd088a0d6df79338921daff0f058e96bb655 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -366,6 +366,16 @@ Agent: Claude (Haiku, HUD research)
 Model: claude-haiku-5-5
 Agent: Claude (Opus, HUD design)
 Model: claude-opus-5-5
+
+- [UWP]: Compile all 22 built-in shaders as SM5.1 with a shared version 1.0
+  root signature, retaining the SM4 build. Extend the diagnostic D3D12 probe
+  to create and time the root signature and 36 built-in graphics PSOs,
+  reporting failures without changing D3D11 rendering or presentation.
+
+Agent: Codex (Sol, D3D12 shader probe)
+Model: gpt-6.1-sol
+Agent: Claude (Haiku, D3D12 probe documentation)
+Model: claude-haiku-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -379,7 +389,7 @@ Model: claude-opus-5-5
  src/f_finale.c                            |    6 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
- src/hardware/CMakeLists.txt               |   37 +
+ src/hardware/CMakeLists.txt               |   68 +
  src/hardware/hw_batching.c                |   11 +-
  src/hardware/hw_bsp.c                     |  110 +-
  src/hardware/hw_cache.c                   |  335 +-
@@ -399,9 +409,11 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
  src/hardware/r_d3d11/r_d3d11.cpp          | 6326 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   66 +
- src/hardware/r_d3d11/shaders.hlsl         |  611 ++
- src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
+ src/hardware/r_d3d11/shaders.hlsl         |  660 +++
+ src/hardware/r_d3d12/d3d12_interop.cpp    |  562 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
+ src/hardware/r_d3d12/d3d12_pso_probe.cpp  |  216 +
+ src/hardware/r_d3d12/d3d12_pso_probe.h    |   26 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
  src/hwr2/patch_atlas.cpp                  |    8 +
@@ -455,7 +467,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 88 files changed, 14719 insertions(+), 1126 deletions(-)
+ 90 files changed, 15045 insertions(+), 1126 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -465,6 +477,8 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.h
+ create mode 100644 src/hardware/r_d3d12/d3d12_pso_probe.cpp
+ create mode 100644 src/hardware/r_d3d12/d3d12_pso_probe.h
  create mode 100644 src/sdl/i_uwpd3d12.cpp
  create mode 100644 src/sdl/i_uwpprofile.cpp
  create mode 100644 src/sdl/i_uwptrace.h
@@ -1717,10 +1731,10 @@ index ce69d80..9db72cf 100644
  #ifdef HAVE_DISCORDRPC
  	DRPC_UpdatePresence();
 diff --git a/src/hardware/CMakeLists.txt b/src/hardware/CMakeLists.txt
-index a0a0f28..5defa1b 100644
+index a0a0f28..7aa7c31 100644
 --- a/src/hardware/CMakeLists.txt
 +++ b/src/hardware/CMakeLists.txt
-@@ -13,3 +13,40 @@ target_sources(SRB2SDL2 PRIVATE
+@@ -13,3 +13,71 @@ target_sources(SRB2SDL2 PRIVATE
  	hw_batching.c
  	r_opengl/r_opengl.c
  )
@@ -1753,13 +1767,44 @@ index a0a0f28..5defa1b 100644
 +		list(APPEND d3d11_shader_headers "${header}")
 +	endforeach()
 +
++	# [UWP]: Compile the same built-ins for the diagnostic D3D12 PSO probe.
++	set(d3d12_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/r_d3d12_shaders")
++	set(d3d12_shader_headers "")
++	file(MAKE_DIRECTORY "${d3d12_shader_dir}")
++
++	foreach(entry VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
++		PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
++		string(SUBSTRING "${entry}" 0 2 stage)
++		string(TOLOWER "${stage}" stage)
++		set(header "${d3d12_shader_dir}/${entry}.h")
++		add_custom_command(
++			OUTPUT "${header}"
++			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /DRR_D3D12 /force_rootsig_ver rootsig_1_0 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d11_shader_source}"
++			DEPENDS "${d3d11_shader_source}"
++			COMMENT "Compiling the ${entry} D3D12 shader"
++			VERBATIM
++		)
++		list(APPEND d3d12_shader_headers "${header}")
++	endforeach()
++
++	set(root_header "${d3d12_shader_dir}/RootSignature.h")
++	add_custom_command(
++		OUTPUT "${root_header}"
++		COMMAND "${SRB2_FXC}" /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "${root_header}" "${d3d11_shader_source}"
++		DEPENDS "${d3d11_shader_source}"
++		COMMENT "Compiling the D3D12 root signature"
++		VERBATIM
++	)
++	add_custom_target(SRB2D3D12Shaders DEPENDS ${d3d12_shader_headers} "${root_header}")
++	add_dependencies(SRB2SDL2 SRB2D3D12Shaders)
++
 +	# A target of its own, since generated files are only visible to targets in the same directory
 +	add_custom_target(SRB2D3D11Shaders DEPENDS ${d3d11_shader_headers})
 +	add_dependencies(SRB2SDL2 SRB2D3D11Shaders)
 +	include(r_d3d11/custom_shaders.cmake)
-+	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp r_d3d12/d3d12_interop.cpp)
++	target_sources(SRB2SDL2 PRIVATE r_d3d11/r_d3d11.cpp r_d3d11/custom_shader.cpp r_d3d12/d3d12_interop.cpp r_d3d12/d3d12_pso_probe.cpp)
 +	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl d3dcompiler)
-+	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}")
++	target_include_directories(SRB2SDL2 PRIVATE "${d3d11_shader_dir}" "${CMAKE_CURRENT_BINARY_DIR}")
 +endif()
 diff --git a/src/hardware/hw_batching.c b/src/hardware/hw_batching.c
 index 9c0e2f6..58bd38e 100644
@@ -12950,10 +12995,10 @@ index 0000000..bb2921c
 +#endif
 diff --git a/src/hardware/r_d3d11/shaders.hlsl b/src/hardware/r_d3d11/shaders.hlsl
 new file mode 100644
-index 0000000..ed8af15
+index 0000000..0921d27
 --- /dev/null
 +++ b/src/hardware/r_d3d11/shaders.hlsl
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,660 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -12969,6 +13014,33 @@ index 0000000..ed8af15
 +/// The GLSL shaders of r_opengl.c, ported to HLSL, plus the parts of OpenGL's
 +/// fixed-function pipeline Legacy GL uses when its shaders are off. Each entry
 +/// point is compiled by fxc at build time (see ../CMakeLists.txt).
++
++// [UWP]: Shared 25-DWORD root signature; b4 reserves the custom view constants.
++#ifdef RR_D3D12
++#define RR_ROOT_SIGNATURE "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_HULL_SHADER_ROOT_ACCESS | DENY_DOMAIN_SHADER_ROOT_ACCESS | DENY_GEOMETRY_SHADER_ROOT_ACCESS), " \
++	"CBV(b0), " \
++	"DescriptorTable(SRV(t0), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(Sampler(s0), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t1), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(Sampler(s1), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t3), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t2), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t4), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t5), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t6), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t7), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t8), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t9), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"DescriptorTable(SRV(t10), visibility=SHADER_VISIBILITY_PIXEL), " \
++	"CBV(b1, visibility=SHADER_VISIBILITY_PIXEL), " \
++	"CBV(b2, visibility=SHADER_VISIBILITY_PIXEL), " \
++	"CBV(b3, visibility=SHADER_VISIBILITY_PIXEL), " \
++	"CBV(b4), " \
++	"CBV(b5, visibility=SHADER_VISIBILITY_PIXEL)"
++#define RR_RS [RootSignature(RR_ROOT_SIGNATURE)]
++#else
++#define RR_RS
++#endif
 +
 +// Must match D3DConstants in r_d3d11.cpp
 +cbuffer DrawConstants : register(b0)
@@ -13093,12 +13165,14 @@ index 0000000..ed8af15
 +// ================
 +
 +// FOutVector, with the current glColor
++RR_RS
 +VSOut VSPoly(float3 pos : POSITION, float2 uv : TEXCOORD0)
 +{
 +	return FinishWorld(pos, Transform(pos), u_color, uv);
 +}
 +
 +// GLSL_SPRITECLIP_HACK_VERTEX_SHADER
++RR_RS
 +VSOut VSPolyClip(float3 pos : POSITION, float2 uv : TEXCOORD0)
 +{
 +	float4 clip = Transform(pos);
@@ -13107,6 +13181,7 @@ index 0000000..ed8af15
 +}
 +
 +// gl_skyvertex_t, with its own colors
++RR_RS
 +VSOut VSSky(float3 pos : POSITION, float2 uv : TEXCOORD0, float4 color : COLOR0)
 +{
 +	return Finish(Transform(pos), color, uv);
@@ -13114,6 +13189,7 @@ index 0000000..ed8af15
 +
 +// Models without shaders, lit like OpenGL's fixed function does with Legacy GL's settings when model lighting is on:
 +// a scene ambient of 1 and a directional GL_LIGHT0, with the surface color as the ambient and diffuse material
++RR_RS
 +VSOut VSModel(float3 pos : POSITION, float3 normal : NORMAL, float2 uv : TEXCOORD0)
 +{
 +	float4 color = u_color;
@@ -13129,6 +13205,7 @@ index 0000000..ed8af15
 +}
 +
 +// GLSL_MODEL_LIGHTING_VERTEX_SHADER
++RR_RS
 +VSOut VSModelLight(float3 pos : POSITION, float3 normal : NORMAL, float2 uv : TEXCOORD0)
 +{
 +	float light = u_lighting;
@@ -13148,6 +13225,7 @@ index 0000000..ed8af15
 +}
 +
 +// A triangle covering the screen, for wipes and palette rendering's last step
++RR_RS
 +VSOut VSFullscreen(uint id : SV_VertexID)
 +{
 +	VSOut o;
@@ -13164,12 +13242,14 @@ index 0000000..ed8af15
 +}
 +
 +// Screen distortion uses clip-space vertices, independent of gameplay FOV.
++RR_RS
 +VSOut VSPostImage(float3 pos : POSITION, float2 uv : TEXCOORD0)
 +{
 +	return Finish(float4(pos.xy, 0.0, 1.0), u_color, uv);
 +}
 +
 +// The second pass of DoScreenWipe: the fade mask's texture coordinates come from the corners of the screen
++RR_RS
 +VSOut VSWipe(float3 pos : POSITION, float2 uv : TEXCOORD0)
 +{
 +	VSOut o = Finish(Transform(pos), u_color, uv);
@@ -13298,6 +13378,7 @@ index 0000000..ed8af15
 +}
 +
 +// OpenGL's fixed function, with one texture unit
++RR_RS
 +float4 PSFixed(VSOut i) : SV_Target
 +{
 +	float4 texel = t_tex.Sample(s_tex, i.uv);
@@ -13312,12 +13393,14 @@ index 0000000..ed8af15
 +}
 +
 +// GLSL_DEFAULT_FRAGMENT_SHADER
++RR_RS
 +float4 PSDefault(VSOut i) : SV_Target
 +{
 +	return AlphaTest(t_tex.Sample(s_tex, i.uv) * u_poly_color);
 +}
 +
 +// GLSL_SOFTWARE_FRAGMENT_SHADER
++RR_RS
 +float4 PSSoftware(VSOut i) : SV_Target
 +{
 +	float4 texel = t_tex.Sample(s_tex, i.uv);
@@ -13334,6 +13417,7 @@ index 0000000..ed8af15
 +}
 +
 +// GLSL_SOFTWARE_MODEL_LIGHTING_FRAGMENT_SHADER
++RR_RS
 +float4 PSSoftwareModelLight(VSOut i) : SV_Target
 +{
 +	float4 texel = t_tex.Sample(s_tex, i.uv);
@@ -13351,6 +13435,7 @@ index 0000000..ed8af15
 +}
 +
 +// GLSL_WATER_FRAGMENT_SHADER
++RR_RS
 +float4 PSWater(VSOut i) : SV_Target
 +{
 +	const float freq = 0.025;
@@ -13409,6 +13494,7 @@ index 0000000..ed8af15
 +	return float4(saturate(result), 1.0);
 +}
 +
++RR_RS
 +float4 PSWaterRefraction(VSOut i) : SV_Target
 +{
 +	// Keep texture/brightmap lighting and alpha-test holes from the regular shader.
@@ -13425,6 +13511,7 @@ index 0000000..ed8af15
 +#endif
 +
 +// GLSL_FOG_FRAGMENT_SHADER
++RR_RS
 +float4 PSFog(VSOut i) : SV_Target
 +{
 +	float4 base_color = i.color;
@@ -13454,6 +13541,7 @@ index 0000000..ed8af15
 +	return clamp(start - attenuation, 0, 31);
 +}
 +
++RR_RS
 +float4 PSFogRemap(VSOut i) : SV_Target
 +{
 +#ifdef _UWP
@@ -13472,18 +13560,21 @@ index 0000000..ed8af15
 +}
 +
 +// GLSL_SKY_FRAGMENT_SHADER
++RR_RS
 +float4 PSSky(VSOut i) : SV_Target
 +{
 +	return AlphaTest(t_tex.Sample(s_tex, i.uv) * i.color * u_poly_color);
 +}
 +
 +// The second pass of DoScreenWipe: the end screen (GL_REPLACE) modulated by the fade mask on the second unit
++RR_RS
 +float4 PSWipe(VSOut i) : SV_Target
 +{
 +	return AlphaTest(t_tex.Sample(s_tex, i.uv) * t_brightmap.Sample(s_brightmap, i.uv1));
 +}
 +
 +// [UWP]: The RHI's rhi_glsl_fragment_postprocesswipe, with D3D's top-first screen textures.
++RR_RS
 +float4 PSWipeFull(VSOut i) : SV_Target
 +{
 +	float2 screen = i.pos.xy / u_wipe_screen_size;
@@ -13527,6 +13618,7 @@ index 0000000..ed8af15
 +
 +// Palette rendering's last step, from SRB2: each pixel of the finished frame becomes the screen palette's color for
 +// its nearest palette index, which also shows palette flashes and color correction
++RR_RS
 +float4 PSPalettePostprocess(VSOut i) : SV_Target
 +{
 +	float3 rgb = t_tex.Load(int3(i.pos.xy, 0)).rgb;
@@ -13534,6 +13626,7 @@ index 0000000..ed8af15
 +}
 +
 +// Software's in-place V_OffsetIntoFadeMap remap, before the HUD and screen-palette postprocess.
++RR_RS
 +float4 PSFadeMap(VSOut i) : SV_Target
 +{
 +	float3 rgb = t_tex.Load(int3(i.pos.xy, 0)).rgb;
@@ -13561,22 +13654,24 @@ index 0000000..ed8af15
 +	return clamp(screen, low, high - 0.0001) * u_postimg_info.zw;
 +}
 +
++RR_RS
 +float4 PSPostImage(VSOut i) : SV_Target
 +{
 +	return t_tex.Sample(s_tex, PostImageUV(i.uv));
 +}
 diff --git a/src/hardware/r_d3d12/d3d12_interop.cpp b/src/hardware/r_d3d12/d3d12_interop.cpp
 new file mode 100644
-index 0000000..b27bb6b
+index 0000000..f922620
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_interop.cpp
-@@ -0,0 +1,558 @@
+@@ -0,0 +1,562 @@
 +// DR. ROBOTNIK'S RING RACERS
 +// This program is free software distributed under the terms of the GNU GPL v2.
 +// See the 'LICENSE' file for more details.
 +/// \brief [UWP]: Diagnostic D3D12/ANGLE sharing probe; no renderer selection or presentation changes.
 +
 +#include "d3d12_interop.h"
++#include "d3d12_pso_probe.h"
 +#include <d3d11_4.h>
 +#include <d3d12.h>
 +#include <dxgi1_4.h>
@@ -14025,6 +14120,7 @@ index 0000000..b27bb6b
 +{
 +	const ULONGLONG start = GetTickCount64();
 +	InteropProbe result;
++	PsoProbe psos;
 +	// One exit path guarantees the elapsed line even if device creation fails.
 +	auto run = [&]()
 +	{
@@ -14056,6 +14152,8 @@ index 0000000..b27bb6b
 +			return;
 +		result.device = true;
 +		Caps(*state, egl, desc);
++		// [UWP]: Run even when queue creation or any sharing path later fails.
++		psos = D3D12Pso_Probe(state->device.Get(), egl);
 +		D3D12_COMMAND_QUEUE_DESC queue = {};
 +		queue.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 +		if (!CheckObject(egl, "device", "CreateCommandQueue", state->device->CreateCommandQueue(&queue, IID_PPV_ARGS(&state->queue)), state->queue)
@@ -14121,9 +14219,9 @@ index 0000000..b27bb6b
 +		}
 +	};
 +	run();
-+	Log(egl, "result: device %s, share A %s, share B %s, share C %s, gpu wait %s, gpu signal %s",
++	Log(egl, "result: device %s, share A %s, share B %s, share C %s, gpu wait %s, gpu signal %s, PSOs %u/%u ok",
 +		result.device ? "yes" : "no", result.share[0] ? "ok" : "failed", result.share[1] ? "ok" : "failed",
-+		result.share[2] ? "ok" : "failed", result.gpuWait ? "ok" : "unavailable", result.gpuSignal ? "ok" : "unavailable");
++		result.share[2] ? "ok" : "failed", result.gpuWait ? "ok" : "unavailable", result.gpuSignal ? "ok" : "unavailable", psos.ok, psos.total);
 +	Log(egl, "took %llu ms", (unsigned long long)(GetTickCount64() - start));
 +	return result;
 +}
@@ -14182,6 +14280,260 @@ index 0000000..b3436f7
 +
 +InteropProbe D3D12Interop_Probe(ID3D11Device *angle, const EglApi &egl, EGLConfig config);
 +
++} // namespace rr_d3d12
++#endif
+diff --git a/src/hardware/r_d3d12/d3d12_pso_probe.cpp b/src/hardware/r_d3d12/d3d12_pso_probe.cpp
+new file mode 100644
+index 0000000..be50e95
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_pso_probe.cpp
+@@ -0,0 +1,216 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  d3d12_pso_probe.cpp
++/// \brief [UWP]: Times creating the Direct3D 12 root signature and built-in PSOs, without changing the D3D11
++///        renderer
++
++#include "d3d12_pso_probe.h"
++#include <wrl/client.h>
++#include <climits>
++#include <cstdarg>
++#include <cstdio>
++
++// [UWP]: Keep these separate from the SM4 headers with the same array names.
++#include "r_d3d12_shaders/VSPoly.h"
++#include "r_d3d12_shaders/VSPolyClip.h"
++#include "r_d3d12_shaders/VSSky.h"
++#include "r_d3d12_shaders/VSModel.h"
++#include "r_d3d12_shaders/VSModelLight.h"
++#include "r_d3d12_shaders/VSWipe.h"
++#include "r_d3d12_shaders/VSFullscreen.h"
++#include "r_d3d12_shaders/VSPostImage.h"
++#include "r_d3d12_shaders/PSFixed.h"
++#include "r_d3d12_shaders/PSDefault.h"
++#include "r_d3d12_shaders/PSSoftware.h"
++#include "r_d3d12_shaders/PSSoftwareModelLight.h"
++#include "r_d3d12_shaders/PSWater.h"
++#include "r_d3d12_shaders/PSWaterRefraction.h"
++#include "r_d3d12_shaders/PSFog.h"
++#include "r_d3d12_shaders/PSFogRemap.h"
++#include "r_d3d12_shaders/PSSky.h"
++#include "r_d3d12_shaders/PSWipe.h"
++#include "r_d3d12_shaders/PSWipeFull.h"
++#include "r_d3d12_shaders/PSPalettePostprocess.h"
++#include "r_d3d12_shaders/PSFadeMap.h"
++#include "r_d3d12_shaders/PSPostImage.h"
++#include "r_d3d12_shaders/RootSignature.h"
++
++namespace rr_d3d12
++{
++namespace
++{
++using Microsoft::WRL::ComPtr;
++
++void Log(const EglApi &egl, const char *format, ...)
++{
++	char message[1024];
++	va_list args;
++	va_start(args, format);
++	vsnprintf(message, sizeof message, format, args);
++	va_end(args);
++	if (egl.LogMessage)
++		egl.LogMessage(message);
++}
++
++// [UWP]: Match CreateDeviceObjects in r_d3d11.cpp and hw_defs.h's packed float vertices.
++const D3D12_INPUT_ELEMENT_DESC kPoly[] =
++{
++	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++};
++const D3D12_INPUT_ELEMENT_DESC kSky[] =
++{
++	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 20, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++};
++const D3D12_INPUT_ELEMENT_DESC kModel[] =
++{
++	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
++};
++const D3D12_INPUT_LAYOUT_DESC kLayouts[] =
++{
++	{kPoly, ARRAYSIZE(kPoly)}, {kSky, ARRAYSIZE(kSky)}, {kModel, ARRAYSIZE(kModel)}, {nullptr, 0},
++};
++enum Layout { POLY, SKY, MODEL, FULLSCREEN };
++struct Pipeline
++{
++	D3D12_SHADER_BYTECODE vs, ps;
++	const char *name;
++	Layout layout;
++	DXGI_FORMAT depth;
++};
++#define RR_PSO(vs, ps, layout, depth) {{g_##vs, sizeof g_##vs}, {g_##ps, sizeof g_##ps}, #vs "+" #ps, layout, depth}
++
++// [UWP]: Exhaust ApplyState's built-in selector, including uncommon layout/program
++// combinations; sprite clipping selects only PSSoftware. Custom programs are excluded.
++const Pipeline kPipelines[] =
++{
++	RR_PSO(VSPoly, PSDefault, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSDefault, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSDefault, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSSoftware, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSSoftware, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSSoftware, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSSoftwareModelLight, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSSoftwareModelLight, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModelLight, PSSoftwareModelLight, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSWater, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSWater, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSWater, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSWaterRefraction, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSWaterRefraction, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSWaterRefraction, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSFog, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSFog, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSFog, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSFogRemap, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSFogRemap, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSFogRemap, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSSky, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSSky, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSSky, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPolyClip, PSSoftware, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPoly, PSFixed, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSFixed, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSFixed, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSWipe, PSWipe, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSSky, PSWipe, SKY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSModel, PSWipe, MODEL, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSPostImage, PSPostImage, POLY, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSFullscreen, PSWipeFull, FULLSCREEN, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSFullscreen, PSPalettePostprocess, FULLSCREEN, DXGI_FORMAT_UNKNOWN),
++	RR_PSO(VSFullscreen, PSFadeMap, FULLSCREEN, DXGI_FORMAT_D24_UNORM_S8_UINT),
++	RR_PSO(VSFullscreen, PSFixed, FULLSCREEN, DXGI_FORMAT_D24_UNORM_S8_UINT),
++};
++#undef RR_PSO
++
++// [UWP]: QPC measures only each creation call, excluding log writes.
++double Milliseconds(LARGE_INTEGER begin, LARGE_INTEGER end, LARGE_INTEGER frequency)
++{
++	return frequency.QuadPart > 0 ? (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart : 0.0;
++}
++} // namespace
++
++PsoProbe D3D12Pso_Probe(ID3D12Device *device, const EglApi &egl)
++{
++	PsoProbe result;
++	result.total = ARRAYSIZE(kPipelines);
++	LARGE_INTEGER frequency = {}, begin = {}, end = {};
++	if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0)
++		Log(egl, "PSO timing: QueryPerformanceFrequency unavailable");
++	ComPtr<ID3D12RootSignature> root;
++	QueryPerformanceCounter(&begin);
++	HRESULT hr = device ? device->CreateRootSignature(0, g_RootSignature, sizeof g_RootSignature,
++		IID_PPV_ARGS(&root)) : E_POINTER;
++	QueryPerformanceCounter(&end);
++	if (SUCCEEDED(hr) && !root)
++		hr = E_POINTER;
++	Log(egl, "CreateRootSignature 0x%08X %.1f ms", (unsigned)hr, Milliseconds(begin, end, frequency));
++	if (FAILED(hr))
++	{
++		Log(egl, "root signature failed 0x%08X", (unsigned)hr);
++		return result;
++	}
++
++	D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
++	desc.pRootSignature = root.Get();
++	desc.SampleMask = UINT_MAX;
++	desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
++	desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
++	desc.RasterizerState.DepthClipEnable = TRUE;
++	desc.DepthStencilState.DepthEnable = FALSE;
++	desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
++	desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
++	desc.DepthStencilState.StencilReadMask = desc.DepthStencilState.StencilWriteMask = 0xFF;
++	desc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
++	desc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
++	desc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
++	desc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
++	desc.DepthStencilState.BackFace = desc.DepthStencilState.FrontFace;
++	auto &blend = desc.BlendState.RenderTarget[0];
++	blend.SrcBlend = blend.SrcBlendAlpha = D3D12_BLEND_ONE;
++	blend.DestBlend = blend.DestBlendAlpha = D3D12_BLEND_ZERO;
++	blend.BlendOp = blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
++	blend.LogicOp = D3D12_LOGIC_OP_NOOP;
++	blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++	desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++	desc.NumRenderTargets = 1;
++	desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
++	desc.SampleDesc.Count = 1;
++	double total = 0.0, worst = -1.0;
++	const char *worstName = "none";
++	for (const auto &pipeline : kPipelines)
++	{
++		desc.VS = pipeline.vs;
++		desc.PS = pipeline.ps;
++		desc.InputLayout = kLayouts[pipeline.layout];
++		desc.DSVFormat = pipeline.depth;
++		ComPtr<ID3D12PipelineState> pso;
++		QueryPerformanceCounter(&begin);
++		hr = device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso));
++		QueryPerformanceCounter(&end);
++		if (SUCCEEDED(hr) && !pso)
++			hr = E_POINTER;
++		const double elapsed = Milliseconds(begin, end, frequency);
++		total += elapsed;
++		if (elapsed > worst)
++		{
++			worst = elapsed;
++			worstName = pipeline.name;
++		}
++		if (SUCCEEDED(hr))
++			result.ok++;
++		Log(egl, "PSO %s 0x%08X %.1f ms", pipeline.name, (unsigned)hr, elapsed);
++	}
++	Log(egl, "root signature ok; 22 shaders, %u PSOs, total %.1f ms, worst %.1f ms (%s)",
++		result.total, total, worst, worstName);
++	return result;
++}
++} // namespace rr_d3d12
+diff --git a/src/hardware/r_d3d12/d3d12_pso_probe.h b/src/hardware/r_d3d12/d3d12_pso_probe.h
+new file mode 100644
+index 0000000..c0afb85
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_pso_probe.h
+@@ -0,0 +1,26 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  d3d12_pso_probe.h
++/// \brief [UWP]: Direct3D 12 PSO timing probe, run from the interop probe (d3d12_interop.cpp)
++
++#ifndef RR_D3D12_PSO_PROBE_H
++#define RR_D3D12_PSO_PROBE_H
++
++#include "d3d12_interop.h"
++#include <d3d12.h>
++
++namespace rr_d3d12
++{
++struct PsoProbe
++{
++	unsigned ok = 0, total = 0;
++};
++
++// [UWP]: Creates diagnostic objects only; never records or submits a draw.
++PsoProbe D3D12Pso_Probe(ID3D12Device *device, const EglApi &egl);
 +} // namespace rr_d3d12
 +#endif
 diff --git a/src/hardware/r_opengl/r_opengl.c b/src/hardware/r_opengl/r_opengl.c
