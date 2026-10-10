@@ -5,6 +5,11 @@
 #include "doomdef.h"
 #include "command.h"
 #include "i_system.h"
+#include "p_tick.h"
+#include "r_fps.h"
+#include "doomstat.h"
+#include "f_finale.h"
+#include "w_wad.h"
 #include "hardware/hw_drv.h"
 #include "hardware/hw_main.h"
 #include "hardware/hw_data.h"
@@ -27,7 +32,21 @@ using namespace rr_d3d12;
 static_assert((PF_Invert & PF_Occlude) == 0, "Inversion must not alias depth writes");
 static std::string logs, negative;
 static bool negativeRejected=false;
+static std::vector<UINT8> lumpBytes; // what the stubbed wipe mask lump holds
 extern "C" {
+UINT8 g_wipemode=0, g_wipetype=0, g_wipeframe=0;
+boolean g_wipereverse=0, g_wipeencorewiggle=0;
+// The tests' wipe modes: 1 to black, 2 to white, 3 to invert, otherwise a crossfade
+boolean F_WipeIsToBlack(UINT8 m) { return m==1; }
+boolean F_WipeIsToWhite(UINT8 m) { return m==2; }
+boolean F_WipeIsToInvert(UINT8 m) { return m==3; }
+tic_t leveltime=0;
+postimg_t postimgtype[MAXSPLITSCREENPLAYERS]={};
+enum viewcontext_e viewcontext=VIEWCONTEXT_PLAYER1;
+// FADE0000 and FADE0001 exist; any other mask is missing, which leaves the two-pass wipe
+lumpnum_t W_CheckNumForName(const char *n) { return (!strcmp(n,"FADE0000")||!strcmp(n,"FADE0001")) ? 1 : LUMPERROR; }
+size_t W_LumpLength(lumpnum_t) { return lumpBytes.size(); }
+void W_ReadLump(lumpnum_t, void *d) { memcpy(d,lumpBytes.data(),lumpBytes.size()); }
 consvar_t cv_gld3d12{}, cv_vidwait{}, cv_reducevfx{};
 CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nullptr}};
 void HWR_Startup() {}
@@ -75,6 +94,12 @@ static std::vector<UINT8> pixels() { std::vector<UINT8> p(W*H*3,0xcd); readrect(
 static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
 // Palette rendering's last step, read like expect reads the screen. scene names its own negative control.
 static void expectPost(const char *scene,RGB want,int x=32,int y=32) { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); validate(validationQueue); if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: palette pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("palette pixel oracle failed"); } }
+// Compares a pixel of an already read image; scene names its own negative control.
+static void check(const char *scene,const std::vector<UINT8> &p,int x,int y,RGB want,int width=W) { if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*width+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d (got %d,%d,%d expected %d,%d,%d)\n",scene,x,y,c,p[(y*width+x)*3+c],want[c],p[(y*width+x)*3],p[(y*width+x)*3+1],p[(y*width+x)*3+2],want[0],want[1],want[2]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
+static void fillRect(float x0,float x1,float y0,float y1,RGB c) { std::vector<FOutVector> v={{x0,y0,1,0,0},{x1,y0,1,0,0},{x1,y1,1,0,0},{x0,y1,1,0,0}}; auto s=surface(c); const FBITFIELD f=PF_Modulated|PF_NoTexture|PF_NoDepthTest; blend(f); polygon(&s,v.data(),4,f); }
+static void quadrants(RGB tl,RGB tr,RGB bl,RGB br) { reset({0,0,0}); fillRect(-1,0,0,1,tl); fillRect(0,1,0,1,tr); fillRect(-1,0,-1,0,bl); fillRect(0,1,-1,0,br); }
+// The screen's color at (x, y from the top) at the current size
+static RGB probe(int x,int y,int height) { UINT8 p[3]={0xcd,0xcd,0xcd}; readrect(x,height-1-y,1,1,3,reinterpret_cast<UINT16 *>(p)); return {p[0],p[1],p[2]}; }
 static void validate(ID3D12InfoQueue *queue)
 {
     bool failed = false;
@@ -141,6 +166,9 @@ int main(int argc,char **argv) {
         auto deleteTexture = function<void (*)(GLMipmap_t *)>("DeleteTexture");
         auto special = function<void (*)(hwdspecialstate_t,INT32)>("SetSpecialState");
         special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_POINTSAMPLED);
+        // Screen copies are bound to unit 0 without telling SetTexture's bookkeeping (as in the Direct3D 11 driver), so unbind it
+        // through a real texture
+        auto unbindTextures = [&]() { std::array<UINT8,4> white={255,255,255,255}; GLMipmap_t one={}; one.format=GL_TEXFMT_RGBA; one.width=one.height=1; one.data=white.data(); texture(&one); texture(nullptr); deleteTexture(&one); };
         auto textured = [&](float left=-.8f,float right=.8f,float size=.8f) {
             auto q=quad(); q[0].x=q[3].x=left; q[1].x=q[2].x=right;
             q[0].y=q[1].y=-size; q[2].y=q[3].y=size;
@@ -262,6 +290,240 @@ int main(int argc,char **argv) {
             function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
             validate(validationQueue);
         }
+        const RGB tl={200,40,16}, tr={16,64,224}, bl={32,200,64}, br={232,216,24}; // quadrants of the screen the copies hold
+        // Screen textures: copies of the screen, drawn back as the intermission background and the final screen
+        {
+            auto makeScreen=function<void (*)()>("MakeScreenTexture");
+            auto makeFinal=function<void (*)()>("MakeScreenFinalTexture");
+            auto drawIntermission=function<void (*)()>("DrawIntermissionBG");
+            auto drawFinal=function<void (*)(int,int)>("DrawScreenFinalTexture");
+            auto flushScreens=function<void (*)()>("FlushScreenTextures");
+            auto clip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
+            // a) The copy holds the quadrants, even after the screen is cleared to something else
+            quadrants(tl,tr,bl,br); makeScreen(); reset({96,96,96});
+            blend(PF_NoDepthTest); drawIntermission();
+            { auto p=pixels(); validate(validationQueue);
+              check("screen-copy",p,16,16,tl); check("screen-copy",p,48,16,tr); check("screen-copy",p,16,48,bl); check("screen-copy",p,48,48,br); }
+            D3D12_FinishUpdate(0);
+            // b) The final screen, drawn into a viewport twice as wide as it is tall: a quarter of the width has black bars on each side
+            quadrants(tl,tr,bl,br); makeFinal(); reset({96,96,96});
+            blend(PF_NoDepthTest); drawFinal(64,32);
+            { auto p=pixels(); validate(validationQueue);
+              check("final-screen",p,24,40,tl); check("final-screen",p,40,40,tr); check("final-screen",p,24,56,bl); check("final-screen",p,40,56,br);
+              check("final-screen",p,4,40,{0,0,0}); check("final-screen",p,60,56,{0,0,0}); check("final-screen",p,32,8,{0,0,0}); }
+            clip(0,0,W,H,.1f);
+            D3D12_FinishUpdate(0);
+            // c) Flushed, the screen textures are remade, and the new copy shows
+            flushScreens();
+            quadrants(br,bl,tr,tl); makeScreen(); reset({96,96,96});
+            blend(PF_NoDepthTest); drawIntermission();
+            { auto p=pixels(); validate(validationQueue);
+              check("screen-flush",p,16,16,br); check("screen-flush",p,48,16,bl); check("screen-flush",p,16,48,tr); check("screen-flush",p,48,48,tl); }
+            // The copies are retired while recorded work still draws them, and their descriptors come back after the fence
+            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; D3D12_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
+            for(int frame=0;frame<64;frame++) {
+                const RGB a=(frame&1)?tl:br, b=(frame&1)?tr:bl;
+                quadrants(a,b,b,a); makeScreen(); reset({96,96,96});
+                blend(PF_NoDepthTest); drawIntermission(); flushScreens();
+                auto p=pixels(); validate(validationQueue);
+                check("screen-flush",p,16,16,a); check("screen-flush",p,48,16,b); check("screen-flush",p,16,48,b); check("screen-flush",p,48,48,a);
+                D3D12_FinishUpdate(0);
+            }
+            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; D3D12_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
+            if(srvsAfter<=srvsBefore) throw std::runtime_error("screen texture SRV reuse was not exercised");
+        }
+        // Wipes. The mask lump is 80x50, its first row at the bottom of the screen; each pixel's byte is 31 - 31 * the share of the end screen.
+        int fullWipes=0, twoPassWipes=0;
+        {
+            auto startWipe=function<void (*)()>("StartScreenWipe");
+            auto endWipe=function<void (*)()>("EndScreenWipe");
+            auto doWipe=function<void (*)()>("DoScreenWipe");
+            const RGB S={150,96,64}, E={16,64,224};
+            auto sat=[](double v) { return std::max(0.,std::min(1.,v)); };
+            // The shader's formulas for one pixel, in the shader's modes (1 invert, 2 black, 3 white, otherwise a crossfade)
+            auto wiped=[&](int mode,RGB s,RGB e,int maskByte,bool reverse) {
+                const double fade=1.0-(reverse?32.0-maskByte:(double)maskByte)/31.0;
+                double st[3],en[3],o[3];
+                for(int c=0;c<3;c++) { st[c]=s[c]/255.; en[c]=e[c]/255.; }
+                if(mode==1) for(int c=0;c<3;c++) o[c]=st[c]+(1-st[c]-st[c])*fade;
+                else if(mode==2) { o[0]=st[0]-sat(fade)*3; o[1]=st[1]-std::max(0.,std::min(3.,-o[0])); o[2]=st[2]-std::max(0.,std::min(3.,-o[1])); }
+                else if(mode==3) { const double radd=sat(fade)*3, gadd=std::max(radd-1,0.), badd=std::max(gadd-1,0.); o[0]=st[0]+radd; o[1]=st[1]+gadd; o[2]=st[2]+badd; }
+                else for(int c=0;c<3;c++) o[c]=st[c]+(en[c]-st[c])*fade;
+                RGB result; for(int c=0;c<3;c++) result[c]=(int)std::lround(sat(o[c])*255.);
+                return result;
+            };
+            // top-left 8, top-right 28, bottom-left 0, bottom-right 31 (lump rows from the bottom)
+            auto setMask=[&]() { lumpBytes.assign(4000,0); for(int r=0;r<50;r++) for(int c=0;c<80;c++) lumpBytes[r*80+c]=(UINT8)(r>=25?(c<40?8:28):(c<40?0:31)); };
+            const int maskTL=8, maskTR=28, maskBL=0, maskBR=31;
+            auto runWipe=[&](UINT8 mode,bool reverse,int wiggle) {
+                reset(S); startWipe(); reset(E); endWipe();
+                g_wipemode=mode; g_wipetype=0; g_wipeframe=0; g_wipereverse=reverse; g_wipeencorewiggle=wiggle;
+                doWipe(); fullWipes++;
+            };
+            setMask();
+            const int shaderMode[4]={0,2,3,1}; // g_wipemode 0..3
+            for(int wipemode=0;wipemode<4;wipemode++) for(int reverse=0;reverse<2;reverse++) {
+                const char *scene=wipemode==0?"wipe-blend":"wipe-mode";
+                runWipe((UINT8)wipemode,reverse!=0,0);
+                auto p=pixels(); validate(validationQueue);
+                const RGB start=reverse?E:S, end=reverse?S:E;
+                check(scene,p,16,16,wiped(shaderMode[wipemode],start,end,maskTL,reverse!=0));
+                check(scene,p,48,16,wiped(shaderMode[wipemode],start,end,maskTR,reverse!=0));
+                check(scene,p,16,48,wiped(shaderMode[wipemode],start,end,maskBL,reverse!=0));
+                check(scene,p,48,48,wiped(shaderMode[wipemode],start,end,maskBR,reverse!=0));
+                D3D12_FinishUpdate(0);
+            }
+            // Encore's wiggle shifts each row sideways by a share of the screen; the start screen's edge shows where. Its mask
+            // keeps all of the start screen (a byte of 31), in the to-black mode.
+            {
+                lumpBytes.assign(4000,31);
+                const int wiggle=2;
+                reset({0,0,0}); fillRect(-1,0,-1,1,tl); fillRect(0,1,-1,1,tr); startWipe(); reset(E); endWipe();
+                g_wipemode=1; g_wipetype=0; g_wipeframe=0; g_wipereverse=0; g_wipeencorewiggle=wiggle;
+                doWipe(); fullWipes++;
+                auto p=pixels(); validate(validationQueue);
+                int shifted=0;
+                for(int y=0;y<H;y++) {
+                    const double row=std::floor((1.0-(y+.5)/H)*200.0);
+                    const double phase=wiggle*128.0+row*wiggle*8.0;
+                    const double direction=(row-2.0*std::floor(row/2.0))*2.0-1.0;
+                    const double shift=direction*std::sin(phase)*wiggle*8.0/320.0;
+                    for(int x=0;x<W;x++) {
+                        const double at=std::max(.5/W,std::min(1-.5/W,(x+.5)/W+shift))*W;
+                        const double fraction=at-std::floor(at);
+                        if(fraction<.03||fraction>.97) continue; // too near a texel's edge to tell float from double
+                        const bool right=at>=W/2;
+                        if(right!=(x>=W/2)) shifted++;
+                        check("wipe-wiggle",p,x,y,right?tr:tl);
+                    }
+                }
+                if(shifted<40) throw std::runtime_error("the wiggle shifted too few pixels to test");
+                D3D12_FinishUpdate(0);
+            }
+            // The two-pass wipe, when the mask lump is missing: the end screen over the start screen, by a texture's alpha
+            {
+                auto mask=function<void (*)(GLMipmap_t *)>("SetTexture");
+                auto deleteMask=function<void (*)(GLMipmap_t *)>("DeleteTexture");
+                const UINT8 alpha[4]={64,192,0,255}; // top-left, top-right, bottom-left, bottom-right
+                std::array<UINT8,4> alphaTexels={alpha[0],alpha[1],alpha[2],alpha[3]};
+                GLMipmap_t fadeMask={}; fadeMask.format=GL_TEXFMT_ALPHA_8; fadeMask.width=fadeMask.height=2; fadeMask.data=alphaTexels.data();
+                reset(S); startWipe(); reset(E); endWipe();
+                mask(&fadeMask); // sets the fade mask the fallback reads
+                g_wipemode=0; g_wipetype=0; g_wipeframe=2; g_wipereverse=0; g_wipeencorewiggle=0;
+                doWipe(); twoPassWipes++;
+                auto p=pixels(); validate(validationQueue);
+                auto over=[&](int a) { RGB result; for(int c=0;c<3;c++) result[c]=(int)std::lround(E[c]*(a/255.)+S[c]*(1-a/255.)); return result; };
+                check("wipe-fallback",p,16,16,over(alpha[0])); check("wipe-fallback",p,48,16,over(alpha[1]));
+                check("wipe-fallback",p,16,48,over(alpha[2])); check("wipe-fallback",p,48,48,over(alpha[3]));
+                deleteMask(&fadeMask);
+                D3D12_FinishUpdate(0);
+                if(logs.find("wipe: the full wipe isn't available")==std::string::npos) throw std::runtime_error("the two-pass wipe wasn't logged");
+            }
+            // A wipe's mask is remade at a new size, and the screen after a wipe still draws
+            lumpBytes.assign(16000,0); g_wipeframe=1; // 160x100: every pixel of the end screen
+            reset(S); startWipe(); reset(E); endWipe(); g_wipemode=0; g_wipereverse=0; g_wipeencorewiggle=0; doWipe(); fullWipes++;
+            unbindTextures(); draw({20,200,40},PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("wipe-after",p,32,32,{20,200,40}); check("wipe-after",p,2,2,E); }
+            D3D12_FinishUpdate(0);
+            g_wipeframe=0;
+        }
+        // Post image distortion samples the saved screen: not at all with none, a few pixels' sway with the water's
+        {
+            auto makeScreen=function<void (*)()>("MakeScreenTexture");
+            auto postImage=function<void (*)(float [SCREENVERTS][SCREENVERTS][2])>("PostImgRedraw");
+            auto clip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
+            static float grid[SCREENVERTS][SCREENVERTS][2]={};
+            const RGB left={200,40,16}, right={16,64,224};
+            clip(0,0,W,H,.1f);
+            reset({0,0,0}); fillRect(-1,0,-1,1,left); fillRect(0,1,-1,1,right); makeScreen();
+            reset({96,96,96}); postimgtype[0]=postimg_none; leveltime=0; postImage(grid);
+            { auto p=pixels(); validate(validationQueue);
+              for(int y=0;y<H;y+=7) { check("postimg-identity",p,31,y,left); check("postimg-identity",p,32,y,right); check("postimg-identity",p,5,y,left); check("postimg-identity",p,58,y,right); } }
+            D3D12_FinishUpdate(0);
+            // Water: each row's texture coordinate sways by a sine, up to 0.64 of a pixel here, which moves the edge at a pixel boundary
+            const UINT32 ticks=40;
+            reset({96,96,96}); postimgtype[0]=postimg_water; leveltime=ticks; postImage(grid);
+            postimgtype[0]=postimg_none; leveltime=0;
+            { auto p=pixels(); validate(validationQueue);
+              int moved=0;
+              for(int y=0;y<H;y++) {
+                  const double shift=std::sin((ticks/35.0)*2.0+((y+.5)/H)*20.0)*0.01*W;
+                  if(std::fabs(std::fabs(shift)-.5)<.03) continue; // too near a texel's edge to tell float from double
+                  const bool leftMoves=shift>.5, rightMoves=shift<-.5;
+                  moved+=leftMoves+rightMoves;
+                  check("postimg-shift",p,31,y,leftMoves?right:left);
+                  check("postimg-shift",p,32,y,rightMoves?left:right);
+              }
+              if(moved<6) throw std::runtime_error("the water's sway moved too few rows to test"); }
+            D3D12_FinishUpdate(0);
+        }
+        // Fade maps: the screen's colors become palette indices, are remapped by a row of the table, and come back as the master palette's
+        {
+            auto setLookup=function<void (*)(UINT8 *)>("SetPaletteLookup");
+            constexpr int lutSize=HWR_PALETTE_LUT_SIZE;
+            std::vector<UINT8> lut(lutSize*lutSize*lutSize);
+            for(int b=0;b<lutSize;b++) for(int g=0;g<lutSize;g++) for(int r=0;r<lutSize;r++) lut[(b*lutSize+g)*lutSize+r]=(r<lutSize/2 && g>=lutSize/2 && b>=lutSize/2)?7:19;
+            auto rgba=[](RGB c) { RGBA_t v={}; v.s.red=(UINT8)c[0]; v.s.green=(UINT8)c[1]; v.s.blue=(UINT8)c[2]; v.s.alpha=255; return v; };
+            std::array<RGBA_t,256> master; master.fill(rgba({8,8,8}));
+            const RGB m40={200,100,50}, m41={30,220,90}, m43={90,20,200}, m7={8,8,8};
+            master[40]=rgba(m40); master[41]=rgba(m41); master[43]=rgba(m43);
+            pMasterPalette=master.data(); setLookup(lut.data());
+            const RGB index7={24,180,220}, index19={200,40,16}; // lit colors: lookup index 7, then 19
+            // Rows 0 to 2: the identity, 7 to 40 and 19 to 19, then 7 to 41 and 19 to 43
+            std::vector<UINT8> table(3*256);
+            for(int row=0;row<3;row++) for(int i=0;i<256;i++) table[row*256+i]=(UINT8)i;
+            table[256+7]=40; table[512+7]=41; table[512+19]=43;
+            // Palette rendering off leaves the screen alone, and tells the caller to fall back
+            special(HWD_SET_PALETTE_RENDERING,0);
+            reset(index7);
+            if(D3D12_ApplyFadeMap(table.data(),table.size(),1234,1)) throw std::runtime_error("a fade map drew without palette rendering");
+            expect("fade-map-off",index7);
+            special(HWD_SET_PALETTE_RENDERING,1);
+            reset(index7); if(!D3D12_ApplyFadeMap(table.data(),table.size(),1234,1)) throw std::runtime_error("the fade map didn't draw");
+            expect("fade-map",m40);
+            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,2); expect("fade-map",m41);
+            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,0); expect("fade-map-row",m7); // the identity row
+            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,9); expect("fade-map-clamp",m41); // the last row
+            reset(index19); D3D12_ApplyFadeMap(table.data(),table.size(),1234,2); expect("fade-map",m43);
+            // The same table id with four rows remakes its texture
+            std::vector<UINT8> four(4*256); for(int row=0;row<4;row++) for(int i=0;i<256;i++) four[row*256+i]=(UINT8)i;
+            four[3*256+7]=43;
+            reset(index7); D3D12_ApplyFadeMap(four.data(),four.size(),1234,3); expect("fade-map-remake",m43);
+            // Drawing after a fade map still works, and the screen keeps its fade-mapped color around the new quad
+            unbindTextures();
+            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,1); draw({20,200,40},PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("fade-map-after",p,32,32,{20,200,40}); check("fade-map-after",p,2,2,m40); }
+            D3D12_FinishUpdate(0);
+            // A new table every frame retires the old one and its descriptor while recorded work reads them
+            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; D3D12_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
+            for(int frame=0;frame<64;frame++) {
+                std::vector<UINT8> remap((frame&1)?3*256:4*256); for(size_t i=0;i<remap.size();i++) remap[i]=(UINT8)(i&255);
+                remap[(frame&1)?256+7:3*256+7]=(frame&1)?40:41;
+                reset(index7); D3D12_ApplyFadeMap(remap.data(),remap.size(),5000+(UINT32)(frame>>1),(UINT8)((frame&1)?1:3));
+                expect("fade-map-reuse",(frame&1)?m40:m41); D3D12_FinishUpdate(0);
+            }
+            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; D3D12_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
+            if(srvsAfter<=srvsBefore) throw std::runtime_error("fade map SRV reuse was not exercised");
+
+            // A new screen size remakes the screen textures and the fade map's copy of the screen
+            auto makeScreen=function<void (*)()>("MakeScreenTexture");
+            auto drawIntermission=function<void (*)()>("DrawIntermissionBG");
+            auto clip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
+            for(auto size:{std::array<int,2>{640,400},std::array<int,2>{W,H}}) {
+                const int w=size[0], h=size[1];
+                if(!D3D12_Surface(w,h)) throw std::runtime_error("resizing failed");
+                clip(0,0,w,h,.1f);
+                reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,1);
+                { RGB c=probe(w/2,h/2,h); if(negative=="resize-fade-map") c[0]=(c[0]+67)%256; if(abs(c[0]-m40[0])>1||abs(c[1]-m40[1])>1||abs(c[2]-m40[2])>1) { negativeRejected=negative=="resize-fade-map"; throw std::runtime_error("fade map after a resize"); } }
+                quadrants(tl,tr,bl,br); makeScreen(); reset({96,96,96}); blend(PF_NoDepthTest); drawIntermission();
+                const struct { int x, y; RGB want; } samples[]={{w/4,h/4,tl},{w*3/4,h/4,tr},{w/4,h*3/4,bl},{w*3/4,h*3/4,br}};
+                for(auto &sample:samples) { RGB c=probe(sample.x,sample.y,h); RGB want=sample.want; if(negative=="resize-screen") want[0]=(want[0]+67)%256; if(abs(c[0]-want[0])>1||abs(c[1]-want[1])>1||abs(c[2]-want[2])>1) { negativeRejected=negative=="resize-screen"; throw std::runtime_error("screen texture after a resize"); } }
+                validate(validationQueue); D3D12_FinishUpdate(0);
+            }
+            special(HWD_SET_PALETTE_RENDERING,0);
+            pMasterPalette=nullptr; setLookup(lut.data());
+            validate(validationQueue);
+        }
         // Inverse of the sky's 270-degree Y rotation; height 200 keeps its Y scale at one.
         std::array<gl_skyvertex_t,4> skyVertices={{{1,-.8f,.8f,0,0,64,176,224,255},{1,-.8f,-.8f,1,0,64,176,224,255},{1,.8f,-.8f,1,1,64,176,224,255},{1,.8f,.8f,0,1,64,176,224,255}}};
         gl_skyloopdef_t skyLoop={HWD_SKYLOOP_FAN,4,0,false}; gl_sky_t sky={};
@@ -304,6 +566,11 @@ int main(int argc,char **argv) {
           if(pp==std::string::npos) throw std::runtime_error("missing palette perf line");
           if(sscanf(logs.c_str()+pp,"UWP perf:   D3D12: palette: rendering %*s %u light tables alive, %d created, %d updated; %u LUT/palette uploads; %lf post passes per frame, %lf ms per frame",&alive,&created,&updated,&uploads,&passes,&ms)!=6
              || alive!=0 || created!=98 || updated!=1 || uploads<6 || passes<=0) throw std::runtime_error("palette perf counters are wrong"); }
+        { int full=0,twoPass=0,images=0,fades=0,fallbacks=0; auto sp=logs.find("UWP perf:   D3D12: screens: ");
+          if(sp==std::string::npos) throw std::runtime_error("missing screens perf line");
+          if(sscanf(logs.c_str()+sp,"UWP perf:   D3D12: screens: %*f per frame (%*f copies, %*f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay",&full,&twoPass,&images,&fades,&fallbacks)!=5
+             || full!=fullWipes || twoPass!=twoPassWipes || images!=2 || fades!=73 || fallbacks!=1) throw std::runtime_error("screens perf counters are wrong");
+          if(logs.find("not drawn yet: ")==std::string::npos || logs.find("postimage not drawn")!=std::string::npos) throw std::runtime_error("the not-drawn-yet line is wrong"); }
         unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=logs.find("; wraps "); if(pos==std::string::npos || sscanf(logs.c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=logs.find("; grows ",pos); if(gp==std::string::npos || sscanf(logs.c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
         unsigned ringSubmissions=0; auto rp=logs.find("mid-frame: ring "); if(rp==std::string::npos || sscanf(logs.c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(queue.Get());

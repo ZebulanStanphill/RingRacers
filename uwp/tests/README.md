@@ -218,8 +218,36 @@ recorded draws still use it, and requires descriptors to be reused after their f
 `screen-palette` changes the screen palette between frames, and `palette-off` checks that
 the last step doesn't run with Palette Rendering off. The master palette's creation and
 removal run under GPU-based validation, and the `palette:` perf line's counters are
-checked; nothing reads the master palette until fade maps are drawn. Fade maps, fog and
-water with palette rendering, and Xbox colors remain untested here.
+checked; the fade map scenes below are what read the master palette. Fog and water with
+palette rendering, and Xbox colors, remain untested here.
+Screen scenes draw a screen of four colored quadrants, copy it, clear the screen and
+draw the copy back. `screen-copy` does so with the intermission background, which must
+reproduce every quadrant; `final-screen` draws the final screen into a viewport twice
+as wide as it is tall, which must show the image with black bars; `screen-flush` flushes the
+screen textures and then, for 64 frames, copies, draws and flushes them again while recorded work
+still reads them, requiring descriptors to come back after their fences.
+Wipe scenes set a known 80×50 mask lump (four byte values, one per quadrant) and wipe a
+solid start screen to a solid end screen. `wipe-blend` checks a crossfade and `wipe-mode`
+the to-black, to-white and invert modes, each normal and reversed, at four sampled pixels
+against the shader's formulas computed in double precision, which also pins the mask's
+orientation. `wipe-wiggle` sets Encore's wiggle and compares every pixel of a start screen with
+a vertical edge to the edge's per-row shift. `wipe-fallback` makes the mask lump missing,
+which leaves the two-pass wipe: the end screen drawn over the start screen by a 2×2 alpha
+texture on the second texture unit. `wipe-after` checks that a draw after a wipe, and a
+mask of another size, still work, since the wipe passes end by resetting every binding.
+`postimg-identity` redraws the saved screen with no distortion, which must reproduce it,
+and `postimg-shift` with the water's sway, checking the pixels either side of the edge in
+every row against the sine. The grid argument of `PostImgRedraw` is ignored, as in the Direct3D 11
+driver, so a shifted grid doesn't shift anything; the sway is what moves pixels.
+Fade map scenes give the master palette known colors and a table of three rows (identity,
+index 7 to 40, then 7 to 41 and 19 to 43). `fade-map` and `fade-map-row` check the strength's row,
+`fade-map-clamp` a strength past the last row, `fade-map-remake` the same table id with four
+rows, `fade-map-off` that nothing is drawn (and false is returned) without Palette
+Rendering, `fade-map-after` that a draw after a fade map is unaffected, and `fade-map-reuse`
+replaces tables for 64 frames while recorded work reads them. `resize-screen` and
+`resize-fade-map` switch the screen to 640×400 and back, which remakes the screen
+textures and the fade map's copy of the screen, under GPU-based validation.
+The `screens:` perf line's counts of wipes, post images and fade maps are checked.
 The inversion oracle caught the upstream `PF_Invert`/`PF_Occlude` bit collision;
 `PF_Invert` now uses its own blend bit, so it survives the blend mask. If the Graphics
 Tools feature is missing, the script retries its install and then fails loudly
