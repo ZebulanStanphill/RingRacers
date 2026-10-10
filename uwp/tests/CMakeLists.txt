@@ -121,3 +121,17 @@ if(RR_SANITIZERS)
 endif()
 add_test(NAME custom_shader_translation COMMAND custom_shader_translation "${CMAKE_CURRENT_BINARY_DIR}/translated-shaders")
 set_tests_properties(custom_shader_translation PROPERTIES TIMEOUT 60)
+
+# Compile GPU-independent D3D12 bookkeeping directly from the production headers.
+add_executable(d3d12_allocators d3d12-allocators.cpp)
+target_compile_features(d3d12_allocators PRIVATE cxx_std_17)
+target_include_directories(d3d12_allocators PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(d3d12_allocators PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(d3d12_allocators PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(d3d12_allocators PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME d3d12_allocators COMMAND d3d12_allocators)
+set_tests_properties(d3d12_allocators PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")

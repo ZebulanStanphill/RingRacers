@@ -119,6 +119,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/run-d3d11.ps1 -Engine build/shader-regression-source
 
+      - name: Direct3D 12 renderer regressions (WARP + debug layer)
+        shell: pwsh
+        run: ./tests/run-d3d12.ps1 -Engine build/shader-regression-source
+
       - name: Build
         shell: pwsh
         run: ./build.ps1
