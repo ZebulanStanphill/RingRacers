@@ -1,4 +1,4 @@
-From 1e232bd6dcd40eb90761e684bd9ef1c15f6af9eb Mon Sep 17 00:00:00 2001
+From 7caef8f26f1d6a3699c43bd61578d947d5438cf9 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -347,6 +347,11 @@ Agent: Codex (Sol)
 Model: gpt-6.1-sol
 Agent: Claude (Haiku)
 Model: claude-haiku-5-5
+
+Agent: Claude Code
+Model: claude-opus-5-5
+Agent: Claude Code
+Model: claude-sonnet-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -356,7 +361,7 @@ Model: claude-haiku-5-5
  src/core/thread_pool.cpp                  |   19 +
  src/cvars.cpp                             |    9 +
  src/d_clisrv.c                            |   49 +
- src/d_main.cpp                            |  364 +-
+ src/d_main.cpp                            |  367 +-
  src/f_finale.c                            |    6 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
@@ -386,7 +391,7 @@ Model: claude-haiku-5-5
  src/hwr2/patch_atlas.cpp                  |    8 +
  src/hwr2/resource_management.cpp          |  105 +-
  src/hwr2/resource_management.hpp          |   31 +-
- src/i_system.h                            |   66 +
+ src/i_system.h                            |   70 +
  src/i_video_common.cpp                    |   60 +-
  src/k_menu.h                              |   12 +-
  src/k_menufunc.c                          |    2 +-
@@ -422,6 +427,7 @@ Model: claude-haiku-5-5
  src/sdl/hwsym_sdl.c                       |    7 +
  src/sdl/i_main.cpp                        |   11 +-
  src/sdl/i_system.cpp                      |   99 +-
+ src/sdl/i_uwpd3d12.cpp                    |  114 +
  src/sdl/i_uwpprofile.cpp                  |  863 +++
  src/sdl/i_uwptrace.h                      |   25 +
  src/sdl/i_video.cpp                       |   98 +-
@@ -433,7 +439,7 @@ Model: claude-haiku-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 85 files changed, 13866 insertions(+), 1101 deletions(-)
+ 86 files changed, 13987 insertions(+), 1101 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -441,6 +447,7 @@ Model: claude-haiku-5-5
  create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
  create mode 100644 src/hardware/r_d3d11/r_d3d11.h
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
+ create mode 100644 src/sdl/i_uwpd3d12.cpp
  create mode 100644 src/sdl/i_uwpprofile.cpp
  create mode 100644 src/sdl/i_uwptrace.h
 
@@ -931,7 +938,7 @@ index 1166b3c..8c31e92 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0..5c214d2 100644
+index 19fcfe0..eb9081a 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -33,8 +33,14 @@
@@ -1329,12 +1336,12 @@ index 19fcfe0..5c214d2 100644
 +#ifdef _UWP
 +			displayed = true;
 +#endif
- 		}
++		}
 +#ifdef _UWP
 +		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
 +		{
 +			skippedframe = true;
-+		}
+ 		}
 +#endif
  
  #ifdef HWRENDER
@@ -1394,7 +1401,17 @@ index 19fcfe0..5c214d2 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1760,6 +2088,9 @@ void D_SRB2Main(void)
+@@ -1707,6 +2035,9 @@ void D_SRB2Main(void)
+ 
+ 	CONS_Printf("Z_Init(): Init zone memory allocation daemon. \n");
+ 	Z_Init();
++#ifdef _UWP
++	I_UWPRequireGameMode();
++#endif
+ 	CON_SetLoadingProgress(LOADED_ZINIT);
+ 
+ 	M_NewGameDataStruct();
+@@ -1760,6 +2091,9 @@ void D_SRB2Main(void)
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
@@ -1404,7 +1421,7 @@ index 19fcfe0..5c214d2 100644
  	mainwads = num_startupiwads - musicwads;
  	D_CleanFile(startupiwads, num_startupiwads);
  	num_startupiwads = 0;
-@@ -1771,6 +2102,7 @@ void D_SRB2Main(void)
+@@ -1771,6 +2105,7 @@ void D_SRB2Main(void)
  	// conversion sometimes needs the palette
  	V_ReloadPalette();
  
@@ -1412,7 +1429,7 @@ index 19fcfe0..5c214d2 100644
  	//
  	// search for mainwad maps
  	//
-@@ -1779,6 +2111,7 @@ void D_SRB2Main(void)
+@@ -1779,6 +2114,7 @@ void D_SRB2Main(void)
  	basenumkartcupheaders = numkartcupheaders;
  
  	CON_SetLoadingProgress(LOADED_IWAD);
@@ -1420,7 +1437,7 @@ index 19fcfe0..5c214d2 100644
  
  	M_PasswordInit();
  
-@@ -1814,6 +2147,27 @@ void D_SRB2Main(void)
+@@ -1814,6 +2150,27 @@ void D_SRB2Main(void)
  
  	CON_Init();
  
@@ -1448,7 +1465,7 @@ index 19fcfe0..5c214d2 100644
  	D_RegisterServerCommands();
  	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
  	R_RegisterEngineStuff();
-@@ -1821,7 +2175,9 @@ void D_SRB2Main(void)
+@@ -1821,7 +2178,9 @@ void D_SRB2Main(void)
  
  	I_RegisterSysCommands();
  
@@ -1458,7 +1475,7 @@ index 19fcfe0..5c214d2 100644
  
  	CONS_Printf("W_InitMultipleFiles(): Adding external PWADs.\n");
  
-@@ -2014,6 +2370,10 @@ void D_SRB2Main(void)
+@@ -2014,6 +2373,10 @@ void D_SRB2Main(void)
  		}
  	}
  
@@ -1469,7 +1486,7 @@ index 19fcfe0..5c214d2 100644
  	// init all NETWORK
  	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
  	if (D_CheckNetGame())
-@@ -2323,6 +2683,8 @@ const char *D_Home(void)
+@@ -2323,6 +2686,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -14014,10 +14031,10 @@ index 3fd6666..3cfcb18 100644
  	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
  	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
 diff --git a/src/i_system.h b/src/i_system.h
-index 56d507e..3c59103 100644
+index 56d507e..740d9a5 100644
 --- a/src/i_system.h
 +++ b/src/i_system.h
-@@ -313,8 +313,74 @@ boolean I_HasOpenURL(void);
+@@ -313,8 +313,78 @@ boolean I_HasOpenURL(void);
  
  void I_OpenURL(const char *data);
  
@@ -14035,6 +14052,10 @@ index 56d507e..3c59103 100644
 +// [UWP]: Logs the process budget, which distinguishes Xbox App/Game resources.
 +// GlobalMemoryStatusEx reports physical memory, not this budget.
 +void I_UWPLogMemoryLimit(void);
++
++// [UWP]: Exits with a pop-up explaining how to set the app type to Game if Direct3D 12 hardware isn't available,
++// which on Xbox One means the game was started as an app (sdl/i_uwpd3d12.cpp).
++void I_UWPRequireGameMode(void);
 +
 +// [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
 +// Call from the main thread.
@@ -17526,7 +17547,7 @@ index 67b8f13..3db17c5 100644
  #endif
  	{0, NULL}
 diff --git a/src/sdl/CMakeLists.txt b/src/sdl/CMakeLists.txt
-index d6f32a6..537495d 100644
+index d6f32a6..226d4ad 100644
 --- a/src/sdl/CMakeLists.txt
 +++ b/src/sdl/CMakeLists.txt
 @@ -58,10 +58,15 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
@@ -17540,7 +17561,7 @@ index d6f32a6..537495d 100644
  )
 +else()
 +	target_link_libraries(SRB2SDL2 PRIVATE SDL2) # TODO: I should cleanup uwp-dep namespaces
-+	target_sources(SRB2SDL2 PRIVATE i_uwpprofile.cpp)
++	target_sources(SRB2SDL2 PRIVATE i_uwpprofile.cpp i_uwpd3d12.cpp)
 +endif()
  
  if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)
@@ -17779,6 +17800,126 @@ index 827f493..633c62f 100644
  	I_OutputMsg("RINGRACERSWADDIR");
  	// does RINGRACERSWADDIR exist?
  	if (((envstr = I_GetEnv("RINGRACERSWADDIR")) != NULL) && isWadPathOk(envstr))
+diff --git a/src/sdl/i_uwpd3d12.cpp b/src/sdl/i_uwpd3d12.cpp
+new file mode 100644
+index 0000000..4b16935
+--- /dev/null
++++ b/src/sdl/i_uwpd3d12.cpp
+@@ -0,0 +1,114 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file  i_uwpd3d12.cpp
++/// \brief [UWP]: Checks that Direct3D 12 hardware is available, which on Xbox One only exists when the app type is
++///        Game
++
++#include <cstdio>
++#include <cstdlib>
++
++#define NOMINMAX
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#include <d3d12.h>
++#include <dxgi1_4.h>
++#include <wrl/client.h>
++
++#include "SDL.h"
++
++#include "../doomdef.h"
++#include "../i_system.h"
++
++using Microsoft::WRL::ComPtr;
++
++namespace
++{
++
++typedef HRESULT(WINAPI *PFNCREATEDXGIFACTORY1)(REFIID, void **);
++typedef HRESULT(WINAPI *PFND3D12CREATEDEVICE)(IUnknown *, D3D_FEATURE_LEVEL, REFIID, void **);
++
++// Logs why Direct3D 12 can't be used; returns whether a hardware adapter can create a feature level 11_0 device
++bool HasD3D12Hardware()
++{
++	// UWP apps load system DLLs with LoadPackagedLibrary
++	HMODULE dxgi = LoadPackagedLibrary(L"dxgi.dll", 0);
++	HMODULE d3d12 = LoadPackagedLibrary(L"d3d12.dll", 0);
++	if (!dxgi || !d3d12)
++	{
++		I_OutputMsg("UWP: Direct3D 12 unavailable: cannot load %s (error %lu)\n", dxgi ? "d3d12.dll" : "dxgi.dll",
++			GetLastError());
++		return false;
++	}
++
++	const auto createFactory = reinterpret_cast<PFNCREATEDXGIFACTORY1>(GetProcAddress(dxgi, "CreateDXGIFactory1"));
++	const auto createDevice = reinterpret_cast<PFND3D12CREATEDEVICE>(GetProcAddress(d3d12, "D3D12CreateDevice"));
++	if (!createFactory || !createDevice)
++	{
++		I_OutputMsg("UWP: Direct3D 12 unavailable: %s is missing\n", createFactory ? "D3D12CreateDevice" : "CreateDXGIFactory1");
++		return false;
++	}
++
++	ComPtr<IDXGIFactory1> factory;
++	HRESULT hr = createFactory(IID_PPV_ARGS(&factory));
++	if (FAILED(hr))
++	{
++		I_OutputMsg("UWP: Direct3D 12 unavailable: CreateDXGIFactory1 failed (HRESULT 0x%08x)\n", (unsigned)hr);
++		return false;
++	}
++
++	bool supported = false;
++	ComPtr<IDXGIAdapter1> adapter;
++	for (UINT index = 0; factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND; index++, adapter.Reset())
++	{
++		DXGI_ADAPTER_DESC1 desc;
++		if (FAILED(adapter->GetDesc1(&desc)))
++			continue;
++
++		char name[128];
++		WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, name, sizeof name, nullptr, nullptr);
++
++		// A software adapter (WARP) isn't the console's GPU
++		if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
++		{
++			I_OutputMsg("UWP: Direct3D 12: skipping software adapter %s\n", name);
++			continue;
++		}
++
++		hr = createDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr);
++		I_OutputMsg("UWP: Direct3D 12: adapter %s %s feature level 11_0 (HRESULT 0x%08x)\n", name,
++			SUCCEEDED(hr) ? "supports" : "does not support", (unsigned)hr);
++		if (SUCCEEDED(hr))
++			supported = true;
++	}
++
++	if (!supported)
++		I_OutputMsg("UWP: Direct3D 12 unavailable: no hardware adapter supports it\n");
++	return supported;
++}
++
++} // namespace
++
++void I_UWPRequireGameMode(void)
++{
++	if (HasD3D12Hardware())
++		return;
++
++	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
++		"Dr. Robotnik's Ring Racers " VERSIONSTRING,
++		"The game is running as an app, which has no access to the full GPU.\n"
++		"\n"
++		"In Dev Home, set the app type to Game:\n"
++		"1. Under Games and Apps, highlight Ring Racers.\n"
++		"2. Press the View button.\n"
++		"3. Choose View details.\n"
++		"4. Change App type from App to Game.\n"
++		"\n"
++		"Then start the game again.", NULL);
++
++	// Nothing is set up this early, so skip the shutdown work
++	exit(1);
++}
 diff --git a/src/sdl/i_uwpprofile.cpp b/src/sdl/i_uwpprofile.cpp
 new file mode 100644
 index 0000000..24cc8f4
