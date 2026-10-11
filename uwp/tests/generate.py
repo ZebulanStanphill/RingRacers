@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 from source import Source
+from title_fixture import generate_fixture
+from title_replay import generate_title
 
 
 def render(template, parts, output):
@@ -41,6 +43,8 @@ def function_section(source, name, first, after):
 def generate(engine, output):
     output.mkdir(parents=True, exist_ok=True)
     templates = Path(__file__).parent / "templates"
+    generate_fixture(templates.parent / "fixtures", output)
+    generate_title(engine, output, templates, render, function_section)
     network = Source(engine / "src/d_clisrv.c")
     game = Source(engine / "src/g_game.c")
     render(templates / "online.cpp.in", {

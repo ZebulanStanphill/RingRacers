@@ -1,0 +1,6 @@
+# Existing fixed-point setup shifts negative signed inputs. Preserve production
+# bodies and suppress only the shift-base check in these two math/setup helpers.
+# Address, overflow, bounds, and every other undefined-behavior check remain on.
+[shift-base]
+fun:_ZL16MakeViaMapthingsssshi
+fun:FixedDiv2

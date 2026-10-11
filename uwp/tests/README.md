@@ -108,6 +108,24 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   geometry, not Xbox visuals or performance. The user confirmed the Water
   Palace wall fix and water effect on Xbox One X in build 94; all split-screen
   visual checks and a controlled performance comparison remain untested.
+- **Title background light lists:** replay the title map's actual BSP with
+  production `HWR_AddLine`, seg processing, wall light slicing, clipping,
+  `R_Prep3DFloors`, and all 72 authored slope constructors. All 58 cold first
+  wall submissions must equal an explicitly prepared reference and the second
+  traversal in order, vertices/UVs, light, colormap, flags, alpha, and queued/fog
+  choice. Focused cases cover NULL back sectors, absent FOFs, a valid list left
+  untouched, portal-search exclusion, real-sector preparation before the fake-flat
+  copy, preserved target/control moved flags, and the normal subsector refresh.
+  A generated negative control removes only the added preparation and must fail
+  equality with exactly 22 lighting/colormap differences. Compact title-map JSON
+  and uncompressed ZNODES are expanded at configure time; generated initialization
+  headers are never committed. Texture/GPU calls and non-wall subsector work are
+  stubs, so this checks wall submissions rather than rendered pixels or the wipe.
+  The faithful slope setup retains existing signed-shift UB: the title targets'
+  `title-shifts.ignorelist` disables **only `shift-base`** in `MakeViaMapthings`
+  and `FixedDiv2`. ASan and all other UBSan checks remain enabled, including in
+  traversal and lighting. No authored slope touches the affected FOF sectors;
+  retaining the complete map still checks the other submitted sloped geometry.
 - **Pixel history diagnostic:** execute the production copy/readback and command handlers against padded-row resource mocks. Verify inactive paths make no GPU calls, the selected color's actual writer is reported, unchanged depth-only draws are excluded from color-writer rows, metadata stays immutable, 100% clamps to the final pixel, shader-off alpha is normalized, atlas rows/capacity and report limits are respected, partial allocation/readback failures clean up, and malformed coordinates or unsupported rendering modes are rejected. The Windows WARP harness also executes the same extracted driver functions on a real SM4 device: 130 command-ordered copies across atlas rows must preserve their earlier colors while the source remains bound, without changing the source target or binding. This validates the diagnostic, not the underlying brown-wall rendering.
 - **Suspect sky-surface diagnostics:** execute the production trace and both floor/wall dispatch conditions against real engine structures. Check per-type caps, one sampled frame per five-second interval and view, 64-bit frame IDs, map/time resets, portal/skybox exclusions, regular-floor selection, original sector IDs alongside fake-flat heights, settings, unchanged vertices, eight-vertex limits and bounded rows with one log write per surface. These checks validate diagnostics; they do not reproduce or fix the reported brown walls.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native

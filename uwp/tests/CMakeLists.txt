@@ -19,7 +19,7 @@ file(GLOB templates CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/templates/*.i
 file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/addons/shader-smoke/source/*")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
-    ${templates} source.py generate.py fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
+    ${templates} source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
     "${RR_SOURCE_DIR}/src/r_main.cpp"
@@ -38,6 +38,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_plane.cpp"
     "${RR_SOURCE_DIR}/src/p_slopes.c"
     "${RR_SOURCE_DIR}/src/taglist.c"
+    "${RR_SOURCE_DIR}/src/tables.c"
+    "${RR_SOURCE_DIR}/src/hardware/hw_clip.c"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/r_things.cpp"
     "${RR_SOURCE_DIR}/src/p_mobj.c"
@@ -105,6 +107,15 @@ foreach(control full edge front nonspring)
     set_tests_properties(spring_clip_negative_${control} PROPERTIES WILL_FAIL TRUE TIMEOUT 60
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 endforeach()
+regression(title_lightlist title_lightlist _UWP HWRENDER)
+regression(title_lightlist_negative title_lightlist_negative _UWP HWRENDER TITLE_NEGATIVE)
+set_tests_properties(title_lightlist_negative PROPERTIES WILL_FAIL TRUE)
+if(RR_SANITIZERS)
+    foreach(target title_lightlist title_lightlist_negative)
+        target_compile_options(${target} PRIVATE
+            "-fsanitize-ignorelist=${CMAKE_CURRENT_SOURCE_DIR}/title-shifts.ignorelist")
+    endforeach()
+endif()
 regression(wall_light_slices wall_light _UWP HWRENDER)
 regression(custom_shader_dispatch custom_dispatch _UWP HWRENDER)
 regression(transparency_uwp transparency _UWP HWRENDER HWPRECIP)
