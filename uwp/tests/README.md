@@ -156,6 +156,24 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   draws and blend a shared CPU pixel; they do not render complete game scenes.
 - **Fog boundaries and captures:** compare 24,960 production shader row selections with the actual Software zlight/scalelight tables and 16,384 palette-remap samples. Exercise full/split viewport bounds, eye-plane crossings, entirely behind-camera/offscreen faces, retained captures, resize/texture/view/buffer failures, resource accounting, t8/b3 bindings and light/darkness constants. Shared blend tests verify complete fog/water composites retain color masks and restore ordinary blending. Custom dispatch tests check fog overrides, Ignore custom shaders and capture failure; wall-slice tests reject directional light adjustment on fog. Windows WARP executes the production SM4 fog shader for all light levels, wall/plane rows, varying depth, full/half-width viewports, palette lookup and smooth tint/fade. An injected reciprocal-depth shader must fail the same pixel oracle. Complete fog volumes, portal/stencil interactions, overlapping volume visuals, Xbox performance and every split-screen visual check still need device testing.
 - **Sprite brightmaps:** execute the shared Software brightmap cache, hardware sprite/precipitation admission and draw texture-selection blocks, hardware mipmap loaders, batch replay blocks and Direct3D texture binding. Check 13 projection cases: frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps, rolled sprites and independent width/height mismatches. All four draw paths (ordinary, light-split, precipitation and linkdraw) must bind the base before the brightmap, mark the first upload and cached binds with `TF_BRIGHTMAP` (including retained CPU data after GPU eviction), avoid translating the brightmap, and clear texture unit 1 for a following nonbright sprite using the same base, with batching on and off (eight path/mode cases). Dependency mocks stop at WAD lookup, color translation, patch allocation and GPU upload; these checks do not render sprite pixels or validate Xbox visuals.
+- **Spring wall silhouettes:** `spring_clip` executes the production silhouette
+  helpers, the complete ordinary sprite draw function, both light-split sprite
+  submissions, the solid-wall recording and both opaque FOF side recordings
+  (extracted from `HWR_ProcessSeg` before light slicing, including the texture
+  gate that leaves masked holes depth-tested). Independent ray/triangle samples
+  check a spring hidden inside an angled box (with a plain and a 3D floor side,
+  and an oblique camera), a spring in front of a wall left as the exact quad,
+  a spring partly behind a wall's edge with only the covered part removed, sloped
+  walls in either direction, a wall crossing the camera plane, a wall wholly nearer than
+  the origin, and an ordinary sprite or always-on-top spring left untouched. FOF
+  sides are admitted when opaque, whether solid or intangible; fog and translucent
+  sides are not. Zone allocation and GPU submission are stubs that collect the
+  submitted triangles. CTest requires four negative controls to fail:
+  `--negative-full` and `--negative-edge` restore the old per-pixel depth behavior,
+  while `--negative-front` and `--negative-nonspring` inject the clipping errors the
+  preservation cases guard against (ordering lost, or the `MF_SPRING` gate lost),
+  since old depth testing already preserves those two cases. Seg traversal,
+  GPU depth/stencil and Xbox visuals still need separate validation.
 - **Palette brightmaps:** Windows WARP executes the production SM4 `PSSoftware` palette path. Brightmapped texels must use the base colormap's full-bright row at their palette index, while other texels keep the surface colormap row from `R_DoomColormap` at the rasterized depth. The negative control restores the old surface-colormap row for brightmapped texels and must fail. This validates the shader on WARP, not Xbox palette-rendering visuals.
 - **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production
   `r_d3d12/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no

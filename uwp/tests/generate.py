@@ -246,7 +246,7 @@ def generate(engine, output):
         "PROJECT_PRECIP": function_section(hardware, "HWR_ProjectPrecipitationSprite",
             "\tvis->gpatch =", "\n\tvis->flip ="),
         "LINKDRAW": function_section(hardware, "HWR_LinkDrawHackFinish",
-            "\t\tHWR_GetPatch(linkdrawlist[i].spr->gpatch);", "\n\t\tHWR_ProcessPolygon"),
+            "\t\tHWR_GetPatch(linkdrawlist[i].spr->gpatch);", "\n\t\tHWR_DrawSpringPolygon"),
         "CURRENT_TEXTURE": batching.function("HWR_SetCurrentTexture"),
         "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
             "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
@@ -270,6 +270,55 @@ def generate(engine, output):
         sprite_parts[token] = function_section(hardware, function,
             "\tHWR_GetMappedPatch(gpatch, spr->colormap);", after)
     render(templates / "sprite_brightmap.cpp.in", sprite_parts, output / "sprite_brightmap.cpp")
+
+    # Exercise the actual submission sites and endpoint recording, without
+    # duplicating the large sprite light-list and seg traversal dependencies.
+    split_sprite = hardware.function("HWR_SplitSprite")
+    draw_sprite = hardware.function("HWR_DrawSprite")
+    submission = "HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);"
+    if split_sprite.count(submission) != 2 or "HWR_ProcessPolygon(" in split_sprite:
+        raise ValueError("spring light-split sprite submissions bypass silhouette clipping")
+    if draw_sprite.count(submission) != 1:
+        raise ValueError("spring ordinary sprite submission bypasses silhouette clipping")
+    split_calls = []
+    split_code = split_sprite.split("\n", 1)[1]
+    split_offset = hardware.text.index(split_code.rstrip("\n"))
+    for match in re.finditer(re.escape(submission), split_code):
+        split_calls.append(hardware.annotated(split_offset + match.start(),
+            split_offset + match.end()))
+    routes = ("static void SpringSplitPiece(FSurfaceInfo *surface, FOutVector *wallVerts, "
+        "FBITFIELD blend, INT32 shader, gl_vissprite_t *spr, bool final) {\n"
+        "FSurfaceInfo &Surf = *surface;\nif (final) {\n" + split_calls[1] +
+        "} else {\n" + split_calls[0] + "}\n}\n")
+    solid = function_section(hardware, "HWR_ProcessSeg",
+        "\t\t// [UWP]: Software clips springs to this solid seg's silhouette.",
+        "\t\t// Single sided line")
+    routes += ("static void SpringRecordSolid(FOutVector *wallVerts, fixed_t worldtop, "
+        "fixed_t worldtopslope, fixed_t worldbottom, fixed_t worldbottomslope) {\n"
+        + solid + "}\n")
+    process_seg = hardware.function("HWR_ProcessSeg").split("\n", 1)[1].rstrip("\n")
+    seg_offset = hardware.text.index(process_seg)
+    record_start = "\t\t\t\t\t// [UWP]: Opaque solid FOF silhouette before lighting splits."
+    record_end = "\t\t\t\t\t\tHWR_AddSpringWall(wallVerts, rover);\n"
+    starts = [m.start() for m in re.finditer(re.escape(record_start), process_seg)]
+    if len(starts) != 2:
+        raise ValueError("expected two opaque FOF side recording routes")
+    for index, start in enumerate(starts):
+        end = process_seg.index(record_end, start) + len(record_end)
+        recording = process_seg[start:end]
+        if "if (!(grTex->mipmap.flags & TF_TRANSPARENT))" not in recording:
+            raise ValueError("masked FOF holes must retain ordinary depth-tested behavior")
+        # The recording must come before this side is split by sector lights.
+        if "HWR_SplitWall(" in recording or "HWR_SplitWall(" not in process_seg[end:end + 200]:
+            raise ValueError("opaque FOF recording must precede light slicing")
+        routes += (f"static void SpringRecordFOF{index}(FOutVector *wallVerts, ffloor_t *rover) {{\n"
+            + hardware.annotated(seg_offset + start, seg_offset + end) + "}\n")
+    render(templates / "spring_clip.cpp.in", {
+        "HELPERS": hardware.section("// [UWP]: Software hides a spring that sits inside a wall.",
+            "// End [UWP] spring silhouette geometry."),
+        "DRAW_SPRITE": draw_sprite,
+        "ROUTES": routes,
+    }, output / "spring_clip.cpp")
 
     render(templates / "surface_probe.cpp.in", {
         "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
