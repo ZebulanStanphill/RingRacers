@@ -1,4 +1,4 @@
-From 29c3316335aca4ee9d1111f587b0b801d00288b0 Mon Sep 17 00:00:00 2001
+From 04886f3d149238415f2a2e5d31eadf844dc1ac6a Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -517,6 +517,17 @@ Agent: Codex (Sol, Encore screen effects)
 Model: gpt-6.1-sol
 Agent: Claude Code (Opus, diagnosis and review)
 Model: claude-opus-5-5
+
+- [UWP]: Fog and water captures in VibeRant's Direct3D 12 driver: the fog
+  and water scene textures, the water sine table, grouped water captures with
+  one render-target transition round trip per call, and the fog (b3) and water
+  (b5) constants reserved together with b0. Small texture placement now checks
+  the top mip's tiled footprint.
+
+Agent: Codex (Sol, D3D12 S6)
+Model: gpt-6.1-sol
+Agent: Claude Code (Opus, D3D12 S6 review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -554,6 +565,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
  src/hardware/r_d3d12/allocators.h         |  196 +
  src/hardware/r_d3d12/d3d12_arenas.inc     |   94 +
+ src/hardware/r_d3d12/d3d12_captures.inc   |  271 +
  src/hardware/r_d3d12/d3d12_core.cpp       |  845 +++
  src/hardware/r_d3d12/d3d12_core.h         |  140 +
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
@@ -566,13 +578,13 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_present.h      |   50 +
  src/hardware/r_d3d12/d3d12_prewarm.cpp    |  212 +
  src/hardware/r_d3d12/d3d12_prewarm.h      |   17 +
- src/hardware/r_d3d12/d3d12_screens.inc    |  567 ++
+ src/hardware/r_d3d12/d3d12_screens.inc    |  576 ++
  src/hardware/r_d3d12/d3d12_upload.cpp     |  112 +
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2801 +++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   56 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2844 +++++++++
+ src/hardware/r_d3d12/r_d3d12.h            |   58 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -629,7 +641,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 111 files changed, 22895 insertions(+), 1140 deletions(-)
+ 112 files changed, 23220 insertions(+), 1140 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -639,6 +651,7 @@ Model: claude-opus-5-5
  create mode 100644 src/hardware/r_d3d11/shaders.hlsl
  create mode 100644 src/hardware/r_d3d12/allocators.h
  create mode 100644 src/hardware/r_d3d12/d3d12_arenas.inc
+ create mode 100644 src/hardware/r_d3d12/d3d12_captures.inc
  create mode 100644 src/hardware/r_d3d12/d3d12_core.cpp
  create mode 100644 src/hardware/r_d3d12/d3d12_core.h
  create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
@@ -14310,6 +14323,283 @@ index 0000000..b3b028d
 +	for (auto &heap : g_textureHeaps) Core_Retire(heap);
 +	g_textureHeaps.clear();
 +}
+diff --git a/src/hardware/r_d3d12/d3d12_captures.inc b/src/hardware/r_d3d12/d3d12_captures.inc
+new file mode 100644
+index 0000000..304f980
+--- /dev/null
++++ b/src/hardware/r_d3d12/d3d12_captures.inc
+@@ -0,0 +1,271 @@
++// DR. ROBOTNIK'S RING RACERS
++//-----------------------------------------------------------------------------
++// This program is free software distributed under the
++// terms of the GNU General Public License, version 2.
++// See the 'LICENSE' file for more details.
++//-----------------------------------------------------------------------------
++/// \file d3d12_captures.inc
++/// \brief [UWP]: Fog and grouped water captures
++
++// Included by r_d3d12.cpp: fog and grouped immutable water captures.
++
++// Capture textures keep persistent SRVs. Replacement retires both resource and descriptor.
++bool EnsureCaptureTexture(GpuTexture &texture, UINT width, UINT height, DXGI_FORMAT format)
++{
++	if (texture.res && texture.width == width && texture.height == height && texture.format == format) return true;
++	const bool replacing = texture.res != nullptr;
++	if (!CreateTextureStorage(&texture, 0, width, height, format, false, nullptr)) return false;
++	texture.res->SetName(&texture == &g_waterScene ? L"water scene" : L"fog scene");
++	if (replacing) g_stats.texturesDeleted++;
++	return true;
++}
++
++bool EnsureWaterSine()
++{
++	if (g_waterSine.res) return true;
++	INT32 waves[FINEANGLES];
++	for (int i = 0; i < FINEANGLES; i++) waves[i] = FINESINE(i);
++	if (!CreateTextureStorage(&g_waterSine, 0, FINEANGLES, 1, DXGI_FORMAT_R32_SINT, false, waves)) return false;
++	g_waterSine.res->SetName(L"immutable water sine");
++	g_stats.textureUploads++;
++	g_stats.textureUploadBytes += sizeof waves;
++	return true;
++}
++
++// One render-target transition pair surrounds all the growth strips.
++void BeginCaptureRegions(GpuTexture &texture)
++{
++	Transition(texture, D3D12_RESOURCE_STATE_COPY_DEST);
++	Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
++	Core_FlushBarriers();
++}
++void CopyRenderTargetRegion(GpuTexture &texture, const D3D12_BOX &box)
++{
++	D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
++	from.pResource = g_rt.Get();
++	from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++	to.pResource = texture.res.Get();
++	to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++	Core_List()->CopyTextureRegion(&to, box.left, box.top, 0, &from, &box);
++}
++void EndCaptureRegions(GpuTexture &texture)
++{
++	if (&texture == &g_waterScene) g_testWaterRoundTrips++;
++	Transition(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
++	Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
++}
++void SetPixelSrv(UINT parameter, GpuTexture &texture)
++{
++	Core_List()->SetGraphicsRootDescriptorTable(parameter, SrvGpu(texture.srv));
++	g_stats.tableSets++;
++}
++// Allocate before copying: this can submit. The draw supersedes this slot with a combined b0/capture
++// reservation, using the CPU snapshot below, then retags and restores it after other ring allocations.
++bool SetPixelConstants(UINT parameter, const void *data, size_t size)
++{
++	UploadAllocation slot = g_constantRing.Alloc(256, 256);
++	if (!slot) return false;
++	memcpy(slot.cpu, data, size);
++	memset(static_cast<UINT8 *>(slot.cpu) + size, 0, 256 - size);
++	memcpy(parameter == 18 ? g_waterConstantData : g_fogConstantData, data, size);
++	(parameter == 18 ? g_waterConstants : g_fogConstants) = slot;
++	g_stats.constantUpdates++;
++	return true;
++}
++
++bool BindCaptureState()
++{
++	if (g_waterRefraction)
++	{
++		if (!g_constantRing.Touch(g_waterConstants, 256)) return false;
++		Core_List()->SetGraphicsRootConstantBufferView(18, g_waterConstants.gpu);
++		SetPixelSrv(12, g_waterScene);
++		SetPixelSrv(13, g_waterSine);
++		g_stats.rootSets++;
++	}
++	if (g_fogRemap)
++	{
++		if (!g_constantRing.Touch(g_fogConstants, 256)) return false;
++		Core_List()->SetGraphicsRootConstantBufferView(16, g_fogConstants.gpu);
++		SetPixelSrv(11, g_fogScene);
++		g_stats.rootSets++;
++	}
++	return true;
++}
++
++static void WaterCaptureBounds(const FOutVector *vertices, UINT count, const Mat4 &matrix,
++	const int viewport[4], UINT height, D3D12_BOX &box)
++{
++	const float left = (float)viewport[0], top = (float)height - viewport[1] - viewport[3];
++	float x0 = left + viewport[2], y0 = top + viewport[3], x1 = left, y1 = top;
++	UINT inFront = 0;
++	for (UINT i = 0; i < count; i++)
++		inFront += matrix.m[3]*vertices[i].x + matrix.m[7]*vertices[i].y
++			+ matrix.m[11]*vertices[i].z + matrix.m[15] > 0.0001f;
++	if (!inFront)
++	{
++		box = {0, 0, 0, 0, 0, 1};
++		return; // a fully clipped face cannot sample the scene
++	}
++	for (UINT i = 0; i < count; i++)
++	{
++		const FOutVector &v = vertices[i];
++		const float w = matrix.m[3]*v.x + matrix.m[7]*v.y + matrix.m[11]*v.z + matrix.m[15];
++		if (!(w > 0.0001f))
++		{
++			x0 = left; y0 = top; x1 = left + viewport[2]; y1 = top + viewport[3];
++			break;
++		}
++		const float x = matrix.m[0]*v.x + matrix.m[4]*v.y + matrix.m[8]*v.z + matrix.m[12];
++		const float y = matrix.m[1]*v.x + matrix.m[5]*v.y + matrix.m[9]*v.z + matrix.m[13];
++		const float px = left + (x/w + 1)*0.5f*viewport[2];
++		const float py = top + (1 - y/w)*0.5f*viewport[3];
++		x0 = std::min(x0, px); y0 = std::min(y0, py);
++		x1 = std::max(x1, px); y1 = std::max(y1, py);
++	}
++	box.left = (UINT)std::clamp(floorf(x0), left, left + viewport[2]);
++	box.top = (UINT)std::clamp(floorf(y0) - 16, top, top + viewport[3]);
++	box.right = (UINT)std::clamp(ceilf(x1), left, left + viewport[2]);
++	box.bottom = (UINT)std::clamp(ceilf(y1) + 16, top, top + viewport[3]);
++	box.front = 0; box.back = 1;
++}
++
++// wholeView: an add-on vertex stage may move the surface, so the CPU-projected
++// bounds can't be trusted; capture its whole viewport instead.
++static bool CaptureWaterScene(FSurfaceInfo *surface, FBITFIELD flags,
++	const FOutVector *vertices, UINT count, bool wholeView = false)
++{
++	if (!CanDraw() || !surface || !g_rt || !vertices || !count)
++		return false;
++	D3D12_BOX needed;
++	WaterCaptureBounds(vertices, count, Multiply(g_projection, g_modelview.back()), g_gl.viewport, g_rtHeight, needed);
++	if (wholeView)
++	{
++		const UINT left = g_gl.viewport[0], top = g_rtHeight - g_gl.viewport[1] - g_gl.viewport[3];
++		needed = {left, top, 0, left + g_gl.viewport[2], top + g_gl.viewport[3], 1};
++	}
++	if (needed.right <= needed.left || needed.bottom <= needed.top) return false;
++	const bool resized = !g_waterScene.res || g_waterScene.width != g_rtWidth
++		|| g_waterScene.height != g_rtHeight || g_waterScene.format != kScreenFormat;
++	if (!EnsureCaptureTexture(g_waterScene, g_rtWidth, g_rtHeight, kScreenFormat)) return false;
++	if (resized) g_waterCaptureReady = false;
++	if (!EnsureWaterSine()) return false;
++	// b5 and t9 stay separate from the palette, wipe and add-on shader slots.
++	struct WaterConstants { float viewport[4]; INT32 blend; INT32 pad[3]; };
++	const FBITFIELD blend = flags & (PF_Blending & ~(PF_Masked | PF_Occlude));
++	INT32 mode = 0;
++	if (blend == PF_Additive) mode = 1;
++	else if (blend == PF_Subtractive) mode = 2;
++	else if (blend == PF_ReverseSubtract) mode = 3;
++	else if (blend == PF_Multiplicative) mode = 4;
++	else if (blend == PF_Environment) mode = 5;
++	const WaterConstants constants = {{(float)g_gl.viewport[0],
++		(float)g_rtHeight - g_gl.viewport[1] - g_gl.viewport[3],
++		(float)(g_gl.viewport[0] + g_gl.viewport[2] - 1),
++		(float)(g_rtHeight - g_gl.viewport[1] - 1)}, mode, {0, 0, 0}};
++	if (!SetPixelConstants(18, &constants, sizeof constants)) return false;
++	// Grow an immutable capture only into pixels no earlier piece could have
++	// touched. The old rectangle already includes every earlier polygon and
++	// its ripple margin. Never overwrite it with the partially refracted scene.
++	const bool fresh = !g_waterCaptureGrouped || !g_waterCaptureReady;
++	D3D12_BOX bounds = needed;
++	if (!fresh)
++	{
++		bounds.left = std::min(bounds.left, g_waterCapturedBounds.left);
++		bounds.top = std::min(bounds.top, g_waterCapturedBounds.top);
++		bounds.right = std::max(bounds.right, g_waterCapturedBounds.right);
++		bounds.bottom = std::max(bounds.bottom, g_waterCapturedBounds.bottom);
++	}
++	if (fresh || bounds.left != g_waterCapturedBounds.left || bounds.top != g_waterCapturedBounds.top
++		|| bounds.right != g_waterCapturedBounds.right || bounds.bottom != g_waterCapturedBounds.bottom)
++	{
++		BeginCaptureRegions(g_waterScene);
++		const auto copy = [&](UINT left, UINT top, UINT right, UINT bottom)
++		{
++			if (right <= left || bottom <= top) return;
++			const D3D12_BOX box = {left, top, 0, right, bottom, 1};
++			CopyRenderTargetRegion(g_waterScene, box);
++			g_stats.screens++;
++			g_stats.waterCopies++;
++			g_testWaterCopies++;
++			g_stats.waterPixels += (UINT64)(right - left) * (bottom - top);
++		};
++		if (fresh)
++			copy(bounds.left, bounds.top, bounds.right, bounds.bottom);
++		else
++		{
++			const D3D12_BOX &old = g_waterCapturedBounds;
++			copy(bounds.left, bounds.top, bounds.right, old.top);
++			copy(bounds.left, old.bottom, bounds.right, bounds.bottom);
++			copy(bounds.left, old.top, old.left, old.bottom);
++			copy(old.right, old.top, bounds.right, old.bottom);
++		}
++		EndCaptureRegions(g_waterScene);
++		g_waterCapturedBounds = bounds;
++		g_waterCaptureReady = g_waterCaptureGrouped;
++	}
++	SetPixelSrv(12, g_waterScene);
++	SetPixelSrv(13, g_waterSine);
++	return true;
++}
++
++static void FogCaptureBounds(const FOutVector *vertices, UINT count, const Mat4 &matrix,
++	const int viewport[4], UINT height, D3D12_BOX &box)
++{
++	const float left = (float)viewport[0], top = (float)height - viewport[1] - viewport[3];
++	float x0 = left + viewport[2], y0 = top + viewport[3], x1 = left, y1 = top;
++	UINT inFront = 0;
++	for (UINT i = 0; i < count; i++)
++		inFront += matrix.m[3]*vertices[i].x + matrix.m[7]*vertices[i].y
++			+ matrix.m[11]*vertices[i].z + matrix.m[15] > 0.0001f;
++	if (!inFront)
++	{
++		box = {0, 0, 0, 0, 0, 1};
++		return;
++	}
++	for (UINT i = 0; i < count; i++)
++	{
++		const FOutVector &v = vertices[i];
++		const float w = matrix.m[3]*v.x + matrix.m[7]*v.y + matrix.m[11]*v.z + matrix.m[15];
++		if (!(w > 0.0001f))
++		{
++			x0 = left; y0 = top; x1 = left + viewport[2]; y1 = top + viewport[3];
++			break;
++		}
++		const float x = matrix.m[0]*v.x + matrix.m[4]*v.y + matrix.m[8]*v.z + matrix.m[12];
++		const float y = matrix.m[1]*v.x + matrix.m[5]*v.y + matrix.m[9]*v.z + matrix.m[13];
++		const float px = left + (x/w + 1)*0.5f*viewport[2];
++		const float py = top + (1 - y/w)*0.5f*viewport[3];
++		x0 = std::min(x0, px); y0 = std::min(y0, py);
++		x1 = std::max(x1, px); y1 = std::max(y1, py);
++	}
++	box.left = (UINT)std::clamp(floorf(x0), left, left + viewport[2]);
++	box.top = (UINT)std::clamp(floorf(y0), top, top + viewport[3]);
++	box.right = (UINT)std::clamp(ceilf(x1), left, left + viewport[2]);
++	box.bottom = (UINT)std::clamp(ceilf(y1), top, top + viewport[3]);
++	box.front = 0; box.back = 1;
++}
++
++static bool CaptureFogScene(FSurfaceInfo *surface, FBITFIELD flags,
++	const FOutVector *vertices, UINT count)
++{
++	if (!CanDraw() || !surface || !g_rt || !vertices || !count)
++		return false;
++	D3D12_BOX box;
++	FogCaptureBounds(vertices, count, Multiply(g_projection, g_modelview.back()), g_gl.viewport, g_rtHeight, box);
++	if (box.right <= box.left || box.bottom <= box.top) return false;
++	if (!EnsureCaptureTexture(g_fogScene, g_rtWidth, g_rtHeight, kScreenFormat)) return false;
++	struct FogConstants { INT32 plane, lightnum; float viewRatio; INT32 pad; };
++	const FogConstants constants = {(flags & PF_FogPlane) ? 1 : 0,
++		R_AdjustLightLevel(std::clamp((INT32)surface->LightInfo.light_level >> 3, 0, 31)),
++		(float)g_gl.viewport[2] / g_screenWidth, 0};
++	if (!SetPixelConstants(16, &constants, sizeof constants)) return false;
++	BeginCaptureRegions(g_fogScene);
++	CopyRenderTargetRegion(g_fogScene, box);
++	EndCaptureRegions(g_fogScene);
++	SetPixelSrv(11, g_fogScene);
++	g_stats.screens++;
++	g_stats.fogCaptures++;
++	g_testFogCopies++;
++	return true;
++}
 diff --git a/src/hardware/r_d3d12/d3d12_core.cpp b/src/hardware/r_d3d12/d3d12_core.cpp
 new file mode 100644
 index 0000000..ff690d3
@@ -18910,10 +19200,10 @@ index 0000000..d58584f
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_screens.inc b/src/hardware/r_d3d12/d3d12_screens.inc
 new file mode 100644
-index 0000000..8a686ee
+index 0000000..33815dd
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_screens.inc
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,576 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -19136,6 +19426,15 @@ index 0000000..8a686ee
 +//			a new size
 +void D3D_FlushScreenTextures(void)
 +{
++	SetWaterSurface(0);
++	for (GpuTexture *capture : {&g_waterScene, &g_waterSine, &g_fogScene})
++	{
++		if (capture->res) g_stats.texturesDeleted++;
++		RetireTexture(*capture);
++	}
++	g_waterRefraction = g_fogRemap = false;
++	g_waterConstants = g_fogConstants = {};
++	g_waterCapturedBounds = {};
 +	// The lists in flight keep using them; their resources and views go when the fence says so
 +	if (g_fadeScreen.res)
 +		g_stats.texturesDeleted++;
@@ -19784,10 +20083,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..ca21d57
+index 0000000..3db5f2c
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2801 @@
+@@ -0,0 +1,2844 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -19831,6 +20130,7 @@ index 0000000..ca21d57
 +#include "../../screen.h"
 +#include "../../p_tick.h"
 +#include "../../r_fps.h"
++#include "../../r_main.h"
 +#include "../../doomstat.h"
 +#include "../../f_finale.h"
 +#include "../../w_wad.h"
@@ -19880,6 +20180,7 @@ index 0000000..ca21d57
 +	double mipMs, textureCreateMs;
 +	int screens; // screen textures, wipes, postimg, the intermission background and the final screen
 +	int screenCopies, wipes, wipeFallbacks, postImages, fadeMapFallbacks;
++	UINT64 waterCopies, waterPixels, fogCaptures;
 +	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
 +	int portals, fadeMaps;
 +	int lightTablesCreated, lightTablesUpdated, paletteUploads, paletteSteps;
@@ -20387,7 +20688,18 @@ index 0000000..ca21d57
 +// The lookup table and light table last set at t2 and t3 on the open list, as descriptor handles
 +UINT64 g_boundPaletteTables[2] = {};
 +void Flush();
-+void SetWaterSurface(INT32) { D3D12_LOG_ONCE("water capture not drawn yet (S6)"); }
++GpuTexture g_waterScene, g_waterSine, g_fogScene;
++UploadAllocation g_waterConstants, g_fogConstants;
++UINT64 g_testWaterCopies = 0, g_testFogCopies = 0, g_testWaterRoundTrips = 0;
++UINT8 g_waterConstantData[32] = {}, g_fogConstantData[16] = {};
++static bool g_waterCaptureGrouped = false, g_waterCaptureReady = false;
++static D3D12_BOX g_waterCapturedBounds = {};
++static void SetWaterSurface(INT32 state)
++{
++	g_waterCaptureGrouped = state != 0;
++	if (state != 2) g_waterCaptureReady = false;
++}
++bool BindCaptureState();
 +void SetLightTable(UINT32 id)
 +{
 +	if (!id)
@@ -20659,11 +20971,18 @@ index 0000000..ca21d57
 +bool CreateTextureResource(GpuTexture &texture, D3D12_RESOURCE_DESC desc)
 +{
 +	CollectTextureBlocks();
-+	// 4 KB alignment is only valid if the most detailed mip is at most 64 KB; asking otherwise is a validation error
-+	const UINT64 topBytes = (UINT64)desc.Width * desc.Height * (desc.Format == DXGI_FORMAT_R8_UNORM ? 1 : 4);
++	// Small alignment requires the top mip's tiled footprint to fit in 64 KB.
++	// Thin textures can exceed sixteen 4 KB tiles even when their raw bytes fit.
++	const UINT tileSize = desc.Format == DXGI_FORMAT_R8_UNORM ? 64
++		: (desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM || desc.Format == DXGI_FORMAT_R32_SINT) ? 32 : 0;
++	const bool smallEligible = tileSize && desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D
++		&& desc.DepthOrArraySize == 1 && desc.SampleDesc.Count == 1
++		&& desc.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN
++		&& !(desc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL))
++		&& ((desc.Width + tileSize - 1) / tileSize) * (((UINT64)desc.Height + tileSize - 1) / tileSize) <= 16;
 +	D3D12_RESOURCE_ALLOCATION_INFO info = {};
 +	bool smallPlacement = false;
-+	if (topBytes <= 64 * 1024)
++	if (smallEligible)
 +	{
 +		desc.Alignment = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
 +		info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc);
@@ -21188,13 +21507,21 @@ index 0000000..ca21d57
 +	c.texMode = g_gl.texture2D && g_units[0] && g_units[0]->res
 +		? (g_gl.texEnv == TE_MODULATE ? 1 : 2) : 0;
 +	c.palette = (g_paletteRendering && g_paletteLookup.res && g_currentLightTable) ? 1 : 0;
-+	if (!g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
++	if (g_waterRefraction || g_fogRemap || !g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
 +		|| memcmp(&c, &g_lastConstants, sizeof c) != 0)
 +	{
-+		auto slot = g_constantRing.Alloc(512, 256);
++		// Keep b0 and the capture CBV in one reservation so a wrap cannot invalidate either.
++		auto slot = g_constantRing.Alloc((g_waterRefraction || g_fogRemap) ? 768 : 512, 256);
 +		if (!slot.cpu) return false;
 +		memcpy(slot.cpu, &c, sizeof c);
 +		memset(static_cast<UINT8 *>(slot.cpu) + sizeof c, 0, 512 - sizeof c);
++		if (g_waterRefraction || g_fogRemap)
++		{
++			UploadAllocation capture = {static_cast<UINT8 *>(slot.cpu) + 512, slot.gpu + 512, slot.offset + 512, slot.generation};
++			memset(capture.cpu, 0, 256);
++			memcpy(capture.cpu, g_waterRefraction ? g_waterConstantData : g_fogConstantData, g_waterRefraction ? 32 : 16);
++			(g_waterRefraction ? g_waterConstants : g_fogConstants) = capture;
++		}
 +		g_constantAllocation = slot;
 +		g_lastConstants = c;
 +		g_constantsValid = true;
@@ -21281,7 +21608,7 @@ index 0000000..ca21d57
 +		g_lastKey = key; g_lastPipeline = pso;
 +	}
 +	// Constants may submit a full ring and reopen the list: bind the PSO afterwards.
-+	if (!ApplyConstants()) return false;
++	if (!ApplyConstants() || !BindCaptureState()) return false;
 +	if (g_boundPipeline != pso)
 +	{
 +		Core_List()->SetPipelineState(pso); g_boundPipeline = pso; g_stats.psoChanges++;
@@ -21688,6 +22015,8 @@ index 0000000..ca21d57
 +	g_gl.texture2D = true;
 +}
 +
++#include "d3d12_captures.inc"
++
 +void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *vertices, UINT count)
 +{
 +	static float poly[4] = {0, 0, 0, 0};
@@ -21736,9 +22065,14 @@ index 0000000..ca21d57
 +	}
 +
 +	SetUniforms(pSurf, poly, tint, fade);
-+	if (PolyFlags & PF_Ripple) D3D12_LOG_ONCE("water capture not drawn yet (S6)");
-+	if (PolyFlags & PF_Fog) D3D12_LOG_ONCE("fog capture not drawn yet (S6)");
-+	(void)vertices; (void)count;
++	const FBITFIELD blend = PolyFlags & (PF_Blending & ~(PF_Masked | PF_Occlude));
++	const bool refractingBlend = blend == PF_Translucent || blend == PF_Additive
++		|| blend == PF_Subtractive || blend == PF_ReverseSubtract
++		|| blend == PF_Multiplicative || blend == PF_Environment;
++	g_waterRefraction = (PolyFlags & PF_Ripple) && g_program == SHADER_WATER
++		&& refractingBlend && !cv_reducevfx.value && CaptureWaterScene(pSurf, PolyFlags, vertices, count);
++	g_fogRemap = (PolyFlags & PF_Fog) && g_program == SHADER_FOG
++		&& !CustomDrawProgram(LAYOUT_POLY) && CaptureFogScene(pSurf, PolyFlags, vertices, count);
 +}
 +
 +void D3D_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
@@ -22488,7 +22822,8 @@ index 0000000..ca21d57
 +		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
 +	I_OutputMsg("UWP perf:   D3D12: screens: %.1f per frame (%.1f copies, %.1f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay\n",
 +		s.screens / n, s.screenCopies / n, core.barriers / n, s.wipes, s.wipeFallbacks, s.postImages, s.fadeMaps, s.fadeMapFallbacks);
-+	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f portal calls; fog/water captures, portals, custom shaders\n", s.portals / n);
++	I_OutputMsg("UWP perf:   D3D12: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);
++	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f portal calls; portals, custom shaders\n", s.portals / n);
 +
 +	if (g_paletteRendering || s.lightTablesCreated || s.lightTablesUpdated || s.paletteUploads)
 +		I_OutputMsg("UWP perf:   D3D12: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
@@ -22518,6 +22853,13 @@ index 0000000..ca21d57
 +		I_OutputMsg("UWP perf:   D3D12: memory: local unavailable; render targets/present slots ~%.1f MB\n", targets / 1048576.0);
 +
 +	memset(&g_stats, 0, sizeof g_stats);
++}
++
++void D3D12_GetCaptureCountsForTest(UINT64 *fogCopies, UINT64 *waterCopies, UINT64 *waterRoundTrips)
++{
++	*fogCopies = g_testFogCopies;
++	*waterCopies = g_testWaterCopies;
++	*waterRoundTrips = g_testWaterRoundTrips;
 +}
 +
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs)
@@ -22591,10 +22933,10 @@ index 0000000..ca21d57
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
 new file mode 100644
-index 0000000..843cf5e
+index 0000000..c064cc3
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.h
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,58 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -22619,8 +22961,10 @@ index 0000000..843cf5e
 +extern "C" {
 +#endif
 +
-+// Test hook: set before initialization; zero keeps the production ring size.
++// Test hook: cumulative capture counts, unaffected by perf logging.
++void D3D12_GetCaptureCountsForTest(UINT64 *fogCopies, UINT64 *waterCopies, UINT64 *waterRoundTrips);
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs);
++// Test hook: set before initialization; zero keeps the production ring size.
 +void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant);
 +// Runs palette rendering's last step and reads its result like ReadRect reads the screen; nothing is read without it
 +void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data);

@@ -116,6 +116,91 @@ def generate(engine, output):
         "CAPTURE": driver.function("CaptureFogScene"),
         "INDEXED": driver.function("D3D_DrawIndexedTriangles"),
     }, output / "fog_capture.cpp")
+    captures = Source(engine / "src/hardware/r_d3d12/d3d12_captures.inc")
+    driver12 = Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp")
+    for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
+        name = "Capture" + kind + "Scene"
+        # Compare the exact production initializer bytes, including padding,
+        # without introducing mocks for D3D11 device/context operations.
+        reference = function_section(driver, name, "\tstruct " + kind + "Constants",
+            "\tg_context->UpdateSubresource")
+        reference = ("std::vector<unsigned char> ReferenceConstants(FSurfaceInfo *surface, FBITFIELD flags){\n"
+            "(void)surface;\n" + reference + "auto p=reinterpret_cast<const unsigned char*>(&constants);\n"
+            "return {p,p+sizeof constants};\n}")
+        split = f"""
+        for(auto flags:{{FBITFIELD(PF_Translucent),FBITFIELD(PF_Additive),FBITFIELD(PF_Subtractive),
+                FBITFIELD(PF_ReverseSubtract),FBITFIELD(PF_Multiplicative),FBITFIELD(PF_Environment),
+                FBITFIELD(PF_Fog),FBITFIELD(PF_Fog|PF_FogPlane)}}){{
+            {'SetWaterSurface(1);' if kind == 'Water' else ''}
+            size_t before=copies.size();int rounds=begins;
+            assert(Capture(&surface,flags,poly,4));
+            assert(copies.size()==before+1&&begins==rounds+1&&ends==begins);
+            D3D12_BOX expected{{}};ReferenceBounds(poly,4,identity,g_gl.viewport,g_rtHeight,expected);
+            SameBox(copies.back(),expected);
+            assert(constants[{param}]==ReferenceConstants(&surface,flags));
+            assert(bound[{srv}]==&Scene);
+        }}
+"""
+        specific = """
+    // Each face gets current scenery; allocation is reused for identical targets.
+    int allocated=allocations;size_t count=copies.size();
+    for(int i=0;i<2;++i)assert(Capture(&surface,PF_Fog,poly,4));
+    assert(copies.size()==count+2&&allocations==allocated);
+"""
+        if kind == "Water":
+            specific = """
+    // Four-sided growth issues up to four strips in one transition round trip.
+    const std::vector<std::vector<int>> rectangles={{52,40,60,48},{48,38,58,46},
+        {57,43,66,53},{50,25,62,42},{44,48,64,61},{40,20,70,67}};
+    for(int reverse:{0,1}){
+        InitTarget();const auto original=g_rt.pixels;std::vector<bool> copied(128*96,false);
+        SetWaterSurface(1);UINT64 pixelsBefore=g_stats.waterPixels;bool sawFour=false;
+        for(size_t i=0;i<rectangles.size();++i){
+            const auto &r=rectangles[reverse?rectangles.size()-1-i:i];
+            auto piece=Rectangle(r[0],r[1],r[2],r[3]);if(i)SetWaterSurface(2);
+            size_t before=copies.size();int rounds=begins;
+            assert(Capture(&surface,PF_Translucent,piece.data(),4));
+            size_t strips=copies.size()-before;assert(strips<=4);sawFour|=strips==4;
+            assert(begins-rounds==int(strips!=0)&&ends==begins);
+            for(size_t n=before;n<copies.size();++n){
+                auto b=copies[n];for(UINT y=b.top;y<b.bottom;++y)for(UINT x=b.left;x<b.right;++x){
+                    assert(!copied[y*128+x]);copied[y*128+x]=true;
+                }
+            }
+            for(size_t n=0;n<copied.size();++n)if(copied[n])assert(Scene.pixels[n]==original[n]);
+            before=copies.size();rounds=begins;
+            assert(Capture(&surface,PF_Translucent,piece.data(),4));
+            assert(copies.size()==before&&begins==rounds);
+            for(int y=r[1];y<r[3];++y)for(int x=r[0];x<r[2];++x)g_rt.pixels[y*128+x]=99999;
+        }
+        assert(g_stats.waterPixels-pixelsBefore==UINT64(std::count(copied.begin(),copied.end(),true)));
+        if(!reverse)assert(sawFour);
+    }
+    // Identical bounds in a new group/view or standalone draw capture again.
+    for(int state:{0,1}){
+        SetWaterSurface(state);size_t before=copies.size();
+        assert(Capture(&surface,PF_Translucent,poly,4));assert(copies.size()==before+1);
+    }
+    SetWaterSurface(1);size_t fullBefore=copies.size();
+    assert(Capture(&surface,PF_Translucent,poly,4,true));
+    assert(copies.size()==fullBefore+1);D3D12_BOX full={0,0,0,128,96,1};SameBox(copies.back(),full);
+"""
+        render(templates / "capture_d3d12.cpp.in", {
+            "MULTIPLY": driver12.function("Multiply"),
+            "GLOBALS": (driver12.section("GpuTexture g_waterScene, g_waterSine, g_fogScene;", "bool BindCaptureState();") if kind == "Water" else
+                driver12.section("GpuTexture g_waterScene, g_waterSine, g_fogScene;", "UploadAllocation g_waterConstants") +
+                driver12.section("UINT64 g_testWaterCopies", "UINT8 g_waterConstantData")),
+            "BOUNDS": captures.function(kind + "CaptureBounds").replace(kind + "CaptureBounds", "CaptureBounds"),
+            "CAPTURE": captures.function(name).replace(name, "Capture").replace(kind + "CaptureBounds", "CaptureBounds"),
+            "REFERENCE_BOUNDS": driver.function(kind + "CaptureBounds").replace(kind + "CaptureBounds", "ReferenceBounds").replace("D3D11_BOX", "D3D12_BOX"),
+            "REFERENCE_CONSTANTS": reference,
+            "SPLIT_TEST": split,
+            "SPECIFIC_TEST": specific,
+            "SINE_FAILURE": "failSine=true;assert(!Capture(&surface,PF_Translucent,poly,4));failSine=false;" if kind == "Water" else "",
+        }, output / (kind.lower() + "_capture_d3d12.cpp"))
+        generated = output / (kind.lower() + "_capture_d3d12.cpp")
+        generated.write_text(re.sub(r"\bScene\b", "g_" + kind.lower() + "Scene", generated.read_text()))
+
     render(templates / "custom_dispatch.cpp.in", {
         "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),
         "CUSTOM_STATE": driver.section("struct CustomProgram\n{", "// r_opengl.c's Shader_SetUniforms"),

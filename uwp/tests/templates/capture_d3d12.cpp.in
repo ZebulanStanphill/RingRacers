@@ -1,0 +1,114 @@
+// DR. ROBOTNIK'S RING RACERS
+//-----------------------------------------------------------------------------
+// This program is free software distributed under the
+// terms of the GNU General Public License, version 2.
+// See the 'LICENSE' file for more details.
+//-----------------------------------------------------------------------------
+/// \file capture_d3d12.cpp.in
+/// \brief Native extraction checks for bounded D3D12 fog and water snapshots.
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include "hardware/hw_defs.h"
+#undef min
+#undef max
+using UINT=unsigned; using UINT64=uint64_t; using DXGI_FORMAT=int;
+struct Mat4 {float m[16];};
+const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
+@@MULTIPLY@@
+Mat4 g_projection=identity; std::vector<Mat4> g_modelview={identity};
+struct D3D12_BOX {UINT left,top,front,right,bottom,back;};
+struct GpuTexture {
+    UINT width=0,height=0; DXGI_FORMAT format=1; void *res=nullptr; std::vector<UINT> pixels;
+    explicit operator bool()const{return width!=0;}
+};
+GpuTexture g_rt;
+struct {int viewport[4]={0,0,128,96};} g_gl;
+UINT g_rtWidth=128,g_rtHeight=96,g_screenWidth=128; DXGI_FORMAT kScreenFormat=1;
+struct UploadAllocation {};
+struct {int texturesCreated=0,screens=0,waterCopies=0,fogCaptures=0;UINT64 waterPixels=0;} g_stats;
+UINT64 g_textureBytes=0;
+bool drawable=true,failTexture=false,failConstants=false,failSine=false;
+bool CanDraw(){return drawable;}
+int R_AdjustLightLevel(int light){return std::max(0,light-2);}
+GpuTexture *bound[19]={};
+std::vector<unsigned char> constants[19];
+std::vector<D3D12_BOX> copies;
+int begins=0,ends=0,allocations=0; GpuTexture *active=nullptr;
+bool EnsureCaptureTexture(GpuTexture &t,UINT w,UINT h,DXGI_FORMAT f){
+    if(failTexture)return false;
+    if(t.width!=w||t.height!=h||t.format!=f){
+        t.width=w;t.height=h;t.format=f;t.res=&t;t.pixels.assign(w*h,0);++allocations;
+    }
+    return true;
+}
+void BeginCaptureRegions(GpuTexture &t){assert(!active);active=&t;++begins;}
+void CopyRenderTargetRegion(GpuTexture &t,const D3D12_BOX &b){
+    assert(active==&t);assert(b.front==0&&b.back==1);
+    assert(b.left<b.right&&b.top<b.bottom&&b.right<=g_rt.width&&b.bottom<=g_rt.height);
+    for(UINT y=b.top;y<b.bottom;++y)for(UINT x=b.left;x<b.right;++x)
+        t.pixels[y*t.width+x]=g_rt.pixels[y*g_rt.width+x];
+    copies.push_back(b);
+}
+void EndCaptureRegions(GpuTexture &t){assert(active==&t);active=nullptr;++ends;}
+void SetPixelSrv(UINT param,GpuTexture &t){assert(param<19);bound[param]=&t;}
+bool SetPixelConstants(UINT param,const void *data,size_t size){
+    assert(param<19);if(failConstants)return false;
+    auto p=static_cast<const unsigned char*>(data);constants[param].assign(p,p+size);return true;
+}
+bool EnsureWaterSine(){return !failSine;}
+@@GLOBALS@@
+@@BOUNDS@@
+@@CAPTURE@@
+@@REFERENCE_BOUNDS@@
+@@REFERENCE_CONSTANTS@@
+
+void InitTarget(UINT w=128,UINT h=96,DXGI_FORMAT f=1){
+    g_rt.width=w;g_rt.height=h;g_rt.format=f;g_rt.pixels.resize(w*h);
+    for(UINT i=0;i<w*h;++i)g_rt.pixels[i]=i+1;
+    g_rtWidth=w;g_rtHeight=h;kScreenFormat=f;
+}
+std::vector<FOutVector> Rectangle(int x0,int y0,int x1,int y1){
+    float a=x0/64.f-1,b=x1/64.f-1,c=1-y1/48.f,d=1-y0/48.f;
+    return {{a,c,0,0,0},{b,c,0,0,0},{b,d,0,0,0},{a,d,0,0,0}};
+}
+void SameBox(const D3D12_BOX &a,const D3D12_BOX &b){
+    assert(a.left==b.left&&a.top==b.top&&a.right==b.right&&a.bottom==b.bottom);
+    assert(a.front==b.front&&a.back==b.back);
+}
+int main(){
+    InitTarget();FSurfaceInfo surface{};surface.LightInfo.light_level=240;
+    FOutVector poly[]={{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
+    // Compare production bounds to the still-shipping D3D11 implementation.
+    for(int vx:{0,64})for(int vy:{0,48}){
+        g_gl.viewport[0]=vx;g_gl.viewport[1]=vy;g_gl.viewport[2]=64;g_gl.viewport[3]=48;
+        for(int matrixCase:{0,1,2}){
+            Mat4 matrix=identity;if(matrixCase==1)matrix.m[15]=-1;
+            if(matrixCase==2){matrix.m[3]=1;matrix.m[15]=0;}
+            D3D12_BOX a{},b{};CaptureBounds(poly,4,matrix,g_gl.viewport,g_rtHeight,a);
+            ReferenceBounds(poly,4,matrix,g_gl.viewport,g_rtHeight,b);SameBox(a,b);
+        }
+@@SPLIT_TEST@@
+    }
+    std::copy(std::begin(identity.m),std::end(identity.m),g_projection.m);
+    g_gl.viewport[0]=g_gl.viewport[1]=0;g_gl.viewport[2]=128;g_gl.viewport[3]=96;
+@@SPECIFIC_TEST@@
+    const size_t before=copies.size();const int rounds=begins;
+    drawable=false;assert(!Capture(&surface,PF_Translucent,poly,4));drawable=true;
+    assert(!Capture(nullptr,PF_Translucent,poly,4));assert(!Capture(&surface,PF_Translucent,nullptr,4));
+    assert(!Capture(&surface,PF_Translucent,poly,0));
+    g_projection.m[15]=-1;assert(!Capture(&surface,PF_Translucent,poly,4));g_projection=identity;
+    auto offscreen=Rectangle(200,200,220,220);
+    assert(!Capture(&surface,PF_Translucent,offscreen.data(),4));
+    assert(copies.size()==before&&begins==rounds&&ends==begins);
+    // Allocation and upload failures preserve the ordinary shader fallback.
+    InitTarget(256,96,2);failTexture=true;assert(!Capture(&surface,PF_Translucent,poly,4));failTexture=false;
+    failConstants=true;assert(!Capture(&surface,PF_Translucent,poly,4));failConstants=false;
+@@SINE_FAILURE@@
+    assert(Capture(&surface,PF_Translucent,poly,4));assert(Scene.width==256&&Scene.format==2);
+    assert(!active&&begins==ends);
+    puts("D3D12 capture bounds, constants, split views, grouped transitions, immutable growth and failure recovery passed");
+}
