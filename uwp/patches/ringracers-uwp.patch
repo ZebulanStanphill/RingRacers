@@ -1,4 +1,4 @@
-From 04886f3d149238415f2a2e5d31eadf844dc1ac6a Mon Sep 17 00:00:00 2001
+From 82b85e8d136f5868d6d0a75c952d88c2eb013264 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -528,6 +528,15 @@ Agent: Codex (Sol, D3D12 S6)
 Model: gpt-6.1-sol
 Agent: Claude Code (Opus, D3D12 S6 review)
 Model: claude-opus-5-5
+
+- [UWP]: Portals in VibeRant's Direct3D 12 driver: stencil apertures, the
+  clip plane, the stencil-limited depth reset, and a preflight of all seven
+  portal pipelines before PortalsSupported reports true.
+
+Agent: Codex (Sol, D3D12 S7)
+Model: gpt-6.1-sol
+Agent: Claude Code (Opus, D3D12 S7 review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -583,7 +592,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2844 +++++++++
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2960 ++++++++++
  src/hardware/r_d3d12/r_d3d12.h            |   58 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
@@ -641,7 +650,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 23220 insertions(+), 1140 deletions(-)
+ 112 files changed, 23336 insertions(+), 1140 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -20083,10 +20092,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..3db5f2c
+index 0000000..ae5c456
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2844 @@
+@@ -0,0 +1,2960 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -20182,7 +20191,7 @@ index 0000000..3db5f2c
 +	int screenCopies, wipes, wipeFallbacks, postImages, fadeMapFallbacks;
 +	UINT64 waterCopies, waterPixels, fogCaptures;
 +	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
-+	int portals, fadeMaps;
++	int portalApertures, portalDepthResets, portalStencilLevels, portalMaxLevel, fadeMaps;
 +	int lightTablesCreated, lightTablesUpdated, paletteUploads, paletteSteps;
 +	precise_t paletteTime;
 +	precise_t presentTime;
@@ -21557,6 +21566,30 @@ index 0000000..3db5f2c
 +	return found->second.Get();
 +}
 +
++// Shared by normal draws and portal preflight, including the fullscreen depth reset.
++PipelineKey StatePipelineKey(Layout layout, VSKind vs, PSKind ps, D3D12_PRIMITIVE_TOPOLOGY topology)
++{
++	PipelineKey key = {};
++	key.vs = vs;
++	key.ps = ps;
++	key.layout = layout;
++	key.topologyType = topology == D3D_PRIMITIVE_TOPOLOGY_LINELIST ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
++		: D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
++	key.rtFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
++	key.dsvFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
++	if (g_gl.blend && !g_waterRefraction && !g_fogRemap
++		&& !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
++		key.blend = 1 | (g_gl.blendSrc << 1) | (g_gl.blendDst << 4) | (g_gl.blendEquation << 7);
++	key.blend |= g_gl.colorWriteMask << 10;
++	key.depth = (g_gl.depthTest ? 1 : 0) | (g_gl.depthAlways ? 2 : 0) | (g_gl.depthMask ? 4 : 0)
++		| ((UINT64)g_gl.stencil << 3) | ((UINT64)g_gl.stencilFunc << 4)
++		| ((UINT64)g_gl.stencilFail << 8) | ((UINT64)g_gl.stencilDepthFail << 12)
++		| ((UINT64)g_gl.stencilPass << 16) | ((UINT64)g_gl.stencilReadMask << 20)
++		| ((UINT64)g_gl.stencilWriteMask << 28);
++	key.raster = (g_gl.cullFace ? (g_gl.cullFront ? 2 : 1) : 0) | (g_gl.polygonOffset ? 4 : 0);
++	return key;
++}
++
 +// Same built-in shader selector as D3D11; custom shaders remain S8.
 +bool ApplyState(Layout layout, D3D12_PRIMITIVE_TOPOLOGY topology, bool wipe = false)
 +{
@@ -21583,22 +21616,13 @@ index 0000000..3db5f2c
 +		vs = layout == LAYOUT_SKY ? VS_SKY : layout == LAYOUT_MODEL ? VS_MODEL : wipe ? VS_WIPE : VS_POLY;
 +	}
 +	if (g_postImage) { vs = VS_POSTIMAGE; ps = PS_POSTIMAGE; }
++	if (layout == LAYOUT_NONE)
++	{
++		vs = VS_FULLSCREEN;
++		ps = PS_FIXED;
++	}
 +	(void)CustomDrawProgram(layout);
-+	PipelineKey key = {};
-+	key.vs = vs; key.ps = ps; key.layout = layout;
-+	key.topologyType = topology == D3D_PRIMITIVE_TOPOLOGY_LINELIST ? D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE
-+		: D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-+	key.rtFormat = DXGI_FORMAT_R8G8B8A8_UNORM; key.dsvFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
-+	if (g_gl.blend && !g_waterRefraction && !g_fogRemap
-+		&& !(g_gl.blendSrc == BF_ONE && g_gl.blendDst == BF_ZERO && g_gl.blendEquation == BE_ADD))
-+		key.blend = 1 | (g_gl.blendSrc << 1) | (g_gl.blendDst << 4) | (g_gl.blendEquation << 7);
-+	key.blend |= g_gl.colorWriteMask << 10;
-+	key.depth = (g_gl.depthTest ? 1 : 0) | (g_gl.depthAlways ? 2 : 0) | (g_gl.depthMask ? 4 : 0)
-+		| ((UINT64)g_gl.stencil << 3) | ((UINT64)g_gl.stencilFunc << 4)
-+		| ((UINT64)g_gl.stencilFail << 8) | ((UINT64)g_gl.stencilDepthFail << 12)
-+		| ((UINT64)g_gl.stencilPass << 16) | ((UINT64)g_gl.stencilReadMask << 20)
-+		| ((UINT64)g_gl.stencilWriteMask << 28);
-+	key.raster = (g_gl.cullFace ? (g_gl.cullFront ? 2 : 1) : 0) | (g_gl.polygonOffset ? 4 : 0);
++	const PipelineKey key = StatePipelineKey(layout, vs, ps, topology);
 +	ID3D12PipelineState *pso = nullptr;
 +	if (g_lastPipeline && key == g_lastKey) pso = g_lastPipeline;
 +	else
@@ -22746,32 +22770,130 @@ index 0000000..3db5f2c
 +{
 +}
 +
-+void D3D12_SetPortalPlane(const float *)
++// Unknown until the current device's complete portal pipeline preflight succeeds or fails.
++int g_portalsSupported = -1;
++
++void D3D12_SetPortalPlane(const float *worldPlane)
 +{
-+	g_stats.portals++;
++	if (!worldPlane)
++	{
++		g_gl.clipPlane[0] = g_gl.clipPlane[1] = g_gl.clipPlane[2] = 0;
++		g_gl.clipPlane[3] = 1;
++		return;
++	}
++	// Inverse transpose of the current CAMERA's affine modelview. Set this
++	// after SetTransform(view), before model transforms are pushed. Shaders
++	// evaluate it against eye positions after the full modelview, including
++	// each model's local rotation/scale/translation. Supports roll and flips.
++	const float *m = g_modelview.back().m;
++	const float det = m[0]*(m[5]*m[10]-m[9]*m[6])
++		- m[4]*(m[1]*m[10]-m[9]*m[2]) + m[8]*(m[1]*m[6]-m[5]*m[2]);
++	float *p = g_gl.clipPlane;
++	p[0] = ((m[5]*m[10]-m[9]*m[6])*worldPlane[0]
++		+ (m[9]*m[2]-m[1]*m[10])*worldPlane[1]
++		+ (m[1]*m[6]-m[5]*m[2])*worldPlane[2]) / det;
++	p[1] = ((m[8]*m[6]-m[4]*m[10])*worldPlane[0]
++		+ (m[0]*m[10]-m[8]*m[2])*worldPlane[1]
++		+ (m[4]*m[2]-m[0]*m[6])*worldPlane[2]) / det;
++	p[2] = ((m[4]*m[9]-m[8]*m[5])*worldPlane[0]
++		+ (m[8]*m[1]-m[0]*m[9])*worldPlane[1]
++		+ (m[0]*m[5]-m[4]*m[1])*worldPlane[2]) / det;
++	p[3] = worldPlane[3] - p[0]*m[12] - p[1]*m[13] - p[2]*m[14];
 +}
 +
-+void D3D12_SetPortalStencil(INT32)
++void D3D12_SetPortalStencil(INT32 level)
 +{
-+	g_stats.portals++;
++	g_gl.stencil = level > 0;
++	g_gl.stencilRef = (UINT8)level;
++	g_gl.stencilPass = D3D12_STENCIL_OP_KEEP;
++	g_gl.colorWriteMask = 7;
++	if (level > 0)
++	{
++		g_stats.portalStencilLevels++;
++		g_stats.portalMaxLevel = std::max(g_stats.portalMaxLevel, (int)g_gl.stencilRef);
++	}
 +}
 +
-+// Without portal resources, the renderer keeps its fallback
 +boolean D3D12_PortalsSupported(void)
 +{
-+	return false;
++	if (!CanDraw() || !g_depth || !g_root)
++		return false;
++	if (g_portalsSupported >= 0)
++		return g_portalsSupported != 0;
++	const GLState saved = g_gl;
++	g_gl.stencil = g_gl.depthTest = true;
++	g_gl.colorWriteMask = 0;
++	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = g_gl.blend = false;
++	bool ok = true;
++	// D3D11's six mask/depth variants, and the reset with its actual fullscreen shader/layout.
++	for (int pass = 0; pass < 6; pass++)
++	{
++		g_gl.depthAlways = pass == 2 || pass == 3 || pass == 5;
++		g_gl.depthMask = pass == 2 || pass == 3 || pass == 4;
++		g_gl.stencilPass = pass == 0 ? D3D12_STENCIL_OP_INCR_SAT
++			: pass == 3 ? D3D12_STENCIL_OP_DECR_SAT : D3D12_STENCIL_OP_KEEP;
++		const PipelineKey key = StatePipelineKey(LAYOUT_POLY, VS_POLY, PS_FIXED, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++		ok = FindOrCreatePipeline(key) != nullptr && ok;
++	}
++	g_gl.depthAlways = g_gl.depthMask = true;
++	g_gl.stencilPass = D3D12_STENCIL_OP_KEEP;
++	const PipelineKey reset = StatePipelineKey(LAYOUT_NONE, VS_FULLSCREEN, PS_FIXED, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
++	ok = FindOrCreatePipeline(reset) != nullptr && ok;
++	g_gl = saved;
++	g_portalsSupported = ok ? 1 : 0;
++	Log("portals %s: seven pipelines preflighted", ok ? "supported" : "unavailable");
++	return ok;
 +}
 +
-+boolean D3D12_DrawPortalAperture(const FOutVector *, INT32, boolean)
++boolean D3D12_DrawPortalAperture(const FOutVector *v, INT32 level, boolean restore)
 +{
-+	D3D12_LOG_ONCE("portal aperture not drawn yet (S7)");
-+	g_stats.portals++;
-+	return false;
++	if (!CanDraw())
++		return false;
++	const FOutVector triangles[6] = {v[0],v[1],v[2],v[0],v[2],v[3]};
++	const GLState saved = g_gl;
++	const int program = g_program;
++	g_gl.stencil = g_gl.depthTest = true;
++	g_gl.stencilRef = (UINT8)(restore ? level+1 : level);
++	g_gl.stencilPass = restore ? D3D12_STENCIL_OP_DECR_SAT : D3D12_STENCIL_OP_INCR_SAT;
++	g_gl.depthAlways = g_gl.depthMask = restore != 0;
++	g_gl.colorWriteMask = 0;
++	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = g_gl.blend = false;
++	g_program = -1;
++	const bool drawn = DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, triangles, 6, nullptr, 0);
++	g_gl = saved;
++	g_program = program;
++	if (drawn)
++		g_stats.portalApertures++;
++	return drawn;
 +}
 +
-+void D3D12_ResetPortalDepth(INT32)
++void D3D12_ResetPortalDepth(INT32 level)
 +{
-+	g_stats.portals++;
++	if (!CanDraw())
++		return;
++	// ClearDepthStencilView ignores stencil. Write far depth only at the child's stencil level.
++	const GLState saved = g_gl;
++	const int program = g_program;
++	g_gl.stencil = g_gl.depthTest = g_gl.depthAlways = g_gl.depthMask = true;
++	g_gl.stencilRef = (UINT8)level;
++	g_gl.stencilPass = D3D12_STENCIL_OP_KEEP;
++	g_gl.colorWriteMask = 0;
++	g_gl.fullscreenDepth = 1;
++	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = g_gl.blend = false;
++	g_program = -1;
++	if (ApplyState(LAYOUT_NONE, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
++		&& g_constantRing.Touch(g_constantAllocation, 512))
++	{
++		Core_FlushBarriers();
++		Core_List()->DrawInstanced(3, 1, 0, 0);
++		g_stats.draws++;
++		g_stats.vertices += 3;
++		g_stats.portalDepthResets++;
++	}
++	g_gl = saved;
++	g_program = program;
++	// Restore root arguments, targets and viewport, and invalidate every dynamic binding cache.
++	BindRenderTarget();
 +}
 +
 +boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength)
@@ -22823,7 +22945,9 @@ index 0000000..3db5f2c
 +	I_OutputMsg("UWP perf:   D3D12: screens: %.1f per frame (%.1f copies, %.1f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay\n",
 +		s.screens / n, s.screenCopies / n, core.barriers / n, s.wipes, s.wipeFallbacks, s.postImages, s.fadeMaps, s.fadeMapFallbacks);
 +	I_OutputMsg("UWP perf:   D3D12: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);
-+	I_OutputMsg("UWP perf:   D3D12: not drawn yet: %.1f portal calls; portals, custom shaders\n", s.portals / n);
++	I_OutputMsg("UWP perf:   D3D12: portals: %.1f apertures/frame, %.1f depth resets/frame, %.1f stencil levels/frame, maximum level %d\n",
++		s.portalApertures / n, s.portalDepthResets / n, s.portalStencilLevels / n, s.portalMaxLevel);
++	I_OutputMsg("UWP perf:   D3D12: not drawn yet: custom shaders\n");
 +
 +	if (g_paletteRendering || s.lightTablesCreated || s.lightTablesUpdated || s.paletteUploads)
 +		I_OutputMsg("UWP perf:   D3D12: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
@@ -22926,6 +23050,7 @@ index 0000000..3db5f2c
 +	g_samplers.clear();
 +	for (auto &pipeline : g_pipelines) Core_Retire(pipeline.second);
 +	g_pipelines.clear(); g_lastPipeline = g_boundPipeline = nullptr;
++	g_portalsSupported = -1;
 +	Core_Retire(g_root); Core_Retire(g_srvHeap); Core_Retire(g_samplerHeap); Core_Retire(g_zeroConstants);
 +	ReleaseModelBuffers();
 +	ShutdownArenas();

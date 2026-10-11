@@ -165,6 +165,47 @@ int main(int argc,char **argv) {
         reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("depth",{200,40,20});
         draw({20,40,200},PF_NoDepthTest,1.5f); expect("nodepth",{20,40,200});
         reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("noocclude",{20,200,40});
+        // Portal recursion follows hw_main: increment the aperture, reset only its depth,
+        // draw the child, then restore entrance depth while decrementing its stencil.
+        {
+            const RGB background={48,80,112}, child={24,180,220}, nested={224,64,32}, parent={32,220,96};
+            auto aperture=[](float extent,float z) {
+                return std::array<FOutVector,4>{{{-extent*z,-extent*z,z,0,0},{extent*z,-extent*z,z,0,0},
+                    {extent*z,extent*z,z,0,0},{-extent*z,extent*z,z,0,0}}};
+            };
+            auto open=[&](const std::array<FOutVector,4> &v,int level,bool restore=false) {
+                if(!D3D12_DrawPortalAperture(v.data(),level,restore)) throw std::runtime_error("portal aperture failed");
+            };
+            reset();
+            bool supported=D3D12_PortalsSupported()!=0;
+            if(negative=="portal-supported") supported=false;
+            if(!supported) { negativeRejected=negative=="portal-supported"; throw std::runtime_error("portal PSO preflight failed"); }
+            // Preflight and mask creation must preserve color; stencil == 1 confines the child.
+            auto outer=aperture(.6f,.25f), inner=aperture(.25f,.2f);
+            open(outer,0);
+            { auto p=pixels(); validate(validationQueue); check("portal-aperture",p,32,32,background); }
+            D3D12_SetPortalStencil(1); draw(child,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("portal-aperture",p,32,32,child); check("portal-aperture",p,8,32,background); }
+            // Level 2 rejects the parent-only portion; restore returns it to level 1.
+            open(inner,1); D3D12_SetPortalStencil(2); draw(nested,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("portal-nested",p,32,32,nested); check("portal-nested",p,46,32,child); check("portal-nested",p,8,32,background); }
+            D3D12_SetPortalStencil(1); open(inner,1,true); draw(parent,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("portal-nested",p,32,32,parent); check("portal-nested",p,46,32,parent); check("portal-nested",p,8,32,background); }
+            // The entrance depth restored on return blocks farther parent geometry.
+            D3D12_SetPortalStencil(0); open(outer,0,true); draw(nested,PF_Occlude,1.5f);
+            { auto p=pixels(); validate(validationQueue); check("portal-restore",p,32,32,parent); check("portal-restore",p,8,32,nested); }
+            // A global depth clear would wrongly reveal the far draw outside the aperture.
+            reset(); draw(parent,PF_Occlude,.5f); open(outer,0);
+            D3D12_ResetPortalDepth(1); D3D12_SetPortalStencil(0); draw(child,PF_Occlude,1.5f);
+            { auto p=pixels(); validate(validationQueue); check("portal-depth",p,32,32,child); check("portal-depth",p,8,32,parent); }
+            // The world exit plane accepts x >= 0; disabling it must restore both sides.
+            reset(); const float plane[4]={1,0,0,0}; D3D12_SetPortalPlane(plane);
+            draw(child,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("portal-plane",p,16,32,background); check("portal-plane",p,48,32,child); }
+            D3D12_SetPortalPlane(nullptr); draw(parent,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("portal-plane",p,16,32,parent); check("portal-plane",p,48,32,parent); }
+            D3D12_SetPortalStencil(0); D3D12_FinishUpdate(0);
+        }
         reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expect("indexed",{24,180,220});
         reset(); blend(PF_NoDepthTest|PF_NoTexture); F2DCoord p1={-.75f,0},p2={.75f,0}; auto ls=surface({240,160,80}); line(&p1,&p2,ls.PolyColor);
         // A one-pixel line lies on a raster boundary; inspect its known interior coverage, excluding endpoints.

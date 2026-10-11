@@ -214,6 +214,15 @@ UV fallback. Their negative controls are `texture`, `texture-update`,
 each must be rejected by its own oracle. Tiny models, lit models and textured sky
 aren't exercised, so they remain untested here. WARP doesn't measure Xbox performance;
 texture creation time, heap behavior and frame rate need an Xbox run.
+Portal scenes require the production PSO preflight to succeed (`portal-supported`).
+`portal-aperture` checks color preservation and stencil-1 confinement; `portal-nested`
+checks incrementing 1 to 2 and restoring 2 to 1. `portal-restore` checks that the return
+pass writes entrance depth, and `portal-depth` checks that the fullscreen far-depth
+reset only touches the aperture, allowing farther child geometry while preserving
+outside occlusion. `portal-plane` checks world-plane clipping and disabling the plane.
+Each has its own required negative control. These pixel scenes use production driver
+entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
+and fog/water portal interactions still require further testing.
 Palette scenes turn Palette Rendering on with a known 64³ lookup table (index 7 only
 where red is low and green and blue are high, otherwise 19), a light table and a screen
 palette. A colormapped textured polygon must read the light table's color from the screen
