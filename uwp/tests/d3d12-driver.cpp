@@ -70,7 +70,9 @@ void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stde
 namespace rr_d3d12 {
 ID3D11Device *Present_AngleDevice() { return nullptr; }
 void Present_SelectPath() {}
+static int presentedFrames=0;
 void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT) {
+    presentedFrames++;
     // No transition is necessary: submission leaves the source in its supplied state.
     UINT64 fence = Core_Submit("present");
     if (!fence || !Core_Wait(fence, 30000, "headless present")) throw std::runtime_error("present failed");
@@ -151,6 +153,9 @@ int main(int argc,char **argv) {
         if(!function<boolean (*)()>("Init")() || !D3D12_Surface(W,H)) throw std::runtime_error("Init/Surface failed");
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
+        // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
+        { reset(); D3D12_FinishUpdate(0); const bool held=(negative=="startup-present" ? presentedFrames+1 : presentedFrames)==0;
+          if(!held) { negativeRejected=negative=="startup-present"; throw std::runtime_error("clear-only startup frame was presented"); } }
         reset(); expect("clear",{48,80,112});
         reset({0,0,0});
         { auto upper=quad(); upper[0].y=upper[1].y=.1f; auto red=surface({248,32,16}); polygon(&red,upper.data(),4,PF_Modulated|PF_NoTexture|PF_NoDepthTest);
@@ -161,7 +166,7 @@ int main(int argc,char **argv) {
           UINT16 packed[35]={}; readrect(29,49,7,5,14,packed); const UINT16 wanted565=(UINT16)((248>>3)<<11 | (32>>2)<<5 | (16>>3)); for(auto c:packed) if(c!=wanted565) throw std::runtime_error("RGB565 oracle failed"); }
         RGB src={160,96,64},dst={48,80,112}; const double a=128./255.;
         struct Mode { const char *name; FBITFIELD flags; } modes[]={{"opaque",0},{"translucent",PF_Translucent},{"additive",PF_Additive},{"subtract",PF_Subtractive},{"reverse",PF_ReverseSubtract},{"multiply",PF_Multiplicative},{"environment",PF_Environment},{"masked",PF_Masked},{"invert",PF_Invert},{"fog",PF_Fog}};
-        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); RGB result={}; for(int c=0;c<3;c++) { double s=src[c],d=dst[c],v=s; switch(m.flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } expect(m.name,result); D3D12_FinishUpdate(0); }
+        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); RGB result={}; for(int c=0;c<3;c++) { double s=src[c],d=dst[c],v=s; switch(m.flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } expect(m.name,result); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
         reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("depth",{200,40,20});
         draw({20,40,200},PF_NoDepthTest,1.5f); expect("nodepth",{20,40,200});
         reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("noocclude",{20,200,40});

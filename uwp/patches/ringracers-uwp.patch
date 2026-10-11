@@ -1,4 +1,4 @@
-From 5e101920b129b645b212708088334f5486dbf0e4 Mon Sep 17 00:00:00 2001
+From 93ab5fd1e404eb56fa00f744bc188b0b0a5df420 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -569,6 +569,13 @@ Model: claude-opus-5-5
 
 Agent: Claude Code (Opus, intro blue flash)
 Model: claude-opus-5-5
+
+- [UWP]: VibeRant D3D11 and D3D12 don't present until something besides a
+  clear has been drawn, so the loading screen stays up while the renderer
+  starts instead of showing black frames before the intro.
+
+Agent: Claude Code (Opus, startup black frames)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -601,7 +608,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/custom_shader.cpp    |  308 +
  src/hardware/r_d3d11/custom_shader.h      |   12 +
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
- src/hardware/r_d3d11/r_d3d11.cpp          | 6402 +++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp          | 6420 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
  src/hardware/r_d3d12/allocators.h         |  196 +
@@ -624,7 +631,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2960 ++++++++++
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2968 ++++++++++
  src/hardware/r_d3d12/r_d3d12.h            |   58 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
@@ -682,7 +689,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 23714 insertions(+), 1137 deletions(-)
+ 112 files changed, 23740 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -7372,10 +7379,10 @@ index 0000000..31f8d89
 +    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 0000000..20f2e5d
+index 0000000..39850f9
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,6402 @@
+@@ -0,0 +1,6420 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -8795,8 +8802,16 @@ index 0000000..20f2e5d
 +}
 +
 +// Sets everything a draw needs from the OpenGL state
++#ifdef _UWP
++// [UWP]: Whether anything besides a clear has been drawn since the driver started
++bool g_drewSinceStart = false;
++#endif
++
 +void ApplyState(Layout layout, D3D11_PRIMITIVE_TOPOLOGY topology, bool wipe = false)
 +{
++#ifdef _UWP
++	g_drewSinceStart = true;
++#endif
 +	VSKind vs;
 +	PSKind ps;
 +
@@ -13491,6 +13506,16 @@ index 0000000..20f2e5d
 +#endif
 +	if (!g_context || !g_rt || g_deviceLost)
 +		return;
++
++#ifdef _UWP
++	// [UWP]: Frames that are only a clear, made while the renderer starts, would show black between the loading
++	// screen and the intro. Until something is drawn, the window keeps the loading screen.
++	if (!g_drewSinceStart)
++	{
++		D3D_GClipRect(0, 0, g_screenWidth, g_screenHeight, NZCLIP_PLANE);
++		return;
++	}
++#endif
 +
 +	Present();
 +	g_stats.frames++;
@@ -20584,10 +20609,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..ae5c456
+index 0000000..c52aa43
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2960 @@
+@@ -0,0 +1,2968 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -22083,8 +22108,12 @@ index 0000000..ae5c456
 +}
 +
 +// Same built-in shader selector as D3D11; custom shaders remain S8.
++// Whether anything besides a clear has been drawn since the driver started
++bool g_drewSinceStart = false;
++
 +bool ApplyState(Layout layout, D3D12_PRIMITIVE_TOPOLOGY topology, bool wipe = false)
 +{
++	g_drewSinceStart = true;
 +	VSKind vs;
 +	PSKind ps;
 +	if (g_program >= 0)
@@ -23198,6 +23227,10 @@ index 0000000..ae5c456
 +		return;
 +
 +	Prewarm_LogDone();
++	// Frames that are only a clear, made while the renderer starts, would show black between the loading screen
++	// and the intro. Until something is drawn, the window keeps the loading screen; the clears stay in the list.
++	if (!g_drewSinceStart)
++		return;
 +	const bool trace = Present_Tracing();
 +	if (trace)
 +		Log("presenting frame %d: %d clears, %d polygons, %d batches, %d models so far", g_stats.frames,
