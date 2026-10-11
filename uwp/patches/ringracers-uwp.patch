@@ -1,4 +1,4 @@
-From 92b168c34ffbbde5adaf2006e6ee2df7590c5b1f Mon Sep 17 00:00:00 2001
+From 5e101920b129b645b212708088334f5486dbf0e4 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -562,6 +562,13 @@ Agent: Codex (Sol, title flash investigation)
 Model: gpt-6.1-sol
 Agent: Claude Code (Opus, review)
 Model: claude-opus-5-5
+
+- [UWP]: The intro's first card skips vanilla's dark blue fill for its
+  first tics; after a slow boot's loading screen, which shows the same card,
+  that blue read as a flash.
+
+Agent: Claude Code (Opus, intro blue flash)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -573,7 +580,7 @@ Model: claude-opus-5-5
  src/d_clisrv.c                            |   49 +
  src/d_main.cpp                            |  368 +-
  src/doomstat.h                            |    1 +
- src/f_finale.c                            |    6 +
+ src/f_finale.c                            |   10 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
  src/hardware/CMakeLists.txt               |   69 +
@@ -675,7 +682,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 23710 insertions(+), 1137 deletions(-)
+ 112 files changed, 23714 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1781,7 +1788,7 @@ index ac32446..329a203 100644
  
  extern INT32 viewwindowx, viewwindowy;
 diff --git a/src/f_finale.c b/src/f_finale.c
-index bacb041..1b1c6b1 100644
+index bacb041..b4086ba 100644
 --- a/src/f_finale.c
 +++ b/src/f_finale.c
 @@ -13,6 +13,9 @@
@@ -1794,7 +1801,23 @@ index bacb041..1b1c6b1 100644
  #include "doomstat.h"
  #include "d_main.h"
  #include "d_netcmd.h"
-@@ -1910,6 +1913,9 @@ void F_VersionDrawer(void)
+@@ -817,11 +820,15 @@ void F_IntroDrawer(void)
+ {
+ 	if (intro_scenenum == 0)
+ 	{
++		// [UWP]: Skip the blue fill of the first tics. The loading screen already shows this card, so on a slow
++		// boot the blue reads as a flash between two copies of it.
++#ifndef _UWP
+ 		if (intro_curtime <= 5)
+ 		{
+ 			V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 157);
+ 			return;
+ 		}
++#endif
+ 
+ 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 31);
+ 		V_DrawScaledPatch(0, 0, 0,
+@@ -1910,6 +1917,9 @@ void F_VersionDrawer(void)
  // (no longer) De-Demo'd Title Screen
  void F_TitleScreenDrawer(void)
  {
