@@ -39,6 +39,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/r_things.cpp"
     "${RR_SOURCE_DIR}/src/p_mobj.c"
+    "${RR_SOURCE_DIR}/src/p_user.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate.py"
@@ -82,6 +83,7 @@ regression(ripples_uwp ripples _UWP HWRENDER)
 regression(ripples_desktop ripples HWRENDER)
 regression(split_distortion distortion _UWP HWRENDER)
 regression(postimg_math postimg)
+regression(postimg_selection postimg_selection)
 regression(water_math water _UWP HWRENDER)
 regression(water_capture water_capture _UWP HWRENDER)
 regression(water_visibility water_visibility HWRENDER)

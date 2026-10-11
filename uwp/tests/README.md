@@ -36,6 +36,14 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
 
+- **Encore post-image selection:** execute full production `P_CalcChasePostImg`
+  and `P_CalcPostImg` with real engine headers, plus chase water/heat helpers.
+  Check heat, water, no distortion and water priority with and without Encore,
+  independent mirroring, first-person gravity flip, FOF bounds/eligibility,
+  awayview selection, matching split views and untouched unrelated views.
+  Flat FOF heights, heat-tag lookup and removed-object detection are dependency
+  stubs; these checks validate selection, not rendered pixels.
+
 - **Online catch-up and title card:** the production packet sender, tic expansion,
   title-card function, client-state enum, packet structs, and server `PingUpdate`.
   Check all eligibility/missed-packet combinations, low-byte wraparound across

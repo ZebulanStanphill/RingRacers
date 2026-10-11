@@ -1,4 +1,4 @@
-From ea290e5fd3af5febd52230d5e5a81b32219b6255 Mon Sep 17 00:00:00 2001
+From 29c3316335aca4ee9d1111f587b0b801d00288b0 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -508,6 +508,15 @@ Model: claude-opus-5-5
 
 Agent: Claude Code (Opus, Encore texture cache fix)
 Model: claude-opus-5-5
+
+- [UWP]: Track Encore's screen mirror separately (postimgmirror) from the
+  single per-view screen effect, so underwater and heat distortion still
+  apply in Encore; both renderers read the new flag.
+
+Agent: Codex (Sol, Encore screen effects)
+Model: gpt-6.1-sol
+Agent: Claude Code (Opus, diagnosis and review)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -517,7 +526,8 @@ Model: claude-opus-5-5
  src/core/thread_pool.cpp                  |   19 +
  src/cvars.cpp                             |   15 +
  src/d_clisrv.c                            |   49 +
- src/d_main.cpp                            |  367 +-
+ src/d_main.cpp                            |  368 +-
+ src/doomstat.h                            |    1 +
  src/f_finale.c                            |    6 +
  src/f_wipe.cpp                            |   35 +-
  src/g_game.c                              |   56 +
@@ -532,7 +542,7 @@ Model: claude-opus-5-5
  src/hardware/hw_drv.h                     |   13 +
  src/hardware/hw_glob.h                    |   12 +
  src/hardware/hw_glsl.h                    |  321 ++
- src/hardware/hw_main.c                    | 1758 +++++-
+ src/hardware/hw_main.c                    | 1762 +++++-
  src/hardware/hw_main.h                    |   21 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
@@ -582,10 +592,12 @@ Model: claude-opus-5-5
  src/menus/options-1.c                     |   34 +
  src/menus/options-video-advanced.c        |   47 +-
  src/p_lights.c                            |    9 +
- src/p_mobj.c                              |   98 +-
+ src/p_mobj.c                              |  113 +-
  src/p_mobj.h                              |   11 +
- src/p_setup.cpp                           |   51 +
+ src/p_setup.cpp                           |   55 +
+ src/p_tick.c                              |    3 +
  src/p_tick.h                              |   15 +
+ src/p_user.c                              |    3 +-
  src/r_draw.h                              |   38 +-
  src/r_draw_column.cpp                     |   18 +-
  src/r_fps.cpp                             |   25 +-
@@ -613,11 +625,11 @@ Model: claude-opus-5-5
  src/sdl/ogl_sdl.c                         |    8 +
  src/sdl/rhi_gl2_platform.cpp              |    9 +
  src/st_stuff.c                            |   10 +-
- src/v_video.cpp                           |   33 +-
+ src/v_video.cpp                           |   35 +-
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 108 files changed, 22875 insertions(+), 1127 deletions(-)
+ 111 files changed, 22895 insertions(+), 1140 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1144,7 +1156,7 @@ index 1166b3c..8c31e92 100644
  			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
  			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)
 diff --git a/src/d_main.cpp b/src/d_main.cpp
-index 19fcfe0..eb9081a 100644
+index 19fcfe0..717502e 100644
 --- a/src/d_main.cpp
 +++ b/src/d_main.cpp
 @@ -33,8 +33,14 @@
@@ -1173,7 +1185,15 @@ index 19fcfe0..eb9081a 100644
  #endif
  
  #include "lua_script.h"
-@@ -359,6 +369,231 @@ gamestate_t wipegamestate = GS_LEVEL;
+@@ -155,6 +165,7 @@ tic_t g_fast_forward = 0;
+ tic_t g_fast_forward_clock_stop = INFTICS;
+ 
+ postimg_t postimgtype[MAXSPLITSCREENPLAYERS];
++boolean postimgmirror[MAXSPLITSCREENPLAYERS]; // [UWP]: Mirror independently of water, heat and gravity flip.
+ INT32 postimgparam[MAXSPLITSCREENPLAYERS];
+ 
+ // These variables are in effect
+@@ -359,6 +370,231 @@ gamestate_t wipegamestate = GS_LEVEL;
  INT16 wipetypepre = -1;
  INT16 wipetypepost = -1;
  
@@ -1405,7 +1425,7 @@ index 19fcfe0..eb9081a 100644
  static bool D_Display(bool world)
  {
  	bool ranwipe = false;
-@@ -369,6 +604,14 @@ static bool D_Display(bool world)
+@@ -369,6 +605,14 @@ static bool D_Display(bool world)
  
  	ZoneScoped;
  
@@ -1420,7 +1440,7 @@ index 19fcfe0..eb9081a 100644
  	if (g_takemapthumbnail != TMT_NO)
  	{
  		forcerefresh = true;
-@@ -424,6 +667,12 @@ static bool D_Display(bool world)
+@@ -424,6 +668,12 @@ static bool D_Display(bool world)
  		I_UpdateNoBlit();
  	}
  
@@ -1433,7 +1453,7 @@ index 19fcfe0..eb9081a 100644
  	// save the current screen if about to wipe
  	wipe = (gamestate != wipegamestate);
  	if (wipe)
-@@ -478,6 +727,25 @@ static bool D_Display(bool world)
+@@ -478,6 +728,25 @@ static bool D_Display(bool world)
  	if (dedicated) //bail out after wipe logic
  		return false;
  
@@ -1459,7 +1479,7 @@ index 19fcfe0..eb9081a 100644
  	// Catch runaway clipping rectangles.
  	V_ClearClipRect();
  
-@@ -545,6 +813,9 @@ static bool D_Display(bool world)
+@@ -545,6 +814,9 @@ static bool D_Display(bool world)
  		{
  			if (!automapactive && !dedicated && cv_renderview.value && (world || forcerefresh))
  			{
@@ -1469,7 +1489,7 @@ index 19fcfe0..eb9081a 100644
  				R_ApplyLevelInterpolators(R_UsingFrameInterpolation() ? rendertimefrac : FRACUNIT);
  
  				viewwindowy = 0;
-@@ -554,6 +825,9 @@ static bool D_Display(bool world)
+@@ -554,6 +826,9 @@ static bool D_Display(bool world)
  				objectsdrawn = 0;
  
  				ps_rendercalltime = I_GetPreciseTime();
@@ -1479,7 +1499,7 @@ index 19fcfe0..eb9081a 100644
  
  				if (rendermode == render_soft)
  				{
-@@ -685,7 +959,13 @@ static bool D_Display(bool world)
+@@ -685,7 +960,13 @@ static bool D_Display(bool world)
  
  			if (rendermode == render_soft)
  			{
@@ -1493,7 +1513,7 @@ index 19fcfe0..eb9081a 100644
  			}
  
  			if (lastdraw)
-@@ -834,6 +1114,9 @@ static bool D_Display(bool world)
+@@ -834,6 +1115,9 @@ static bool D_Display(bool world)
  		ps_swaptime = I_GetPreciseTime() - ps_swaptime;
  	}
  
@@ -1503,7 +1523,7 @@ index 19fcfe0..eb9081a 100644
  	return ranwipe;
  }
  
-@@ -903,6 +1186,10 @@ void D_SRB2Loop(void)
+@@ -903,6 +1187,10 @@ void D_SRB2Loop(void)
  	S_SetMusicVolume();
  	S_SetSfxVolume();
  
@@ -1514,7 +1534,7 @@ index 19fcfe0..eb9081a 100644
  	for (;;)
  	{
  		// capbudget is the minimum precise_t duration of a single loop iteration
-@@ -922,6 +1209,10 @@ void D_SRB2Loop(void)
+@@ -922,6 +1210,10 @@ void D_SRB2Loop(void)
  
  		bool ranwipe = false;
  		bool world = false;
@@ -1525,7 +1545,7 @@ index 19fcfe0..eb9081a 100644
  
  		I_UpdateTime();
  
-@@ -954,6 +1245,9 @@ void D_SRB2Loop(void)
+@@ -954,6 +1246,9 @@ void D_SRB2Loop(void)
  		renderisnewtic = (realtics > 0 || singletics);
  
  		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
@@ -1535,7 +1555,7 @@ index 19fcfe0..eb9081a 100644
  
  		if (renderisnewtic)
  		{
-@@ -1067,7 +1361,16 @@ void D_SRB2Loop(void)
+@@ -1067,7 +1362,16 @@ void D_SRB2Loop(void)
  			}
  
  			ranwipe = D_Display(world);
@@ -1552,7 +1572,7 @@ index 19fcfe0..eb9081a 100644
  
  #ifdef HWRENDER
  		// Only take screenshots after drawing.
-@@ -1183,14 +1486,30 @@ void D_SRB2Loop(void)
+@@ -1183,14 +1487,30 @@ void D_SRB2Loop(void)
  			skiplaggyworld = false;
  		}
  
@@ -1584,7 +1604,7 @@ index 19fcfe0..eb9081a 100644
  			{
  				I_SleepDuration(capbudget - (finishprecise - enterprecise));
  			}
-@@ -1199,6 +1518,10 @@ void D_SRB2Loop(void)
+@@ -1199,6 +1519,10 @@ void D_SRB2Loop(void)
  		finishprecise = I_GetPreciseTime();
  		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
  		deltatics = deltasecs * NEWTICRATE;
@@ -1595,7 +1615,7 @@ index 19fcfe0..eb9081a 100644
  	}
  }
  
-@@ -1661,6 +1984,11 @@ void D_SRB2Main(void)
+@@ -1661,6 +1985,11 @@ void D_SRB2Main(void)
  		configfile[sizeof configfile - 1] = '\0';
  	}
  
@@ -1607,7 +1627,7 @@ index 19fcfe0..eb9081a 100644
  	// If config isn't writable, tons of behavior will be broken.
  	// Fail loudly before things get confusing!
  	{
-@@ -1707,6 +2035,9 @@ void D_SRB2Main(void)
+@@ -1707,6 +2036,9 @@ void D_SRB2Main(void)
  
  	CONS_Printf("Z_Init(): Init zone memory allocation daemon. \n");
  	Z_Init();
@@ -1617,7 +1637,7 @@ index 19fcfe0..eb9081a 100644
  	CON_SetLoadingProgress(LOADED_ZINIT);
  
  	M_NewGameDataStruct();
-@@ -1760,6 +2091,9 @@ void D_SRB2Main(void)
+@@ -1760,6 +2092,9 @@ void D_SRB2Main(void)
  	// load wad, including the main wad file
  	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
  	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
@@ -1627,7 +1647,7 @@ index 19fcfe0..eb9081a 100644
  	mainwads = num_startupiwads - musicwads;
  	D_CleanFile(startupiwads, num_startupiwads);
  	num_startupiwads = 0;
-@@ -1771,6 +2105,7 @@ void D_SRB2Main(void)
+@@ -1771,6 +2106,7 @@ void D_SRB2Main(void)
  	// conversion sometimes needs the palette
  	V_ReloadPalette();
  
@@ -1635,7 +1655,7 @@ index 19fcfe0..eb9081a 100644
  	//
  	// search for mainwad maps
  	//
-@@ -1779,6 +2114,7 @@ void D_SRB2Main(void)
+@@ -1779,6 +2115,7 @@ void D_SRB2Main(void)
  	basenumkartcupheaders = numkartcupheaders;
  
  	CON_SetLoadingProgress(LOADED_IWAD);
@@ -1643,7 +1663,7 @@ index 19fcfe0..eb9081a 100644
  
  	M_PasswordInit();
  
-@@ -1814,6 +2150,27 @@ void D_SRB2Main(void)
+@@ -1814,6 +2151,27 @@ void D_SRB2Main(void)
  
  	CON_Init();
  
@@ -1671,7 +1691,7 @@ index 19fcfe0..eb9081a 100644
  	D_RegisterServerCommands();
  	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
  	R_RegisterEngineStuff();
-@@ -1821,7 +2178,9 @@ void D_SRB2Main(void)
+@@ -1821,7 +2179,9 @@ void D_SRB2Main(void)
  
  	I_RegisterSysCommands();
  
@@ -1681,7 +1701,7 @@ index 19fcfe0..eb9081a 100644
  
  	CONS_Printf("W_InitMultipleFiles(): Adding external PWADs.\n");
  
-@@ -2014,6 +2373,10 @@ void D_SRB2Main(void)
+@@ -2014,6 +2374,10 @@ void D_SRB2Main(void)
  		}
  	}
  
@@ -1692,7 +1712,7 @@ index 19fcfe0..eb9081a 100644
  	// init all NETWORK
  	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
  	if (D_CheckNetGame())
-@@ -2323,6 +2686,8 @@ const char *D_Home(void)
+@@ -2323,6 +2687,8 @@ const char *D_Home(void)
  
  #ifdef ANDROID
  	return "/data/data/org.srb2/";
@@ -1701,6 +1721,18 @@ index 19fcfe0..eb9081a 100644
  #endif
  
  	if (M_CheckParm("-home") && M_IsNextParm())
+diff --git a/src/doomstat.h b/src/doomstat.h
+index ac32446..329a203 100644
+--- a/src/doomstat.h
++++ b/src/doomstat.h
+@@ -276,6 +276,7 @@ extern boolean nodrawers;
+ extern boolean noblit;
+ extern boolean lastdraw;
+ extern postimg_t postimgtype[MAXSPLITSCREENPLAYERS];
++extern boolean postimgmirror[MAXSPLITSCREENPLAYERS]; // [UWP]: Mirror independently of water, heat and gravity flip.
+ extern INT32 postimgparam[MAXSPLITSCREENPLAYERS];
+ 
+ extern INT32 viewwindowx, viewwindowy;
 diff --git a/src/f_finale.c b/src/f_finale.c
 index bacb041..1b1c6b1 100644
 --- a/src/f_finale.c
@@ -3414,7 +3446,7 @@ index 0000000..c025b5a
 +
 +#endif
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca..8721168 100644
+index b5e8fca..0e523f4 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -12,8 +12,13 @@
@@ -5383,6 +5415,15 @@ index b5e8fca..8721168 100644
  	}
  
  	if (r != 4)
+@@ -5558,7 +6581,7 @@ static void HWR_DrawSkyBackground(player_t *player)
+ 		else
+ 			dometransform.flip = false;
+ 
+-		if (*type == postimg_mirror)
++		if (postimgmirror[R_GetViewNumber()]) // [UWP]: Mirror independently of distortion/flip.
+ 			dometransform.mirror = true;
+ 		else
+ 			dometransform.mirror = false;
 @@ -5662,6 +6685,11 @@ static void HWR_DrawSkyBackground(player_t *player)
  			v[0].t = v[1].t -= ((float) angle / angleturn);
  		}
@@ -5452,6 +5493,15 @@ index b5e8fca..8721168 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
+@@ -5837,7 +6889,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+ 	else
+ 		atransform.flip = false;
+ 
+-	if (*type == postimg_mirror)
++	if (postimgmirror[viewssnum]) // [UWP]: Mirror independently of distortion/flip.
+ 		atransform.mirror = true;
+ 	else
+ 		atransform.mirror = false;
 @@ -5857,13 +6909,34 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
@@ -24290,7 +24340,7 @@ index fe16783..7d20743 100644
 +#endif
  }
 diff --git a/src/p_mobj.c b/src/p_mobj.c
-index 305a75e..9da7677 100644
+index 305a75e..d7fbabd 100644
 --- a/src/p_mobj.c
 +++ b/src/p_mobj.c
 @@ -216,6 +216,40 @@ static void P_CyclePlayerMobjState(mobj_t *mobj)
@@ -24486,7 +24536,38 @@ index 305a75e..9da7677 100644
  }
  
  //----------------------------------------------------------------------------
-@@ -12319,12 +12361,14 @@ void P_RemoveMobj(mobj_t *mobj)
+@@ -3857,11 +3899,8 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
+ 	if (thiscam->subsector == NULL || thiscam->subsector->sector == NULL)
+ 		return;
+ 
+-	if (encoremode)
+-	{
+-		postimg = postimg_mirror;
+-	}
+-	else if (player->awayview.tics && player->awayview.mobj && !P_MobjWasRemoved(player->awayview.mobj)) // Camera must obviously exist
++	// [UWP]: Encore mirrors the view without replacing underwater/heat distortion.
++	if (player->awayview.tics && player->awayview.mobj && !P_MobjWasRemoved(player->awayview.mobj)) // Camera must obviously exist
+ 	{
+ 		camera_t dummycam;
+ 
+@@ -3886,11 +3925,13 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
+ 			postimg = postimg_heat;
+ 	}
+ 
+-	if (postimg != postimg_none)
++	// [UWP]: Store the mirror even when there is no distortion.
++	for (i = 0; i <= r_splitscreen; i++)
+ 	{
+-		for (i = 0; i <= r_splitscreen; i++)
++		if (player == &players[displayplayers[i]])
+ 		{
+-			if (player == &players[displayplayers[i]])
++			postimgmirror[i] = encoremode;
++			if (postimg != postimg_none)
+ 				postimgtype[i] = postimg;
+ 		}
+ 	}
+@@ -12319,12 +12360,14 @@ void P_RemoveMobj(mobj_t *mobj)
  
  // This does not need to be added to Lua.
  // To test it in Lua, check mobj.valid
@@ -24532,7 +24613,7 @@ index 02f46b5..f6f4e46 100644
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce..1a57547 100644
+index e5208ce..606e64b 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
 @@ -17,6 +17,9 @@
@@ -24592,7 +24673,18 @@ index e5208ce..1a57547 100644
  
  	// This is needed. Don't touch.
  	maptol = mapheaderinfo[gamemap-1]->typeoflevel;
-@@ -8830,6 +8850,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+@@ -8551,7 +8571,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+ 	}
+ 
+ 	for (i = 0; i <= r_splitscreen; i++)
++	{ // [UWP]: Reset the independent mirror along with the distortion.
+ 		postimgtype[i] = postimg_none;
++		postimgmirror[i] = false;
++	}
+ 
+ 	// Initial height of PointOfView
+ 	// will be set by player think.
+@@ -8830,6 +8853,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
  	{
  		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette, NULL, 0);
  	}
@@ -24603,7 +24695,15 @@ index e5208ce..1a57547 100644
  	CON_SetupBackColormap();
  
  	// SRB2 determines the sky texture to be used depending on the map header.
-@@ -9006,6 +9030,20 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+@@ -8993,6 +9020,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+ 		for (i = 0; i <= r_splitscreen; i++)
+ 		{
+ 			postimgtype[i] = postimg_none;
++			postimgmirror[i] = false; // [UWP]: Reset the independent mirror on level load.
+ 		}
+ 
+ 		if (marathonmode & MA_INGAME)
+@@ -9006,6 +9034,20 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
  		levelloading = false;
  	}
  
@@ -24624,7 +24724,7 @@ index e5208ce..1a57547 100644
  	if (rendermode != render_none && reloadinggamestate == false)
  	{
  		R_ResetViewInterpolation(0);
-@@ -9119,6 +9157,16 @@ void P_PostLoadLevel(void)
+@@ -9119,6 +9161,16 @@ void P_PostLoadLevel(void)
  
  	P_MapEnd();
  
@@ -24641,7 +24741,7 @@ index e5208ce..1a57547 100644
  	// We're now done loading the level.
  	levelloading = false;
  
-@@ -9291,6 +9339,9 @@ UINT8 P_InitMapData(void)
+@@ -9291,6 +9343,9 @@ UINT8 P_InitMapData(void)
  
  	for (i = 0; i < nummapheaders; ++i)
  	{
@@ -24650,6 +24750,21 @@ index e5208ce..1a57547 100644
 +#endif
  		name = mapheaderinfo[i]->lumpname;
  		maplump = W_CheckNumForMap(name, (mapheaderinfo[i]->lumpnum == LUMPERROR));
+ 
+diff --git a/src/p_tick.c b/src/p_tick.c
+index 00821e4..fe26481 100644
+--- a/src/p_tick.c
++++ b/src/p_tick.c
+@@ -753,7 +753,10 @@ void P_Ticker(boolean run)
+ 	}
+ 
+ 	for (i = 0; i <= r_splitscreen; i++)
++	{ // [UWP]: Reset the independent mirror along with the distortion.
+ 		postimgtype[i] = postimg_none;
++		postimgmirror[i] = false;
++	}
+ 
+ 	P_MapStart();
  
 diff --git a/src/p_tick.h b/src/p_tick.h
 index b735d9b..5d78a91 100644
@@ -24684,6 +24799,20 @@ index b735d9b..5d78a91 100644
  #else
  #define P_SetTarget P_SetTarget2
  #endif
+diff --git a/src/p_user.c b/src/p_user.c
+index 9bff650..2ddbbb1 100644
+--- a/src/p_user.c
++++ b/src/p_user.c
+@@ -3964,8 +3964,7 @@ static void P_CalcPostImg(player_t *player, size_t viewnum)
+ 	}
+ #endif
+ 
+-	if (encoremode) // srb2kart
+-		*type = postimg_mirror;
++	postimgmirror[viewnum] = encoremode; // [UWP]: Preserve distortion and gravity flip in Encore.
+ }
+ 
+ void P_DoTimeOver(player_t *player)
 diff --git a/src/r_draw.h b/src/r_draw.h
 index b3b71e1..ed1dbf7 100644
 --- a/src/r_draw.h
@@ -28395,7 +28524,7 @@ index 6f67d6a..0a95580 100644
  		V_SetPalette(0);
  
 diff --git a/src/v_video.cpp b/src/v_video.cpp
-index 481a70d..8f467f4 100644
+index 481a70d..2d4ec02 100644
 --- a/src/v_video.cpp
 +++ b/src/v_video.cpp
 @@ -20,6 +20,9 @@
@@ -28497,6 +28626,15 @@ index 481a70d..8f467f4 100644
  #ifdef HWRENDER
  	if (rendermode == render_opengl)
  	{
+@@ -3827,7 +3850,7 @@ void VID_DisplaySoftwareScreen()
+ 					postimgtype[i] == postimg_water && !cv_reducevfx.value,
+ 					postimgtype[i] == postimg_heat && !cv_reducevfx.value,
+ 					postimgtype[i] == postimg_flip,
+-					postimgtype[i] == postimg_mirror
++					postimgmirror[i] != false // [UWP]: Mirror can accompany distortion or gravity flip.
+ 				}
+ 			}
+ 		);
 diff --git a/src/w_wad.cpp b/src/w_wad.cpp
 index 3c68b13..8e3ab1b 100644
 --- a/src/w_wad.cpp

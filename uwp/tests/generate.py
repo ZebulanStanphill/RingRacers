@@ -317,6 +317,14 @@ def generate(engine, output):
         "FIXTURE": "\n".join(fixture_code),
     }, output / "horizon.cpp")
 
+    postimg_mobj = Source(engine / "src/p_mobj.c")
+    render(templates / "postimg_selection.cpp.in", {
+        "CAMERA_HEAT": postimg_mobj.function("P_CameraCheckHeat"),
+        "CAMERA_WATER": postimg_mobj.function("P_CameraCheckWater"),
+        "CHASE": postimg_mobj.function("P_CalcChasePostImg"),
+        "FIRST_PERSON": Source(engine / "src/p_user.c").function("P_CalcPostImg"),
+    }, output / "postimg_selection.cpp")
+
     postimg = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PostImageUV")
     postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
     reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(
