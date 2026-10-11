@@ -1,4 +1,4 @@
-From 22183f28f8aca10c7939a12397cee58eb1476a13 Mon Sep 17 00:00:00 2001
+From ea290e5fd3af5febd52230d5e5a81b32219b6255 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -501,6 +501,13 @@ Model: claude-sonnet-5-5
 
 Agent: Claude Code (Opus, D3D12 S5 review)
 Model: claude-opus-5-5
+
+- [UWP]: With palette rendering, remake the cached textures when Encore's
+  remap changes (HWR_UWPSetEncoreMap after R_ReInitColormaps), since the
+  remap is baked into them and the palette-change flush no longer runs.
+
+Agent: Claude Code (Opus, Encore texture cache fix)
+Model: claude-opus-5-5
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -517,13 +524,13 @@ Model: claude-opus-5-5
  src/hardware/CMakeLists.txt               |   69 +
  src/hardware/hw_batching.c                |   11 +-
  src/hardware/hw_bsp.c                     |  110 +-
- src/hardware/hw_cache.c                   |  335 +-
+ src/hardware/hw_cache.c                   |  359 +-
  src/hardware/hw_clip.c                    |   15 +
  src/hardware/hw_clip.h                    |    5 +
  src/hardware/hw_defs.h                    |   11 +-
  src/hardware/hw_draw.c                    |  116 +-
  src/hardware/hw_drv.h                     |   13 +
- src/hardware/hw_glob.h                    |   11 +
+ src/hardware/hw_glob.h                    |   12 +
  src/hardware/hw_glsl.h                    |  321 ++
  src/hardware/hw_main.c                    | 1758 +++++-
  src/hardware/hw_main.h                    |   21 +-
@@ -577,7 +584,7 @@ Model: claude-opus-5-5
  src/p_lights.c                            |    9 +
  src/p_mobj.c                              |   98 +-
  src/p_mobj.h                              |   11 +
- src/p_setup.cpp                           |   47 +
+ src/p_setup.cpp                           |   51 +
  src/p_tick.h                              |   15 +
  src/r_draw.h                              |   38 +-
  src/r_draw_column.cpp                     |   18 +-
@@ -610,7 +617,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 108 files changed, 22846 insertions(+), 1127 deletions(-)
+ 108 files changed, 22875 insertions(+), 1127 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -2188,7 +2195,7 @@ index 0b036ea..0625182 100644
  	i = SolveTProblem();
  	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
-index aee197a..e7bff6d 100644
+index aee197a..466ca7c 100644
 --- a/src/hardware/hw_cache.c
 +++ b/src/hardware/hw_cache.c
 @@ -18,6 +18,9 @@
@@ -2294,7 +2301,7 @@ index aee197a..e7bff6d 100644
  
  	// hardware driver will flush there own cache if cache is non paletized
  	// now flush data texture cache so 32 bit texture are recomputed
-@@ -781,6 +808,165 @@ void HWR_SetPalette(RGBA_t *palette)
+@@ -781,6 +808,189 @@ void HWR_SetPalette(RGBA_t *palette)
  	}
  }
  
@@ -2342,6 +2349,30 @@ index aee197a..e7bff6d 100644
 +		Z_FreeTag(PU_HWRCACHE);
 +		Z_FreeTag(PU_HWRCACHE_UNLOCKED);
 +	}
++}
++
++// [UWP]: Encore's remap is baked into the cached textures. Outside palette rendering, V_SetPalette frees them at
++// every level start, but palette rendering keeps them unless the palette changes, so the same map played again
++// with Encore toggled (or another map's Encore remap) would reuse the old colors. Call after R_ReInitColormaps.
++void HWR_UWPSetEncoreMap(const UINT8 *map)
++{
++	static UINT8 lastMap[256];
++	static boolean lastEncore = false;
++	const boolean encore = (map != NULL);
++
++	if (encore == lastEncore && (!encore || !memcmp(lastMap, map, sizeof(lastMap))))
++		return;
++
++	lastEncore = encore;
++	if (encore)
++		memcpy(lastMap, map, sizeof(lastMap));
++
++	if (!HWR_ShouldUsePaletteRendering() || vid.glstate != VID_GL_LIBRARY_LOADED)
++		return;
++
++	HWD.pfnClearMipMapCache();
++	Z_FreeTag(PU_HWRCACHE);
++	Z_FreeTag(PU_HWRCACHE_UNLOCKED);
 +}
 +
 +// [UWP]: Palette rendering's light tables: each colormap's 32 light levels of 256 palette indices, as the colors
@@ -2460,7 +2491,7 @@ index aee197a..e7bff6d 100644
  // --------------------------------------------------------------------------
  // Make sure texture is downloaded and set it as the source
  // --------------------------------------------------------------------------
-@@ -804,6 +990,9 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
+@@ -804,6 +1014,9 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
  	if (!grtex->mipmap.downloaded)
  		HWD.pfnSetTexture(&grtex->mipmap);
  	HWR_SetCurrentTexture(&grtex->mipmap);
@@ -2470,7 +2501,7 @@ index aee197a..e7bff6d 100644
  
  	// The system-memory data can be purged now.
  	Z_ChangeTag(grtex->mipmap.data, PU_HWRCACHE_UNLOCKED);
-@@ -1067,6 +1256,10 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
+@@ -1067,6 +1280,10 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
  #endif
  	else // set no texture
  		HWR_SetCurrentTexture(NULL);
@@ -2481,7 +2512,7 @@ index aee197a..e7bff6d 100644
  }
  
  // --------------------+
-@@ -1117,6 +1310,28 @@ void HWR_GetPatch(patch_t *patch)
+@@ -1117,6 +1334,28 @@ void HWR_GetPatch(patch_t *patch)
  	HWR_LoadPatchMipmap(patch, ((GLPatch_t *)patch->hardware)->mipmap);
  }
  
@@ -2510,7 +2541,7 @@ index aee197a..e7bff6d 100644
  // -------------------+
  // HWR_GetMappedPatch : Same as HWR_GetPatch for sprite color
  // -------------------+
-@@ -1181,77 +1396,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
+@@ -1181,77 +1420,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
  	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
  }
  
@@ -2627,7 +2658,7 @@ index aee197a..e7bff6d 100644
  	}
  }
  
-@@ -1270,16 +1470,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
+@@ -1270,16 +1494,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
  		UINT8 *block;
  		size_t len;
  
@@ -2654,7 +2685,7 @@ index aee197a..e7bff6d 100644
  		else
  			grPatch->mipmap->format = picmode2GR[pic->mode];
  
-@@ -1290,7 +1497,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
+@@ -1290,7 +1521,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
  
  		if (patch->width  == SHORT(pic->width) &&
  			patch->height == SHORT(pic->height) &&
@@ -2663,7 +2694,7 @@ index aee197a..e7bff6d 100644
  		{
  			// no conversion needed
  			M_Memcpy(grPatch->mipmap->data, pic->data,len);
-@@ -1357,7 +1564,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
+@@ -1357,7 +1588,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
  		{
  			// fademask bpp is always 1, and is used just for alpha
  			texel = src[(posx)>>FRACBITS];
@@ -3014,7 +3045,7 @@ index c4396c8..4ace846 100644
  
  extern struct hwdriver_s hwdriver;
 diff --git a/src/hardware/hw_glob.h b/src/hardware/hw_glob.h
-index 07dfb7a..4521034 100644
+index 07dfb7a..d770194 100644
 --- a/src/hardware/hw_glob.h
 +++ b/src/hardware/hw_glob.h
 @@ -98,6 +98,7 @@ typedef struct gl_vissprite_s
@@ -3033,7 +3064,13 @@ index 07dfb7a..4521034 100644
  void HWR_GetMappedPatch(patch_t *patch, const UINT8 *colormap);
  void HWR_GetFadeMask(lumpnum_t fademasklumpnum);
  patch_t *HWR_GetPic(lumpnum_t lumpnum);
-@@ -142,6 +144,15 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
+@@ -137,11 +139,21 @@ void HWR_FreeTexture(patch_t *patch);
+ void HWR_FreeTextureData(patch_t *patch);
+ void HWR_FreeTextureColormaps(patch_t *patch);
+ void HWR_ClearAllTextures(void);
++void HWR_UWPSetEncoreMap(const UINT8 *map); // [UWP]: remakes cached textures when Encore's remap changes
+ void HWR_FreeColormapCache(void);
+ void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
  
  void HWR_SetPalette(RGBA_t *palette);
  
@@ -24495,7 +24532,7 @@ index 02f46b5..f6f4e46 100644
  struct actioncache_t
  {
 diff --git a/src/p_setup.cpp b/src/p_setup.cpp
-index e5208ce..63c5d08 100644
+index e5208ce..1a57547 100644
 --- a/src/p_setup.cpp
 +++ b/src/p_setup.cpp
 @@ -17,6 +17,9 @@
@@ -24555,7 +24592,18 @@ index e5208ce..63c5d08 100644
  
  	// This is needed. Don't touch.
  	maptol = mapheaderinfo[gamemap-1]->typeoflevel;
-@@ -9006,6 +9026,20 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+@@ -8830,6 +8850,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+ 	{
+ 		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette, NULL, 0);
+ 	}
++#if defined (HWRENDER) && defined (_UWP)
++	if (rendermode == render_opengl)
++		HWR_UWPSetEncoreMap(encoremap);
++#endif
+ 	CON_SetupBackColormap();
+ 
+ 	// SRB2 determines the sky texture to be used depending on the map header.
+@@ -9006,6 +9030,20 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
  		levelloading = false;
  	}
  
@@ -24576,7 +24624,7 @@ index e5208ce..63c5d08 100644
  	if (rendermode != render_none && reloadinggamestate == false)
  	{
  		R_ResetViewInterpolation(0);
-@@ -9119,6 +9153,16 @@ void P_PostLoadLevel(void)
+@@ -9119,6 +9157,16 @@ void P_PostLoadLevel(void)
  
  	P_MapEnd();
  
@@ -24593,7 +24641,7 @@ index e5208ce..63c5d08 100644
  	// We're now done loading the level.
  	levelloading = false;
  
-@@ -9291,6 +9335,9 @@ UINT8 P_InitMapData(void)
+@@ -9291,6 +9339,9 @@ UINT8 P_InitMapData(void)
  
  	for (i = 0; i < nummapheaders; ++i)
  	{
