@@ -201,8 +201,17 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   SIZE_MAX limits. `PipelineKey` equality and hashing are checked for each field and
   across a deterministic 65,536-key sample. `SizeClassArena` checks fenced reuse
   through `Free` and `Collect`, chunk growth with `AddChunk`, dedicated allocations
-  above `MaxClass`, and exhaustion once no chunk can be added. The CPU mip generator
-  is checked against a scalar oracle for odd sizes and 1×N textures. The 3D texture
+  above `MaxClass`, and exhaustion once no chunk can be added. The texture arena's
+  opt-in quarter-octave classes are checked on both sides of every threshold,
+  rounded to 4 KB or 64 KB alignment, with dense packing, separate alignment
+  chunks/free lists, fenced reuse, and a seeded mixed-alignment nonoverlap oracle.
+  The 4 KB post-allocation texture guard is included in placement capacity and
+  cannot overlap another live allocation; default static-upload behavior remains
+  power-of-two and class-aligned. The explicit WARP `texture-guard` fixture uses
+  a test-only getter that queries the live resource's allocation size and checks
+  the guard and nonoverlap for 256×256 and 64×64 textures. It does not run during
+  normal rendering or retain diagnostic metadata. The CPU mip generator is checked
+  against a scalar oracle for odd sizes and 1×N textures. The 3D texture
 repack used for the palette lookup table is checked for row pitch, slice order and
 untouched padding.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes

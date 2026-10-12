@@ -215,6 +215,143 @@ static void arenaTests()
  arena.Reset(256, 123); assert(!arena.AddChunk());
 }
 
+// Independently enumerate the fine classes rather than repeat Allocate's rounding.
+static size_t fineClass(size_t bytes, size_t alignment)
+{
+ using Arena = rr_d3d12::SizeClassArena;
+ size_t best = Arena::MaxClass;
+ for (size_t power = 4096; power < Arena::MaxClass; power *= 2)
+  for (size_t quarter = 0; quarter <= 4; ++quarter) {
+   const size_t candidate = power + quarter * (power / 4);
+   const size_t aligned = ((candidate + alignment - 1) / alignment) * alignment;
+   if (aligned >= bytes) best = std::min(best, aligned);
+  }
+ return best;
+}
+
+static void fineArenaTests()
+{
+ using Arena = rr_d3d12::SizeClassArena;
+ constexpr size_t KB = 1024, small = 4 * KB, large = 64 * KB;
+ Arena arena;
+ auto reset = [&]() { arena.Reset(small, Arena::MaxClass, SIZE_MAX, true); };
+ reset();
+ for (const auto &sample : std::vector<std::pair<size_t, size_t>>{
+      {8 * KB, small}, {260 * KB, large}, {68 * KB, large}, {1024 * KB + small, small}}) {
+  auto block = arena.Allocate(sample.first, sample.second);
+  const size_t expected = sample.first == 8 * KB ? 8 * KB :
+   sample.first == 260 * KB ? 320 * KB : sample.first == 68 * KB ? 128 * KB : 1280 * KB;
+  assert(!block.valid && block.needsChunk && block.size == expected);
+ }
+ // Both sides of every quarter threshold, including exact powers and 4 MiB.
+ for (size_t power = small; power < Arena::MaxClass; power *= 2)
+  for (size_t quarter = 0; quarter <= 4; ++quarter)
+   for (size_t alignment : {small, large}) {
+    const size_t threshold = power + quarter * (power / 4);
+    for (size_t bytes : {threshold - 1, threshold, threshold + 1}) {
+     reset();
+     auto block = arena.Allocate(bytes, alignment);
+     assert(!block.valid && block.needsChunk);
+     if (bytes > Arena::MaxClass) {
+      assert(block.dedicated && block.size == bytes);
+      auto dedicated = arena.AddDedicated(bytes);
+      assert(dedicated.valid && dedicated.dedicated && dedicated.size == bytes && dedicated.offset == 0);
+     } else {
+      assert(!block.dedicated && block.size == fineClass(bytes, alignment));
+      assert(arena.AddChunk());
+      block = arena.Allocate(bytes, alignment);
+      assert(block.valid && block.size == fineClass(bytes, alignment));
+      assert(block.alignment == alignment && block.offset % alignment == 0);
+     }
+    }
+   }
+ reset();
+ assert(arena.AddChunk());
+ // Dense bump packing has no class-sized padding, even when class sizes change.
+ size_t end = 0;
+ for (size_t bytes : {small, 8 * KB, 68 * KB, 260 * KB, 1024 * KB + small}) {
+  const auto block = arena.Allocate(bytes, small);
+  assert(block.valid && block.chunk == 0 && block.offset == end);
+  assert(block.offset % small == 0 && block.size == fineClass(bytes, small));
+  end += block.size;
+ }
+ auto high = arena.Allocate(68 * KB, large);
+ assert(!high.valid && high.needsChunk); // Existing chunk belongs to 4 KiB alignment.
+ assert(arena.AddChunk());
+ high = arena.Allocate(68 * KB, large);
+ auto highNext = arena.Allocate(260 * KB, large);
+ assert(high.valid && high.chunk == 1 && high.offset == 0);
+ assert(highNext.valid && highNext.chunk == 1 && highNext.offset == high.size);
+ assert(highNext.offset % large == 0);
+ // Zero selects the configured minimum; other invalid alignments fail unchanged.
+ const auto defaultAlignment = arena.Allocate(1);
+ assert(defaultAlignment.valid && defaultAlignment.alignment == small && defaultAlignment.offset == end);
+ end += defaultAlignment.size;
+ for (size_t alignment : {size_t(1), size_t(2048), size_t(6144), Arena::MaxClass * 2, SIZE_MAX}) {
+  const auto invalid = arena.Allocate(1, alignment);
+  assert(!invalid.valid && !invalid.needsChunk && !invalid.dedicated);
+ }
+ assert(arena.Allocate(1, small).offset == end);
+ // Identical capacities with different alignments have separate fenced free lists.
+ reset(); assert(arena.AddChunk());
+ const auto low = arena.Allocate(128 * KB, small);
+ assert(arena.AddChunk());
+ high = arena.Allocate(128 * KB, large);
+ assert(low.valid && high.valid && low.size == high.size && low.chunk != high.chunk);
+ arena.Free(low, 8); arena.Free(high, 3); arena.Collect(2);
+ auto before = arena.Allocate(128 * KB, large);
+ assert(before.valid && before.offset != high.offset && arena.Reuses() == 0);
+ arena.Collect(3);
+ auto reused = arena.Allocate(128 * KB, small);
+ assert(reused.valid && reused.offset != low.offset && reused.chunk == low.chunk && arena.Reuses() == 0);
+ reused = arena.Allocate(128 * KB, large);
+ assert(reused.chunk == high.chunk && reused.offset == high.offset && reused.alignment == large && arena.Reuses() == 1);
+ arena.Collect(8);
+ reused = arena.Allocate(128 * KB, small);
+ assert(reused.chunk == low.chunk && reused.offset == low.offset && reused.alignment == small && arena.Reuses() == 2);
+ // A larger free class must not satisfy a smaller request.
+ arena.Free(reused, 9); arena.Collect(9);
+ assert(arena.Allocate(64 * KB, small).size == 64 * KB && arena.Reuses() == 2);
+ // Default mode retains power-of-two classes and class-aligned offsets.
+ arena.Reset(small, Arena::MaxClass); assert(arena.AddChunk());
+ assert(arena.Allocate(1, large).size == small);
+ const auto legacy = arena.Allocate(260 * KB, small);
+ assert(legacy.valid && legacy.size == 512 * KB && legacy.offset == 512 * KB);
+ assert(arena.Allocate(68 * KB, 3).size == 128 * KB);
+ // Seeded mixed-alignment oracle checks every live and fence-pending range.
+ arena.Reset(small, Arena::MaxClass, 16, true);
+ std::vector<Arena::Block> live;
+ std::vector<std::pair<uint64_t, Arena::Block>> pending;
+ std::mt19937 random(0xabc123);
+ for (uint64_t frame = 1; frame <= 500; ++frame) {
+  const uint64_t completed = frame > 3 ? frame - 3 : 0;
+  arena.Collect(completed);
+  pending.erase(std::remove_if(pending.begin(), pending.end(), [&](const auto &entry) { return entry.first <= completed; }), pending.end());
+  for (unsigned n = 0; n < 10; ++n) {
+   const size_t bytes = 1 + random() % (320 * KB);
+   const size_t alignment = random() % 2 ? small : large;
+   auto block = arena.Allocate(bytes, alignment);
+   if (block.needsChunk) { assert(arena.AddChunk()); block = arena.Allocate(bytes, alignment); }
+   if (!block.valid) continue;
+   assert(block.size == fineClass(bytes, alignment) && block.size >= bytes);
+   assert(block.alignment == alignment && block.offset % alignment == 0);
+   assert(block.size % alignment == 0 && block.offset + block.size <= arena.ChunkBytes());
+   auto disjoint = [&](const Arena::Block &other) {
+    assert(block.chunk != other.chunk || block.offset + block.size <= other.offset || other.offset + other.size <= block.offset);
+   };
+   for (const auto &other : live) disjoint(other);
+   for (const auto &other : pending) disjoint(other.second);
+   live.push_back(block);
+  }
+  for (unsigned n = 0; n < 9 && !live.empty(); ++n) {
+   const size_t index = random() % live.size();
+   const uint64_t fence = frame + random() % 4;
+   arena.Free(live[index], fence); pending.emplace_back(fence, live[index]);
+   live.erase(live.begin() + index);
+  }
+ }
+}
+
 static void mipTests()
 {
  using rr_d3d12::GenerateMipChainRGBA8;
@@ -276,6 +413,7 @@ int main()
     ringTests();
     keyTests();
     arenaTests();
+    fineArenaTests();
     mipTests();
     repackTests();
     std::cout << "D3D12 allocator and pipeline key regressions passed\n";

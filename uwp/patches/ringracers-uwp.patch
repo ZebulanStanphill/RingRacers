@@ -1,4 +1,4 @@
-From 93ab5fd1e404eb56fa00f744bc188b0b0a5df420 Mon Sep 17 00:00:00 2001
+From 3bba0033d65a9df3a7e012fcdb4315b64ccf1107 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -576,6 +576,33 @@ Model: claude-opus-5-5
 
 Agent: Claude Code (Opus, startup black frames)
 Model: claude-opus-5-5
+
+- [UWP]: Reserve a 4 KB guard after every placed texture's reported
+  allocation size, and use alignment-partitioned quarter-octave classes for
+  the texture arena while keeping static uploads power-of-two. The Xbox One
+  driver writes a per-resource state word at offset + align_up(data end, 256),
+  outside the reported size whenever the data fills it, which corrupted the
+  next texture's first texel. The explicit WARP fixture queries live
+  allocation information through a test-only getter; normal rendering retains
+  no diagnostic metadata or overhead.
+
+Agent: Codex (/root, texture guard design and review)
+Model: gpt-6.1-sol
+Agent: Codex (/root/production_guard_implementation, production integration and tests)
+Model: gpt-6.1-sol
+Agent: Codex (/root/placement_result_review, placement evidence and production review)
+Model: gpt-6.1-sol
+Agent: Codex (/root/production_guard_docs, documentation and patch export)
+Model: gpt-6-luna
+Agent: Codex (Sol, prior quarter-octave allocator implementation)
+Model: gpt-6.1-sol
+Agent: Claude Code (Opus 5.5, prior quarter-octave allocator review)
+Model: claude-opus-5-5
+Agent: Codex (/root/guarded_run_log_extraction, Xbox log extraction)
+Model: gpt-6-luna
+Agent: Claude Code (Opus 5.5, cause-of-corruption comment)
+Model: claude-opus-5-5
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -611,7 +638,7 @@ Model: claude-opus-5-5
  src/hardware/r_d3d11/r_d3d11.cpp          | 6420 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
- src/hardware/r_d3d12/allocators.h         |  196 +
+ src/hardware/r_d3d12/allocators.h         |  212 +
  src/hardware/r_d3d12/d3d12_arenas.inc     |   94 +
  src/hardware/r_d3d12/d3d12_captures.inc   |  271 +
  src/hardware/r_d3d12/d3d12_core.cpp       |  845 +++
@@ -631,8 +658,8 @@ Model: claude-opus-5-5
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2968 ++++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   58 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 2991 ++++++++++
+ src/hardware/r_d3d12/r_d3d12.h            |   61 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -689,7 +716,7 @@ Model: claude-opus-5-5
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 23740 insertions(+), 1137 deletions(-)
+ 112 files changed, 23782 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -14549,10 +14576,10 @@ index 0000000..0921d27
 +}
 diff --git a/src/hardware/r_d3d12/allocators.h b/src/hardware/r_d3d12/allocators.h
 new file mode 100644
-index 0000000..beb6dae
+index 0000000..29a80b0
 --- /dev/null
 +++ b/src/hardware/r_d3d12/allocators.h
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,212 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -14668,7 +14695,7 @@ index 0000000..beb6dae
 +	std::vector<uint32_t> free_;
 +	std::multimap<uint64_t, uint32_t> pending_;
 +};
-+// Chunks are bump-carved into aligned power-of-two blocks with class free lists. The GPU owner creates
++// Chunks are bump-carved into power-of-two blocks, or opt-in quarter-octave classes. The GPU owner creates
 +// backing storage before AddChunk/AddDedicated, and keeps chunk IDs stable.
 +class SizeClassArena
 +{
@@ -14677,33 +14704,49 @@ index 0000000..beb6dae
 +	static constexpr uint32_t InvalidChunk = UINT32_MAX;
 +	struct Block {
 +		uint32_t chunk = InvalidChunk;
-+		size_t offset = 0, size = 0;
++		size_t offset = 0, size = 0, alignment = 0;
 +		bool dedicated = false, needsChunk = false, valid = false;
 +	};
-+	void Reset(size_t minClass, size_t chunkBytes, size_t maxChunks = SIZE_MAX)
++	void Reset(size_t minClass, size_t chunkBytes, size_t maxChunks = SIZE_MAX, bool quarterClasses = false)
 +	{
-+		minClass_ = minClass; chunkBytes_ = chunkBytes; maxChunks_ = maxChunks;
++		minClass_ = minClass; chunkBytes_ = chunkBytes; maxChunks_ = maxChunks; quarterClasses_ = quarterClasses;
 +		chunks_.clear(); pending_.clear(); free_.clear(); reuses_ = 0;
 +		configured_ = minClass && !(minClass & (minClass - 1)) && minClass <= MaxClass
 +				&& chunkBytes >= MaxClass && chunkBytes % MaxClass == 0;
 +	}
-+	Block Allocate(size_t bytes)
++	Block Allocate(size_t bytes, size_t alignment = 0)
 +	{
 +		Block b;
 +		if (!configured_ || !bytes) return b;
 +		b.size = bytes; b.dedicated = bytes > MaxClass;
 +		if (!b.dedicated) {
 +			b.size = minClass_;
-+			while (b.size < bytes) b.size *= 2;
-+			auto &free = free_[b.size];
++			if (quarterClasses_) {
++				if (!alignment) alignment = minClass_;
++				if (alignment < minClass_ || alignment > MaxClass || (alignment & (alignment - 1))) return Block{};
++				// First round to a quarter of the containing power-of-two interval,
++				// then to placement alignment. All arithmetic is bounded by MaxClass.
++				while (b.size <= bytes / 2) b.size *= 2;
++				if (b.size < bytes) {
++					const size_t step = b.size / 4 ? b.size / 4 : 1;
++					b.size += ((bytes - b.size + step - 1) / step) * step;
++				}
++				b.size = ((b.size + alignment - 1) / alignment) * alignment;
++				b.alignment = alignment;
++			}
++			else while (b.size < bytes) b.size *= 2;
++			auto &free = free_[{b.size, b.alignment}];
 +			if (!free.empty()) { b = free.back(); free.pop_back(); ++reuses_; return b; }
 +			for (size_t i = 0; i < chunks_.size(); ++i) {
 +				auto &c = chunks_[i];
 +				if (c.dedicated) continue;
-+				const size_t padding = (b.size - c.head % b.size) % b.size;
++				// A fresh chunk adopts one alignment. Its classes are multiples of
++				// that alignment, so fine-class bump allocation needs no padding.
++				if (quarterClasses_ && c.alignment && c.alignment != b.alignment) continue;
++				const size_t padding = quarterClasses_ ? 0 : (b.size - c.head % b.size) % b.size;
 +				if (padding > chunkBytes_ - c.head || b.size > chunkBytes_ - c.head - padding) continue;
 +				b.chunk = static_cast<uint32_t>(i); b.offset = c.head + padding;
-+				c.head = b.offset + b.size; b.valid = true; return b;
++				c.head = b.offset + b.size; c.alignment = b.alignment; b.valid = true; return b;
 +			}
 +		}
 +		b.needsChunk = CanGrow(); return b;
@@ -14729,7 +14772,7 @@ index 0000000..beb6dae
 +		const auto end = pending_.upper_bound(completed);
 +		for (auto it = pending_.begin(); it != end; ++it) {
 +			const auto &b = it->second;
-+			if (!b.dedicated) free_[b.size].push_back(b);
++			if (!b.dedicated) free_[{b.size, b.alignment}].push_back(b);
 +		}
 +		pending_.erase(pending_.begin(), end);
 +	}
@@ -14737,12 +14780,12 @@ index 0000000..beb6dae
 +	size_t ChunkCount() const { return chunks_.size(); }
 +	size_t ChunkBytes() const { return chunkBytes_; }
 +private:
-+	struct Chunk { size_t blockSize = 0, head = 0; bool dedicated = false; };
++	struct Chunk { size_t blockSize = 0, head = 0, alignment = 0; bool dedicated = false; };
 +	bool CanGrow() const { return chunks_.size() < maxChunks_ && chunks_.size() < InvalidChunk; }
 +	size_t reuses_ = 0;
 +	size_t minClass_ = 0, chunkBytes_ = 0, maxChunks_ = 0;
-+	bool configured_ = false;
-+	std::map<size_t, std::vector<Block>> free_;
++	bool configured_ = false, quarterClasses_ = false;
++	std::map<std::pair<size_t, size_t>, std::vector<Block>> free_;
 +	std::vector<Chunk> chunks_;
 +	std::multimap<uint64_t, Block> pending_;
 +};
@@ -14751,7 +14794,7 @@ index 0000000..beb6dae
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_arenas.inc b/src/hardware/r_d3d12/d3d12_arenas.inc
 new file mode 100644
-index 0000000..b3b028d
+index 0000000..8eda11b
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_arenas.inc
 @@ -0,0 +1,94 @@
@@ -14797,7 +14840,7 @@ index 0000000..b3b028d
 +void InitArenas()
 +{
 +	g_staticArena.Reset(256, kStaticChunkBytes);
-+	g_textureArena.Reset(4096, kTextureHeapBytes);
++	g_textureArena.Reset(4096, kTextureHeapBytes, SIZE_MAX, true);
 +}
 +StaticAllocation AllocateStatic(const void *data, UINT bytes)
 +{
@@ -20609,10 +20652,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..c52aa43
+index 0000000..3be5807
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2968 @@
+@@ -0,0 +1,2991 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -21515,9 +21558,20 @@ index 0000000..c52aa43
 +		smallPlacement = info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT && info.SizeInBytes != UINT64_MAX;
 +	}
 +	if (!smallPlacement) { desc.Alignment = 0; info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc); }
-+	if (info.SizeInBytes <= 4 * 1024 * 1024)
++	// [UWP]: The Xbox One driver keeps a 4-byte state word for each placed resource at
++	// offset + align_up(end of its data, 256), which GetResourceAllocationInfo doesn't
++	// count. When the data fills the reported size (such as 256x256 RGBA8 with one
++	// mip), the word lands on the next resource's first texel: CreatePlacedResource
++	// writes 0 there and later transitions write 0 or 1. Leave a guard after every
++	// placed texture; alignment rounds it up to the next 4 KB or 64 KB boundary anyway.
++	constexpr UINT64 kTextureGuardBytes = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
++	const size_t blockBytes = info.SizeInBytes && info.SizeInBytes <= SizeClassArena::MaxClass - kTextureGuardBytes
++		&& (info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT
++			|| info.Alignment == D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
++		? (size_t)(info.SizeInBytes + kTextureGuardBytes) : 0;
++	if (blockBytes)
 +	{
-+		auto block = g_textureArena.Allocate((size_t)info.SizeInBytes);
++		auto block = g_textureArena.Allocate(blockBytes, (size_t)info.Alignment);
 +		if (block.needsChunk)
 +		{
 +			D3D12_HEAP_DESC heapDesc = {}; heapDesc.SizeInBytes = kTextureHeapBytes;
@@ -21531,7 +21585,7 @@ index 0000000..c52aa43
 +				g_textureArena.AddChunk();
 +				g_textureHeaps.push_back(heap);
 +				Log("texture heap #%u (16 MB)", (unsigned)g_textureHeaps.size());
-+				block = g_textureArena.Allocate((size_t)info.SizeInBytes);
++				block = g_textureArena.Allocate(blockBytes, (size_t)info.Alignment);
 +			}
 +		}
 +		if (block.valid)
@@ -23516,6 +23570,18 @@ index 0000000..c52aa43
 +	*placed = g_placedCreated; *blocks = g_textureArena.Reuses(); *srvs = g_srvReuses;
 +}
 +
++boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset,
++	UINT64 *blockBytes, UINT64 *reportedBytes, UINT64 *alignment)
++{
++	const auto *texture = FindTexture(id);
++	if (!texture || !texture->res || !texture->heapBlock.valid) return false;
++	const auto desc = texture->res->GetDesc();
++	const auto info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc);
++	*heap = texture->heapBlock.chunk; *offset = texture->heapBlock.offset;
++	*blockBytes = texture->heapBlock.size; *reportedBytes = info.SizeInBytes; *alignment = info.Alignment;
++	return true;
++}
++
 +void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
 +{
 +	if (PalettePostprocess())
@@ -23583,10 +23649,10 @@ index 0000000..c52aa43
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
 new file mode 100644
-index 0000000..c064cc3
+index 0000000..b028f38
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,61 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -23614,6 +23680,9 @@ index 0000000..c064cc3
 +// Test hook: cumulative capture counts, unaffected by perf logging.
 +void D3D12_GetCaptureCountsForTest(UINT64 *fogCopies, UINT64 *waterCopies, UINT64 *waterRoundTrips);
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs);
++// Test hook: queries an existing placed texture's block and the device's current allocation info.
++boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset,
++	UINT64 *blockBytes, UINT64 *reportedBytes, UINT64 *alignment);
 +// Test hook: set before initialization; zero keeps the production ring size.
 +void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant);
 +// Runs palette rendering's last step and reads its result like ReadRect reads the screen; nothing is read without it

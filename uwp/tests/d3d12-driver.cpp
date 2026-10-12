@@ -231,6 +231,47 @@ int main(int argc,char **argv) {
             auto white=surface({255,255,255}); const FBITFIELD flags=PF_Modulated|PF_NoDepthTest;
             blend(flags); polygon(&white,q.data(),4,flags);
         };
+        // Query production placements only after ordinary SetTexture creation/upload.
+        // Each block must contain its own complete blind guard, including mixed alignments.
+        {
+            struct Placement { UINT32 heap; UINT64 offset, block, reported, alignment; };
+            std::array<GLMipmap_t,4> textures={};
+            std::array<std::vector<UINT8>,4> data;
+            std::array<Placement,4> placements={};
+            for(size_t i=0;i<textures.size();i++) {
+                const int side=i<2?256:64;
+                const RGB color=i%2?RGB{16,200,80}:RGB{200,40,16};
+                data[i].resize(side*side*4);
+                for(size_t pixel=0;pixel<data[i].size()/4;pixel++) {
+                    for(size_t c=0;c<3;c++) data[i][pixel*4+c]=(UINT8)color[c];
+                    data[i][pixel*4+3]=255;
+                }
+                auto &t=textures[i]; t.format=GL_TEXFMT_RGBA; t.width=t.height=side; t.data=data[i].data();
+                texture(&t);
+                auto &p=placements[i];
+                if(!D3D12_GetTexturePlacementForTest(t.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
+                    throw std::runtime_error("texture-guard did not use placed storage");
+                const UINT64 alignment=i<2?65536:4096;
+                const UINT64 expectedBlock=i<2?320*1024:20*1024;
+                if(p.alignment!=alignment || p.offset%alignment || p.block%alignment
+                    || p.reported>p.block || p.block-p.reported<4096 || p.block!=expectedBlock)
+                    throw std::runtime_error("texture-guard allocation bounds/class oracle failed");
+            }
+            // Fresh same-class pairs are adjacent; the next resource begins after the entire guard.
+            for(size_t first : {size_t(0),size_t(2)}) {
+                const auto &a=placements[first], &b=placements[first+1];
+                if(a.heap!=b.heap || b.offset!=a.offset+a.block || b.offset<a.offset+a.reported+4096)
+                    throw std::runtime_error("texture-guard neighboring allocations share a guard");
+            }
+            if(placements[0].heap==placements[2].heap)
+                throw std::runtime_error("texture-guard mixed alignments shared a chunk");
+            for(size_t i=0;i<textures.size();i++) {
+                reset(); texture(&textures[i]); textured();
+                expect("texture-guard",i%2?RGB{16,200,80}:RGB{200,40,16});
+                deleteTexture(&textures[i]);
+            }
+            D3D12_FinishUpdate(0);
+        }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};
         GLMipmap_t tex={}; tex.format=GL_TEXFMT_RGBA; tex.width=tex.height=2; tex.data=texels.data();
         reset(); texture(&tex); textured();
