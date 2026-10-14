@@ -209,8 +209,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   cannot overlap another live allocation; default static-upload behavior remains
   power-of-two and class-aligned. The explicit WARP `texture-guard` fixture uses
   a test-only getter that queries the live resource's allocation size and checks
-  the guard and nonoverlap for 256×256 and 64×64 textures. It does not run during
-  normal rendering or retain diagnostic metadata. The CPU mip generator is checked
+  the guard and nonoverlap for 256×256 and 64×64 textures, then creates a 1024×1024
+  texture, which exceeds the arena's largest class with its guard, and checks that it
+  got a heap of its own rather than committed storage and that its last texel draws.
+  None of this runs during normal rendering or retains diagnostic metadata. The CPU mip generator is checked
   against a scalar oracle for odd sizes and 1×N textures. The 3D texture
 repack used for the palette lookup table is checked for row pitch, slice order and
 untouched padding.

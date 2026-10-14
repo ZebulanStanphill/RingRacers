@@ -25,7 +25,11 @@ The report, logs and app source are kept outside this repository.
 
 ## The workaround
 
-`CreateTextureResource` asks the texture arena for `SizeInBytes + 4 KB` for every placed texture. The arena then rounds that up to the texture's placement alignment, so the effective gap is one alignment unit:
+Every texture is placed with room after its data. There are two paths.
+
+### Shared heaps
+
+`CreateTextureResource` asks the texture arena for `SizeInBytes + 4 KB` for every texture up to the arena's largest class. The arena then rounds that up to the texture's placement alignment, so the effective gap is one alignment unit:
 - **4 KB** for small-placement textures;
 - **64 KB** for others.
 
@@ -33,6 +37,22 @@ A smaller constant would give the same blocks: the next resource can't start bef
 
 The texture arena uses alignment-rounded quarter-octave classes (P, 1.25P, 1.5P, 1.75P, 2P), with chunks and free lists separated by alignment. Most textures then already have slack after their data, and the guard costs extra memory only when a texture exactly fills its class. Static uploads keep their power-of-two classes; the workaround doesn't apply to them.
 
-## Known gap
+### A heap of its own
 
-Committed textures appear to hold the same word over their last texel, so it becomes `0` after any state change. Textures over 4 MB, and textures whose placement fails, still fall back to committed resources. Those can show a wrong bottom-right pixel.
+The arena's largest class is 4 MB, so a texture whose reported size plus the guard exceeds it can't be placed there. A 1024×1024 RGBA8 texture with one mip is exactly 4 MB, so it's the common case; textures whose arena placement fails for any other reason take the same path.
+
+`CreateDedicatedTexture` gives such a texture a heap of its own, sized to its reported allocation rounded up to 64 KB plus one spare 64 KB page, and places the texture at offset 0. The spare page holds the state word.
+
+### Why committed textures aren't the fallback
+
+The obvious fallback for an oversized texture is `CreateCommittedResource`, and that was the fallback until this change. It isn't safe. In the diagnostic app, a committed 256×256 RGBA8 texture read `0` at texel (255,255) after any state transition, while every other texel kept its data: the same state word, inside the resource this time, over its last texel. A large committed texture would come back with its bottom-right texel zeroed after its first use.
+
+That's why both paths place the texture in a heap with room after it. Committed textures remain only as a last resort for when creating a heap fails, and the log reports the first one:
+
+`UWP D3D12: committed texture: 1024x1024 could not be placed; its last texel is unreliable on Xbox One`
+
+The palette lookup table used to be a committed 64×64×64 R8 texture. Its last texel is the entry for white, so it now goes through `CreateTextureResource` like every other texture.
+
+## Counters
+
+The perf summary's `texture heaps:` line counts textures created in each kind of storage: `placed` (shared heap blocks), `dedicated` (heaps of their own) and `committed` (the last resort, expected to stay at 0).

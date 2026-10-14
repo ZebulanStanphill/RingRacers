@@ -233,8 +233,8 @@ int main(int argc,char **argv) {
         };
         // Query production placements only after ordinary SetTexture creation/upload.
         // Each block must contain its own complete blind guard, including mixed alignments.
+        struct Placement { UINT32 heap; UINT64 offset, block, reported, alignment; };
         {
-            struct Placement { UINT32 heap; UINT64 offset, block, reported, alignment; };
             std::array<GLMipmap_t,4> textures={};
             std::array<std::vector<UINT8>,4> data;
             std::array<Placement,4> placements={};
@@ -271,6 +271,32 @@ int main(int argc,char **argv) {
                 deleteTexture(&textures[i]);
             }
             D3D12_FinishUpdate(0);
+        }
+        // A 1024x1024 texture exceeds the shared heaps' largest class once its guard is counted. It must get a heap
+        // of its own rather than committed storage, whose last texel the Xbox One driver's state word can zero.
+        {
+            UINT64 placedBefore=0,dedicatedBefore=0,committedBefore=0;
+            D3D12_GetTextureStorageCountsForTest(&placedBefore,&dedicatedBefore,&committedBefore);
+            std::vector<UINT8> big(1024*1024*4);
+            for(size_t pixel=0;pixel<big.size()/4;pixel++) { big[pixel*4]=40; big[pixel*4+1]=96; big[pixel*4+2]=216; big[pixel*4+3]=255; }
+            // The bottom-right texel differs so that a zeroed or clamped last texel would show.
+            big[big.size()-4]=232; big[big.size()-3]=200; big[big.size()-2]=24;
+            GLMipmap_t t={}; t.format=GL_TEXFMT_RGBA; t.width=t.height=1024; t.data=big.data();
+            reset(); texture(&t);
+            Placement p={};
+            if(D3D12_GetTexturePlacementForTest(t.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
+                throw std::runtime_error("texture-dedicated used a shared heap block");
+            UINT64 placed=0,dedicated=0,committed=0;
+            D3D12_GetTextureStorageCountsForTest(&placed,&dedicated,&committed);
+            if(placed!=placedBefore || dedicated!=dedicatedBefore+1 || committed!=committedBefore)
+                throw std::runtime_error("texture-dedicated storage counts oracle failed");
+            // Draw with texel (1023,1023) alone on the top-right pixel: s and t of 1 sample the last texel with point filtering.
+            auto q=quad(); q[0].x=q[3].x=-1; q[1].x=q[2].x=1; q[0].y=q[1].y=-1; q[2].y=q[3].y=1;
+            q[0].s=q[3].s=0; q[1].s=q[2].s=1.f+1.f/W; q[0].t=q[1].t=0; q[2].t=q[3].t=1.f+1.f/H;
+            auto white=surface({255,255,255}); const FBITFIELD flags=PF_Modulated|PF_NoDepthTest;
+            blend(flags); polygon(&white,q.data(),4,flags);
+            expect("texture-dedicated",{40,96,216},8,32); expect("texture-dedicated",{232,200,24},W-1,0);
+            deleteTexture(&t); D3D12_FinishUpdate(0);
         }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};
         GLMipmap_t tex={}; tex.format=GL_TEXFMT_RGBA; tex.width=tex.height=2; tex.data=texels.data();

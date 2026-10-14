@@ -1,4 +1,4 @@
-From 3bba0033d65a9df3a7e012fcdb4315b64ccf1107 Mon Sep 17 00:00:00 2001
+From 048167ee44e46c805d85f4e7e5046dda48a409ee Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -603,6 +603,21 @@ Model: gpt-6-luna
 Agent: Claude Code (Opus 5.5, cause-of-corruption comment)
 Model: claude-opus-5-5
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- [UWP]: Give a texture that the shared heaps can't take, such as a
+  1024x1024 texture over the arena's 4 MB class limit or any failed
+  placement, a heap of its own sized to its reported allocation plus a spare
+  64 KB page, instead of a committed resource. On Xbox One the driver's
+  state word lands inside a committed texture, over its last texel, which
+  read 0 after any transition in the diagnostic app. Place the palette
+  lookup table the same way; keep committed textures as a logged last
+  resort; count dedicated heaps in the perf summary and a test-only getter,
+  and check the path in the WARP fixture.
+
+Agent: Claude Code (Fable 5.1, dedicated texture heaps)
+Model: claude-fable-5-1
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
@@ -646,7 +661,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
  src/hardware/r_d3d12/d3d12_models.inc     |  516 ++
- src/hardware/r_d3d12/d3d12_palette.inc    |  294 +
+ src/hardware/r_d3d12/d3d12_palette.inc    |  290 +
  src/hardware/r_d3d12/d3d12_pipeline.cpp   |  173 +
  src/hardware/r_d3d12/d3d12_pipeline.h     |   58 +
  src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
@@ -658,8 +673,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 2991 ++++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   61 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 3038 ++++++++++
+ src/hardware/r_d3d12/r_d3d12.h            |   63 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -716,7 +731,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 23782 insertions(+), 1137 deletions(-)
+ 112 files changed, 23827 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -14794,7 +14809,7 @@ index 0000000..29a80b0
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_arenas.inc b/src/hardware/r_d3d12/d3d12_arenas.inc
 new file mode 100644
-index 0000000..8eda11b
+index 0000000..34d9741
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_arenas.inc
 @@ -0,0 +1,94 @@
@@ -14811,7 +14826,7 @@ index 0000000..8eda11b
 +struct StaticChunk { ComPtr<ID3D12Resource> resource; BYTE *cpu = nullptr; bool dedicated = false; };
 +std::vector<StaticChunk> g_staticChunks;
 +std::vector<ComPtr<ID3D12Heap>> g_textureHeaps;
-+UINT64 g_placedCreated = 0, g_committedCreated = 0, g_smallPlaced = 0, g_normalPlaced = 0;
++UINT64 g_placedCreated = 0, g_dedicatedCreated = 0, g_committedCreated = 0, g_smallPlaced = 0, g_normalPlaced = 0;
 +UINT64 g_textureHeapUsed = 0, g_textureHeapPeak = 0;
 +size_t g_staticDedicated = 0;
 +std::multimap<UINT64, UINT64> g_pendingTextureBytes;
@@ -17309,10 +17324,10 @@ index 0000000..23c3fce
 +}
 diff --git a/src/hardware/r_d3d12/d3d12_palette.inc b/src/hardware/r_d3d12/d3d12_palette.inc
 new file mode 100644
-index 0000000..5578b0b
+index 0000000..7cb8b86
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_palette.inc
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,290 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -17387,7 +17402,7 @@ index 0000000..5578b0b
 +	return true;
 +}
 +
-+// Created once, so it's a committed resource rather than a heap placement
++// Created once; placed like any texture so the driver's state word can't zero its white entry (see CreateTextureResource)
 +bool CreatePaletteLookup()
 +{
 +	constexpr UINT size = HWR_PALETTE_LUT_SIZE;
@@ -17402,11 +17417,8 @@ index 0000000..5578b0b
 +	desc.MipLevels = 1;
 +	desc.Format = DXGI_FORMAT_R8_UNORM;
 +	desc.SampleDesc.Count = 1;
-+	D3D12_HEAP_PROPERTIES heap = {};
-+	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 +	GpuTexture lookup;
-+	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
-+		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&lookup.res)), "CreateCommittedResource (palette lookup)"))
++	if (!CreateTextureResource(lookup, desc))
 +	{
 +		g_srvIndices.Free(index, Core_PendingFence());
 +		return false;
@@ -17416,7 +17428,6 @@ index 0000000..5578b0b
 +	lookup.width = lookup.height = size;
 +	lookup.format = desc.Format;
 +	lookup.bytes = (UINT64)size * size * size;
-+	lookup.allocatedBytes = Core_Device()->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
 +	D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
 +	srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 +	srv.Format = desc.Format;
@@ -20652,10 +20663,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..3be5807
+index 0000000..4cef4c51
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,2991 @@
+@@ -0,0 +1,3038 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -21114,7 +21125,8 @@ index 0000000..3be5807
 +	UINT width = 0, height = 0, mips = 1;
 +	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 +	UINT64 bytes = 0, allocatedBytes = 0;
-+	SizeClassArena::Block heapBlock;
++	SizeClassArena::Block heapBlock; // a block of a shared texture heap, or
++	ComPtr<ID3D12Heap> heap; // a heap of its own (see CreateDedicatedTexture), or neither when committed
 +};
 +IndexFreeList g_srvIndices;
 +UINT g_srvHighWater = 4;
@@ -21474,6 +21486,7 @@ index 0000000..3be5807
 +	if (!texture.res) return;
 +	// Both the resource and its descriptor cover all work recorded so far, including this open list.
 +	Core_Retire(texture.res);
++	Core_Retire(texture.heap);
 +	if (texture.heapBlock.valid)
 +	{
 +		g_textureArena.Free(texture.heapBlock, Core_PendingFence());
@@ -21536,7 +21549,47 @@ index 0000000..3be5807
 +	Transition(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 +	return true;
 +}
++// [UWP]: The Xbox One driver keeps a 4-byte state word for each buffer and each
++// non-render-target texture at offset + align_up(end of its data, 256), which
++// GetResourceAllocationInfo doesn't count. When the data fills the reported size
++// (such as 256x256 RGBA8 with one mip), the word lands on whatever follows the
++// resource: CreatePlacedResource writes 0 there and each later transition writes
++// 0 or 1. In the diagnostic app that established this, committed textures of such
++// sizes instead lost their last texel to the word, so committed storage isn't a
++// safe fallback either: a 1024x1024 texture would come back with its bottom-right
++// texel zeroed. Every texture is therefore placed with room after its data:
++// - shared heaps, with kTextureGuardBytes after each block (CreateTextureResource);
++// - a heap of its own with a spare 64 KB page, when the shared heaps can't take it
++//   (CreateDedicatedTexture).
++// Committed textures remain only as a last resort for when even that fails.
++constexpr UINT64 kTextureGuardBytes = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
++constexpr UINT64 kDedicatedTexturePadBytes = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
++// A texture at offset 0 of a heap of its own, sized for the reported allocation plus a spare page.
++bool CreateDedicatedTexture(GpuTexture &texture, const D3D12_RESOURCE_DESC &desc, const D3D12_RESOURCE_ALLOCATION_INFO &info)
++{
++	if (!info.SizeInBytes || info.SizeInBytes == UINT64_MAX || !info.Alignment || info.Alignment > kDedicatedTexturePadBytes) return false;
++	D3D12_HEAP_DESC heapDesc = {};
++	heapDesc.SizeInBytes = (info.SizeInBytes + kDedicatedTexturePadBytes - 1) / kDedicatedTexturePadBytes * kDedicatedTexturePadBytes
++		+ kDedicatedTexturePadBytes;
++	heapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
++	heapDesc.Alignment = kDedicatedTexturePadBytes;
++	heapDesc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
++	ComPtr<ID3D12Heap> heap;
++	if (FAILED(Core_Device()->CreateHeap(&heapDesc, IID_PPV_ARGS(&heap)))) return false;
++	if (FAILED(Core_Device()->CreatePlacedResource(heap.Get(), 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++		IID_PPV_ARGS(&texture.res))))
++	{
++		texture.res.Reset();
++		return false;
++	}
++	heap->SetName(L"dedicated texture heap");
++	texture.heap = heap;
++	texture.allocatedBytes = heapDesc.SizeInBytes;
++	++g_dedicatedCreated;
++	return true;
++}
 +// Heaps remain alive until shutdown, including while freed blocks await a fence.
++// Records the aliasing barrier a placed texture needs, so the list must be open.
 +bool CreateTextureResource(GpuTexture &texture, D3D12_RESOURCE_DESC desc)
 +{
 +	CollectTextureBlocks();
@@ -21558,13 +21611,7 @@ index 0000000..3be5807
 +		smallPlacement = info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT && info.SizeInBytes != UINT64_MAX;
 +	}
 +	if (!smallPlacement) { desc.Alignment = 0; info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc); }
-+	// [UWP]: The Xbox One driver keeps a 4-byte state word for each placed resource at
-+	// offset + align_up(end of its data, 256), which GetResourceAllocationInfo doesn't
-+	// count. When the data fills the reported size (such as 256x256 RGBA8 with one
-+	// mip), the word lands on the next resource's first texel: CreatePlacedResource
-+	// writes 0 there and later transitions write 0 or 1. Leave a guard after every
-+	// placed texture; alignment rounds it up to the next 4 KB or 64 KB boundary anyway.
-+	constexpr UINT64 kTextureGuardBytes = D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT;
++	// The guard goes after the reported size; alignment rounds it up to the next 4 KB or 64 KB boundary anyway.
 +	const size_t blockBytes = info.SizeInBytes && info.SizeInBytes <= SizeClassArena::MaxClass - kTextureGuardBytes
 +		&& (info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT
 +			|| info.Alignment == D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
@@ -21597,18 +21644,30 @@ index 0000000..3be5807
 +				texture.heapBlock = block; texture.allocatedBytes = block.size;
 +				g_textureHeapUsed += block.size; g_textureHeapPeak = std::max(g_textureHeapPeak, g_textureHeapUsed);
 +				++g_placedCreated; if (smallPlacement) ++g_smallPlaced; else ++g_normalPlaced;
++				// The block may have held another texture whose work is done.
++				Core_FlushBarriers();
++				D3D12_RESOURCE_BARRIER alias = {}; alias.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
++				alias.Aliasing.pResourceAfter = texture.res.Get();
++				Core_List()->ResourceBarrier(1, &alias);
 +				return true;
 +			}
++			texture.res.Reset();
 +			g_textureArena.Free(block, Core_CompletedFence());
 +		}
 +	}
-+	// Large resources or failed placement fall back to committed storage.
++	// Over the arena's largest class, or placement failed: a padded heap of its own (see above).
 +	desc.Alignment = 0;
++	if (!blockBytes || info.Alignment != D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT)
++		info = Core_Device()->GetResourceAllocationInfo(0, 1, &desc);
++	if (CreateDedicatedTexture(texture, desc, info)) return true;
++	// Last resort; on Xbox One the driver's state word can zero this texture's last texel.
 +	D3D12_HEAP_PROPERTIES heap = {}; heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 +	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
 +		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&texture.res)), "Create committed texture")) return false;
-+	texture.allocatedBytes = Core_Device()->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
-+	++g_committedCreated;
++	texture.allocatedBytes = info.SizeInBytes;
++	if (!g_committedCreated++)
++		Log("committed texture: %llux%u could not be placed; its last texel is unreliable on Xbox One",
++			(unsigned long long)desc.Width, (unsigned)desc.Height);
 +	return true;
 +}
 +// A persistent SRV index, or UINT32_MAX (after asking for a texture flush) if there are none
@@ -21648,13 +21707,6 @@ index 0000000..3be5807
 +	}
 +	wchar_t name[64]; swprintf(name, sizeof name / sizeof *name, L"texture %u", id);
 +	replacement.res->SetName(name);
-+	if (replacement.heapBlock.valid)
-+	{
-+		Core_FlushBarriers();
-+		D3D12_RESOURCE_BARRIER alias = {}; alias.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
-+		alias.Aliasing.pResourceAfter = replacement.res.Get();
-+		Core_List()->ResourceBarrier(1, &alias);
-+	}
 +	replacement.width = width; replacement.height = height; replacement.format = format;
 +	for (UINT mip = 0, w = width, h = height; mip < replacement.mips; ++mip, w = std::max(1u, w / 2), h = std::max(1u, h / 2))
 +		replacement.bytes += (UINT64)w * h * (format == DXGI_FORMAT_R8_UNORM ? 1 : 4);
@@ -21667,6 +21719,7 @@ index 0000000..3be5807
 +	if (data && !UploadTexture(replacement, data))
 +	{
 +		Core_Retire(replacement.res);
++		Core_Retire(replacement.heap);
 +		if (replacement.heapBlock.valid)
 +		{
 +			g_textureArena.Free(replacement.heapBlock, Core_PendingFence());
@@ -23539,8 +23592,8 @@ index 0000000..3be5807
 +#ifdef _UWP
 +	I_OutputMsg("UWP perf:   D3D12: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
 +#endif
-+	I_OutputMsg("UWP perf:   D3D12: texture heaps: %llu placed, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
-+		(unsigned long long)g_placedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
++	I_OutputMsg("UWP perf:   D3D12: texture heaps: %llu placed, %llu dedicated, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
++		(unsigned long long)g_placedCreated, (unsigned long long)g_dedicatedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
 +		g_textureHeapUsed / 1048576.0, g_textureHeaps.size() * kTextureHeapBytes / 1048576.0, g_textureHeapPeak / 1048576.0,
 +		(unsigned long long)g_smallPlaced, (unsigned long long)g_normalPlaced, s.textureCreateMs);
 +
@@ -23568,6 +23621,11 @@ index 0000000..3be5807
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs)
 +{
 +	*placed = g_placedCreated; *blocks = g_textureArena.Reuses(); *srvs = g_srvReuses;
++}
++
++void D3D12_GetTextureStorageCountsForTest(UINT64 *placed, UINT64 *dedicated, UINT64 *committed)
++{
++	*placed = g_placedCreated; *dedicated = g_dedicatedCreated; *committed = g_committedCreated;
 +}
 +
 +boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset,
@@ -23649,10 +23707,10 @@ index 0000000..3be5807
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
 new file mode 100644
-index 0000000..b028f38
+index 0000000..3688151
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.h
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,63 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -23680,6 +23738,8 @@ index 0000000..b028f38
 +// Test hook: cumulative capture counts, unaffected by perf logging.
 +void D3D12_GetCaptureCountsForTest(UINT64 *fogCopies, UINT64 *waterCopies, UINT64 *waterRoundTrips);
 +void D3D12_GetReuseCountsForTest(UINT64 *placed, UINT64 *blocks, UINT64 *srvs);
++// Test hook: cumulative texture creations by storage: shared heap blocks, heaps of their own, committed.
++void D3D12_GetTextureStorageCountsForTest(UINT64 *placed, UINT64 *dedicated, UINT64 *committed);
 +// Test hook: queries an existing placed texture's block and the device's current allocation info.
 +boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset,
 +	UINT64 *blockBytes, UINT64 *reportedBytes, UINT64 *alignment);
