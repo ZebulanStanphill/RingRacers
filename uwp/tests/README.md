@@ -294,6 +294,18 @@ removal run under GPU-based validation, and the `palette:` perf line's counters 
 checked; the fade map scenes below are what read the master palette. Fog remapping with
 palette rendering is covered below; water with palette rendering and Xbox colors remain
 untested here.
+The `surface-probe` scene requests the Direct3D 12 driver's pixel history at 50%,50% (pixel 32,32 of
+the 64×64 target), draws three flat quads of different colors, labels one with
+`SurfaceProbeSource("wall", 7)` and ends the probe. It checks the logged `begin` pixel, each draw's
+`raw=` value (RGBA8 as a little-endian DWORD, alpha `0xFF`, each color channel within one like the
+other scenes) in order, `kind=wall source=7` on the labelled draw and `kind=polygon source=-1` on the
+others, and the `end draws=3 color_changes=3` line. The screen must still show the last color
+afterwards, a repeated request while one is pending must be refused, and a second frame without a
+request must neither begin a probe nor log `surface probe:`. Its negative control offsets the
+expected red channel and must fail the log oracle. The forced readback present path
+(`gr_d3d12_present Readback`) has no scene, since the harness stubs presentation and has no ANGLE.
+The DRED breadcrumbs logged by a timed-out GPU wait are also unexercised here.
+
 Fog and water scenes run the production capture path with the same tiny rings, so command-list
 submissions exercise rebinding and constant lifetimes. Fog draws over known scenery, including
 palette remapping through a light table. Water checks ordinary surface sampling and captured-scene

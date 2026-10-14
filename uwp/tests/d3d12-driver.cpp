@@ -164,6 +164,35 @@ int main(int argc,char **argv) {
           std::vector<UINT8> odd(7*5*3,0xcd); readrect(29,49,7,5,21,reinterpret_cast<UINT16 *>(odd.data()));
           for(size_t i=0;i<odd.size();i++) { const int wanted=RGB{248,32,16}[i%3]; if(abs(odd[i]-wanted)>1) throw std::runtime_error("odd-width/subrect RGB24 oracle failed"); }
           UINT16 packed[35]={}; readrect(29,49,7,5,14,packed); const UINT16 wanted565=(UINT16)((248>>3)<<11 | (32>>2)<<5 | (16>>3)); for(auto c:packed) if(c!=wanted565) throw std::runtime_error("RGB565 oracle failed"); }
+        // The surface probe copies the pixel under 50%,50% after each draw and logs the draws' colors at the end of the frame.
+        { const RGB colors[3]={{200,40,20},{20,200,40},{40,20,200}};
+          const auto reject=[](const char *why) { negativeRejected=negative=="surface-probe"; throw std::runtime_error(why); };
+          reset({0,0,0});
+          if(D3D12_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began without a request");
+          if(!D3D12_RequestSurfaceProbe(50,50) || D3D12_RequestSurfaceProbe(50,50)) throw std::runtime_error("surface probe requests weren't accepted once");
+          const size_t start=logs.size();
+          if(!D3D12_BeginSurfaceProbe()) throw std::runtime_error("the surface probe didn't begin");
+          for(int i=0;i<3;i++) { if(i==1) D3D12_SurfaceProbeSource("wall",7); draw(colors[i],PF_NoDepthTest); }
+          D3D12_EndSurfaceProbe(); validate(validationQueue);
+          const std::string probeLog=logs.substr(start);
+          if(probeLog.find("surface probe: begin pixel=(32,32) screen=64x64")==std::string::npos) reject("surface probe begin line");
+          for(int i=0;i<3;i++)
+          { char key[48]; snprintf(key,sizeof key,"surface probe: sample=%d raw=0x",i);
+            const size_t at=probeLog.find(key); unsigned raw=0; char kind[16]={}; int source=0;
+            if(at==std::string::npos || sscanf(probeLog.c_str()+at+strlen(key),"%x kind=%15s source=%d",&raw,kind,&source)!=3) reject("surface probe sample line");
+            // RGBA8 as a little-endian DWORD; like the other scenes, each color channel may be one off
+            RGB want=colors[i]; if(negative=="surface-probe") want[0]=(want[0]+67)%256;
+            for(int c=0;c<3;c++) if(abs((int)((raw>>(8*c))&255)-want[c])>1) { fprintf(stderr,"surface-probe: sample %d raw 0x%08X channel %d expected %d\n",i,raw,c,want[c]); reject("surface probe color"); }
+            if((raw>>24)!=0xFF) reject("surface probe alpha");
+            if(strcmp(kind,i==1?"wall":"polygon") || source!=(i==1?7:-1)) reject("surface probe kind and source"); }
+          if(probeLog.find("surface probe: end draws=3 color_changes=3 rows_omitted=0 overflow=0")==std::string::npos) reject("surface probe end line");
+          // The copies leave the screen as they found it
+          expect("surface-probe-pixel",colors[2]);
+          // Without a request, the next frame copies and logs nothing
+          const size_t quiet=logs.size();
+          reset(); if(D3D12_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began twice for one request");
+          draw(colors[0],PF_NoDepthTest); D3D12_EndSurfaceProbe(); expect("surface-probe-quiet",colors[0]);
+          if(logs.find("surface probe:",quiet)!=std::string::npos) throw std::runtime_error("an inactive surface probe logged"); }
         RGB src={160,96,64},dst={48,80,112}; const double a=128./255.;
         struct Mode { const char *name; FBITFIELD flags; } modes[]={{"opaque",0},{"translucent",PF_Translucent},{"additive",PF_Additive},{"subtract",PF_Subtractive},{"reverse",PF_ReverseSubtract},{"multiply",PF_Multiplicative},{"environment",PF_Environment},{"masked",PF_Masked},{"invert",PF_Invert},{"fog",PF_Fog}};
         for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); RGB result={}; for(int c=0;c<3;c++) { double s=src[c],d=dst[c],v=s; switch(m.flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } expect(m.name,result); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }

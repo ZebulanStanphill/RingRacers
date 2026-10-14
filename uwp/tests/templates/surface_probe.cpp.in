@@ -81,6 +81,11 @@ struct Texture {UINT32 id;char probeName[9];};
 std::unordered_map<UINT32,Texture> g_textures;
 Texture *g_units[2]={};
 @@PROBE@@
+// The Direct3D 12 forwarding in the extracted functions never runs here: the driver stays on Direct3D 11
+static bool g_useD3D12=false;
+static boolean D3D12_RequestSurfaceProbe(INT32,INT32){assert(false);return false;}
+static void D3D12_SurfaceProbeSource(const char *,INT32){assert(false);}
+static void D3D12_SurfaceProbeTexture(const char *){assert(false);}
 @@REQUEST@@
 @@SOURCE@@
 @@TEXTURE@@

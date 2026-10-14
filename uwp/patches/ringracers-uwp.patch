@@ -1,4 +1,4 @@
-From 6a10fe0b860063aed1f71db9dd15f22ed9786bba Mon Sep 17 00:00:00 2001
+From 2d3f0a218ad8518eca77d9a9258133bdb5002593 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -632,6 +632,19 @@ Model: gpt-6.1-sol
 Agent: Claude Code (Fable 5.1, review)
 Model: claude-fable-5-1
 
+- [UWP]: Bring the Direct3D 12 driver's diagnostics up to Direct3D 11's:
+  the surface probe copies the chosen pixel after each polygon, batch,
+  model, sky and clear draw into 512-byte slots of one readback buffer,
+  reads them once at the end of the world pass and logs the Direct3D 11
+  driver's rows (the D3D11_* request, source and texture wrappers forward
+  to the new D3D12_* functions); the saved gr_d3d12_present variable
+  (Auto or Readback, read when the path is selected) forces present path D;
+  and the first timed-out GPU wait of a run logs DRED's breadcrumbs, through
+  the helper that a device removal now shares.
+
+Agent: Claude Code (Sonnet 5.5, D3D12 diagnostics)
+Model: claude-sonnet-5-5
+
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  CMakeLists.txt                            |   19 +-
@@ -640,7 +653,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/console.c                             |   57 +
  src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
- src/cvars.cpp                             |   15 +
+ src/cvars.cpp                             |   18 +
  src/d_clisrv.c                            |   49 +
  src/d_main.cpp                            |  368 +-
  src/doomstat.h                            |    1 +
@@ -657,29 +670,29 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/hw_draw.c                    |  116 +-
  src/hardware/hw_drv.h                     |   13 +
  src/hardware/hw_glob.h                    |   13 +
- src/hardware/hw_glsl.h                    |  321 ++
+ src/hardware/hw_glsl.h                    |  321 +
  src/hardware/hw_main.c                    | 2132 ++++++-
- src/hardware/hw_main.h                    |   21 +-
+ src/hardware/hw_main.h                    |   22 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
  src/hardware/r_d3d11/custom_shader.cpp    |  310 +
  src/hardware/r_d3d11/custom_shader.h      |   13 +
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
- src/hardware/r_d3d11/r_d3d11.cpp          | 6420 +++++++++++++++++++++
+ src/hardware/r_d3d11/r_d3d11.cpp          | 6437 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
  src/hardware/r_d3d11/shaders.hlsl         |  660 +++
  src/hardware/r_d3d12/allocators.h         |  212 +
  src/hardware/r_d3d12/d3d12_arenas.inc     |   94 +
  src/hardware/r_d3d12/d3d12_captures.inc   |  271 +
- src/hardware/r_d3d12/d3d12_core.cpp       |  845 +++
+ src/hardware/r_d3d12/d3d12_core.cpp       |  865 +++
  src/hardware/r_d3d12/d3d12_core.h         |  140 +
  src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
- src/hardware/r_d3d12/d3d12_models.inc     |  516 ++
+ src/hardware/r_d3d12/d3d12_models.inc     |  518 ++
  src/hardware/r_d3d12/d3d12_palette.inc    |  290 +
  src/hardware/r_d3d12/d3d12_pipeline.cpp   |  180 +
  src/hardware/r_d3d12/d3d12_pipeline.h     |   60 +
- src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
+ src/hardware/r_d3d12/d3d12_present.cpp    | 1623 ++++++
  src/hardware/r_d3d12/d3d12_present.h      |   50 +
  src/hardware/r_d3d12/d3d12_prewarm.cpp    |  212 +
  src/hardware/r_d3d12/d3d12_prewarm.h      |   17 +
@@ -688,8 +701,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
  src/hardware/r_d3d12/pipeline_key.h       |   52 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 3241 +++++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   63 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 3415 +++++++++++
+ src/hardware/r_d3d12/r_d3d12.h            |   67 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
  src/http-mserv.c                          |    2 +
@@ -746,7 +759,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 24043 insertions(+), 1137 deletions(-)
+ 112 files changed, 24273 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1149,7 +1162,7 @@ index 8a434ba..b4518d0 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33..959f784 100644
+index d589b33..332780d 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
 @@ -431,7 +431,11 @@ consvar_t cv_bgaudio = Player("bgaudio", "Nothing").onchange_noinit(BGAudio_OnCh
@@ -1164,7 +1177,7 @@ index d589b33..959f784 100644
  consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
  
  consvar_t cv_renderview = Player("renderview", "On").values({{0, "Off"}, {1, "On"}, {2, "Force"}}).dont_save();
-@@ -1478,6 +1482,17 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+@@ -1478,6 +1482,20 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
  	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
  
  	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
@@ -1178,6 +1191,9 @@ index d589b33..959f784 100644
 +	// [UWP]: VibeRant's Direct3D 12 backend while it's ported, read once at startup. Once turns itself Off then,
 +	// so a broken build is back on Direct3D 11 at the next launch.
 +	consvar_t cv_gld3d12 = OpenGL("gr_d3d12", "Off").values({{0, "Off"}, {1, "Once"}, {2, "On"}});
++	// [UWP]: Readback forces the Direct3D 12 driver's CPU readback present path (D) instead of probing the ANGLE
++	// interop paths; read once when the path is selected, so it takes effect at the next start. Not in the menu.
++	consvar_t cv_gld3d12present = OpenGL("gr_d3d12_present", "Auto").values({{0, "Auto"}, {1, "Readback"}});
 +#endif
  
  #ifdef ALAM_LIGHTING
@@ -6536,7 +6552,7 @@ index b5e8fca..affa40d 100644
  		// Capture the screen again for screen waving on the intermission
  		if(gamestate != GS_INTERMISSION)
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b409..8cd0161 100644
+index 652b409..6108cc4 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,10 @@ extern "C" {
@@ -6572,7 +6588,7 @@ index 652b409..8cd0161 100644
  extern consvar_t cv_glmodels;
  
  // SRB2Kart: We don't like these options.
-@@ -120,7 +132,10 @@ extern consvar_t cv_glshearing;
+@@ -120,7 +132,11 @@ extern consvar_t cv_glshearing;
  extern consvar_t cv_glspritebillboarding;
  extern consvar_t cv_glskydome;
  
@@ -6580,11 +6596,12 @@ index 652b409..8cd0161 100644
 +extern consvar_t cv_glbatching, cv_glbettertransparency;
 +#ifdef _UWP
 +extern consvar_t cv_gld3d12; // [UWP]: VibeRant's backend, chosen at startup
++extern consvar_t cv_gld3d12present; // [UWP]: Readback forces the Direct3D 12 driver's readback present path
 +#endif
  
  extern float gl_viewwidth, gl_viewheight, gl_baseviewwindowy;
  
-@@ -133,6 +148,10 @@ extern float gl_viewsin, gl_viewcos;
+@@ -133,6 +149,10 @@ extern float gl_viewsin, gl_viewcos;
  
  
  // Render stats
@@ -7439,10 +7456,10 @@ index 0000000..31f8d89
 +    "SPIRV-Cross: MIT license option.\n${cross_license}\nSPIR-V headers:\n${khronos_license}")
 diff --git a/src/hardware/r_d3d11/r_d3d11.cpp b/src/hardware/r_d3d11/r_d3d11.cpp
 new file mode 100644
-index 0000000..39850f9
+index 0000000..5b2183c
 --- /dev/null
 +++ b/src/hardware/r_d3d11/r_d3d11.cpp
-@@ -0,0 +1,6420 @@
+@@ -0,0 +1,6437 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -13454,12 +13471,15 @@ index 0000000..39850f9
 +
 +boolean D3D11_RequestSurfaceProbe(INT32 x, INT32 y)
 +{
++#ifdef _UWP
++	if (g_useD3D12)
++		return D3D12_RequestSurfaceProbe(x, y);
++#endif
 +	if (x < 0 || x > 100 || y < 0 || y > 100 || g_probePending || g_probeActive) return false;
 +	g_probePercentX = x; g_probePercentY = y; g_probePending = true;
 +	return true;
 +}
-+// [UWP]: Under Direct3D 12, requests, sources and textures only change this driver's probe state, which stays
-+// inactive since D3D12_BeginSurfaceProbe doesn't start a probe.
++// [UWP]: Under Direct3D 12, every probe function forwards to the Direct3D 12 driver's own probe.
 +boolean D3D11_BeginSurfaceProbe(void)
 +{
 +#ifdef _UWP
@@ -13481,11 +13501,25 @@ index 0000000..39850f9
 +}
 +void D3D11_SurfaceProbeSource(const char *kind, INT32 source)
 +{
++#ifdef _UWP
++	if (g_useD3D12)
++	{
++		D3D12_SurfaceProbeSource(kind, source);
++		return;
++	}
++#endif
 +	if (!g_probeActive) return;
 +	g_probeKind = kind; g_probeSource = source;
 +}
 +void D3D11_SurfaceProbeTexture(const char *name)
 +{
++#ifdef _UWP
++	if (g_useD3D12)
++	{
++		D3D12_SurfaceProbeTexture(name);
++		return;
++	}
++#endif
 +	if (!g_probeActive || !g_units[0]) return;
 +	snprintf(g_units[0]->probeName, sizeof g_units[0]->probeName, "%.8s", name);
 +}
@@ -15204,10 +15238,10 @@ index 0000000..304f980
 +}
 diff --git a/src/hardware/r_d3d12/d3d12_core.cpp b/src/hardware/r_d3d12/d3d12_core.cpp
 new file mode 100644
-index 0000000..ff690d3
+index 0000000..6600cff
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_core.cpp
-@@ -0,0 +1,845 @@
+@@ -0,0 +1,865 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -15285,7 +15319,7 @@ index 0000000..ff690d3
 +void (*g_listBegin)(void) = nullptr;
 +
 +int g_errors = 0;
-+bool g_removed = false, g_removalLogged = false;
++bool g_removed = false, g_removalLogged = false, g_timeoutLogged = false;
 +CoreStats g_stats;
 +
 +double PreciseToMs(precise_t t)
@@ -15365,6 +15399,49 @@ index 0000000..ff690d3
 +		settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
 +		settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
 +	}
++}
++
++// DRED's record of which operations of each command list finished: for a removed device, and for a wait that timed out
++void LogBreadcrumbs(ID3D12DeviceRemovedExtendedData *dred)
++{
++	D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT breadcrumbs = {};
++	if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&breadcrumbs)))
++	{
++		int nodes = 0, unfinished = 0;
++		for (const D3D12_AUTO_BREADCRUMB_NODE *node = breadcrumbs.pHeadAutoBreadcrumbNode; node && nodes < 32;
++			node = node->pNext, nodes++)
++		{
++			const UINT32 count = node->BreadcrumbCount;
++			const UINT32 last = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
++			if (last >= count || !node->pCommandHistory || unfinished >= 4)
++				continue;
++			unfinished++;
++			char listName[64], queueName[64];
++			Core_Log("DRED: list '%s' on '%s' stopped after %u of %u operations",
++				DebugName(node->pCommandListDebugNameA, node->pCommandListDebugNameW, listName, sizeof listName),
++				DebugName(node->pCommandQueueDebugNameA, node->pCommandQueueDebugNameW, queueName, sizeof queueName),
++				(unsigned)last, (unsigned)count);
++			// The last five finished operations and the one that didn't
++			for (UINT32 i = last >= 5 ? last - 5 : 0; i <= last && i < count; i++)
++				Core_Log("DRED:   %s %u %s", i == last ? "->" : "  ", (unsigned)i, DescribeBreadcrumb(node->pCommandHistory[i]));
++		}
++		Core_Log("DRED: %d breadcrumb lists, %d unfinished", nodes, unfinished);
++	}
++	else
++		Core_Log("DRED: no breadcrumbs");
++}
++
++// The first timed-out wait of a run says which operations the GPU hadn't finished, as a removed device would
++void LogTimeout(const char *what, double ms)
++{
++	if (g_timeoutLogged || !g_device || !g_dred)
++		return;
++	g_timeoutLogged = true;
++	ComPtr<ID3D12DeviceRemovedExtendedData> dred;
++	if (FAILED(g_device.As(&dred)))
++		return;
++	Core_Log("GPU wait for %s timed out after %.0f ms; breadcrumbs:", what, ms);
++	LogBreadcrumbs(dred.Get());
 +}
 +
 +void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
@@ -15702,7 +15779,7 @@ index 0000000..ff690d3
 +	g_lastSubmitted = g_lastSignaled = 0;
 +	g_signalFailed = false;
 +	g_listOpen = false;
-+	g_removed = g_removalLogged = false;
++	g_removed = g_removalLogged = g_timeoutLogged = false;
 +}
 +
 +ID3D12Device *Core_Device()
@@ -15855,6 +15932,7 @@ index 0000000..ff690d3
 +	{
 +		g_stats.waitTimeouts++;
 +		WarnStall(what, waited, value, done);
++		LogTimeout(what, waited);
 +	}
 +	return reached;
 +}
@@ -15912,31 +15990,7 @@ index 0000000..ff690d3
 +	if (Core_Failed(g_device.As(&dred), "QueryInterface ID3D12DeviceRemovedExtendedData"))
 +		return;
 +
-+	D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT breadcrumbs = {};
-+	if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&breadcrumbs)))
-+	{
-+		int nodes = 0, unfinished = 0;
-+		for (const D3D12_AUTO_BREADCRUMB_NODE *node = breadcrumbs.pHeadAutoBreadcrumbNode; node && nodes < 32;
-+			node = node->pNext, nodes++)
-+		{
-+			const UINT32 count = node->BreadcrumbCount;
-+			const UINT32 last = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
-+			if (last >= count || !node->pCommandHistory || unfinished >= 4)
-+				continue;
-+			unfinished++;
-+			char listName[64], queueName[64];
-+			Core_Log("DRED: list '%s' on '%s' stopped after %u of %u operations",
-+				DebugName(node->pCommandListDebugNameA, node->pCommandListDebugNameW, listName, sizeof listName),
-+				DebugName(node->pCommandQueueDebugNameA, node->pCommandQueueDebugNameW, queueName, sizeof queueName),
-+				(unsigned)last, (unsigned)count);
-+			// The last five finished operations and the one that didn't
-+			for (UINT32 i = last >= 5 ? last - 5 : 0; i <= last && i < count; i++)
-+				Core_Log("DRED:   %s %u %s", i == last ? "->" : "  ", (unsigned)i, DescribeBreadcrumb(node->pCommandHistory[i]));
-+		}
-+		Core_Log("DRED: %d breadcrumb lists, %d unfinished", nodes, unfinished);
-+	}
-+	else
-+		Core_Log("DRED: no breadcrumbs");
++	LogBreadcrumbs(dred.Get());
 +
 +	D3D12_DRED_PAGE_FAULT_OUTPUT fault = {};
 +	if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault)) && fault.PageFaultVA)
@@ -16820,10 +16874,10 @@ index 0000000..b3436f7
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_models.inc b/src/hardware/r_d3d12/d3d12_models.inc
 new file mode 100644
-index 0000000..23c3fce
+index 0000000..f7c155b
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_models.inc
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,518 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -16987,6 +17041,7 @@ index 0000000..23c3fce
 +		g_stats.vertices += count;
 +	}
 +	g_stats.draws++;
++	CaptureSurfaceProbe("model", nullptr, 0);
 +}
 +
 +void D3D_DrawModel(
@@ -17336,6 +17391,7 @@ index 0000000..23c3fce
 +				Core_List()->DrawInstanced(loop->vertexcount, 1, loop->vertexindex, 0);
 +			g_stats.draws++;
 +			g_stats.vertices += loop->vertexcount;
++			CaptureSurfaceProbe("sky", nullptr, 0);
 +		}
 +	SetColor(kWhite);
 +	g_stats.skies++;
@@ -17890,10 +17946,10 @@ index 0000000..453b038
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_present.cpp b/src/hardware/r_d3d12/d3d12_present.cpp
 new file mode 100644
-index 0000000..176935a
+index 0000000..9ebbcba
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_present.cpp
-@@ -0,0 +1,1614 @@
+@@ -0,0 +1,1623 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -17930,6 +17986,7 @@ index 0000000..176935a
 +#include "../../i_system.h"
 +#include "../../sdl/i_uwptrace.h"
 +#include "../../sdl/sdlmain.h"
++#include "../hw_main.h"
 +
 +// doomdef.h's
 +#undef min
@@ -19231,6 +19288,14 @@ index 0000000..176935a
 +	{
 +		g_present.path = PATH_D;
 +		Log("interop path D: %s", !gl.loaded ? "OpenGL ES functions are missing" : "no ANGLE device to share with");
++		return;
++	}
++
++	// gr_d3d12_present Readback: skip the A, B and C probes, to test path D where the others would be chosen
++	if (cv_gld3d12present.string && cv_gld3d12present.value == 1)
++	{
++		g_present.path = PATH_D;
++		Log("interop path D: forced by gr_d3d12_present");
 +		return;
 +	}
 +
@@ -20691,10 +20756,10 @@ index 0000000..3634027
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..7eb6b6d
+index 0000000..cdfb359
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,3241 @@
+@@ -0,0 +1,3415 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -22414,6 +22479,152 @@ index 0000000..7eb6b6d
 +bool CanDraw() { return Core_List() && g_rt && !g_deviceLost && !g_shutdown; }
 +enum Primitive { PRIM_FAN, PRIM_LINES, PRIM_STRIP };
 +
++// One requested frame, one pixel copied after each world draw into a slot of a single readback buffer, read back
++// once the frame is recorded (the log format is the Direct3D 11 driver's). The screen is never sampled, and no
++// copies, allocations or maps occur when the probe is inactive.
++constexpr UINT kProbeCapacity = 8192;
++// A placed footprint starts at a multiple of 512 (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT); one texel takes a 256-byte pitch
++constexpr UINT kProbeSlotBytes = D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT;
++struct SurfaceProbeRecord
++{
++	const char *kind;
++	INT32 source;
++	UINT32 texture;
++	char name[9];
++	FBITFIELD flags;
++	int shader;
++	UINT8 colorMask;
++	bool depthTest, depthWrite, depthAlways;
++	float alpha;
++	UINT count;
++	FOutVector vertices[8];
++};
++bool g_probePending = false, g_probeActive = false, g_probeOverflow = false;
++UINT g_probePercentX = 15, g_probePercentY = 35, g_probeX, g_probeY;
++const char *g_probeKind = "draw";
++INT32 g_probeSource = -1;
++ComPtr<ID3D12Resource> g_probeBuffer;
++std::vector<SurfaceProbeRecord> g_probeRecords;
++
++void CaptureSurfaceProbe(const char *fallback, const FOutVector *vertices, UINT count)
++{
++	if (!g_probeActive) return;
++	if (g_probeRecords.size() == kProbeCapacity)
++	{
++		g_probeOverflow = true;
++		return;
++	}
++	SurfaceProbeRecord record = {};
++	record.kind = strcmp(g_probeKind, "draw") ? g_probeKind : fallback;
++	record.source = g_probeSource;
++	record.flags = g_currentPolyFlags;
++	record.shader = g_program;
++	record.colorMask = g_gl.colorWriteMask;
++	record.depthTest = g_gl.depthTest;
++	record.depthWrite = g_gl.depthMask;
++	record.depthAlways = g_gl.depthAlways;
++	record.alpha = g_program >= 0 ? g_uniforms[g_program].poly[3] : g_gl.color[3]/255.0f;
++	record.count = vertices ? count : 0;
++	if (vertices) memcpy(record.vertices, vertices, std::min(count, 8u)*sizeof(*vertices));
++	if (g_units[0])
++	{
++		record.texture = g_units[0]->id;
++		memcpy(record.name, g_units[0]->probeName, sizeof record.name);
++	}
++	D3D12_TEXTURE_COPY_LOCATION source = {};
++	source.pResource = g_rt.Get();
++	source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++	D3D12_TEXTURE_COPY_LOCATION destination = {};
++	destination.pResource = g_probeBuffer.Get();
++	destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++	destination.PlacedFootprint.Offset = (UINT64)g_probeRecords.size() * kProbeSlotBytes;
++	destination.PlacedFootprint.Footprint = {kScreenFormat, 1, 1, 1, D3D12_TEXTURE_DATA_PITCH_ALIGNMENT};
++	const D3D12_BOX pixel = {g_probeX, g_probeY, 0, g_probeX + 1, g_probeY + 1, 1};
++	Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
++	Core_FlushBarriers();
++	Core_List()->CopyTextureRegion(&destination, 0, 0, 0, &source, &pixel);
++	Core_Transition(g_rt.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
++	g_probeRecords.push_back(record);
++	g_probeKind = "draw";
++	g_probeSource = -1; // an unlabelled draw must not inherit the previous map source
++}
++
++bool BeginSurfaceProbe(void)
++{
++	if (!g_probePending) return false;
++	g_probePending = false;
++	if (!CanDraw() || !g_rtWidth || !g_rtHeight) return false;
++	g_probeX = std::min(g_rtWidth-1, (UINT)((UINT64)g_rtWidth*g_probePercentX/100));
++	g_probeY = std::min(g_rtHeight-1, (UINT)((UINT64)g_rtHeight*g_probePercentY/100));
++	D3D12_HEAP_PROPERTIES heap = {};
++	heap.Type = D3D12_HEAP_TYPE_READBACK;
++	D3D12_RESOURCE_DESC desc = {};
++	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++	desc.Width = (UINT64)kProbeCapacity * kProbeSlotBytes;
++	desc.Height = 1;
++	desc.DepthOrArraySize = desc.MipLevels = 1;
++	desc.SampleDesc.Count = 1;
++	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
++		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&g_probeBuffer)), "CreateCommittedResource (surface probe)"))
++		return false;
++	g_probeBuffer->SetName(L"Surface probe readback");
++	g_probeRecords.clear();
++	g_probeRecords.reserve(kProbeCapacity);
++	g_probeOverflow = false; g_probeActive = true;
++	g_probeKind = "draw"; g_probeSource = -1;
++	for (auto &texture : g_textures) texture.second.probeName[0] = '\0';
++	Log("surface probe: begin pixel=(%u,%u) screen=%ux%u format=%d", g_probeX, g_probeY,
++		g_rtWidth, g_rtHeight, (int)kScreenFormat);
++	return true;
++}
++
++void EndSurfaceProbe(void)
++{
++	if (!g_probeActive) return;
++	g_probeActive = false;
++	const UINT draws = (UINT)g_probeRecords.size();
++	UINT changes = 0;
++	bool read = !draws;
++	if (draws)
++	{
++		const UINT64 fence = Core_Submit("readback");
++		void *data = nullptr;
++		const D3D12_RANGE range = {0, (SIZE_T)draws * kProbeSlotBytes};
++		if (fence && Core_Wait(fence, 2000, "the surface probe")
++			&& !Core_Failed(g_probeBuffer->Map(0, &range, &data), "Map (surface probe)"))
++		{
++			read = true;
++			UINT32 previous = 0;
++			UINT logged = 0;
++			for (UINT i = 0; i < draws; ++i)
++			{
++				UINT32 pixel;
++				memcpy(&pixel, (const UINT8 *)data + (size_t)i*kProbeSlotBytes, 4);
++				if (i && pixel == previous) continue;
++				previous = pixel; ++changes;
++				if (logged++ >= 256) continue;
++				const SurfaceProbeRecord &r = g_probeRecords[i];
++				Log("surface probe: sample=%u raw=0x%08X kind=%s source=%d texture=%u name=%.8s flags=0x%lx shader=%d mask=%u depth=(%d,%d,%d) alpha=%.3f vertices=%u",
++					i, pixel, r.kind, r.source, r.texture, r.name, (unsigned long)r.flags, r.shader,
++					r.colorMask, r.depthTest, r.depthWrite, r.depthAlways, r.alpha, r.count);
++				for (UINT j = 0; j < std::min(r.count, 8u); ++j)
++					Log("surface probe: sample=%u v%u=(%.2f,%.2f,%.2f;%.4f,%.4f)", i, j,
++						r.vertices[j].x, r.vertices[j].z, r.vertices[j].y, r.vertices[j].s, r.vertices[j].t);
++			}
++			const D3D12_RANGE written = {0, 0};
++			g_probeBuffer->Unmap(0, &written);
++		}
++	}
++	if (read)
++		Log("surface probe: end draws=%u color_changes=%u rows_omitted=%u overflow=%d",
++			draws, changes, changes > 256 ? changes-256 : 0, g_probeOverflow);
++	else
++		Log("surface probe: readback failed after %u draws", draws);
++	Core_Retire(g_probeBuffer);
++	std::vector<SurfaceProbeRecord>().swap(g_probeRecords);
++}
++
 +bool DrawUploaded(Layout layout, D3D12_PRIMITIVE_TOPOLOGY topology, const void *vertices, UINT count,
 +	const void *indices, UINT indexCount, bool wipe = false, DXGI_FORMAT indexFormat = DXGI_FORMAT_R32_UINT)
 +{
@@ -22450,15 +22661,16 @@ index 0000000..7eb6b6d
 +	return true;
 +}
 +
-+void DrawFanUploaded(Layout layout, const void *vertices, UINT count, bool wipe);
++bool DrawFanUploaded(Layout layout, const void *vertices, UINT count, bool wipe);
 +
 +void DrawArrays(Layout layout, Primitive primitive, const void *vertices, UINT count, bool wipe = false)
 +{
++	bool drawn;
 +	if (primitive == PRIM_FAN)
 +	{
 +		if (count < 3) return;
 +		if (count <= 65535)
-+			DrawFanUploaded(layout, vertices, count, wipe);
++			drawn = DrawFanUploaded(layout, vertices, count, wipe);
 +		else
 +		{
 +			std::vector<UINT32> indices;
@@ -22467,32 +22679,35 @@ index 0000000..7eb6b6d
 +			{
 +				indices.push_back(0); indices.push_back(i); indices.push_back(i + 1);
 +			}
-+			DrawUploaded(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, count,
++			drawn = DrawUploaded(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, count,
 +				indices.data(), (UINT)indices.size(), wipe);
 +		}
 +	}
-+	else DrawUploaded(layout, primitive == PRIM_LINES ? D3D_PRIMITIVE_TOPOLOGY_LINELIST : D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
++	else drawn = DrawUploaded(layout, primitive == PRIM_LINES ? D3D_PRIMITIVE_TOPOLOGY_LINELIST : D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
 +		vertices, primitive == PRIM_LINES ? count & ~1u : count, nullptr, 0, wipe);
++	if (drawn)
++		CaptureSurfaceProbe("polygon", layout == LAYOUT_POLY ? (const FOutVector *)vertices : nullptr, count);
 +}
 +
 +#include "d3d12_models.inc"
 +
-+void DrawFanUploaded(Layout layout, const void *vertices, UINT count, bool wipe)
++bool DrawFanUploaded(Layout layout, const void *vertices, UINT count, bool wipe)
 +{
-+	if (!CanDraw() || !EnsureFanIndices()) return;
++	if (!CanDraw() || !EnsureFanIndices()) return false;
 +	const UINT strides[] = {sizeof(FOutVector), sizeof(gl_skyvertex_t), sizeof(ModelVertex)};
 +	const UINT stride = strides[layout];
 +	auto vb = g_vertexRing.Alloc((size_t)count * stride, stride);
-+	if (!vb) return;
++	if (!vb) return false;
 +	memcpy(vb.cpu, vertices, (size_t)count * stride);
-+	if (!ApplyState(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, wipe)) return;
-+	if (!g_vertexRing.Touch(vb, (size_t)count * stride) || !g_constantRing.Touch(g_constantAllocation, 512)) return;
++	if (!ApplyState(layout, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, wipe)) return false;
++	if (!g_vertexRing.Touch(vb, (size_t)count * stride) || !g_constantRing.Touch(g_constantAllocation, 512)) return false;
 +	const D3D12_VERTEX_BUFFER_VIEW view = {vb.gpu, count * stride, stride};
 +	const D3D12_INDEX_BUFFER_VIEW indices = {g_fanIndices.allocation.gpu, g_fanIndices.bytes, DXGI_FORMAT_R16_UINT};
 +	Core_List()->IASetVertexBuffers(0, 1, &view); Core_List()->IASetIndexBuffer(&indices);
 +	Core_FlushBarriers();
 +	Core_List()->DrawIndexedInstanced((count - 2) * 3, 1, 0, 0, 0);
 +	g_stats.draws++; g_stats.vertices += count; g_stats.indices += (count - 2) * 3;
++	return true;
 +}
 +
 +// Whenever the list is (re)opened: restore every root argument and dynamic binding.
@@ -22857,7 +23072,8 @@ index 0000000..7eb6b6d
 +	UINT vertexCount = 0;
 +	for (FUINT i = 0; i < count; i++) vertexCount = std::max(vertexCount, indices[i] + 1);
 +	PreparePolygon(surface, flags, vertices, vertexCount);
-+	DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, vertexCount, indices, count);
++	if (DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, vertexCount, indices, count))
++		CaptureSurfaceProbe("batch", vertices, vertexCount);
 +}
 +
 +
@@ -22938,7 +23154,10 @@ index 0000000..7eb6b6d
 +	D3D_SetBlend(DepthMask ? PF_Occlude | g_currentPolyFlags : g_currentPolyFlags&~PF_Occlude);
 +
 +	if (ColorMask)
++	{
 +		ClearScreenColor();
++		CaptureSurfaceProbe("clear", nullptr, 0);
++	}
 +	if (DepthMask)
 +		ClearScreenDepth();
 +}
@@ -23625,13 +23844,33 @@ index 0000000..7eb6b6d
 +	return true;
 +}
 +
++boolean D3D12_RequestSurfaceProbe(INT32 x, INT32 y)
++{
++	if (x < 0 || x > 100 || y < 0 || y > 100 || g_probePending || g_probeActive) return false;
++	g_probePercentX = x; g_probePercentY = y; g_probePending = true;
++	return true;
++}
++
 +boolean D3D12_BeginSurfaceProbe(void)
 +{
-+	return false;
++	return BeginSurfaceProbe();
 +}
 +
 +void D3D12_EndSurfaceProbe(void)
 +{
++	EndSurfaceProbe();
++}
++
++void D3D12_SurfaceProbeSource(const char *kind, INT32 source)
++{
++	if (!g_probeActive) return;
++	g_probeKind = kind; g_probeSource = source;
++}
++
++void D3D12_SurfaceProbeTexture(const char *name)
++{
++	if (!g_probeActive || !g_units[0]) return;
++	snprintf(g_units[0]->probeName, sizeof g_units[0]->probeName, "%.8s", name);
 +}
 +
 +// Unknown until the current device's complete portal pipeline preflight succeeds or fails.
@@ -23938,10 +24177,10 @@ index 0000000..7eb6b6d
 +}
 diff --git a/src/hardware/r_d3d12/r_d3d12.h b/src/hardware/r_d3d12/r_d3d12.h
 new file mode 100644
-index 0000000..3688151
+index 0000000..838726f
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.h
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,67 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -23984,8 +24223,12 @@ index 0000000..3688151
 +void D3D12_FinishUpdate(INT32 waitvbl);
 +boolean D3D12_TakeTextureFlushRequest(void);
 +
++// The Direct3D 11 driver's probe, for the same console command: a request starts a probe at the next Begin
++boolean D3D12_RequestSurfaceProbe(INT32 x, INT32 y);
 +boolean D3D12_BeginSurfaceProbe(void);
 +void D3D12_EndSurfaceProbe(void);
++void D3D12_SurfaceProbeSource(const char *kind, INT32 source);
++void D3D12_SurfaceProbeTexture(const char *name);
 +
 +void D3D12_SetPortalPlane(const float *worldPlane);
 +void D3D12_SetPortalStencil(INT32 level);
