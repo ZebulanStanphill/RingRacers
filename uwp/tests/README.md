@@ -303,7 +303,8 @@ others, and the `end draws=3 color_changes=3` line. The screen must still show t
 afterwards, a repeated request while one is pending must be refused, and a second frame without a
 request must neither begin a probe nor log `surface probe:`. Its negative control offsets the
 expected red channel and must fail the log oracle. The forced readback present path
-(`gr_d3d12_present Readback`) has no scene, since the harness stubs presentation and has no ANGLE.
+(`gr_d3d12_present Readback`) has no scene, since the harness stubs presentation and has no ANGLE;
+for the same reason, nothing here covers the shared-fence present sync or `gr_d3d12_present CpuSync`.
 The DRED breadcrumbs logged by a timed-out GPU wait are also unexercised here.
 
 Fog and water scenes run the production capture path with the same tiny rings, so command-list

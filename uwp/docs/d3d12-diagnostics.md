@@ -29,13 +29,22 @@ How the driver takes its samples differs from Direct3D 11's atlas:
 - While no probe is requested, nothing is copied, allocated or mapped.
 - The requested frame stalls on the GPU. Don't read its timings as a benchmark.
 
-## Forcing the readback present path: `gr_d3d12_present`
+## Present path and synchronization: `gr_d3d12_present`
 
-`gr_d3d12_present` is a saved console variable, `Auto` (the default) or `Readback`, kept out of the
-menu. By default, the driver probes ANGLE interop paths A, B and C and falls back to the readback path D
+`gr_d3d12_present` is a saved console variable, `Auto` (the default), `Readback` or `CpuSync`, kept out
+of the menu. By default, the driver probes ANGLE interop paths A, B and C and falls back to the readback path D
 only if they all fail. `Readback` skips the probes and logs `interop path D: forced by gr_d3d12_present`.
 This is how to test path D on hardware where another path would work. The value is read once, when
 the path is selected at launch: set it in the console or `ringconfig.cfg`, then restart.
+
+On paths A, B and C, `Auto` synchronizes the Direct3D 12 queue and ANGLE's device on the GPU through
+two shared fences (`present sync: shared fences`): ANGLE waits for each frame's copy, and the queue
+waits for ANGLE's last read of a presentation texture before copying into it again. `CpuSync` keeps the
+older CPU waits instead, the copy's fence and an ANGLE event query per texture (`present sync: cpu
+fence + ANGLE queries`), to compare the two; it's read when the presentation textures are made, so
+restart after changing it. The `present:` perf line names the sync in use and ends with `GPU waits:
+copy N, read N`. If the fences can't be made, or a call on them fails, the CPU waits take over and the
+log says why. Path D always waits on the CPU.
 
 The WARP harness stubs presentation and has no ANGLE, so no scene covers this variable.
 
@@ -57,4 +66,4 @@ warning. The dump needs DRED, which Xbox may not provide; then nothing extra is 
 ## Tests
 
 The `surface-probe` WARP scene covers the probe (see [tests/README.md](../tests/README.md)). The other
-two features are untested off Xbox and Windows CI.
+features, including the shared-fence present sync, are untested off Xbox and Windows CI.

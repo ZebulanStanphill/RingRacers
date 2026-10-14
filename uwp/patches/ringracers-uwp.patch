@@ -1,4 +1,4 @@
-From 2d3f0a218ad8518eca77d9a9258133bdb5002593 Mon Sep 17 00:00:00 2001
+From cd05d39d6f3cd2109060e26fc6316fe05e361fc6 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -645,6 +645,21 @@ Model: claude-fable-5-1
 Agent: Claude Code (Sonnet 5.5, D3D12 diagnostics)
 Model: claude-sonnet-5-5
 
+- [UWP]: Synchronize the Direct3D 12 driver's presents with ANGLE on the GPU:
+  on interop paths A, B and C, two D3D12 fences are shared with ANGLE's
+  device (ID3D11Device5::OpenSharedFence, as the S0a fence probe did). The
+  queue signals the copy fence after each present submission and ANGLE's
+  context waits for it before drawing the slot; ANGLE signals the read fence
+  after the draw and the queue waits for it before the submission that next
+  copies into the slot, replacing the CPU copy-fence wait and ANGLE event
+  query wait. No wait is enqueued before its signal, nor on a removed
+  device; a failed signal or wait falls back to the CPU sync for the rest of
+  the run, and gr_d3d12_present CpuSync keeps it for comparison. The present
+  perf line names the sync and counts GPU waits.
+
+Agent: Claude Code (Opus 5.5, D3D12 shared-fence sync)
+Model: claude-opus-5-5
+
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  CMakeLists.txt                            |   19 +-
@@ -653,7 +668,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/console.c                             |   57 +
  src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
- src/cvars.cpp                             |   18 +
+ src/cvars.cpp                             |   20 +
  src/d_clisrv.c                            |   49 +
  src/d_main.cpp                            |  368 +-
  src/doomstat.h                            |    1 +
@@ -692,7 +707,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/r_d3d12/d3d12_palette.inc    |  290 +
  src/hardware/r_d3d12/d3d12_pipeline.cpp   |  180 +
  src/hardware/r_d3d12/d3d12_pipeline.h     |   60 +
- src/hardware/r_d3d12/d3d12_present.cpp    | 1623 ++++++
+ src/hardware/r_d3d12/d3d12_present.cpp    | 1848 ++++++
  src/hardware/r_d3d12/d3d12_present.h      |   50 +
  src/hardware/r_d3d12/d3d12_prewarm.cpp    |  212 +
  src/hardware/r_d3d12/d3d12_prewarm.h      |   17 +
@@ -759,7 +774,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 24273 insertions(+), 1137 deletions(-)
+ 112 files changed, 24500 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1162,7 +1177,7 @@ index 8a434ba..b4518d0 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33..332780d 100644
+index d589b33..8bd83cb 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
 @@ -431,7 +431,11 @@ consvar_t cv_bgaudio = Player("bgaudio", "Nothing").onchange_noinit(BGAudio_OnCh
@@ -1177,7 +1192,7 @@ index d589b33..332780d 100644
  consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
  
  consvar_t cv_renderview = Player("renderview", "On").values({{0, "Off"}, {1, "On"}, {2, "Force"}}).dont_save();
-@@ -1478,6 +1482,20 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+@@ -1478,6 +1482,22 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
  	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
  
  	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
@@ -1192,8 +1207,10 @@ index d589b33..332780d 100644
 +	// so a broken build is back on Direct3D 11 at the next launch.
 +	consvar_t cv_gld3d12 = OpenGL("gr_d3d12", "Off").values({{0, "Off"}, {1, "Once"}, {2, "On"}});
 +	// [UWP]: Readback forces the Direct3D 12 driver's CPU readback present path (D) instead of probing the ANGLE
-+	// interop paths; read once when the path is selected, so it takes effect at the next start. Not in the menu.
-+	consvar_t cv_gld3d12present = OpenGL("gr_d3d12_present", "Auto").values({{0, "Auto"}, {1, "Readback"}});
++	// interop paths; read once when the path is selected, so it takes effect at the next start. CpuSync keeps the
++	// interop paths' CPU waits instead of the shared fences, to compare them; read when the presentation textures
++	// are made (at the first frame and on a resize). Not in the menu.
++	consvar_t cv_gld3d12present = OpenGL("gr_d3d12_present", "Auto").values({{0, "Auto"}, {1, "Readback"}, {2, "CpuSync"}});
 +#endif
  
  #ifdef ALAM_LIGHTING
@@ -6552,7 +6569,7 @@ index b5e8fca..affa40d 100644
  		// Capture the screen again for screen waving on the intermission
  		if(gamestate != GS_INTERMISSION)
 diff --git a/src/hardware/hw_main.h b/src/hardware/hw_main.h
-index 652b409..6108cc4 100644
+index 652b409..6c42542 100644
 --- a/src/hardware/hw_main.h
 +++ b/src/hardware/hw_main.h
 @@ -27,6 +27,10 @@ extern "C" {
@@ -6596,7 +6613,7 @@ index 652b409..6108cc4 100644
 +extern consvar_t cv_glbatching, cv_glbettertransparency;
 +#ifdef _UWP
 +extern consvar_t cv_gld3d12; // [UWP]: VibeRant's backend, chosen at startup
-+extern consvar_t cv_gld3d12present; // [UWP]: Readback forces the Direct3D 12 driver's readback present path
++extern consvar_t cv_gld3d12present; // [UWP]: Readback forces the Direct3D 12 driver's readback present path; CpuSync, its CPU present sync
 +#endif
  
  extern float gl_viewwidth, gl_viewheight, gl_baseviewwindowy;
@@ -17946,10 +17963,10 @@ index 0000000..453b038
 +#endif
 diff --git a/src/hardware/r_d3d12/d3d12_present.cpp b/src/hardware/r_d3d12/d3d12_present.cpp
 new file mode 100644
-index 0000000..9ebbcba
+index 0000000..6075219
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_present.cpp
-@@ -0,0 +1,1623 @@
+@@ -0,0 +1,1848 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -17962,14 +17979,16 @@ index 0000000..9ebbcba
 +/// \brief [UWP]: Shows VibeRant D3D12's frames through ANGLE, which owns the window
 +///
 +/// The Direct3D 11 driver's presenter (r_d3d11.cpp), with D3D12 resources: each frame is copied to one of four
-+/// textures shared with ANGLE's device, which draws it to the window through OpenGL ES a frame later. The copy's
-+/// fence is waited for on the CPU before ANGLE reads the texture, and ANGLE's event query for its last read of a
-+/// texture before the submission that copies the next frame into it. How the texture is shared was probed on Xbox
-+/// by d3d12_interop.cpp; the same paths are tried here in order, with the same content check.
++/// textures shared with ANGLE's device, which draws it to the window through OpenGL ES a frame later. Two shared
++/// fences order the devices on the GPU: ANGLE waits for the copy's before reading the texture, and D3D12's queue for
++/// ANGLE's last read of a texture before the submission that copies the next frame into it. Without them (or with
++/// gr_d3d12_present CpuSync) the copy's fence is waited for on the CPU, and ANGLE's event query for its read. How
++/// the texture is shared was probed on Xbox by d3d12_interop.cpp; the same paths are tried here in order, with the
++/// same content check.
 +
 +#include "d3d12_present.h"
 +
-+#include <d3d11_1.h>
++#include <d3d11_4.h>
 +#include <dxgi1_2.h>
 +
 +#include <algorithm>
@@ -18312,6 +18331,8 @@ index 0000000..9ebbcba
 +	return path == PATH_A ? 'A' : path == PATH_B ? 'B' : path == PATH_C ? 'C' : path == PATH_D ? 'D' : '-';
 +}
 +
++enum SyncMode { SYNC_CPU_FENCE, SYNC_SHARED_FENCES };
++
 +struct PresentSlot
 +{
 +	ComPtr<ID3D12Resource> resource; // shared with ANGLE (A-C), or a READBACK buffer (D)
@@ -18320,8 +18341,10 @@ index 0000000..9ebbcba
 +	EGLSurface surface = nullptr;
 +	GLuint glTexture = 0;
 +	UINT64 copyFence = 0; // the submission that copied a frame into it
++	bool copyShared = false; // the shared copy fence is signaled with copyFence too
 +	ComPtr<ID3D11Query> read; // completion of ANGLE's draw that samples this slot
 +	bool readPending = false;
++	UINT64 readValue = 0; // shared fences: what ANGLE signals on the read fence after that draw; 0 for the query
 +	bool timing = false; // the frame's begin timestamp is recorded
 +	UINT64 timingFence = 0; // the submission that resolved its timestamps, until they're read
 +};
@@ -18338,6 +18361,12 @@ index 0000000..9ebbcba
 +	ComPtr<ID3D11Device1> angleDevice1;
 +	ComPtr<ID3D11DeviceContext> angleContext;
 +	bool deviceProbed = false, angleQueries = false;
++	SyncMode syncMode = SYNC_CPU_FENCE;
++	ComPtr<ID3D11DeviceContext4> angleContext4;
++	ComPtr<ID3D12Fence> copyFence, readFence; // D3D12 signals copyFence for ANGLE; ANGLE signals readFence for D3D12
++	ComPtr<ID3D11Fence> angleCopyFence, angleReadFence; // ANGLE's views of them
++	UINT64 readValue = 0; // the last value ANGLE signaled on the read fence
++	bool fencesTried = false, sharedFailed = false;
 +	precise_t lastPresent = 0;
 +	bool hasLastPresent = false;
 +	UINT width = 0, height = 0;
@@ -18364,6 +18393,7 @@ index 0000000..9ebbcba
 +	double copyWaitMs, worstCopyWaitMs;
 +	int copyWaits, copyWaitFailures;
 +	int angleReadWaits, angleReadTimeouts, fallbackFinishes;
++	int gpuCopyWaits, gpuReadWaits; // shared fences: waits enqueued on ANGLE's context and D3D12's queue
 +	precise_t angleReadWaitTime;
 +	double gpuMs, worstGpuMs;
 +	int gpuFrames;
@@ -18406,7 +18436,8 @@ index 0000000..9ebbcba
 +	Log("ANGLE's device has feature level 0x%X", (unsigned)g_present.angleDevice->GetFeatureLevel());
 +}
 +
-+// A copy on D3D12 must not overtake a pending read on ANGLE's device.
++// A copy on D3D12 must not overtake a pending read on ANGLE's device: waits on the CPU for its query, or for its
++// value on the shared read fence
 +void WaitForAngleRead(PresentSlot &slot)
 +{
 +	if (!slot.readPending)
@@ -18416,12 +18447,23 @@ index 0000000..9ebbcba
 +	UINT flags = 0; // allow one submission, then poll without repeatedly flushing
 +	for (;;)
 +	{
-+		BOOL done = FALSE;
-+		const HRESULT hr = g_present.angleContext->GetData(slot.read.Get(), &done, sizeof done, flags);
-+		if (hr == S_OK && done)
-+			break;
-+		if (Core_Failed(hr, "GetData (ANGLE read finished)"))
-+			break;
++		if (slot.readValue)
++		{
++			// UINT64_MAX once D3D12's device is removed, which ends the wait too
++			if (g_present.readFence->GetCompletedValue() >= slot.readValue)
++				break;
++			if (!blocked)
++				g_present.angleContext->Flush(); // its Signal, if a swap hasn't flushed it
++		}
++		else
++		{
++			BOOL done = FALSE;
++			const HRESULT hr = g_present.angleContext->GetData(slot.read.Get(), &done, sizeof done, flags);
++			if (hr == S_OK && done)
++				break;
++			if (Core_Failed(hr, "GetData (ANGLE read finished)"))
++				break;
++		}
 +		blocked = true;
 +		if (PreciseToMs(I_GetPreciseTime() - start) >= 100.0)
 +		{
@@ -18438,6 +18480,69 @@ index 0000000..9ebbcba
 +		g_stats.angleReadWaitTime += I_GetPreciseTime() - start;
 +	}
 +	slot.readPending = false;
++	slot.readValue = 0;
++}
++
++// A D3D12 fence ANGLE's device opens, as d3d12_interop.cpp's FenceProbe proved on Xbox. Nothing has used it on the
++// GPU if this fails.
++bool ShareFence(ID3D11Device5 *device5, const wchar_t *name, ComPtr<ID3D12Fence> &fence, ComPtr<ID3D11Fence> &angleFence,
++	const char **step, HRESULT *hr)
++{
++	HANDLE handle = nullptr;
++	*step = "CreateFence";
++	*hr = Core_Device()->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence));
++	if (FAILED(*hr))
++		return false;
++	*step = "CreateSharedHandle";
++	*hr = Core_Device()->CreateSharedHandle(fence.Get(), nullptr, GENERIC_ALL, nullptr, &handle);
++	if (SUCCEEDED(*hr) && (!handle || handle == INVALID_HANDLE_VALUE))
++		*hr = E_HANDLE;
++	if (FAILED(*hr))
++		return false;
++	*step = "OpenSharedFence";
++	*hr = device5->OpenSharedFence(handle, IID_PPV_ARGS(&angleFence));
++	CloseHandle(handle);
++	if (FAILED(*hr))
++		return false;
++	fence->SetName(name);
++	return true;
++}
++
++// Made once and kept across resizes. ANGLE's event queries stay made too, for falling back.
++bool InitSharedFences()
++{
++	if (g_present.sharedFailed)
++		return false;
++	if (g_present.copyFence)
++		return true;
++	if (g_present.fencesTried)
++		return false;
++	g_present.fencesTried = true;
++
++	ComPtr<ID3D11Device5> device5;
++	const char *step = "QueryInterface ID3D11Device5";
++	HRESULT hr = g_present.angleDevice.As(&device5);
++	if (SUCCEEDED(hr))
++	{
++		step = "QueryInterface ID3D11DeviceContext4";
++		hr = g_present.angleContext.As(&g_present.angleContext4);
++	}
++	const bool ok = SUCCEEDED(hr)
++		&& ShareFence(device5.Get(), L"present copy fence", g_present.copyFence, g_present.angleCopyFence, &step, &hr)
++		&& ShareFence(device5.Get(), L"present read fence", g_present.readFence, g_present.angleReadFence, &step, &hr);
++	if (!ok)
++	{
++		Log("present sync: shared fences unavailable (%s 0x%08X); cpu fence + %s", step, (unsigned)hr,
++			g_present.angleQueries ? "ANGLE queries" : "glFinish");
++		g_present.angleCopyFence.Reset();
++		g_present.angleReadFence.Reset();
++		g_present.copyFence.Reset();
++		g_present.readFence.Reset();
++		g_present.angleContext4.Reset();
++		return false;
++	}
++	g_present.readValue = 0;
++	return true;
 +}
 +
 +// Called after allocating all slots, including on resize or readback fallback.
@@ -18457,24 +18562,65 @@ index 0000000..9ebbcba
 +			}
 +		}
 +	}
-+	if (g_present.angleQueries)
-+		LOG_ONCE("present sync: cpu fence + ANGLE queries");
-+	else
++	if (!g_present.angleQueries)
 +	{
 +		for (PresentSlot &slot : g_present.slots)
 +			slot.read.Reset();
-+		LOG_ONCE("present sync: cpu fence + glFinish on fast frames (under 8 ms)");
 +	}
++
++	// Not for D, whose frames the CPU reads anyway; gr_d3d12_present CpuSync keeps the CPU waits to compare with
++	g_present.syncMode = SYNC_CPU_FENCE;
++	if (g_present.path != PATH_D && g_present.angleContext)
++	{
++		if (cv_gld3d12present.string && cv_gld3d12present.value == 2)
++			LOG_ONCE("present sync: shared fences not used (gr_d3d12_present CpuSync)");
++		else if (InitSharedFences())
++			g_present.syncMode = SYNC_SHARED_FENCES;
++	}
++
++	if (g_present.syncMode == SYNC_SHARED_FENCES)
++		LOG_ONCE("present sync: shared fences");
++	else if (g_present.angleQueries)
++		LOG_ONCE("present sync: cpu fence + ANGLE queries");
++	else
++		LOG_ONCE("present sync: cpu fence + glFinish on fast frames (under 8 ms)");
++}
++
++// A shared fence call failed: the CPU waits for the rest of the run, resizes included. Slots ANGLE read under the
++// shared fences keep their read fence values, which WaitForAngleRead waits for on the CPU.
++void FallBackToCpuSync(const char *what, HRESULT hr)
++{
++	g_present.sharedFailed = true;
++	Log("present sync: %s failed (0x%08X); cpu fence + %s from now on", what, (unsigned)hr,
++		g_present.angleQueries ? "ANGLE queries" : "glFinish");
++	g_present.syncMode = SYNC_CPU_FENCE;
 +}
 +
 +void FinishAngleRead(PresentSlot &slot, bool fastFrame)
 +{
++	if (g_present.syncMode == SYNC_SHARED_FENCES)
++	{
++		// After DrawToWindow on ANGLE's immediate context, like the query's End. Flushed at once, so that the queue
++		// wait for it before the slot's next copy can't stall on ANGLE's buffered commands.
++		const UINT64 value = g_present.readValue + 1;
++		const HRESULT hr = g_present.angleContext4->Signal(g_present.angleReadFence.Get(), value);
++		if (SUCCEEDED(hr))
++		{
++			g_present.angleContext4->Flush();
++			g_present.readValue = value;
++			slot.readValue = value;
++			slot.readPending = true;
++			return;
++		}
++		FallBackToCpuSync("ID3D11DeviceContext4::Signal (present read)", hr);
++	}
 +	if (g_present.angleQueries)
 +	{
 +		// ANGLE issues GL draws directly on its immediate context, so End is ordered after DrawToWindow (see
-+		// r_d3d11.cpp's FinishAngleRead).
++		// r_d3d11.cpp's FinishAngleRead). It covers any earlier read under the shared fences too.
 +		g_present.angleContext->End(slot.read.Get());
 +		slot.readPending = true;
++		slot.readValue = 0;
 +	}
 +	else if (fastFrame)
 +	{
@@ -19432,20 +19578,62 @@ index 0000000..9ebbcba
 +	g_traceCopied = index;
 +	g_traceCopyFrame = g_traceSlotFrame[index] = UWPTraceFrameId();
 +
-+	// Before the submission with the copy, not before recording it
++	// Before the submission with the copy, not before recording it: mid-frame submissions don't have it. Under the
++	// shared fences the queue waits for ANGLE's read; ANGLE's Signal for it was flushed when the slot was drawn.
 +	const precise_t readStart = I_GetPreciseTime();
 +	const bool readPending = slot.readPending;
++	const UINT64 readValue = slot.readValue;
++	bool queueWait = false;
++	if (slot.readPending && slot.readValue && list && g_present.syncMode == SYNC_SHARED_FENCES && !Core_RemovalSeen())
++	{
++		if (g_present.readFence->GetCompletedValue() >= slot.readValue)
++		{
++			slot.readPending = false; // already read
++			slot.readValue = 0;
++		}
++		else
++		{
++			const HRESULT hr = Core_Queue()->Wait(g_present.readFence.Get(), slot.readValue);
++			if (SUCCEEDED(hr))
++			{
++				g_stats.gpuReadWaits++;
++				queueWait = true;
++				slot.readPending = false;
++				slot.readValue = 0;
++			}
++			else
++				FallBackToCpuSync("ID3D12CommandQueue::Wait (present read)", hr); // and wait below
++		}
++	}
 +	WaitForAngleRead(slot);
 +	const double readWait = PreciseToMs(I_GetPreciseTime() - readStart);
 +	slot.copyFence = list ? Core_Submit("present") : 0;
++	slot.copyShared = false;
 +	if (!list)
 +		SubmitWithoutPresenting(); // reopens the list
++	if (slot.copyFence && g_present.syncMode == SYNC_SHARED_FENCES)
++	{
++		// Same queue, so after the copy. The main fence's values are monotonic, so they serve the shared one too.
++		const HRESULT hr = Core_Queue()->Signal(g_present.copyFence.Get(), slot.copyFence);
++		if (SUCCEEDED(hr))
++			slot.copyShared = true;
++		else
++			FallBackToCpuSync("ID3D12CommandQueue::Signal (present copy)", hr);
++	}
 +	if (timed && slot.copyFence)
 +		slot.timingFence = slot.copyFence;
 +	if (trace)
-+		Log("  copied the screen to slot %d; %s; submitted as fence %llu", index,
-+			readPending ? (readWait >= 0.01 ? "waited for ANGLE's last read of it" : "ANGLE's last read of it was done")
-+				: "no ANGLE read pending", (unsigned long long)slot.copyFence);
++	{
++		char read[96];
++		if (queueWait)
++			snprintf(read, sizeof read, "enqueued queue wait for ANGLE's read of slot %d (value %llu)", index,
++				(unsigned long long)readValue);
++		else
++			snprintf(read, sizeof read, "%s", readPending ? (readWait >= 0.01 ? "waited for ANGLE's last read of it"
++				: "ANGLE's last read of it was done") : "no ANGLE read pending");
++		Log("  copied the screen to slot %d; %s; submitted as fence %llu%s", index, read,
++			(unsigned long long)slot.copyFence, slot.copyShared ? " (shared fence signaled)" : "");
++	}
 +
 +	precise_t now = I_GetPreciseTime();
 +	g_stats.copyTime += now - t;
@@ -19455,26 +19643,66 @@ index 0000000..9ebbcba
 +	// The next normal frame will show that wipe frame again once, which is acceptable.
 +	PresentSlot &shown = (!readback && g_present.frame > 0 && !g_presentImmediately)
 +		? g_present.slots[(g_present.frame - 1) % kPresentSlots] : slot;
++	const int shownIndex = (int)(&shown - g_present.slots);
 +	if (trace && g_presentImmediately)
 +		Log("  showing the current wipe frame immediately");
 +	g_presentImmediately = false;
 +
-+	double waited = 0.0;
++	// Under the shared fences ANGLE waits for the copy on the GPU: its Signal was enqueued when the slot was
++	// submitted, this frame or an earlier one. Never on a removed device, whose fence may never get there.
 +	g_stats.copyWaits++;
-+	if (!shown.copyFence || !Core_Wait(shown.copyFence, 500, "a frame's copy", &waited))
++	bool cpuWait = true;
++	if (g_present.syncMode == SYNC_SHARED_FENCES && shown.copyShared)
 +	{
-+		g_stats.copyWaitFailures++;
-+		if (trace)
-+			Log("  slot %d's copy (fence %llu) didn't finish; not showing it", (int)(&shown - g_present.slots),
-+				(unsigned long long)shown.copyFence);
-+		NextFrame();
-+		return;
++		const UINT64 done = Core_CompletedFence(); // UINT64_MAX once removed, which Core_RemovalSeen then reports
++		if (!shown.copyFence || Core_RemovalSeen() || (done < shown.copyFence && Core_DeviceRemoved()))
++		{
++			g_stats.copyWaitFailures++;
++			if (trace)
++				Log("  slot %d's copy (fence %llu) can't be waited for; not showing it", shownIndex,
++					(unsigned long long)shown.copyFence);
++			NextFrame();
++			return;
++		}
++		if (done >= shown.copyFence)
++		{
++			cpuWait = false;
++			if (trace)
++				Log("  slot %d's copy (fence %llu) was done", shownIndex, (unsigned long long)shown.copyFence);
++		}
++		else
++		{
++			const HRESULT hr = g_present.angleContext4->Wait(g_present.angleCopyFence.Get(), shown.copyFence);
++			if (SUCCEEDED(hr))
++			{
++				cpuWait = false;
++				g_stats.gpuCopyWaits++;
++				if (trace)
++					Log("  enqueued ANGLE wait for slot %d's copy (fence %llu; GPU at %llu)", shownIndex,
++						(unsigned long long)shown.copyFence, (unsigned long long)Core_CompletedFence());
++			}
++			else
++				FallBackToCpuSync("ID3D11DeviceContext4::Wait (present copy)", hr); // and wait below
++		}
 +	}
-+	g_stats.copyWaitMs += waited;
-+	g_stats.worstCopyWaitMs = std::max(g_stats.worstCopyWaitMs, waited);
-+	if (trace)
-+		Log("  waited %.2f ms for slot %d's copy (fence %llu; GPU at %llu)", waited, (int)(&shown - g_present.slots),
-+			(unsigned long long)shown.copyFence, (unsigned long long)Core_CompletedFence());
++	if (cpuWait)
++	{
++		double waited = 0.0;
++		if (!shown.copyFence || !Core_Wait(shown.copyFence, 500, "a frame's copy", &waited))
++		{
++			g_stats.copyWaitFailures++;
++			if (trace)
++				Log("  slot %d's copy (fence %llu) didn't finish; not showing it", shownIndex,
++					(unsigned long long)shown.copyFence);
++			NextFrame();
++			return;
++		}
++		g_stats.copyWaitMs += waited;
++		g_stats.worstCopyWaitMs = std::max(g_stats.worstCopyWaitMs, waited);
++		if (trace)
++			Log("  waited %.2f ms for slot %d's copy (fence %llu; GPU at %llu)", waited, shownIndex,
++				(unsigned long long)shown.copyFence, (unsigned long long)Core_CompletedFence());
++	}
 +
 +	if (readback)
 +		UploadReadback(shown);
@@ -19487,7 +19715,7 @@ index 0000000..9ebbcba
 +	FinishAngleRead(shown, fastFrame);
 +	g_present.lastPresent = presentStart;
 +	g_present.hasLastPresent = true;
-+	g_traceShown = (INT32)(&shown - g_present.slots);
++	g_traceShown = shownIndex;
 +	g_traceShowFrame = g_traceSlotFrame[g_traceShown];
 +
 +	now = I_GetPreciseTime();
@@ -19511,17 +19739,30 @@ index 0000000..9ebbcba
 +
 +void Present_Shutdown(bool idle)
 +{
-+	DestroySlots(idle);
++	DestroySlots(idle); // waits for ANGLE's reads on the CPU
 +	if (idle)
 +	{
++		// The queue has reached every copy Signal, so ANGLE's waits for them can finish: none may be left on its
++		// context when the fences go. On a busy or removed device, no more GPU work.
++		if (g_present.copyFence && gl.loaded)
++			gl.Finish();
 +		g_present.timestamps.Reset();
 +		g_present.timestampBuffer.Reset();
++		g_present.copyFence.Reset();
++		g_present.readFence.Reset();
 +	}
 +	else
 +	{
 +		Core_Retire(g_present.timestamps);
 +		Core_Retire(g_present.timestampBuffer);
++		Core_Retire(g_present.copyFence);
++		Core_Retire(g_present.readFence);
 +	}
++	g_present.angleCopyFence.Reset();
++	g_present.angleReadFence.Reset();
++	g_present.angleContext4.Reset();
++	g_present.syncMode = SYNC_CPU_FENCE;
++	g_present.fencesTried = g_present.sharedFailed = false;
 +	// GL objects go with ANGLE's context, as with the Direct3D 11 driver
 +	g_present.angleContext.Reset();
 +	g_present.angleDevice1.Reset();
@@ -19542,11 +19783,12 @@ index 0000000..9ebbcba
 +{
 +	const PresentStats &s = g_stats;
 +	const double n = frames > 0 ? frames : 1;
-+	I_OutputMsg("UWP perf:   D3D12: present: interop path %c, sync %s; per frame copy %.2f ms, copy-fence wait %.2f ms (worst %.2f, %d of %d not shown), GL %.2f, swap %.2f ms; ANGLE read waits %d, %.2f ms total; %d timeouts; fallback finishes %d\n",
-+		PathName(g_present.path), g_present.angleQueries ? "cpu fence + ANGLE queries" : "cpu fence + glFinish",
++	I_OutputMsg("UWP perf:   D3D12: present: interop path %c, sync %s; per frame copy %.2f ms, copy-fence wait %.2f ms (worst %.2f, %d of %d not shown), GL %.2f, swap %.2f ms; ANGLE read waits %d, %.2f ms total; %d timeouts; fallback finishes %d; GPU waits: copy %d, read %d\n",
++		PathName(g_present.path), g_present.syncMode == SYNC_SHARED_FENCES ? "shared fences"
++			: g_present.angleQueries ? "cpu fence + ANGLE queries" : "cpu fence + glFinish",
 +		PreciseToMs(s.copyTime) / n, s.copyWaitMs / n, s.worstCopyWaitMs, s.copyWaitFailures, s.copyWaits,
 +		PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
-+		s.angleReadWaits, PreciseToMs(s.angleReadWaitTime), s.angleReadTimeouts, s.fallbackFinishes);
++		s.angleReadWaits, PreciseToMs(s.angleReadWaitTime), s.angleReadTimeouts, s.fallbackFinishes, s.gpuCopyWaits, s.gpuReadWaits);
 +	I_OutputMsg("UWP perf:   D3D12: GPU %.2f ms per frame (worst %.2f, %d timed)\n",
 +		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames);
 +	g_stats = PresentStats();
@@ -19575,7 +19817,7 @@ index 0000000..9ebbcba
 +} // namespace rr_d3d12
 diff --git a/src/hardware/r_d3d12/d3d12_present.h b/src/hardware/r_d3d12/d3d12_present.h
 new file mode 100644
-index 0000000..c8467ce
+index 0000000..057daa2
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_present.h
 @@ -0,0 +1,50 @@
@@ -19611,8 +19853,8 @@ index 0000000..c8467ce
 +// Wipes must reach the window before presenting stops: show the frame being copied rather than the previous one
 +void Present_Immediately();
 +
-+// Releases the presentation textures and their EGL surfaces, then ANGLE's device. idle: the GPU has finished, so
-+// D3D12 objects can go now rather than being retired.
++// Releases the presentation textures and their EGL surfaces, the shared fences, then ANGLE's device. idle: the GPU
++// has finished, so D3D12 objects can go now rather than being retired.
 +void Present_Shutdown(bool idle);
 +
 +// Last Present's copied/shown slots and source draw IDs; -1/0 if no copy/draw occurred.
