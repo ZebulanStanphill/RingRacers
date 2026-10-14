@@ -281,6 +281,16 @@ static void Routes(){
         assert(hwr_numspringwalls==size_t(special==0));
         if(!special){assert(hwr_springwalls[0].v[2].y==9&&hwr_springwalls[0].v[1].y==-7);}
     }line.special=0;
+    // Two-sided segs' upper and lower walls are recorded like solid segs (Software's SIL_TOP/SIL_BOTTOM):
+    // Metropolis's bumper walls are upper walls over low back sectors, with the springs just behind them.
+    Begin();{auto q=wall;SpringRecordUpper(q.data(),8*FRACUNIT,9*FRACUNIT,2*FRACUNIT,3*FRACUNIT);
+        assert(hwr_numspringwalls==1&&!hwr_springwalls[0].thick);
+        assert(hwr_springwalls[0].v[3].y==8&&hwr_springwalls[0].v[2].y==9&&hwr_springwalls[0].v[0].y==2&&hwr_springwalls[0].v[1].y==3);
+        Quad rec;std::copy(hwr_springwalls[0].v,hwr_springwalls[0].v+4,rec.begin());DrawEntry();assert(Samples(fixture,{rec})==0);}
+    Begin();{auto q=wall;SpringRecordLower(q.data(),-2*FRACUNIT,-3*FRACUNIT,-8*FRACUNIT,-7*FRACUNIT);
+        assert(hwr_numspringwalls==1&&!hwr_springwalls[0].thick);
+        assert(hwr_springwalls[0].v[3].y==-2&&hwr_springwalls[0].v[2].y==-3&&hwr_springwalls[0].v[0].y==-8&&hwr_springwalls[0].v[1].y==-7);
+        Quad rec;std::copy(hwr_springwalls[0].v,hwr_springwalls[0].v+4,rec.begin());DrawEntry();assert(Samples(fixture,{rec})==0);}
     for(int route:{0,1}){
         Begin();auto q=wall;
         auto record=route?SpringRecordFOF1:SpringRecordFOF0;

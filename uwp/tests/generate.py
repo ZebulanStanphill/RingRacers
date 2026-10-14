@@ -300,6 +300,14 @@ def generate(engine, output):
     routes += ("static void SpringRecordSolid(FOutVector *wallVerts, fixed_t worldtop, "
         "fixed_t worldtopslope, fixed_t worldbottom, fixed_t worldbottomslope) {\n"
         + solid + "}\n")
+    for kind, top, bottom in (("Upper", "worldtop", "worldhigh"), ("Lower", "worldlow", "worldbottom")):
+        section = function_section(hardware, "HWR_ProcessSeg",
+            f"\t\t\t// set top/bottom coords\n\t\t\twallVerts[3].y = FIXED_TO_FLOAT({top});",
+            "\n\t\t\t{\n\t\t\t\tFBITFIELD polyflags = PF_Masked;")
+        if "HWR_AddSpringWall(wallVerts, NULL);" not in section:
+            raise ValueError(f"two-sided {kind.lower()} walls must be recorded for spring clipping")
+        routes += (f"static void SpringRecord{kind}(FOutVector *wallVerts, fixed_t {top}, "
+            f"fixed_t {top}slope, fixed_t {bottom}, fixed_t {bottom}slope) {{\n" + section + "}\n")
     process_seg = hardware.function("HWR_ProcessSeg").split("\n", 1)[1].rstrip("\n")
     seg_offset = hardware.text.index(process_seg)
     record_start = "\t\t\t\t\t// [UWP]: Opaque solid FOF silhouette before lighting splits."
