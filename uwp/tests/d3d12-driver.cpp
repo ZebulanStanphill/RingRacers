@@ -298,6 +298,46 @@ int main(int argc,char **argv) {
             expect("texture-dedicated",{40,96,216},8,32); expect("texture-dedicated",{232,200,24},W-1,0);
             deleteTexture(&t); D3D12_FinishUpdate(0);
         }
+        // Add-on shaders use the Legacy GL loader and replace a valid base slot.
+        // NOCUSTOM must make the same custom-color oracle fail with built-in pixels.
+        {
+            auto load=function<void (*)(int,char *,size_t,boolean)>("LoadCustomShader");
+            auto compile=function<boolean (*)()>("CompileShaders");
+            auto clean=function<void (*)()>("CleanShaders");
+            auto shader=function<void (*)(int)>("SetShader");
+            char vertex[]="void main() { gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex; }";
+            char fragment[]="void main() { gl_FragColor = vec4(0.25, 0.5, 0.75, 1.0); }";
+            std::array<UINT8,4> color={200,40,16,255};
+            GLMipmap_t customTexture={}; customTexture.format=GL_TEXFMT_RGBA;
+            customTexture.width=customTexture.height=1; customTexture.data=color.data();
+            auto customDraw=[&]() {
+                reset(); texture(&customTexture); auto q=quad();
+                auto white=surface({255,255,255}); white.LightInfo.light_level=255; white.LightInfo.fade_end=31;
+                const FBITFIELD flags=PF_Modulated|PF_NoDepthTest;
+                blend(flags); polygon(&white,q.data(),4,flags);
+            };
+            special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON);
+            load(SHADER_FLOOR,vertex,sizeof(vertex)-1,false);
+            load(SHADER_FLOOR,fragment,sizeof(fragment)-1,true);
+            if(!compile()) throw std::runtime_error("custom shader compilation failed");
+            shader(SHADER_FLOOR);
+            if(negative=="custom-shader-nocustom") special(HWD_SET_SHADERS,HWD_SHADEROPTION_NOCUSTOM);
+            customDraw();
+            try { expect("custom-shader",{64,128,191}); }
+            catch(...) { if(negative=="custom-shader-nocustom") negativeRejected=true; throw; }
+            clean(); shader(SHADER_FLOOR); customDraw(); expect("custom-shader-clean",{200,40,16});
+            const size_t logStart=logs.size();
+            char invalid[]="void main() { gl_FragColor = vec4(; }";
+            load(SHADER_FLOOR,vertex,sizeof(vertex)-1,false);
+            load(SHADER_FLOOR,invalid,sizeof(invalid)-1,true);
+            if(!compile()) throw std::runtime_error("invalid add-on disabled built-in shaders");
+            const std::string diagnostic=logs.substr(logStart);
+            if(diagnostic.find("custom shader")==std::string::npos || diagnostic.find("built-in")==std::string::npos)
+                throw std::runtime_error("invalid custom shader did not log built-in fallback");
+            shader(SHADER_FLOOR); customDraw(); expect("custom-shader-invalid",{200,40,16});
+            clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
+            deleteTexture(&customTexture);
+        }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};
         GLMipmap_t tex={}; tex.format=GL_TEXFMT_RGBA; tex.width=tex.height=2; tex.data=texels.data();
         reset(); texture(&tex); textured();
@@ -851,7 +891,8 @@ int main(int argc,char **argv) {
           if(sp==std::string::npos) throw std::runtime_error("missing screens perf line");
           if(sscanf(logs.c_str()+sp,"UWP perf:   D3D12: screens: %*f per frame (%*f copies, %*f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay",&full,&twoPass,&images,&fades,&fallbacks)!=5
              || full!=fullWipes || twoPass!=twoPassWipes || images!=2 || fades!=73 || fallbacks!=1) throw std::runtime_error("screens perf counters are wrong");
-          if(logs.find("not drawn yet: ")==std::string::npos || logs.find("postimage not drawn")!=std::string::npos) throw std::runtime_error("the not-drawn-yet line is wrong"); }
+          // Every driver feature draws now: nothing may report itself as not drawn yet.
+          if(logs.find("not drawn yet")!=std::string::npos || logs.find("postimage not drawn")!=std::string::npos) throw std::runtime_error("something still reports itself as not drawn"); }
         unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=logs.find("; wraps "); if(pos==std::string::npos || sscanf(logs.c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=logs.find("; grows ",pos); if(gp==std::string::npos || sscanf(logs.c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
         unsigned ringSubmissions=0; auto rp=logs.find("mid-frame: ring "); if(rp==std::string::npos || sscanf(logs.c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(queue.Get());

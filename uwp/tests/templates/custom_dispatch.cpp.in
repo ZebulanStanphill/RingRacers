@@ -47,7 +47,8 @@ static int translated=0,created=0,refractions=0,failLayout=-1;
 static bool failRefraction=false;
 static std::string lastVertex,lastFragment;
 bool TranslateLegacyShader(const std::string &v,const std::string &p,int layout,
-    LegacyShaderHLSL &out,std::string &error,bool refraction) {
+    LegacyShaderHLSL &out,std::string &error,bool refraction,int shaderModel) {
+    assert(shaderModel==40);
     ++translated;lastVertex=v;lastFragment=p;
     if(v=="bad"||p=="bad"||(refraction&&p=="no refraction")){error="invalid shader";return false;}
     if(refraction){assert(layout==LAYOUT_POLY);++refractions;}

@@ -1,4 +1,4 @@
-From 048167ee44e46c805d85f4e7e5046dda48a409ee Mon Sep 17 00:00:00 2001
+From 6a10fe0b860063aed1f71db9dd15f22ed9786bba Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -617,6 +617,21 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Agent: Claude Code (Fable 5.1, dedicated texture heaps)
 Model: claude-fable-5-1
 
+- [UWP]: Draw add-on Legacy GL shaders in the Direct3D 12 driver at Shader
+  Model 5.1: TranslateLegacyShader takes the shader model (51 sets explicit
+  register space 0; 40 output unchanged), D3DCompile builds vs_5_1/ps_5_1
+  bytecode per layout, and custom programs are keyed into the cached
+  pipelines above the built-in ranges with a generation that recompilation
+  and cleanup retire. Each program creates its pipelines at load, so a bad
+  add-on keeps the built-in shader then rather than at draw. Custom water
+  keeps the built-in refraction only with its composite variant; the custom
+  view constants ride in the draw constant reservation at b4.
+
+Agent: Codex (Sol, D3D12 custom shaders)
+Model: gpt-6.1-sol
+Agent: Claude Code (Fable 5.1, review)
+Model: claude-fable-5-1
+
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  CMakeLists.txt                            |   19 +-
@@ -647,8 +662,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/hw_main.h                    |   21 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
- src/hardware/r_d3d11/custom_shader.cpp    |  308 +
- src/hardware/r_d3d11/custom_shader.h      |   12 +
+ src/hardware/r_d3d11/custom_shader.cpp    |  310 +
+ src/hardware/r_d3d11/custom_shader.h      |   13 +
  src/hardware/r_d3d11/custom_shaders.cmake |   58 +
  src/hardware/r_d3d11/r_d3d11.cpp          | 6420 +++++++++++++++++++++
  src/hardware/r_d3d11/r_d3d11.h            |   72 +
@@ -662,8 +677,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/r_d3d12/d3d12_interop.h      |   49 +
  src/hardware/r_d3d12/d3d12_models.inc     |  516 ++
  src/hardware/r_d3d12/d3d12_palette.inc    |  290 +
- src/hardware/r_d3d12/d3d12_pipeline.cpp   |  173 +
- src/hardware/r_d3d12/d3d12_pipeline.h     |   58 +
+ src/hardware/r_d3d12/d3d12_pipeline.cpp   |  180 +
+ src/hardware/r_d3d12/d3d12_pipeline.h     |   60 +
  src/hardware/r_d3d12/d3d12_present.cpp    | 1614 ++++++
  src/hardware/r_d3d12/d3d12_present.h      |   50 +
  src/hardware/r_d3d12/d3d12_prewarm.cpp    |  212 +
@@ -672,8 +687,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/r_d3d12/d3d12_upload.cpp     |  112 +
  src/hardware/r_d3d12/d3d12_upload.h       |   54 +
  src/hardware/r_d3d12/mips.h               |   60 +
- src/hardware/r_d3d12/pipeline_key.h       |   51 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 3038 ++++++++++
+ src/hardware/r_d3d12/pipeline_key.h       |   52 +
+ src/hardware/r_d3d12/r_d3d12.cpp          | 3241 +++++++++++
  src/hardware/r_d3d12/r_d3d12.h            |   63 +
  src/hardware/r_d3d12/texture_repack.h     |   36 +
  src/hardware/r_opengl/r_opengl.c          |  308 +-
@@ -731,7 +746,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 112 files changed, 23827 insertions(+), 1137 deletions(-)
+ 112 files changed, 24043 insertions(+), 1137 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -7025,10 +7040,10 @@ index dbfa84a..c44c848 100644
  
 diff --git a/src/hardware/r_d3d11/custom_shader.cpp b/src/hardware/r_d3d11/custom_shader.cpp
 new file mode 100644
-index 0000000..31fe2c2
+index 0000000..6424957
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shader.cpp
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,310 @@
 +// GPL-2.0; runtime translation of Legacy GL add-on GLSL.
 +#include "custom_shader.h"
 +#include <algorithm>
@@ -7254,8 +7269,8 @@ index 0000000..31fe2c2
 +    return count;
 +}
 +
-+std::string HLSL(spirv_cross::CompilerHLSL &compiler, bool fragment) {
-+    auto hlsl=compiler.get_hlsl_options(); hlsl.shader_model=40;
++std::string HLSL(spirv_cross::CompilerHLSL &compiler, bool fragment, int shaderModel) {
++    auto hlsl=compiler.get_hlsl_options(); hlsl.shader_model=shaderModel;
 +    compiler.set_hlsl_options(hlsl);
 +    if(!fragment) {
 +        compiler.add_vertex_attribute_remap({0,"POSITION"});
@@ -7267,12 +7282,14 @@ index 0000000..31fe2c2
 +    for(unsigned binding : {0u,4u,5u}) {
 +        spirv_cross::HLSLResourceBinding map;
 +        map.stage=stage; map.desc_set=0; map.binding=binding; map.cbv.register_binding=binding;
++        if(shaderModel==51) map.cbv.register_space=map.srv.register_space=map.sampler.register_space=0;
 +        compiler.add_hlsl_resource_binding(map);
 +    }
 +    for(unsigned binding : {0u,1u,9u,10u}) {
 +        spirv_cross::HLSLResourceBinding map;
 +        map.stage=stage; map.desc_set=1; map.binding=binding;
 +        map.srv.register_binding=map.sampler.register_binding=binding;
++        if(shaderModel==51) map.cbv.register_space=map.srv.register_space=map.sampler.register_space=0;
 +        compiler.add_hlsl_resource_binding(map);
 +    }
 +    return compiler.compile();
@@ -7280,7 +7297,7 @@ index 0000000..31fe2c2
 +}
 +
 +bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
-+    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction) {
++    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction, int shaderModel) {
 +    output={}; error.clear();
 +    try {
 +        if(layout<0 || layout>2) throw std::runtime_error("invalid vertex layout");
@@ -7331,18 +7348,18 @@ index 0000000..31fe2c2
 +                compiler.set_decoration(r.id,spv::DecorationLocation,locations.at(r.name));
 +        };
 +        assign(vertexCompiler,false); assign(fragmentCompiler,true);
-+        result.vertex=HLSL(vertexCompiler,false);
-+        result.fragment=HLSL(fragmentCompiler,true);
++        result.vertex=HLSL(vertexCompiler,false,shaderModel);
++        result.fragment=HLSL(fragmentCompiler,true,shaderModel);
 +        output=std::move(result);
 +        return true;
 +    } catch(const std::exception &e) { error=e.what(); return false; }
 +}
 diff --git a/src/hardware/r_d3d11/custom_shader.h b/src/hardware/r_d3d11/custom_shader.h
 new file mode 100644
-index 0000000..dbd7e2f
+index 0000000..5a924df
 --- /dev/null
 +++ b/src/hardware/r_d3d11/custom_shader.h
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,13 @@
 +// GPL-2.0; runtime translation of Legacy GL add-on GLSL.
 +#ifndef RR_CUSTOM_SHADER_H
 +#define RR_CUSTOM_SHADER_H
@@ -7351,9 +7368,10 @@ index 0000000..dbd7e2f
 +// layout: 0 polygon, 1 sky, 2 model (the driver's vertex buffer layouts).
 +// waterRefraction: the fragment stage also composites its alpha-tested result
 +// over the captured scene with ripple distortion (t9/t10/b5, as PSWaterRefraction).
++// shaderModel: SPIRV-Cross target (40 for D3D11, 51 for D3D12 space 0).
 +// Its vertex stage and fragment inputs are the same as the normal variant's.
 +bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
-+    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction = false);
++    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction = false, int shaderModel = 40);
 +#endif
 diff --git a/src/hardware/r_d3d11/custom_shaders.cmake b/src/hardware/r_d3d11/custom_shaders.cmake
 new file mode 100644
@@ -17620,10 +17638,10 @@ index 0000000..7cb8b86
 +}
 diff --git a/src/hardware/r_d3d12/d3d12_pipeline.cpp b/src/hardware/r_d3d12/d3d12_pipeline.cpp
 new file mode 100644
-index 0000000..c44989b
+index 0000000..2ea58ea
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_pipeline.cpp
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,180 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -17777,12 +17795,19 @@ index 0000000..c44989b
 +}
 +D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, const PipelineKey &k)
 +{
++	return BuildPipelineDesc(root, k, nullptr, nullptr);
++}
++D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, const PipelineKey &k,
++	const D3D12_SHADER_BYTECODE *customVs, const D3D12_SHADER_BYTECODE *customPs)
++{
 +	D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
 +	d.pRootSignature = root;
 +	if (k.vs < NUMVS)
 +		d.VS = kVs[k.vs];
++	else if (customVs) d.VS = *customVs;
 +	if (k.ps < NUMPS)
 +		d.PS = kPs[k.ps];
++	else if (customPs) d.PS = *customPs;
 +	if (k.layout <= LAYOUT_NONE)
 +		d.InputLayout = kLayouts[k.layout];
 +	d.BlendState = MakeBlendDesc(k.blend);
@@ -17799,10 +17824,10 @@ index 0000000..c44989b
 +} // namespace rr_d3d12
 diff --git a/src/hardware/r_d3d12/d3d12_pipeline.h b/src/hardware/r_d3d12/d3d12_pipeline.h
 new file mode 100644
-index 0000000..1de98e1
+index 0000000..453b038
 --- /dev/null
 +++ b/src/hardware/r_d3d12/d3d12_pipeline.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,60 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -17857,6 +17882,8 @@ index 0000000..1de98e1
 +D3D12_DEPTH_STENCIL_DESC MakeDepthDesc(std::uint64_t key);
 +D3D12_RASTERIZER_DESC MakeRasterDesc(std::uint8_t key);
 +D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, const PipelineKey &key);
++D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, const PipelineKey &key,
++	const D3D12_SHADER_BYTECODE *customVs, const D3D12_SHADER_BYTECODE *customPs);
 +const char *ShaderName(VSKind kind);
 +const char *ShaderName(PSKind kind);
 +} // namespace rr_d3d12
@@ -20606,10 +20633,10 @@ index 0000000..67884d1
 +#endif
 diff --git a/src/hardware/r_d3d12/pipeline_key.h b/src/hardware/r_d3d12/pipeline_key.h
 new file mode 100644
-index 0000000..736f77d
+index 0000000..3634027
 --- /dev/null
 +++ b/src/hardware/r_d3d12/pipeline_key.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,52 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// This program is free software distributed under the
@@ -20626,13 +20653,14 @@ index 0000000..736f77d
 +struct PipelineKey
 +{
 +	std::uint16_t vs = 0, ps = 0;
++	std::uint16_t custom = 0;
 +	std::uint8_t layout = 0, topologyType = 3, rtFormat = 28, dsvFormat = 45;
 +	std::uint16_t blend = 0;
 +	std::uint8_t raster = 0;
 +	std::uint64_t depth = 0;
 +	bool operator==(const PipelineKey &b) const
 +	{
-+		return vs == b.vs && ps == b.ps && layout == b.layout && topologyType == b.topologyType &&
++		return vs == b.vs && ps == b.ps && custom == b.custom && layout == b.layout && topologyType == b.topologyType &&
 +			   rtFormat == b.rtFormat && dsvFormat == b.dsvFormat && blend == b.blend && raster == b.raster &&
 +			   depth == b.depth;
 +	}
@@ -20646,7 +20674,7 @@ index 0000000..736f77d
 +	std::size_t operator()(const PipelineKey &k) const
 +	{
 +		std::uint64_t h = 14695981039346656037ULL;
-+		for (auto v : {std::uint64_t(k.vs), std::uint64_t(k.ps), std::uint64_t(k.layout), std::uint64_t(k.topologyType),
++		for (auto v : {std::uint64_t(k.vs), std::uint64_t(k.ps), std::uint64_t(k.custom), std::uint64_t(k.layout), std::uint64_t(k.topologyType),
 +					   std::uint64_t(k.rtFormat), std::uint64_t(k.dsvFormat), std::uint64_t(k.blend),
 +					   std::uint64_t(k.raster), k.depth})
 +		{
@@ -20663,10 +20691,10 @@ index 0000000..736f77d
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..4cef4c51
+index 0000000..7eb6b6d
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
-@@ -0,0 +1,3038 @@
+@@ -0,0 +1,3241 @@
 +// DR. ROBOTNIK'S RING RACERS
 +//-----------------------------------------------------------------------------
 +// Copyright (C) 2025 by Kart Krew.
@@ -20689,6 +20717,9 @@ index 0000000..4cef4c51
 +#include "d3d12_prewarm.h"
 +#include "d3d12_upload.h"
 +#include "mips.h"
++#include "../r_d3d11/custom_shader.h"
++#include "../hw_glsl.h"
++#include <d3dcompiler.h>
 +#include "texture_repack.h"
 +#include "r_d3d12_shaders/RootSignature.h"
 +
@@ -21288,8 +21319,27 @@ index 0000000..4cef4c51
 +	auto it = g_lightTables.find(id);
 +	g_currentLightTable = it != g_lightTables.end() ? &it->second : nullptr;
 +}
-+struct CustomProgram {};
-+const CustomProgram *CustomDrawProgram(Layout) { return nullptr; }
++struct CustomProgram
++{
++	ComPtr<ID3DBlob> vertex, pixel, refraction;
++};
++struct CustomShader
++{
++	std::string vertex, fragment;
++	CustomProgram programs[NUMLAYOUTS];
++	bool dirty = false, valid = false;
++	UINT16 generation = 0;
++};
++CustomShader g_customShaders[NUMBASESHADERS];
++UINT16 g_customGeneration = 0;
++const CustomProgram *CustomDrawProgram(Layout layout)
++{
++	if (g_postImage || g_allowShaders != HWD_SHADEROPTION_ON || g_program < 0 || g_program >= NUMBASESHADERS
++		|| layout >= NUMLAYOUTS)
++		return nullptr;
++	const CustomShader &shader = g_customShaders[g_program];
++	return shader.valid ? &shader.programs[layout] : nullptr;
++}
 +void SetBlendMode(FBITFIELD flags)
 +{
 +	// Set blending function
@@ -21445,7 +21495,9 @@ index 0000000..4cef4c51
 +size_t g_testVertexBytes = 0, g_testIndexBytes = 0, g_testConstantBytes = 0;
 +Constants g_lastConstants = {};
 +bool g_constantsValid = false;
-+UploadAllocation g_constantAllocation;
++UploadAllocation g_constantAllocation, g_customViewConstants;
++UINT64 g_customViewFrame = UINT64_MAX;
++UINT g_customViewHeight = 0;
 +std::unordered_map<PipelineKey, ComPtr<ID3D12PipelineState>, PipelineKeyHash> g_pipelines;
 +PipelineKey g_lastKey = {};
 +ID3D12PipelineState *g_lastPipeline = nullptr, *g_boundPipeline = nullptr;
@@ -22098,7 +22150,7 @@ index 0000000..4cef4c51
 +
 +int ScreenTextureSize();
 +
-+bool ApplyConstants()
++bool ApplyConstants(bool custom)
 +{
 +	Constants c = {};
 +	memcpy(c.projection, g_projection.m, sizeof c.projection);
@@ -22140,11 +22192,14 @@ index 0000000..4cef4c51
 +	c.texMode = g_gl.texture2D && g_units[0] && g_units[0]->res
 +		? (g_gl.texEnv == TE_MODULATE ? 1 : 2) : 0;
 +	c.palette = (g_paletteRendering && g_paletteLookup.res && g_currentLightTable) ? 1 : 0;
-+	if (g_waterRefraction || g_fogRemap || !g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
++	const bool updateView = custom && (!g_customViewConstants || g_customViewFrame != g_hueFrame
++		|| g_customViewHeight != g_rtHeight || g_customViewConstants.generation != g_constantRing.Generation());
++	if (updateView || g_waterRefraction || g_fogRemap || !g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
 +		|| memcmp(&c, &g_lastConstants, sizeof c) != 0)
 +	{
-+		// Keep b0 and the capture CBV in one reservation so a wrap cannot invalidate either.
-+		auto slot = g_constantRing.Alloc((g_waterRefraction || g_fogRemap) ? 768 : 512, 256);
++		// Reserve b0, capture and optional b4 together: Alloc can wrap and reopen the list.
++		const size_t viewOffset = (g_waterRefraction || g_fogRemap) ? 768 : 512;
++		auto slot = g_constantRing.Alloc(viewOffset + (custom ? 256 : 0), 256);
 +		if (!slot.cpu) return false;
 +		memcpy(slot.cpu, &c, sizeof c);
 +		memset(static_cast<UINT8 *>(slot.cpu) + sizeof c, 0, 512 - sizeof c);
@@ -22155,10 +22210,26 @@ index 0000000..4cef4c51
 +			memcpy(capture.cpu, g_waterRefraction ? g_waterConstantData : g_fogConstantData, g_waterRefraction ? 32 : 16);
 +			(g_waterRefraction ? g_waterConstants : g_fogConstants) = capture;
 +		}
++		if (custom && (updateView || g_customViewConstants.generation != slot.generation))
++		{
++			g_customViewConstants = {static_cast<UINT8 *>(slot.cpu) + viewOffset, slot.gpu + viewOffset,
++				slot.offset + viewOffset, slot.generation};
++			const float view[4] = {(float)g_rtHeight, 0, 0, 0};
++			memset(g_customViewConstants.cpu, 0, 256);
++			memcpy(g_customViewConstants.cpu, view, sizeof view);
++			g_customViewFrame = g_hueFrame; g_customViewHeight = g_rtHeight;
++			g_stats.constantUpdates++;
++		}
 +		g_constantAllocation = slot;
 +		g_lastConstants = c;
 +		g_constantsValid = true;
 +		g_stats.constantUpdates++;
++	}
++	if (custom)
++	{
++		if (!g_constantRing.Touch(g_customViewConstants, 256)) return false;
++		Core_List()->SetGraphicsRootConstantBufferView(17, g_customViewConstants.gpu);
++		g_stats.rootSets++;
 +	}
 +	Core_List()->SetGraphicsRootConstantBufferView(0, g_constantAllocation.gpu);
 +	g_stats.rootSets++;
@@ -22171,7 +22242,20 @@ index 0000000..4cef4c51
 +	auto found = g_pipelines.find(key);
 +	if (found == g_pipelines.end())
 +	{
-+		const auto desc = BuildPipelineDesc(g_root.Get(), key);
++		D3D12_SHADER_BYTECODE vertex = {}, pixel = {};
++		if (key.custom)
++		{
++			const int type = key.vs - NUMVS;
++			if (type <= SHADER_DEFAULT || type >= NUMBASESHADERS || key.layout >= NUMLAYOUTS
++				|| (key.ps != NUMPS + type * 2 && key.ps != NUMPS + type * 2 + 1) || key.custom != g_customGeneration)
++				return nullptr;
++			const CustomProgram &program = g_customShaders[type].programs[key.layout];
++			const auto &ps = (key.ps - NUMPS) % 2 ? program.refraction : program.pixel;
++			if (!program.vertex || !ps) return nullptr;
++			vertex = {program.vertex->GetBufferPointer(), program.vertex->GetBufferSize()};
++			pixel = {ps->GetBufferPointer(), ps->GetBufferSize()};
++		}
++		const auto desc = BuildPipelineDesc(g_root.Get(), key, &vertex, &pixel);
 +		ComPtr<ID3D12PipelineState> created;
 +		LARGE_INTEGER frequency = {}, begin = {}, end = {};
 +		QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&begin);
@@ -22179,9 +22263,16 @@ index 0000000..4cef4c51
 +		QueryPerformanceCounter(&end);
 +		const double ms = frequency.QuadPart > 0 ? (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart : 0;
 +		g_psoCreated++; g_psoMs += ms; g_psoWorstMs = std::max(g_psoWorstMs, ms);
-+		if (g_psoCreated <= 64)
++		char customVs[64] = {}, customPs[64] = {};
++		if (key.custom)
++		{
++			snprintf(customVs, sizeof customVs, "custom VS (shader %u)", (unsigned)(key.vs - NUMVS));
++			snprintf(customPs, sizeof customPs, "custom PS (shader %u%s)", (unsigned)(key.vs - NUMVS),
++				(key.ps - NUMPS) % 2 ? " refraction" : "");
++		}
++		if (g_psoCreated <= 64 || key.custom)
 +			Log("PSO #%u %s+%s layout %u topology %u blend 0x%X depth 0x%llX raster 0x%X: %.1f ms (prewarm %s)",
-+				(unsigned)g_psoCreated, ShaderName((VSKind)key.vs), ShaderName((PSKind)key.ps), key.layout, key.topologyType,
++				(unsigned)g_psoCreated, key.custom ? customVs : ShaderName((VSKind)key.vs), key.custom ? customPs : ShaderName((PSKind)key.ps), key.layout, key.topologyType,
 +				key.blend, (unsigned long long)key.depth, key.raster, ms, Prewarm_Done() ? "done" : "running");
 +		if (Core_Failed(hr, "CreateGraphicsPipelineState")) created.Reset();
 +		else created->SetName(L"Legacy GL cached pipeline");
@@ -22214,7 +22305,7 @@ index 0000000..4cef4c51
 +	return key;
 +}
 +
-+// Same built-in shader selector as D3D11; custom shaders remain S8.
++// Same shader selector as D3D11, with add-on bytecode in the cached PSO.
 +// Whether anything besides a clear has been drawn since the driver started
 +bool g_drewSinceStart = false;
 +
@@ -22249,8 +22340,14 @@ index 0000000..4cef4c51
 +		vs = VS_FULLSCREEN;
 +		ps = PS_FIXED;
 +	}
-+	(void)CustomDrawProgram(layout);
-+	const PipelineKey key = StatePipelineKey(layout, vs, ps, topology);
++	const CustomProgram *custom = CustomDrawProgram(layout);
++	PipelineKey key = StatePipelineKey(layout, vs, ps, topology);
++	if (custom)
++	{
++		key.vs = NUMVS + g_program;
++		key.ps = NUMPS + g_program * 2 + (g_waterRefraction && custom->refraction ? 1 : 0);
++		key.custom = g_customGeneration;
++	}
 +	ID3D12PipelineState *pso = nullptr;
 +	if (g_lastPipeline && key == g_lastKey) pso = g_lastPipeline;
 +	else
@@ -22260,7 +22357,7 @@ index 0000000..4cef4c51
 +		g_lastKey = key; g_lastPipeline = pso;
 +	}
 +	// Constants may submit a full ring and reopen the list: bind the PSO afterwards.
-+	if (!ApplyConstants() || !BindCaptureState()) return false;
++	if (!ApplyConstants(custom != nullptr) || !BindCaptureState()) return false;
 +	if (g_boundPipeline != pso)
 +	{
 +		Core_List()->SetPipelineState(pso); g_boundPipeline = pso; g_stats.psoChanges++;
@@ -22721,8 +22818,13 @@ index 0000000..4cef4c51
 +	const bool refractingBlend = blend == PF_Translucent || blend == PF_Additive
 +		|| blend == PF_Subtractive || blend == PF_ReverseSubtract
 +		|| blend == PF_Multiplicative || blend == PF_Environment;
++	// Custom water keeps its own surface color; its composite variant blends
++	// that over the refracted scene, like PSWaterRefraction does for PSWater.
++	const CustomProgram *customWater = CustomDrawProgram(LAYOUT_POLY);
 +	g_waterRefraction = (PolyFlags & PF_Ripple) && g_program == SHADER_WATER
-+		&& refractingBlend && !cv_reducevfx.value && CaptureWaterScene(pSurf, PolyFlags, vertices, count);
++		&& refractingBlend && !cv_reducevfx.value && (!customWater || customWater->refraction)
++		&& CaptureWaterScene(pSurf, PolyFlags, vertices, count,
++			customWater && !g_customShaders[SHADER_WATER].vertex.empty());
 +	g_fogRemap = (PolyFlags & PF_Fog) && g_program == SHADER_FOG
 +		&& !CustomDrawProgram(LAYOUT_POLY) && CaptureFogScene(pSurf, PolyFlags, vertices, count);
 +}
@@ -23135,14 +23237,126 @@ index 0000000..4cef4c51
 +
 +#include "d3d12_screens.inc"
 +
-+// Succeeds, like the Direct3D 11 driver without a device, so shaders stay available
++static void RetireCustomPipelines(int type = 0)
++{
++	for (auto it = g_pipelines.begin(); it != g_pipelines.end();)
++	{
++		if (it->first.custom && (!type || it->first.vs == NUMVS + type))
++		{
++			Core_Retire(it->second);
++			it = g_pipelines.erase(it);
++		}
++		else ++it;
++	}
++	g_lastKey = {};
++	g_lastPipeline = g_boundPipeline = nullptr;
++}
++
++static void AdvanceCustomGeneration()
++{
++	RetireCustomPipelines();
++	// Zero is reserved for built-ins; retiring every custom PSO also makes wrap safe.
++	if (!++g_customGeneration) ++g_customGeneration;
++}
++
++static bool CompileCustomStage(const std::string &hlsl, const char *profile, ComPtr<ID3DBlob> &code)
++{
++	ComPtr<ID3DBlob> errors;
++	const HRESULT result = D3DCompile(hlsl.data(), hlsl.size(), "Legacy GL add-on", nullptr, nullptr,
++		"main", profile, D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
++	if (errors)
++		Log("custom %s: %.*s", profile, (int)std::min<size_t>(errors->GetBufferSize(), 8192), (const char *)errors->GetBufferPointer());
++	return !Core_Failed(result, "D3DCompile (custom shader)");
++}
++
++static PipelineKey CustomValidationKey(int type, Layout layout, bool refraction = false)
++{
++	PipelineKey key = {};
++	key.vs = NUMVS + type;
++	key.ps = NUMPS + type * 2 + (refraction ? 1 : 0);
++	key.custom = g_customGeneration;
++	key.layout = layout;
++	key.blend = 7 << 10; // opaque RGB, preserving target alpha like normal draws
++	key.depth = 5ULL | (UINT64(D3D12_COMPARISON_FUNC_EQUAL) << 4)
++		| (UINT64(D3D12_STENCIL_OP_KEEP) << 8) | (UINT64(D3D12_STENCIL_OP_KEEP) << 12)
++		| (UINT64(D3D12_STENCIL_OP_KEEP) << 16) | (255ULL << 20) | (255ULL << 28);
++	// Depth test and writes, LESS_EQUAL; valid stencil defaults even while disabled.
++	return key;
++}
++
 +boolean D3D_CompileShaders(void)
 +{
++	// A bad add-on must not disable the built-in shaders or palette rendering.
++	if (!Core_Device()) return true;
++	bool dirty = false;
++	for (const CustomShader &shader : g_customShaders) dirty = dirty || shader.dirty;
++	if (dirty) AdvanceCustomGeneration();
++	for (int type = 1; type < NUMBASESHADERS; type++)
++	{
++		CustomShader &shader = g_customShaders[type];
++		if (!shader.dirty) continue;
++		shader.dirty = false; shader.valid = false;
++		for (CustomProgram &program : shader.programs) program = {};
++		if (shader.vertex.empty() && shader.fragment.empty()) continue;
++		const std::string vertex = shader.vertex.empty() ? gl_shadersources[type].vertex : shader.vertex;
++		const std::string fragment = shader.fragment.empty() ? gl_shadersources[type].fragment : shader.fragment;
++		CustomProgram programs[NUMLAYOUTS];
++		bool valid = true;
++		for (int layout = 0; layout < NUMLAYOUTS; layout++)
++		{
++			LegacyShaderHLSL output; std::string error;
++			if (!TranslateLegacyShader(vertex, fragment, layout, output, error, false, 51))
++			{
++				Log("custom shader %d: %s; keeping the built-in shader", type, error.c_str());
++				valid = false; break;
++			}
++			if (!CompileCustomStage(output.vertex, "vs_5_1", programs[layout].vertex)
++				|| !CompileCustomStage(output.fragment, "ps_5_1", programs[layout].pixel))
++			{
++				valid = false; break;
++			}
++		}
++		if (!valid) continue;
++		for (int layout = 0; layout < NUMLAYOUTS; layout++) shader.programs[layout] = std::move(programs[layout]);
++		// Validate bytecode, root bindings and all input layouts before selecting an add-on.
++		for (int layout = 0; layout < NUMLAYOUTS; layout++)
++			if (!FindOrCreatePipeline(CustomValidationKey(type, (Layout)layout))) { valid = false; break; }
++		if (!valid)
++		{
++			Log("custom shader %d: pipeline validation failed; keeping the built-in shader", type);
++			RetireCustomPipelines(type);
++			for (CustomProgram &program : shader.programs) program = {};
++			continue;
++		}
++		if (type == SHADER_WATER)
++		{
++			// Same vertex stage and inputs; without it, custom water draws unrefracted.
++			LegacyShaderHLSL output; std::string error;
++			CustomProgram &program = shader.programs[LAYOUT_POLY];
++			if (!TranslateLegacyShader(vertex, fragment, LAYOUT_POLY, output, error, true, 51))
++				Log("custom water refraction: %s; drawing custom water without refraction", error.c_str());
++			else if (!CompileCustomStage(output.fragment, "ps_5_1", program.refraction)
++				|| !FindOrCreatePipeline(CustomValidationKey(type, LAYOUT_POLY, true)))
++			{
++				program.refraction.Reset();
++				Log("custom water refraction failed to compile; drawing custom water without refraction");
++			}
++		}
++		shader.valid = true; shader.generation = g_customGeneration;
++		Log("custom shader %d compiled for polygon, sky and model layouts", type);
++	}
++	g_shaderChanged = true;
++	g_lastKey = {}; g_lastPipeline = g_boundPipeline = nullptr;
 +	return true;
 +}
 +
 +void D3D_CleanShaders(void)
 +{
++	AdvanceCustomGeneration();
++	for (CustomShader &shader : g_customShaders) shader = {};
++	g_customViewConstants = {};
++	g_customViewFrame = UINT64_MAX;
++	g_shaderChanged = true;
 +}
 +
 +void D3D_SetShader(int type)
@@ -23164,7 +23378,9 @@ index 0000000..4cef4c51
 +	if (g_allowShaders != HWD_SHADEROPTION_OFF)
 +	{
 +		// If using model lighting, set the appropriate shader.
-+		if (type == SHADER_MODEL && g_modelLighting)
++		if (type == SHADER_MODEL && g_modelLighting
++			&& !(g_allowShaders == HWD_SHADEROPTION_ON && g_customShaders[SHADER_MODEL].valid
++				&& !g_customShaders[SHADER_MODEL_LIGHTING].valid))
 +			type = SHADER_MODEL_LIGHTING;
 +
 +		if (g_shaderCurrent < 0 || type != g_shaderType)
@@ -23221,9 +23437,25 @@ index 0000000..4cef4c51
 +	}
 +}
 +
-+void D3D_LoadCustomShader(int, char *, size_t, boolean)
++void D3D_LoadCustomShader(int number, char *code, size_t size, boolean isfragment)
 +{
-+	D3D12_LOG_ONCE("custom shaders not drawn yet (S8); keeping built-ins");
++	if (number <= SHADER_DEFAULT || number >= NUMBASESHADERS || !code || size > 1024*1024)
++	{
++		Log("invalid custom shader %d (%u bytes); keeping the built-in shader", number, (unsigned)size);
++		return;
++	}
++	std::string source(code, size);
++	while (!source.empty() && source.back() == 0) source.pop_back();
++	CustomShader &shader = g_customShaders[number];
++	(isfragment ? shader.fragment : shader.vertex) = source;
++	shader.dirty = true;
++	// Billboard sprites use the clipping variant of the sprite shader.
++	if (number == SHADER_SPRITE)
++	{
++		CustomShader &clip = g_customShaders[SHADER_SPRITECLIPHACK];
++		(isfragment ? clip.fragment : clip.vertex) = std::move(source);
++		clip.dirty = true;
++	}
 +}
 +
 +#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&D3D_##name)}
@@ -23579,7 +23811,6 @@ index 0000000..4cef4c51
 +	I_OutputMsg("UWP perf:   D3D12: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);
 +	I_OutputMsg("UWP perf:   D3D12: portals: %.1f apertures/frame, %.1f depth resets/frame, %.1f stencil levels/frame, maximum level %d\n",
 +		s.portalApertures / n, s.portalDepthResets / n, s.portalStencilLevels / n, s.portalMaxLevel);
-+	I_OutputMsg("UWP perf:   D3D12: not drawn yet: custom shaders\n");
 +
 +	if (g_paletteRendering || s.lightTablesCreated || s.lightTablesUpdated || s.paletteUploads)
 +		I_OutputMsg("UWP perf:   D3D12: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",

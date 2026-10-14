@@ -23,8 +23,28 @@ Get-ChildItem "$Engine\thirdparty" -Directory | ForEach-Object {
     $Include = Join-Path $_.FullName 'include'
     if (Test-Path $Include) { $Includes += "/I$Include" }
 }
+# Build the production runtime translator with its pinned source dependencies.
+# WARP runs before the app build, so its native archives must be prepared here.
+$LegacySource = Join-Path $Output 'legacy-source'
+$LegacyBuild = Join-Path $Output 'legacy-build'
+New-Item -ItemType Directory -Force $LegacySource | Out-Null
+$EngineCMake = $Engine.Replace('\', '/')
+@"
+cmake_minimum_required(VERSION 3.20)
+project(RRD3D12LegacyHarness LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+include("$EngineCMake/src/hardware/r_d3d11/custom_shaders.cmake")
+add_library(rr_d3d12_legacy STATIC "$EngineCMake/src/hardware/r_d3d11/custom_shader.cpp")
+target_link_libraries(rr_d3d12_legacy PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
+"@ | Set-Content (Join-Path $LegacySource 'CMakeLists.txt')
+& cmake -S $LegacySource -B $LegacyBuild -G Ninja -DCMAKE_BUILD_TYPE=Release
+if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator configuration failed' }
+& cmake --build $LegacyBuild --target rr_d3d12_legacy
+if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator compilation failed' }
+$LegacyLibraries = @((Join-Path $LegacyBuild 'rr_d3d12_legacy.lib'))
+$LegacyLibraries += @(Get-ChildItem (Join-Path $LegacyBuild 'legacy-shader-libs') -Filter '*.lib' | ForEach-Object { $_.FullName })
 $Exe = Join-Path $Output 'd3d12-driver.exe'
-& cl.exe /nologo /std:c++17 /O2 /EHsc /W3 /D_UWP /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @Includes "/Fe:$Exe" "/Fo:$Output\" @Files /link d3d12.lib dxgi.lib dxguid.lib
+& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @Includes "/Fe:$Exe" "/Fo:$Output\" @Files /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 driver compilation failed" }
 & $Exe
 if ($LASTEXITCODE -eq 77) {
@@ -34,7 +54,7 @@ if ($LASTEXITCODE -eq 77) {
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
 # Each oracle must prove it rejects incorrect pixels. Failure is the required outcome.
-foreach ($Scene in @('startup-present','clear','readrect','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','fog-remap','fog-palette','water-surface','water-refraction','water-group','water-group-counts','capture-mixed','capture-recreate','capture-skipped','depth','nodepth','noocclude','portal-supported','portal-aperture','portal-nested','portal-restore','portal-depth','portal-plane','indexed','line','rings','growth','shutdown','texture-guard','texture','texture-update','texture-reuse','mips','palette','palette-post','light-table-update','light-table-update-post','light-table-clear','screen-palette','palette-off','sky','model-buffered','model-lerped','model-fallback','screen-copy','final-screen','screen-flush','wipe-blend','wipe-mode','wipe-wiggle','wipe-fallback','wipe-after','postimg-identity','postimg-shift','fade-map-off','fade-map','fade-map-row','fade-map-clamp','fade-map-remake','fade-map-after','fade-map-reuse','resize-fade-map','resize-screen')) {
+foreach ($Scene in @('startup-present','clear','readrect','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','fog-remap','fog-palette','water-surface','water-refraction','water-group','water-group-counts','capture-mixed','capture-recreate','capture-skipped','depth','nodepth','noocclude','portal-supported','portal-aperture','portal-nested','portal-restore','portal-depth','portal-plane','indexed','line','rings','growth','shutdown','custom-shader','custom-shader-clean','custom-shader-invalid','custom-shader-nocustom','texture-guard','texture','texture-update','texture-reuse','mips','palette','palette-post','light-table-update','light-table-update-post','light-table-clear','screen-palette','palette-off','sky','model-buffered','model-lerped','model-fallback','screen-copy','final-screen','screen-flush','wipe-blend','wipe-mode','wipe-wiggle','wipe-fallback','wipe-after','postimg-identity','postimg-shift','fade-map-off','fade-map','fade-map-row','fade-map-clamp','fade-map-remake','fade-map-after','fade-map-reuse','resize-fade-map','resize-screen')) {
     $ErrorActionPreference = "Continue"
     $NegativeLog = (& $Exe --negative-control $Scene 2>&1 | Out-String)
     $NegativeExit = $LASTEXITCODE

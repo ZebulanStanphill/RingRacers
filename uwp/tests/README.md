@@ -76,7 +76,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   blended output after capture/variant failures, for non-ripple/opaque surfaces
   and with Reduce VFX; Ignore custom shaders restores the built-in refraction.
   Reverting the old custom-water guard fails these checks.
-  Windows CI compiles these 78 stages with SM4 `fxc`, then runs the production shader
+  Native translation also emits the 78 general fixtures as SM5.1 stages for Direct3D 12.
+  Windows CI compiles those SM5.1 stages and the existing 97 SM4 stages (78 general and 19
+  smoke-test) with `fxc` under both profiles, then runs the production shader
   and input-layout factory on WARP: 36,864 pixels verify polygon/sky/model data,
   driver constants, UVs, GL fragment coordinates, alpha tests and portal clipping.
   Translated custom water then draws through the production refraction variant in
@@ -270,6 +272,13 @@ outside occlusion. `portal-plane` checks world-plane clipping and disabling the 
 Each has its own required negative control. These pixel scenes use production driver
 entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
 and fog/water portal interactions still require further testing.
+Custom-shader scenes load an add-on fragment shader that outputs a fixed color, compile it
+through the production loader, and draw a quad textured with (200, 40, 16). `custom-shader`
+must show the fixed color (64, 128, 191). `custom-shader-clean` must show the built-in color
+again after cleaning the shaders. `custom-shader-invalid` loads invalid GLSL, which must log a
+built-in fallback and draw the built-in color. `custom-shader-nocustom` sets Ignore custom
+shaders, so the custom-color oracle must fail: it's the negative control. They haven't been run
+locally, and Xbox results are untested. See [the Direct3D 12 add-on shader notes](../docs/d3d12-custom-shaders.md).
 Palette scenes turn Palette Rendering on with a known 64³ lookup table (index 7 only
 where red is low and green and blue are high, otherwise 19), a light table and a screen
 palette. A colormapped textured polygon must read the light table's color from the screen

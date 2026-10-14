@@ -115,6 +115,7 @@ static void keyTests()
 #define CHECK_FIELD(field, value) key = base; key.field = value; different(key)
     CHECK_FIELD(vs, 0x8000);
     CHECK_FIELD(ps, 0x8000);
+    CHECK_FIELD(custom, 0x8000);
     CHECK_FIELD(layout, 0x80);
     CHECK_FIELD(topologyType, 0x80);
     CHECK_FIELD(rtFormat, 0x80);
@@ -131,6 +132,7 @@ static void keyTests()
     {
         key.vs = static_cast<uint16_t>(i);
         key.ps = static_cast<uint16_t>(i * 40503u);
+        key.custom = static_cast<uint16_t>(i * 17u);
         key.layout = static_cast<uint8_t>(i >> 8);
         key.topologyType = static_cast<uint8_t>(i * 3u);
         key.rtFormat = static_cast<uint8_t>(i * 5u);
