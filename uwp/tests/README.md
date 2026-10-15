@@ -405,9 +405,12 @@ do not change that lifecycle. They do not cover Xbox rendering or performance.
 ## CI and adding cases
 
 The `regressions` job runs this suite with ASan and UBSan on every push, pull
-request, and manual workflow dispatch. The Windows build depends on it passing.
-CTest's JUnit report and detailed run log are uploaded as `regression-results`,
-including when a test fails.
+request, and manual workflow dispatch. The Windows `warp` job, which compiles the
+translated add-on shader fixtures and runs the Direct3D SM4 and Direct3D 12 WARP
+regressions, depends on it passing; the Windows `build` job runs alongside both,
+so a failed test fails the run but the package is still uploaded. CTest's JUnit
+report and detailed run log are uploaded as `regression-results`, including when
+a test fails.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its
 observable result. Test the relevant platform variants and important boundaries.
