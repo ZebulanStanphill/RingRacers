@@ -247,6 +247,32 @@ def generate(engine, output):
     }, output / "wall_light.cpp")
     things = Source(engine / "src/r_things.cpp")
     batching = Source(engine / "src/hardware/hw_batching.c")
+    encore_parts = {
+        "SELECT": function_section(hardware, "HWR_ProjectSprite",
+            "\tINT32 skinnum = TC_DEFAULT;", "\n\t// set top/bottom coords"),
+        "SOFTWARE_FULLBRIGHT": function_section(things, "R_DrawVisSprite",
+            "\tdc.lightmap = colormaps;\n\n\tdc.fullbright = colormaps;", "\n\tdc.texturemid = vis->texturemid;"),
+        "DRAW_COLUMN": cache.function("HWR_DrawColumnInCache"),
+        "TEXTURE_PALETTE": cache.function("HWR_GetTexturePalette"),
+        "CONVERT_LIGHT_TABLE": cache.function("HWR_ConvertLightTable"),
+        "GET_PATCH": cache.function("HWR_GetPatch"),
+    }
+    for token, function in (("GET_MAPPED_PATCH", "HWR_GetMappedPatch"),
+            ("LOAD_PATCH", "HWR_LoadPatchMipmap"), ("UPDATE_PATCH", "HWR_UpdatePatchMipmap")):
+        encore_parts[token] = cache.function(function).replace(
+            "grPatch = patch->hardware;", "grPatch = (GLPatch_t *)patch->hardware;").replace(
+            "newMipmap = calloc(", "newMipmap = (GLMipmap_t *)calloc(").replace(
+            "newMipmap->colormap = Z_Calloc(", "newMipmap->colormap = (GLColormap_t *)Z_Calloc(")
+    for suffix in ("", "_negative_missing", "_negative_double"):
+        parts = dict(encore_parts)
+        statement = "texel = mipmap->colormap->data[texel];"
+        if suffix:
+            assert parts["DRAW_COLUMN"].count(statement) == 1
+            parts["DRAW_COLUMN"] = parts["DRAW_COLUMN"].replace(statement,
+                "(void)texel;" if suffix == "_negative_missing" else
+                "texel = mipmap->colormap->data[mipmap->colormap->data[texel]];")
+        render(templates / "encore_brightmap.cpp.in", parts, output / ("encore_brightmap" + suffix + ".cpp"))
+
     sprite_parts = {
         "CACHE_BRIGHT": things.function("R_CacheSpriteBrightMap"),
         # C permits these void-pointer assignments; add only the C++ harness cast.

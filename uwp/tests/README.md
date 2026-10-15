@@ -185,6 +185,19 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   draws and blend a shared CPU pixel; they do not render complete game scenes.
 - **Fog boundaries and captures:** compare 24,960 production shader row selections with the actual Software zlight/scalelight tables and 16,384 palette-remap samples. Exercise full/split viewport bounds, eye-plane crossings, entirely behind-camera/offscreen faces, retained captures, resize/texture/view/buffer failures, resource accounting, t8/b3 bindings and light/darkness constants. Shared blend tests verify complete fog/water composites retain color masks and restore ordinary blending. Custom dispatch tests check fog overrides, Ignore custom shaders and capture failure; wall-slice tests reject directional light adjustment on fog. Windows WARP executes the production SM4 fog shader for all light levels, wall/plane rows, varying depth, full/half-width viewports, palette lookup and smooth tint/fade. An injected reciprocal-depth shader must fail the same pixel oracle. Complete fog volumes, portal/stencil interactions, overlapping volume visuals, Xbox performance and every split-screen visual check still need device testing.
 - **Sprite brightmaps:** execute the shared Software brightmap cache, hardware sprite/precipitation admission and draw texture-selection blocks, hardware mipmap loaders, batch replay blocks and Direct3D texture binding. Check 13 projection cases: frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps, rolled sprites and independent width/height mismatches. All four draw paths (ordinary, light-split, precipitation and linkdraw) must bind the base before the brightmap, mark the first upload and cached binds with `TF_BRIGHTMAP` (including retained CPU data after GPU eviction), avoid translating the brightmap, and clear texture unit 1 for a following nonbright sprite using the same base, with batching on and off (eight path/mode cases). Dependency mocks stop at WAD lookup, color translation, patch allocation and GPU upload; these checks do not render sprite pixels or validate Xbox visuals.
+- **Encore brightmap colors:** run production sprite colormap selection, Software
+  full-bright selection, mapped-cache lookup/update, column conversion and light-table
+  conversion. Check 12,288 combinations covering all 256 indices, 1/2/3/4-byte
+  output, both palette settings, ordinary/Encore/exempt sprites, cache reuse and
+  in-place remap changes. Generated production mutants that omit or repeat the
+  column remap must fail with a color mismatch. Windows `run-d3d11.ps1` separately
+  runs the production SM4 shader through WARP for 10,752 pixels in normal,
+  Encore and exempt modes with Palette Rendering on and off and colored tint/fade.
+  Shader controls that remove or repeat the remap only on bright pixels must
+  corrupt every eligible bright pixel in both palette modes and leave all other
+  pixels correct. The native test verifies production pretranslation; the WARP
+  test supplies pretranslated textures to verify shader behavior. These are
+  complementary boundary checks, not a complete game or Xbox visual test.
 - **Spring wall silhouettes:** `spring_clip` executes the production silhouette
   helpers, the complete ordinary sprite draw function, both light-split sprite
   submissions, the solid-wall recording and both opaque FOF side recordings
