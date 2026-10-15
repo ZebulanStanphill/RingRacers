@@ -293,7 +293,10 @@ validation enabled. Any debug-layer warning, error or corruption message, or any
 a missing or mismatched optimized render-target clear value: the runtime guarantees
 the requested clear color, which the pixel oracle checks. It only affects clear
 performance. Scenes cover clears, blends, depth, indexed
-triangles, 2D lines and a tiny-ring stress test, and negative controls must fail.
+triangles, 2D lines and a tiny-ring stress test, and negative controls must fail. Each
+negative control is its own process; the runner keeps one per core going at once, since
+each replays the scenes before its own under GPU-based validation, and prints each one's
+output as it finishes.
 New texture, model and sky scenes cover texture creation, point sampling, reuploads,
 delete-and-recreate, mip chains, sky fan-strip rebuilds, and model buffered/lerped
 UV fallback. Their negative controls are `texture`, `texture-update`,

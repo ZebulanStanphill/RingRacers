@@ -54,14 +54,39 @@ if ($LASTEXITCODE -eq 77) {
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
 # Each oracle must prove it rejects incorrect pixels. Failure is the required outcome.
-foreach ($Scene in @('startup-present','clear','readrect','surface-probe','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','fog-remap','fog-palette','water-surface','water-refraction','water-group','water-group-counts','capture-mixed','capture-recreate','capture-skipped','depth','nodepth','noocclude','portal-supported','portal-aperture','portal-nested','portal-restore','portal-depth','portal-plane','indexed','line','rings','growth','shutdown','custom-shader','custom-shader-clean','custom-shader-invalid','custom-shader-nocustom','texture-guard','texture','texture-update','texture-reuse','mips','palette','palette-post','light-table-update','light-table-update-post','light-table-clear','screen-palette','palette-off','sky','model-buffered','model-lerped','model-fallback','screen-copy','final-screen','screen-flush','wipe-blend','wipe-mode','wipe-wiggle','wipe-fallback','wipe-after','postimg-identity','postimg-shift','fade-map-off','fade-map','fade-map-row','fade-map-clamp','fade-map-remake','fade-map-after','fade-map-reuse','resize-fade-map','resize-screen')) {
-    $ErrorActionPreference = "Continue"
-    $NegativeLog = (& $Exe --negative-control $Scene 2>&1 | Out-String)
-    $NegativeExit = $LASTEXITCODE
-    $ErrorActionPreference = "Stop"
-    Write-Host $NegativeLog
-    if ($NegativeExit -ne 1 -or $NegativeLog -notmatch "NEGATIVE_ORACLE_REJECTED: $Scene") { throw "D3D12 $Scene negative control was not rejected by its oracle (exit $NegativeExit)" }
+# Every control is its own process that replays the scenes before its own under GPU-based validation, which is
+# CPU work on WARP, so they run several at a time (one per core); the harness touches no files, so they don't collide.
+$Scenes = @('startup-present','clear','readrect','surface-probe','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','fog-remap','fog-palette','water-surface','water-refraction','water-group','water-group-counts','capture-mixed','capture-recreate','capture-skipped','depth','nodepth','noocclude','portal-supported','portal-aperture','portal-nested','portal-restore','portal-depth','portal-plane','indexed','line','rings','growth','shutdown','custom-shader','custom-shader-clean','custom-shader-invalid','custom-shader-nocustom','texture-guard','texture','texture-update','texture-reuse','mips','palette','palette-post','light-table-update','light-table-update-post','light-table-clear','screen-palette','palette-off','sky','model-buffered','model-lerped','model-fallback','screen-copy','final-screen','screen-flush','wipe-blend','wipe-mode','wipe-wiggle','wipe-fallback','wipe-after','postimg-identity','postimg-shift','fade-map-off','fade-map','fade-map-row','fade-map-clamp','fade-map-remake','fade-map-after','fade-map-reuse','resize-fade-map','resize-screen')
+$Workers = [Math]::Max(1, [Environment]::ProcessorCount)
+$Pending = [System.Collections.Generic.List[object]]::new()
+$Failures = @()
+function Finish($Run) {
+    $Run.Process.WaitForExit()
+    $Log = $Run.Output.Result + $Run.Error.Result
+    $ExitCode = $Run.Process.ExitCode
+    $Run.Process.Dispose()
+    Write-Host $Log
+    if ($ExitCode -ne 1 -or $Log -notmatch "NEGATIVE_ORACLE_REJECTED: $($Run.Scene)") {
+        $script:Failures += "D3D12 $($Run.Scene) negative control was not rejected by its oracle (exit $ExitCode)"
+    }
 }
+foreach ($Scene in $Scenes) {
+    while ($Pending.Count -ge $Workers) {
+        $Done = $Pending | Where-Object { $_.Process.HasExited } | Select-Object -First 1
+        if ($null -eq $Done) { Start-Sleep -Milliseconds 200; continue }
+        $Pending.Remove($Done) | Out-Null
+        Finish $Done
+    }
+    $Info = [System.Diagnostics.ProcessStartInfo]::new($Exe, "--negative-control $Scene")
+    $Info.UseShellExecute = $false
+    $Info.RedirectStandardOutput = $true
+    $Info.RedirectStandardError = $true
+    $Process = [System.Diagnostics.Process]::Start($Info)
+    # Both streams are drained on the thread pool, so a chatty control can't fill a pipe and stall.
+    $Pending.Add(@{ Scene = $Scene; Process = $Process; Output = $Process.StandardOutput.ReadToEndAsync(); Error = $Process.StandardError.ReadToEndAsync() })
+}
+foreach ($Run in $Pending) { Finish $Run }
+if ($Failures.Count -gt 0) { throw ($Failures -join "`n") }
 
 # Expected failing native controls must not become the enclosing CI shell exit code.
 $global:LASTEXITCODE = 0
