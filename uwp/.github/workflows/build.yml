@@ -26,7 +26,7 @@ jobs:
           -DRR_SANITIZERS=ON
 
       - name: Build tests
-        run: cmake --build build/regression --parallel 2
+        run: cmake --build build/regression --parallel 4
 
       - name: Run tests
         run: ctest --test-dir build/regression --output-on-failure --output-junit results.xml

@@ -15,7 +15,7 @@ python3 tests/prepare-source.py build/regression-source
 cmake -S tests -B build/regression \
   -DRR_SOURCE_DIR="$PWD/build/regression-source" \
   -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build/regression --parallel 2
+cmake --build build/regression --parallel 4
 ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 ```
 
