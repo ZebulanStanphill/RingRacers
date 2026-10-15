@@ -20,6 +20,8 @@ file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/a
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
     ${templates} source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
+    "${RR_SOURCE_DIR}/src/i_tcp.c"
+    "${RR_SOURCE_DIR}/src/i_tcp_detail.h"
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
     "${RR_SOURCE_DIR}/src/r_main.cpp"
@@ -71,6 +73,12 @@ function(regression name source)
     set_tests_properties(${name} PROPERTIES TIMEOUT 60
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 endfunction()
+
+regression(udp_send_posix udp_send)
+regression(udp_send_winsock udp_send TEST_WINSOCK)
+regression(udp_send_negative_posix udp_send_negative TEST_NEGATIVE)
+regression(udp_send_negative_winsock udp_send_negative TEST_NEGATIVE TEST_WINSOCK)
+set_tests_properties(udp_send_negative_posix udp_send_negative_winsock PROPERTIES WILL_FAIL TRUE)
 
 regression(online_uwp_hw online _UWP HWRENDER)
 regression(online_desktop_hw online HWRENDER)

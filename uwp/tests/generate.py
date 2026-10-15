@@ -45,6 +45,18 @@ def generate(engine, output):
     templates = Path(__file__).parent / "templates"
     generate_fixture(templates.parent / "fixtures", output)
     generate_title(engine, output, templates, render, function_section)
+    tcp = Source(engine / "src/i_tcp.c")
+    errors = Source(engine / "src/i_tcp_detail.h")
+    for suffix, negative in (("", False), ("_negative", True)):
+        sender = tcp.function("SOCK_Send")
+        if negative:
+            sender = sender.replace(" && e != EHOSTUNREACH && e != ENETUNREACH", "")
+        render(templates / "udp_send.cpp.in", {
+            "WINSOCK_ERRORS": errors.section("\t#undef errno", "\t#ifndef IOC_VENDOR"),
+            "SEND_TO_ADDR": tcp.function("SOCK_SendToAddr"),
+            "SEND": sender,
+        }, output / ("udp_send" + suffix + ".cpp"))
+
     network = Source(engine / "src/d_clisrv.c")
     game = Source(engine / "src/g_game.c")
     render(templates / "online.cpp.in", {

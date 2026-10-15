@@ -36,6 +36,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
 
+- **UDP send failures:** execute production `SOCK_Send` and `SOCK_SendToAddr`
+  against a `sendto` mock, with host POSIX errors and the extracted production
+  Winsock aliases (including raw 10065/10051). Check successful sends, would-block,
+  refusal, host/network-unreachable drops, recovery on the next send, disconnected
+  peers, broadcast/socket selection, address lengths, and fatal unexpected errors.
+  Pre-fix sender controls fail specifically on unreachable errors with a clean
+  nonzero exit. These checks run under ASan/UBSan; live netcode retries/timeouts
+  and Xbox behavior remain untested. Run with `ctest -R '^udp_send_'`.
+
 - **Encore post-image selection:** execute full production `P_CalcChasePostImg`
   and `P_CalcPostImg` with real engine headers, plus chase water/heat helpers.
   Check heat, water, no distortion and water priority with and without Encore,

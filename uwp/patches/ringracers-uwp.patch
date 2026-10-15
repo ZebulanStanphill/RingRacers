@@ -1,4 +1,4 @@
-From 4a5c6af1c9098c11fff9083a3905a7d238a4c583 Mon Sep 17 00:00:00 2001
+From b627d1a9a3741869047e2e345592abd53af393e9 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -670,153 +670,22 @@ Agent: Claude Code (Fable 5.1, Metropolis spring clipping)
 Model: claude-fable-5-1
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
----
- CMakeLists.txt                            |   19 +-
- CMakePresets.json                         |   17 +
- src/CMakeLists.txt                        |   44 +-
- src/console.c                             |   57 +
- src/console.h                             |   11 +
- src/core/thread_pool.cpp                  |   19 +
- src/cvars.cpp                             |   20 +
- src/d_clisrv.c                            |   49 +
- src/d_main.cpp                            |  368 +-
- src/doomstat.h                            |    1 +
- src/f_finale.c                            |   10 +
- src/f_wipe.cpp                            |   35 +-
- src/g_game.c                              |   56 +
- src/hardware/CMakeLists.txt               |   69 +
- src/hardware/hw_batching.c                |   11 +-
- src/hardware/hw_bsp.c                     |  110 +-
- src/hardware/hw_cache.c                   |  359 +-
- src/hardware/hw_clip.c                    |   15 +
- src/hardware/hw_clip.h                    |    5 +
- src/hardware/hw_defs.h                    |   11 +-
- src/hardware/hw_draw.c                    |  116 +-
- src/hardware/hw_drv.h                     |   13 +
- src/hardware/hw_glob.h                    |   13 +
- src/hardware/hw_glsl.h                    |  321 +
- src/hardware/hw_main.c                    | 2138 ++++++-
- src/hardware/hw_main.h                    |   22 +-
- src/hardware/hw_md2.c                     |  304 +-
- src/hardware/hw_md2.h                     |    4 +
- src/hardware/r_d3d11/custom_shader.cpp    |  310 +
- src/hardware/r_d3d11/custom_shader.h      |   13 +
- src/hardware/r_d3d11/custom_shaders.cmake |   58 +
- src/hardware/r_d3d11/r_d3d11.cpp          | 6437 +++++++++++++++++++++
- src/hardware/r_d3d11/r_d3d11.h            |   72 +
- src/hardware/r_d3d11/shaders.hlsl         |  660 +++
- src/hardware/r_d3d12/allocators.h         |  212 +
- src/hardware/r_d3d12/d3d12_arenas.inc     |   94 +
- src/hardware/r_d3d12/d3d12_captures.inc   |  271 +
- src/hardware/r_d3d12/d3d12_core.cpp       |  865 +++
- src/hardware/r_d3d12/d3d12_core.h         |  140 +
- src/hardware/r_d3d12/d3d12_interop.cpp    |  558 ++
- src/hardware/r_d3d12/d3d12_interop.h      |   49 +
- src/hardware/r_d3d12/d3d12_models.inc     |  518 ++
- src/hardware/r_d3d12/d3d12_palette.inc    |  290 +
- src/hardware/r_d3d12/d3d12_pipeline.cpp   |  180 +
- src/hardware/r_d3d12/d3d12_pipeline.h     |   60 +
- src/hardware/r_d3d12/d3d12_present.cpp    | 1848 ++++++
- src/hardware/r_d3d12/d3d12_present.h      |   50 +
- src/hardware/r_d3d12/d3d12_prewarm.cpp    |  212 +
- src/hardware/r_d3d12/d3d12_prewarm.h      |   17 +
- src/hardware/r_d3d12/d3d12_screens.inc    |  576 ++
- src/hardware/r_d3d12/d3d12_upload.cpp     |  112 +
- src/hardware/r_d3d12/d3d12_upload.h       |   54 +
- src/hardware/r_d3d12/mips.h               |   60 +
- src/hardware/r_d3d12/pipeline_key.h       |   52 +
- src/hardware/r_d3d12/r_d3d12.cpp          | 3415 +++++++++++
- src/hardware/r_d3d12/r_d3d12.h            |   67 +
- src/hardware/r_d3d12/texture_repack.h     |   36 +
- src/hardware/r_opengl/r_opengl.c          |  308 +-
- src/http-mserv.c                          |    2 +
- src/hwr2/patch_atlas.cpp                  |    8 +
- src/hwr2/resource_management.cpp          |  105 +-
- src/hwr2/resource_management.hpp          |   31 +-
- src/i_system.h                            |   74 +
- src/i_video_common.cpp                    |   60 +-
- src/k_menu.h                              |   13 +-
- src/k_menufunc.c                          |    2 +-
- src/lua_script.c                          |  127 +
- src/m_fixed.h                             |   11 +
- src/m_perfstats.c                         |  244 +
- src/m_perfstats.h                         |   11 +
- src/md5.c                                 |   19 +-
- src/md5.h                                 |   31 +-
- src/menus/options-1.c                     |   34 +
- src/menus/options-video-advanced.c        |   47 +-
- src/p_lights.c                            |    9 +
- src/p_mobj.c                              |  113 +-
- src/p_mobj.h                              |   11 +
- src/p_setup.cpp                           |   55 +
- src/p_tick.c                              |    3 +
- src/p_tick.h                              |   15 +
- src/p_user.c                              |    3 +-
- src/r_draw.h                              |   38 +-
- src/r_draw_column.cpp                     |   18 +-
- src/r_fps.cpp                             |   25 +-
- src/r_main.cpp                            |  181 +-
- src/r_main.h                              |    8 +
- src/r_plane.cpp                           |   19 +-
- src/r_segs.cpp                            |   15 +-
- src/r_sky.c                               |    4 +-
- src/r_textures.cpp                        |    2 +
- src/r_textures.h                          |   10 +
- src/r_things.cpp                          |  160 +-
- src/r_things.h                            |    7 +
- src/rhi/gl2/gl2_rhi.cpp                   |  618 +-
- src/rhi/gl2/gl2_rhi.hpp                   |   36 +
- src/screen.c                              |    4 +-
- src/sdl/CMakeLists.txt                    |    5 +
- src/sdl/hwsym_sdl.c                       |    7 +
- src/sdl/i_main.cpp                        |   11 +-
- src/sdl/i_system.cpp                      |   99 +-
- src/sdl/i_uwpd3d12.cpp                    |  130 +
- src/sdl/i_uwpprofile.cpp                  |  886 +++
- src/sdl/i_uwptrace.h                      |   25 +
- src/sdl/i_video.cpp                       |  102 +-
- src/sdl/mixer_sound.c                     |    4 +-
- src/sdl/ogl_sdl.c                         |    8 +
- src/sdl/rhi_gl2_platform.cpp              |    9 +
- src/st_stuff.c                            |   10 +-
- src/v_video.cpp                           |   35 +-
- src/w_wad.cpp                             |  312 +
- src/w_wad.h                               |   11 +
- src/z_zone.cpp                            |    5 +
- 112 files changed, 24506 insertions(+), 1137 deletions(-)
- create mode 100644 src/hardware/hw_glsl.h
- create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
- create mode 100644 src/hardware/r_d3d11/custom_shader.h
- create mode 100644 src/hardware/r_d3d11/custom_shaders.cmake
- create mode 100644 src/hardware/r_d3d11/r_d3d11.cpp
- create mode 100644 src/hardware/r_d3d11/r_d3d11.h
- create mode 100644 src/hardware/r_d3d11/shaders.hlsl
- create mode 100644 src/hardware/r_d3d12/allocators.h
- create mode 100644 src/hardware/r_d3d12/d3d12_arenas.inc
- create mode 100644 src/hardware/r_d3d12/d3d12_captures.inc
- create mode 100644 src/hardware/r_d3d12/d3d12_core.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_core.h
- create mode 100644 src/hardware/r_d3d12/d3d12_interop.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_interop.h
- create mode 100644 src/hardware/r_d3d12/d3d12_models.inc
- create mode 100644 src/hardware/r_d3d12/d3d12_palette.inc
- create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_pipeline.h
- create mode 100644 src/hardware/r_d3d12/d3d12_present.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_present.h
- create mode 100644 src/hardware/r_d3d12/d3d12_prewarm.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_prewarm.h
- create mode 100644 src/hardware/r_d3d12/d3d12_screens.inc
- create mode 100644 src/hardware/r_d3d12/d3d12_upload.cpp
- create mode 100644 src/hardware/r_d3d12/d3d12_upload.h
- create mode 100644 src/hardware/r_d3d12/mips.h
- create mode 100644 src/hardware/r_d3d12/pipeline_key.h
- create mode 100644 src/hardware/r_d3d12/r_d3d12.cpp
- create mode 100644 src/hardware/r_d3d12/r_d3d12.h
- create mode 100644 src/hardware/r_d3d12/texture_repack.h
- create mode 100644 src/sdl/i_uwpd3d12.cpp
- create mode 100644 src/sdl/i_uwpprofile.cpp
- create mode 100644 src/sdl/i_uwptrace.h
+
+- [All patched platforms]: Treat host/network-unreachable UDP send errors as
+  dropped packets so existing retry/timeout handling can recover or disconnect
+  rather than terminating the game. Include Winsock mappings for error 10065
+  and 10051.
+
+Agent: Codex (Sol, primary investigation and integration)
+Model: gpt-6.1-sol
+Agent: Codex (Sol, fix_transport implementation)
+Model: gpt-6.1-sol
+Agent: Codex (Sol, network_trace review)
+Model: gpt-6.1-sol
+Agent: Codex (Luna, log_triage and patch export)
+Model: gpt-6-luna
+Agent: Codex (Luna, push and rebase integration)
+Model: gpt-6-luna
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index fc82385..8b691cc 100644
@@ -25243,6 +25112,39 @@ index 56d507e..f3813f8 100644
 +#endif
 +
  #endif
+diff --git a/src/i_tcp.c b/src/i_tcp.c
+index f4c7537..01586fb 100644
+--- a/src/i_tcp.c
++++ b/src/i_tcp.c
+@@ -591,7 +591,8 @@ static void SOCK_Send(void)
+ 	if (c == ERRSOCKET)
+ 	{
+ 		int e = errno; // save error code so it can't be modified later
+-		if (e != ECONNREFUSED && e != EWOULDBLOCK)
++		// Drop transient UDP route failures; netcode retries or times out the peer.
++		if (e != ECONNREFUSED && e != EWOULDBLOCK && e != EHOSTUNREACH && e != ENETUNREACH)
+ 			I_Error("SOCK_Send, error sending to node %d (%s) #%u: %s", doomcom->remotenode,
+ 				SOCK_GetNodeAddress(doomcom->remotenode), e, strerror(e));
+ 	}
+diff --git a/src/i_tcp_detail.h b/src/i_tcp_detail.h
+index b56b1c1..952877e 100644
+--- a/src/i_tcp_detail.h
++++ b/src/i_tcp_detail.h
+@@ -81,6 +81,14 @@ extern "C" {
+ 	#undef ECONNREFUSED
+ 	#endif
+ 	#define ECONNREFUSED WSAECONNREFUSED
++	#ifdef EHOSTUNREACH
++	#undef EHOSTUNREACH
++	#endif
++	#define EHOSTUNREACH WSAEHOSTUNREACH
++	#ifdef ENETUNREACH
++	#undef ENETUNREACH
++	#endif
++	#define ENETUNREACH WSAENETUNREACH
+ 	#ifdef ETIMEDOUT
+ 	#undef ETIMEDOUT
+ 	#endif
 diff --git a/src/i_video_common.cpp b/src/i_video_common.cpp
 index f52f929..ff724f0 100644
 --- a/src/i_video_common.cpp
@@ -27680,7 +27582,7 @@ index 7e608da..175c281 100644
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b0..6de17b2 100644
+index bf1e28b..6de17b2 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
 @@ -64,6 +64,8 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t

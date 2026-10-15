@@ -9,6 +9,7 @@ Where each change applies:
   - the GL2 RHI's call reductions and OpenGL ES support
   - the colormap texture caching
   - the software renderer optimizations, except inlining `R_GetTextureNum`
+  - nonfatal unreachable-route errors when sending UDP packets
   - the Lua userdata set
   - the state-change and interpolation-list changes
   - Legacy GL's skybox and neutral camera-fog fixes
@@ -100,6 +101,10 @@ Changes marked *untested* are in the latest build but haven't been tried on an X
 - **Legacy GL: raw picture formats** *(untested on Xbox)*. Add opaque intensity/grayscale and RGB24 pictures using RGBA textures. Preserve palette, intensity/alpha and RGBA pictures, including nearest-neighbor resizing; fix RGBA conversion writing past its destination. Validate picture headers, dimensions, modes and pixel lengths before conversion, and ignore trailing lump bytes. Applies to every patched platform. Native sanitizer tests cover all five modes, palette destination formats and resized pictures.
 - **Encore: underwater and heat distortion** *(untested)*. Encore's screen mirror used to replace underwater and heat distortion in both Software and Legacy GL (VibeRant D3D11/D3D12). Now the two combine. Applies to all patched platforms.
 - **Audio.** The audio driver is WASAPI instead of DirectSound.
+
+## Network
+
+- **Unreachable UDP routes** *(untested on Xbox)*. Treat host-unreachable and network-unreachable send errors as dropped packets on every patched platform, including Winsock error 10065 seen while spectating. Existing netcode retry and receive-timeout handling decides recovery or disconnection. Other unexpected send errors remain fatal. Native ASan/UBSan regressions exercise production send functions and Winsock error mappings.
 
 ## Files and startup
 
