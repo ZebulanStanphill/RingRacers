@@ -226,7 +226,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and for a sloped plane find the height per point. `--metropolis` replays the nine wedge-shaped
   3D floors of the yellow bumpers in Metropolis (map geometry copied into the test, the
   spring at the map's quarter object scale) from eight cameras in the pit and prints, per
-  view, the visible area and what remains under each kind of occluder; the test fails when
+  view, the visible area, the piece peak and what remains under each kind of occluder,
+  and writes the first view's `gr_springprobe` log through a stub `I_OutputMsg`; the test fails when
   anything Software would paint over the spring remains, or when any of the spring is left
   visible at all (before the draw order rule about half of a full-size spring stayed visible
   along the wall). Seg traversal,

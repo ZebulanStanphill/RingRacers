@@ -41,6 +41,9 @@ static void PurgeLevel() {
 }
 float gl_viewcos=1,gl_viewsin=0;
 static float gl_viewx=0,gl_viewy=0,gl_viewz=0;
+#include <cstdarg>
+static int probeLines;
+void I_OutputMsg(const char *fmt,...){++probeLines;va_list ap;va_start(ap,fmt);std::vprintf(fmt,ap);va_end(ap);}
 @@HELPERS@@
 
 // Dependencies of the entire production draw entry. Geometry is supplied as a
@@ -428,7 +431,8 @@ static int Metropolis(bool verbose){
     constexpr int ownwedge=7; // T1436 (z 192) sits in the pocket at x -3400..-3376
     int worst=0;
     for(auto &vw:views){
-        Begin();
+        Begin();hwr_springpeakpieces=0;
+        hwr_springprobe=verbose&&&vw==views; // The gr_springprobe log for one view, as the Xbox would write it.
         double ang=vw.angle*M_PI/180;gl_viewx=vw.x;gl_viewy=vw.y;gl_viewz=vw.z;gl_viewcos=(float)std::cos(ang);gl_viewsin=(float)std::sin(ang);
         float ox=-3388,oy=3472,oz=192;
         float lx=gl_viewsin,ly=-gl_viewcos;int i=0;
@@ -463,7 +467,9 @@ static int Metropolis(bool verbose){
             for(auto *q:{&w.top,&w.bottom}){HWR_AddSpringPlane(q->data(),4,&f);occluders.push_back(*q);kind.push_back(2);owner.push_back(k);}
             for(auto *q:{&w.west,&w.east,&w.tip}){HWR_AddSpringWall(q->data(),&f);occluders.push_back(*q);kind.push_back(1);owner.push_back(k);}
         }
+        int lines=probeLines;
         HWR_DrawSprite(&spr); // Map-scale coordinates exceed CheckAttributes' absolute tolerance.
+        if(hwr_springprobe){assert(probeLines-lines>=3);hwr_springprobe=false;}else assert(probeLines==lines);
         double area=0;for(auto &d:draws)for(size_t k=1;k+1<d.v.size();++k)
             area+=std::fabs(Orient(d.v[0].s,d.v[0].t,d.v[k].s,d.v[k].t,d.v[k+1].s,d.v[k+1].t))*.5;
         // What would Software paint over each remaining pixel? Its own wedge, or anything farther, is drawn
@@ -478,8 +484,9 @@ static int Metropolis(bool verbose){
                 else if(nearestDepth(occluders[k])<depthOrigin){if(kind[k]==2)nearPlane=true;else nearFace=true;}
                 else farther=true;}
             if(nearWall)cat[0]++;else if(nearFace)cat[1]++;else if(nearPlane)cat[2]++;else if(ownWedge)cat[3]++;else if(farther)cat[4]++;else cat[5]++;}
-        if(verbose)std::printf("metropolis view (%g,%g,%g) angle %g: %zu draws, visible area %.3f; remaining pixels under a nearer wall %d, nearer wedge face %d, nearer wedge plane %d, own wedge only %d, farther only %d, nothing %d\n",
-            vw.x,vw.y,vw.z,vw.angle,draws.size(),area,cat[0],cat[1],cat[2],cat[3],cat[4],cat[5]);
+        if(verbose)std::printf("metropolis view (%g,%g,%g) angle %g: %zu draws, visible area %.3f, peak pieces %zu; remaining pixels under a nearer wall %d, nearer wedge face %d, nearer wedge plane %d, own wedge only %d, farther only %d, nothing %d\n",
+            vw.x,vw.y,vw.z,vw.angle,draws.size(),area,hwr_springpeakpieces,cat[0],cat[1],cat[2],cat[3],cat[4],cat[5]);
+        assert(hwr_springpeakpieces<HWR_SPRINGMAXPIECES/2); // Headroom under the piece limit at which cutting stops.
         // At the map's object scale the nearer wedges cover the whole spring from every view, along the wall
         // (grazing and oblique, above and below the first row) and head-on.
         if(area>.01||cat[0]||cat[1]||cat[2]){worst=1;if(verbose)std::puts("  FAILED");}
