@@ -1,4 +1,4 @@
-From bf0e063d6aa2a25140541de534f5df071006911b Mon Sep 17 00:00:00 2001
+From 3788249625af09120cfef2f2d3101790dfd580f9 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -674,8 +674,6 @@ Model: claude-opus-5-5
 Agent: Claude Code (Fable 5.1, Metropolis spring clipping)
 Model: claude-fable-5-1
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
-
 - [All patched platforms]: Treat host/network-unreachable UDP send errors as
   dropped packets so existing retry/timeout handling can recover or disconnect
   rather than terminating the game. Include Winsock mappings for error 10065
@@ -706,6 +704,14 @@ Model: claude-sonnet-5-5
 Agent: Claude Code (Fable 5.1, review and Metropolis scale)
 Model: claude-fable-5-1
 
+- [UWP]: VibeRant runs on Direct3D 12 by default: gr_d3d12 defaults to On
+  now that the Direct3D 12 driver matches the Direct3D 11 one, the renderer
+  is named "VibeRant D3D" in the renderer list and the advanced video menu, and
+  the backend option is "Direct3D 12" (Off keeps the Direct3D 11 driver).
+
+Agent: Claude Code (Fable 5.1, Direct3D 12 cutover)
+Model: claude-fable-5-1
+
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  CMakeLists.txt                            |   19 +-
@@ -714,7 +720,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/console.c                             |   57 +
  src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
- src/cvars.cpp                             |   20 +
+ src/cvars.cpp                             |   21 +
  src/d_clisrv.c                            |   49 +
  src/d_main.cpp                            |  368 +-
  src/doomstat.h                            |    1 +
@@ -826,7 +832,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 118 files changed, 24859 insertions(+), 1165 deletions(-)
+ 118 files changed, 24860 insertions(+), 1165 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1229,22 +1235,22 @@ index 8a434ba..b4518d0 100644
  
  void I_ThreadPoolShutdown(void)
 diff --git a/src/cvars.cpp b/src/cvars.cpp
-index d589b33..8bd83cb 100644
+index d589b33..ab73169 100644
 --- a/src/cvars.cpp
 +++ b/src/cvars.cpp
 @@ -431,7 +431,11 @@ consvar_t cv_bgaudio = Player("bgaudio", "Nothing").onchange_noinit(BGAudio_OnCh
  consvar_t cv_pauseifunfocused = Player("pauseifunfocused", "Yes").yes_no();
  
  extern CV_PossibleValue_t cv_renderer_t[];
-+#if defined(HWRENDER) && defined(_UWP) // [UWP]: Default to VibeRant D3D11, which runs faster than Software on Xbox
-+consvar_t cv_renderer = Player("renderer", "VibeRant D3D11").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
++#if defined(HWRENDER) && defined(_UWP) // [UWP]: Default to VibeRant D3D, which runs faster than Software on Xbox
++consvar_t cv_renderer = Player("renderer", "VibeRant D3D").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
 +#else
  consvar_t cv_renderer = Player("renderer", "Software").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
 +#endif
  consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
  
  consvar_t cv_renderview = Player("renderview", "On").values({{0, "Off"}, {1, "On"}, {2, "Force"}}).dont_save();
-@@ -1478,6 +1482,22 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
+@@ -1478,6 +1482,23 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
  	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
  
  	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
@@ -1255,9 +1261,10 @@ index d589b33..8bd83cb 100644
 +	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
 +
 +#ifdef _UWP
-+	// [UWP]: VibeRant's Direct3D 12 backend while it's ported, read once at startup. Once turns itself Off then,
-+	// so a broken build is back on Direct3D 11 at the next launch.
-+	consvar_t cv_gld3d12 = OpenGL("gr_d3d12", "Off").values({{0, "Off"}, {1, "Once"}, {2, "On"}});
++	// [UWP]: VibeRant's backend, read once at startup: On is Direct3D 12 (the default now that the port is
++	// complete), Off the Direct3D 11 driver it was ported from, Once turns itself Off after one launch. A
++	// Direct3D 12 start that fails also sets it Off, so the next launch is back on Direct3D 11.
++	consvar_t cv_gld3d12 = OpenGL("gr_d3d12", "On").values({{0, "Off"}, {1, "Once"}, {2, "On"}});
 +	// [UWP]: Readback forces the Direct3D 12 driver's CPU readback present path (D) instead of probing the ANGLE
 +	// interop paths; read once when the path is selected, so it takes effect at the next start. CpuSync keeps the
 +	// interop paths' CPU waits instead of the shared fences, to compare them; read when the presentation textures
@@ -2270,7 +2277,7 @@ index 9c0e2f6..58bd38e 100644
  					changeState = true;
  					changeSurfaceInfo = true;
 diff --git a/src/hardware/hw_bsp.c b/src/hardware/hw_bsp.c
-index 0b036ea..0625182 100644
+index 0b036ea..a76c513 100644
 --- a/src/hardware/hw_bsp.c
 +++ b/src/hardware/hw_bsp.c
 @@ -15,6 +15,9 @@
@@ -2345,7 +2352,7 @@ index 0b036ea..0625182 100644
  	V_DrawRightAlignedString(x+50, y, V_YELLOWMAP, s);
  
  	// Is this really necessary at this point..?
-+#ifndef _UWP // [UWP]: No warning; VibeRant D3D11 has close to Software's features
++#ifndef _UWP // [UWP]: No warning; VibeRant D3D has close to Software's features
  	V_DrawCenteredString(BASEVIDWIDTH/2, 40, V_YELLOWMAP, "LEGACY GL IS INCOMPLETE AND MANY");
  	V_DrawCenteredString(BASEVIDWIDTH/2, 50, V_YELLOWMAP, "VISUAL FEATURES ARE MISSING/BROKEN.");
  	V_DrawCenteredString(BASEVIDWIDTH/2, 70, V_YELLOWMAP, "USE AT ROBOTNIK'S RISK.");
@@ -25687,7 +25694,7 @@ index d52750a..708aee4 100644
  	vaopt_perspective,
  	vaopt_legacygl_end,
 diff --git a/src/k_menufunc.c b/src/k_menufunc.c
-index 812c7f8..dd6eca9 100644
+index 812c7f8..3e27bc2 100644
 --- a/src/k_menufunc.c
 +++ b/src/k_menufunc.c
 @@ -195,7 +195,7 @@ static void M_ChangeCvar(INT32 choice)
@@ -25695,7 +25702,7 @@ index 812c7f8..dd6eca9 100644
  	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
  
 -#ifdef HWRENDER
-+#if defined(HWRENDER) && !defined(_UWP) // [UWP]: VibeRant D3D11 has close to Software's features, so switching to it doesn't ask
++#if defined(HWRENDER) && !defined(_UWP) // [UWP]: VibeRant D3D has close to Software's features, so switching to it doesn't ask
  	if (cvar == &cv_renderer &&
  		// Switching from Software [to Legacy GL]
  		cv_renderer.value == 1 &&
@@ -26335,7 +26342,7 @@ index 41bc817..ccb3958 100644
  		M_GonerCheckLooking();
  	}
 diff --git a/src/menus/options-video-advanced.c b/src/menus/options-video-advanced.c
-index c2e40ae..ea3ac29 100644
+index c2e40ae..dcd46f1 100644
 --- a/src/menus/options-video-advanced.c
 +++ b/src/menus/options-video-advanced.c
 @@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
@@ -26343,10 +26350,10 @@ index c2e40ae..ea3ac29 100644
  		NULL, {NULL}, 0, 0},
  
 +#ifdef _UWP
-+	{IT_STRING | IT_SPACE, "VibeRant D3D11 is an enhanced port of", "",
++	{IT_STRING | IT_SPACE, "VibeRant D3D is an enhanced port of", "",
 +		NULL, {NULL}, 0, 0},
 +
-+	{IT_STRING | IT_SPACE, "the Legacy GL renderer to Direct3D 11,", "",
++	{IT_STRING | IT_SPACE, "the Legacy GL renderer to Direct3D 12,", "",
 +		NULL, {NULL}, 0, 0},
 +
 +	{IT_STRING | IT_SPACE, "featuring 3D models, true perspective,", "",
@@ -26391,7 +26398,7 @@ index c2e40ae..ea3ac29 100644
  		NULL, {.cvar = &cv_renderer}, 0, 0},
  
 +#ifdef _UWP
-+	{IT_HEADER, "VibeRant D3D11 Options...", "Watch people get confused anyway!!",
++	{IT_HEADER, "VibeRant D3D Options...", "Watch people get confused anyway!!",
 +#else
  	{IT_HEADER, "Legacy GL Options...", "Watch people get confused anyway!!",
 +#endif
@@ -26414,7 +26421,7 @@ index c2e40ae..ea3ac29 100644
 +	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
 +		NULL, {.cvar = &cv_glbatching}, 0, 0},
 +
-+	{IT_STRING | IT_CVAR, "Direct3D 12 (test)", "Unfinished: only shows a test color. Applies after restarting; Once goes back after one launch.",
++	{IT_STRING | IT_CVAR, "Direct3D 12", "Off uses the older Direct3D 11 driver instead. Applies after restarting; Once goes back after one launch.",
 +		NULL, {.cvar = &cv_gld3d12}, 0, 0},
 +#endif
  
@@ -28246,7 +28253,7 @@ index 7e608da..175c281 100644
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b..6de17b2 100644
+index bf1e28b0..6de17b2 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
 @@ -64,6 +64,8 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t
@@ -29322,7 +29329,7 @@ index f8b6298..fbc3822 100644
  	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);
  	virtual ~Gl2Rhi();
 diff --git a/src/screen.c b/src/screen.c
-index 67b8f13..3db17c5 100644
+index 67b8f13..047600c 100644
 --- a/src/screen.c
 +++ b/src/screen.c
 @@ -58,7 +58,9 @@ UINT8 setrenderneeded = 0;
@@ -29331,7 +29338,7 @@ index 67b8f13..3db17c5 100644
  	{1, "Software"},
 -#ifdef HWRENDER
 +#if defined(HWRENDER) && defined(_UWP) // [UWP]: Legacy GL draws with Direct3D 11 (hardware/r_d3d11), not OpenGL
-+	{2, "VibeRant D3D11"},
++	{2, "VibeRant D3D"},
 +#elif defined(HWRENDER)
  	{2, "Legacy GL"},
  #endif

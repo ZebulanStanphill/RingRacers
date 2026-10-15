@@ -29,7 +29,7 @@ Coding agents were used heavily in the development of this port.
 
 [CHANGES.md](CHANGES.md) lists every change in detail. The ones you'll notice:
 
-- **VibeRant D3D11 renderer (the default).** Vanilla's hardware renderer, Legacy GL, needs desktop OpenGL, which the Xbox doesn't have, so this port redid it on Direct3D 11. It runs faster than Software on Xbox and fills in much of what vanilla's Legacy GL lacks:
+- **VibeRant D3D renderer (the default).** Vanilla's hardware renderer, Legacy GL, needs desktop OpenGL, which the Xbox doesn't have, so this port redid it on Direct3D 12 (with the Direct3D 11 driver it was ported from still selectable through `gr_d3d12 Off`). It runs faster than Software on Xbox and fills in much of what vanilla's Legacy GL lacks:
   - Software-style colors and palette flashes (the Palette Rendering option)
   - portals, as in Marble Garden Zone
   - fog volumes
@@ -51,7 +51,7 @@ Coding agents were used heavily in the development of this port.
 - add-on shaders ([shader smoke-test add-on](tests/addons/shader-smoke/README.md))
 - fog volumes
 - sprite brightmaps
-- split-screen with VibeRant D3D11, including heat distortion
+- split-screen with VibeRant D3D, including heat distortion
 - Better transparency ordering
 
 CHANGES.md marks every untested change.
@@ -98,4 +98,4 @@ This clones Ring Racers v2.4 into `RingRacers/`, applies the patch, and builds i
 
 ## Credits
 
-The port builds on [worleydl's UWP port](https://github.com/worleydl/ringracers-uwp). VibeRant D3D11's portals are inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s.
+The port builds on [worleydl's UWP port](https://github.com/worleydl/ringracers-uwp). VibeRant D3D's portals are inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s.

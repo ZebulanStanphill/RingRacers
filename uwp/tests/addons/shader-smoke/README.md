@@ -1,14 +1,14 @@
 # Custom shader smoke test
 
 [D_ShaderSmoke_v1.pk3](D_ShaderSmoke_v1.pk3) is a 2 KB shader-only add-on for
-Ring Racers 2.4, including this port's VibeRant D3D11 renderer. Its purpose is
+Ring Racers 2.4, including this port's VibeRant D3D renderer. Its purpose is
 to make custom shader selection unmistakable. Xbox visuals are **untested**.
 
 ## Install and compare on Xbox
 
 1. Copy **the PK3 itself**, without extracting it, to
    `E:\ringracers\addons\D_ShaderSmoke_v1.pk3` on the game-data USB drive.
-2. Launch the game, select **VibeRant D3D11**, and set
+2. Launch the game, select **VibeRant D3D**, and set
    **Options → Video → Advanced → Shaders** to **On**.
 3. Load the file through the game's **Addons** menu. With a keyboard, the
    alternative console command is:
