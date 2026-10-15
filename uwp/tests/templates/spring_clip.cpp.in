@@ -68,6 +68,8 @@ FBITFIELD HWR_SurfaceBlend(INT32,INT32,FSurfaceInfo *s){s->PolyColor.s.alpha=173
 void HWR_GetMappedPatch(patch_t *,const UINT8 *){}
 void HWR_GetSpriteBrightmap(patch_t *){}
 @@DRAW_SPRITE@@
+fixed_t P_GetFFloorTopZAt(const ffloor_t *f,fixed_t,fixed_t){return *f->topheight;}
+fixed_t P_GetFFloorBottomZAt(const ffloor_t *f,fixed_t,fixed_t){return *f->bottomheight;}
 @@ROUTES@@
 
 struct Vec { double x,y,z; };
@@ -318,8 +320,176 @@ static void Retention(){
     Begin();HWR_AddSpringWall(edge.data(),nullptr);DrawEntry();assert(Samples(fixture,{edge})==0);
     Begin();DrawEntry();assert(Samples(fixture,{})==0);PurgeLevel();
 }
+
+// Software's r2->plane test: the spring sorts behind a 3D floor plane that it lies wholly under (camera
+// above the plane) or over (camera below it), and the plane then paints over it.
+static Quad Slab(float height,float nearx=1,float farx=16){
+    return {{{nearx,height,-12,0,0},{farx,height,-12,0,0},{farx,height,12,0,0},{nearx,height,12,0,0}}};
+}
+static void Planes(){
+    auto f=Solid();
+    auto record=[&](const Quad &q){HWR_AddSpringPlane(q.data(),4,&f);};
+    auto camera=[&](float z){gl_viewz=z;};
+    // Camera above a slab's top plane, the sprite (y -2..2) entirely beneath it.
+    Begin();camera(10);record(Slab(5));DrawEntry();assert(draws.empty());assert(Samples(fixture,{Slab(5)})==0);
+    // Camera below the slab's bottom plane, the sprite entirely above it.
+    Begin();camera(-10);record(Slab(-5));DrawEntry();assert(draws.empty());assert(Samples(fixture,{Slab(-5)})==0);
+    // The sprite pokes through the plane (its top at 2 is over a plane at 1; its bottom at -2 under one at -1).
+    Begin();camera(10);record(Slab(1));DrawEntry();ExactQuad();
+    Begin();camera(-10);record(Slab(-1));DrawEntry();ExactQuad();
+    // The camera is level with the plane, which is edge-on.
+    Begin();camera(5);record(Slab(5));DrawEntry();ExactQuad();
+    // The plane is wholly behind the sprite's origin, beside it, or above or below its screen rows.
+    Begin();camera(10);record(Slab(5,12,20));DrawEntry();ExactQuad();
+    Begin();camera(10);{auto q=Slab(5);for(auto &p:q)p.z+=20;record(q);}DrawEntry();ExactQuad();
+    Begin();camera(10);record(Slab(8,4,5));DrawEntry();ExactQuad();
+    // See-through and fog planes stay depth tested.
+    for(int kind=0;kind<2;++kind){
+        Begin();camera(10);auto t=Solid();t.fofflags=Flags(t.fofflags|(kind?FOF_FOG:FOF_TRANSLUCENT));t.alpha=100;
+        HWR_AddSpringPlane(Slab(5).data(),4,&t);assert(hwr_numspringwalls==0);DrawEntry();ExactQuad();
+    }
+    // A sloped plane's height is found per point. Falling 0.4 per unit of x it is 8 over the camera (x 0), which
+    // is below it at 10, and 4 over the sprite (x 10), which it covers (top 2). Lowered by 3 it is only 1 there,
+    // so the sprite pokes through, though the plane is at 3.4 at its near edge (x 4), over the sprite's top.
+    for(float drop:{0.f,3.f}){
+        Begin();camera(10);{Quad q=Slab(0,1,16);for(auto &p:q)p.y=8-drop-.4f*p.x;record(q);
+            DrawEntry();if(drop==0){assert(draws.empty());assert(Samples(fixture,{q})==0);}else ExactQuad();}
+    }
+    gl_viewz=0;
+    // The production recorder reads the subsector's polygon, and fans one with too many corners into several.
+    {
+        const int N=70;
+        std::vector<char> storage(sizeof(poly_t)+N*sizeof(polyvertex_t));
+        poly_t *poly=reinterpret_cast<poly_t *>(storage.data());poly->numpts=N;
+        for(int i=0;i<N;++i){double a=2*M_PI*i/N;poly->pts[i].x=(float)(10+12*std::cos(a));poly->pts[i].y=(float)(12*std::sin(a));}
+        extrasubsector_t xsub{};xsub.planepoly=poly;
+        fixed_t top=5*FRACUNIT,bottom=-5*FRACUNIT;pslope_t *noslope=nullptr;
+        auto g=Solid();g.topheight=&top;g.bottomheight=&bottom;g.t_slope=g.b_slope=&noslope;
+        Begin();camera(10);HWR_AddSpringFOFPlane(&xsub,&g,true);
+        assert(hwr_numspringwalls==3);
+        for(size_t i=0;i<3;++i){auto &r=hwr_springwalls[i];assert(r.numverts<=HWR_SPRINGMAXVERTS&&r.plane&&r.thick);
+            assert(r.v[0].x==poly->pts[0].x&&r.v[0].y==5&&r.a==0&&r.b==0&&r.c==5);}
+        assert(hwr_springwalls[0].numverts==32&&hwr_springwalls[1].numverts==32&&hwr_springwalls[2].numverts==10);
+        DrawEntry();assert(draws.empty());
+        Begin();camera(-10);HWR_AddSpringFOFPlane(&xsub,&g,false);assert(hwr_numspringwalls==3);
+        DrawEntry();assert(draws.empty());
+        Begin();camera(10);HWR_AddSpringFOFPlane(&xsub,&g,false);DrawEntry();ExactQuad(); // The bottom plane at -5 is under the sprite's bottom.
+        gl_viewz=0;
+    }
+}
+
+// R_CreateDrawNodes puts the sprite before the farthest 3D floor side it sorts behind, and every side after that,
+// which is every nearer one, paints over it whether or not it would sort behind the sprite itself.
+static void Painter(){
+    auto f=Solid();
+    // A crossing side that the sprite's middle column passes in front of, and a narrow one it is behind.
+    auto crossing=Wall(6,-8,16,8),narrow=Wall(6,-8,6,0);
+    Begin(8);HWR_AddSpringWall(crossing.data(),&f);DrawEntry();ExactQuad();
+    Begin(8);HWR_AddSpringWall(narrow.data(),&f);DrawEntry();assert(!draws.empty());assert(Samples(fixture,{narrow})==0);
+    double alone=0;for(auto &d:draws)for(size_t k=1;k+1<d.v.size();++k)
+        alone+=std::fabs(Orient(d.v[0].s,d.v[0].t,d.v[k].s,d.v[k].t,d.v[k+1].s,d.v[k+1].t))*.5;
+    // Nearer one recorded first: both are subtracted although only the narrow one applies by itself.
+    Begin(8);HWR_AddSpringWall(crossing.data(),&f);HWR_AddSpringWall(narrow.data(),&f);DrawEntry();
+    double both=0;for(auto &d:draws)for(size_t k=1;k+1<d.v.size();++k)
+        both+=std::fabs(Orient(d.v[0].s,d.v[0].t,d.v[k].s,d.v[k].t,d.v[k+1].s,d.v[k+1].t))*.5;
+    assert(Samples(fixture,{crossing,narrow})==0);assert(both<alone-.05);
+    // Recorded the other way round the crossing side is farther in draw order and stays behind the sprite.
+    Begin(8);HWR_AddSpringWall(narrow.data(),&f);HWR_AddSpringWall(crossing.data(),&f);DrawEntry();assert(Samples(fixture,{narrow})==0);
+    // A side that is not a 3D floor's is tested alone, never swept up by a farther thick side.
+    Begin(8);HWR_AddSpringWall(crossing.data(),nullptr);HWR_AddSpringWall(narrow.data(),&f);DrawEntry();assert(Samples(fixture,{narrow})==0);
+    // A plane is swept up too. This slab lies under the sprite, so by itself it would not sort the sprite behind it,
+    // but the side recorded after it does, and the slab is nearer in draw order.
+    Begin(8);gl_viewz=10;{auto slab=Slab(-9);HWR_AddSpringPlane(slab.data(),4,&f);
+        HWR_AddSpringWall(narrow.data(),&f);DrawEntry();assert(Samples(fixture,{slab,narrow})==0);
+        double withplane=0;for(auto &d:draws)for(size_t k=1;k+1<d.v.size();++k)
+            withplane+=std::fabs(Orient(d.v[0].s,d.v[0].t,d.v[k].s,d.v[k].t,d.v[k+1].s,d.v[k+1].t))*.5;
+        assert(withplane<alone-.01);}
+    gl_viewz=0;
+}
+
+// Metropolis (RR_Metropolis.wad): the yellow bumper wall at map y 3456 is a chain of
+// two-sided segs whose upper walls rise from the bumper strip's ceiling (144/176) to
+// the pit's (640). Grey diagonal springs sit 8-16 units into the pit at heights 192+
+// (sprite 64x64, top offset 60), each in a wedge-shaped intangible 3D floor pocket. From a
+// camera in the pit looking along the wall, the nearer segs cover every screen column of a
+// spring, so Software clips it entirely, and R_CreateDrawNodes paints the nearer wedges'
+// faces and planes over whatever is left: every thick node after the farthest one the
+// sprite sorts behind. Only what Software draws BEFORE the sprite may remain: the sprite
+// is still seen in front of the farther wedges' faces. Wedges are recorded nearest first,
+// each subsector's planes before its sides, as the BSP walk does. Without the painter's
+// order about half (0.49-0.51) of the spring stays visible along the wall; with it 0.39-0.40
+// does, and none of that is under anything Software draws over the sprite.
+struct Seg { float x0,x1,low,high; };
+struct Wedge { Quad west,east,tip,top,bottom; double depth; };
+static int Metropolis(bool verbose){
+    static const Seg segs[]={{-3624,-3648,144,640},{-3600,-3624,144,640},{-3592,-3600,144,640},{-3584,-3592,144,640},{-3568,-3584,176,640},{-3560,-3568,176,640},{-3552,-3560,176,640},{-3536,-3552,176,640},{-3528,-3536,176,640},{-3520,-3528,176,640},{-3504,-3520,176,640},{-3496,-3504,176,640},{-3472,-3496,176,640},{-3464,-3472,176,640},{-3456,-3464,176,640},{-3440,-3456,176,640},{-3432,-3440,176,640},{-3424,-3432,176,640},{-3408,-3424,176,640},{-3400,-3408,176,640},{-3392,-3400,176,640},{-3376,-3392,144,640},{-3368,-3376,144,640},{-3344,-3368,144,640},{-3328,-3344,144,640}};
+    // Cameras in the pit: oblique and grazing along the wall, above and below the first row, and head-on.
+    struct View { float x,y,z,angle; } views[]={{-3200,3560,200,205},{-3100,3620,230,200},{-3300,3520,190,215},{-3388,3600,210,270},{-3000,3540,150,190},{-2900,3530,140,186},{-3150,3550,160,195},{-3100,3600,120,200}};
+    constexpr int ownwedge=7; // T1436 (z 192) sits in the pocket at x -3400..-3376
+    int worst=0;
+    for(auto &vw:views){
+        Begin();
+        double ang=vw.angle*M_PI/180;gl_viewx=vw.x;gl_viewy=vw.y;gl_viewz=vw.z;gl_viewcos=(float)std::cos(ang);gl_viewsin=(float)std::sin(ang);
+        float ox=-3388,oy=3472,oz=192;
+        float lx=gl_viewsin,ly=-gl_viewcos;int i=0;
+        for(auto uv:std::array<std::array<float,2>,4>{{{0,0},{1,0},{1,1},{0,1}}}){
+            float a=2*uv[0]-1,b=2*uv[1]-1;
+            fixture[i++]={ox+8*a*lx,oz-1+8*(b+1),oy+8*a*ly,uv[0],1-uv[1]}; // 64x64 patch, top offset 60, at the map's MobjScale of 1/4
+        }
+        thing.x=FLOAT_TO_FIXED(ox);thing.y=FLOAT_TO_FIXED(oy);spr.gx=ox;spr.gy=oy;
+        auto depthOf=[&](const FOutVector &v){return (v.x-gl_viewx)*gl_viewcos+(v.z-gl_viewy)*gl_viewsin;};
+        auto nearestDepth=[&](const Quad &w){return std::min(std::min(depthOf(w[0]),depthOf(w[1])),std::min(depthOf(w[2]),depthOf(w[3])));};
+        auto farthestDepth=[&](const Quad &w){return std::max(std::max(depthOf(w[0]),depthOf(w[1])),std::max(depthOf(w[2]),depthOf(w[3])));};
+        double depthOrigin=(ox-gl_viewx)*gl_viewcos+(oy-gl_viewy)*gl_viewsin;
+        std::vector<Quad> occluders;std::vector<int> kind,owner; // kind: 0 seg, 1 wedge face, 2 wedge plane
+        for(auto &sg:segs){auto w=Wall(sg.x0,3456,sg.x1,3456,sg.low,sg.low,sg.high,sg.high);occluders.push_back(w);kind.push_back(0);owner.push_back(-1);HWR_AddSpringWall(w.data(),nullptr);}
+        // The nine yellow wedges: pockets 24 wide at the wall (y 3456) and 12 wide at the tip (y 3488);
+        // FOF 180-264 at the wall tapering to 188-192 at the tip (the line slope).
+        auto f=Solid();std::vector<Wedge> wedges;
+        for(int k=0;k<9;++k){float x0=-3624+32*k,x1=x0+24,tx0=x0+6,tx1=x0+18;
+            Wedge w;
+            w.west={{{x0,180,3456,0,0},{tx0,188,3488,0,0},{tx0,192,3488,0,0},{x0,264,3456,0,0}}};
+            w.east={{{tx1,188,3488,0,0},{x1,180,3456,0,0},{x1,264,3456,0,0},{tx1,192,3488,0,0}}};
+            w.tip={{{tx0,188,3488,0,0},{tx1,188,3488,0,0},{tx1,192,3488,0,0},{tx0,192,3488,0,0}}};
+            w.top={{{x0,264,3456,0,0},{x1,264,3456,0,0},{tx1,192,3488,0,0},{tx0,192,3488,0,0}}};
+            w.bottom={{{x0,180,3456,0,0},{x1,180,3456,0,0},{tx1,188,3488,0,0},{tx0,188,3488,0,0}}};
+            w.depth=std::min({nearestDepth(w.west),nearestDepth(w.east),nearestDepth(w.top)});
+            wedges.push_back(w);
+        }
+        std::vector<int> index(9);for(int k=0;k<9;++k)index[k]=k;
+        // The BSP walk visits the nearest subsector first, drawing its planes before adding its sides.
+        std::stable_sort(index.begin(),index.end(),[&](int a,int b){return wedges[a].depth<wedges[b].depth;});
+        for(int k:index){auto &w=wedges[k];
+            for(auto *q:{&w.top,&w.bottom}){HWR_AddSpringPlane(q->data(),4,&f);occluders.push_back(*q);kind.push_back(2);owner.push_back(k);}
+            for(auto *q:{&w.west,&w.east,&w.tip}){HWR_AddSpringWall(q->data(),&f);occluders.push_back(*q);kind.push_back(1);owner.push_back(k);}
+        }
+        HWR_DrawSprite(&spr); // Map-scale coordinates exceed CheckAttributes' absolute tolerance.
+        double area=0;for(auto &d:draws)for(size_t k=1;k+1<d.v.size();++k)
+            area+=std::fabs(Orient(d.v[0].s,d.v[0].t,d.v[k].s,d.v[k].t,d.v[k+1].s,d.v[k+1].t))*.5;
+        // What would Software paint over each remaining pixel? Its own wedge, or anything farther, is drawn
+        // behind the sprite; a nearer wall or a nearer wedge's face or plane is drawn over it.
+        int cat[6]={0,0,0,0,0,0};
+        for(int y=0;y<43;++y)for(int x=0;x<47;++x){
+            double u=(x+.371)/47,v=(y+.613)/43;if(!Visible(u,v))continue;Vec pt=Point(fixture,u,v);
+            bool nearWall=false,nearFace=false,nearPlane=false,ownWedge=false,farther=false;
+            for(size_t k=0;k<occluders.size();++k){if(Hit(pt,occluders[k])<=0)continue;
+                if(kind[k]==0){if(farthestDepth(occluders[k])<depthOrigin)nearWall=true;else farther=true;}
+                else if(owner[k]==ownwedge)ownWedge=true;
+                else if(nearestDepth(occluders[k])<depthOrigin){if(kind[k]==2)nearPlane=true;else nearFace=true;}
+                else farther=true;}
+            if(nearWall)cat[0]++;else if(nearFace)cat[1]++;else if(nearPlane)cat[2]++;else if(ownWedge)cat[3]++;else if(farther)cat[4]++;else cat[5]++;}
+        if(verbose)std::printf("metropolis view (%g,%g,%g) angle %g: %zu draws, visible area %.3f; remaining pixels under a nearer wall %d, nearer wedge face %d, nearer wedge plane %d, own wedge only %d, farther only %d, nothing %d\n",
+            vw.x,vw.y,vw.z,vw.angle,draws.size(),area,cat[0],cat[1],cat[2],cat[3],cat[4],cat[5]);
+        // At the map's object scale the nearer wedges cover the whole spring from every view, along the wall
+        // (grazing and oblique, above and below the first row) and head-on.
+        if(area>.01||cat[0]||cat[1]||cat[2]){worst=1;if(verbose)std::puts("  FAILED");}
+        gl_viewx=gl_viewy=gl_viewz=gl_viewsin=0;gl_viewcos=1;
+    }
+    return worst;
+}
 int main(int argc,char **argv){
+    if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return Negative(argv[1]);
-    RunCases();ObliqueCamera();Routes();Retention();
+    RunCases();ObliqueCamera();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();PurgeLevel();
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }

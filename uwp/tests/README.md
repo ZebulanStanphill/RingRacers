@@ -201,7 +201,22 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `--negative-full` and `--negative-edge` restore the old per-pixel depth behavior,
   while `--negative-front` and `--negative-nonspring` inject the clipping errors the
   preservation cases guard against (ordering lost, or the `MF_SPRING` gate lost),
-  since old depth testing already preserves those two cases. Seg traversal,
+  since old depth testing already preserves those two cases. Software draws every 3D floor
+  side and plane nearer than the farthest one a sprite sorts behind over it, so those
+  entries are subtracted together: the test records two sides whose nearer one fails its own
+  test and checks that it is still subtracted (and not when recorded after the farther one),
+  and a plane swept up by a side. The production plane recorder (`HWR_AddSpringFOFPlane`,
+  extracted from `HWR_Subsector`'s call sites) is run on a 70-corner subsector polygon
+  and must split it into three pieces. Plane cases put a slab over a camera-above spring and
+  under a camera-below one (hidden), and leave the spring whole when it pokes through,
+  the plane is edge-on, behind the origin, beside it, off its rows, fog or see-through,
+  and for a sloped plane find the height per point. `--metropolis` replays the nine wedge-shaped
+  3D floors of the yellow bumpers in Metropolis (map geometry copied into the test, the
+  spring at the map's quarter object scale) from eight cameras in the pit and prints, per
+  view, the visible area and what remains under each kind of occluder; the test fails when
+  anything Software would paint over the spring remains, or when any of the spring is left
+  visible at all (before the draw order rule about half of a full-size spring stayed visible
+  along the wall). Seg traversal,
   GPU depth/stencil and Xbox visuals still need separate validation.
 - **Palette brightmaps:** Windows WARP executes the production SM4 `PSSoftware` palette path. Brightmapped texels must use the base colormap's full-bright row at their palette index, while other texels keep the surface colormap row from `R_DoomColormap` at the rasterized depth. The negative control restores the old surface-colormap row for brightmapped texels and must fail. This validates the shader on WARP, not Xbox palette-rendering visuals.
 - **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production

@@ -337,6 +337,14 @@ def generate(engine, output):
             raise ValueError("opaque FOF recording must precede light slicing")
         routes += (f"static void SpringRecordFOF{index}(FOutVector *wallVerts, ffloor_t *rover) {{\n"
             + hardware.annotated(seg_offset + start, seg_offset + end) + "}\n")
+    # The 3D floor plane recorder reads the subsector's polygon and each corner's height. It must run for the
+    # opaque planes HWR_Subsector actually draws: the bottom and the top one.
+    subsector = hardware.function("HWR_Subsector")
+    for isceiling, pic in (("false", "bottompic"), ("true", "toppic")):
+        if (f"HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, {isceiling}); // [UWP]\n"
+            f"\t\t\t\t\tHWR_GetLevelFlat(&levelflats[*rover->{pic}]") not in subsector:
+            raise ValueError(f"the opaque 3D floor {pic} plane must be recorded for spring clipping")
+    routes += hardware.function("HWR_AddSpringFOFPlane")
     render(templates / "spring_clip.cpp.in", {
         "HELPERS": hardware.section("// [UWP]: Software hides a spring that sits inside a wall.",
             "// End [UWP] spring silhouette geometry."),
