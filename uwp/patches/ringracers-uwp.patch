@@ -1,4 +1,4 @@
-From 3c0414005d896a7f0d164da204eff9b94e1b68ce Mon Sep 17 00:00:00 2001
+From bf0e063d6aa2a25140541de534f5df071006911b Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -338,8 +338,13 @@ RingRacers-dev, rebased onto v2.4.
   Ship compiler license notices with the launcher. Add translation,
   production dispatch and real SM4/WARP rendering regressions.
 
-- Apply SPRTINFO sprite brightmaps in Legacy GL, with ordinary lighting for
-  roll-rotated sprites and mismatched dimensions.
+- Apply SPRTINFO sprite brightmaps in Legacy GL. Rotate brightmaps with the
+  exact base raster transform and cache them per rotated base/map identity.
+  Preserve ordinary lighting for missing or dimension-mismatched maps;
+  invalidate and reclaim companion patches safely on source reload or purge.
+
+Agent: Codex (Sol)
+Model: gpt-6.1-sol
 
 - Respect explicit and HUD fill transparency in Legacy GL. Resolve HUD alpha
   before hardware dispatch, omit invisible fills and blend partial opacity,
@@ -727,7 +732,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/hardware/hw_drv.h                     |   13 +
  src/hardware/hw_glob.h                    |   13 +
  src/hardware/hw_glsl.h                    |  321 +
- src/hardware/hw_main.c                    | 2301 +++++++-
+ src/hardware/hw_main.c                    | 2302 +++++++-
  src/hardware/hw_main.h                    |   22 +-
  src/hardware/hw_md2.c                     |  304 +-
  src/hardware/hw_md2.h                     |    4 +
@@ -786,11 +791,15 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/p_tick.c                              |    3 +
  src/p_tick.h                              |   15 +
  src/p_user.c                              |    3 +-
+ src/r_defs.h                              |   16 +
  src/r_draw.h                              |   38 +-
  src/r_draw_column.cpp                     |   18 +-
  src/r_fps.cpp                             |   25 +-
  src/r_main.cpp                            |  181 +-
  src/r_main.h                              |    8 +
+ src/r_patch.cpp                           |   20 +
+ src/r_patch.h                             |    5 +
+ src/r_patchrotation.c                     |  165 +-
  src/r_plane.cpp                           |   19 +-
  src/r_segs.cpp                            |   15 +-
  src/r_sky.c                               |    4 +-
@@ -817,7 +826,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 114 files changed, 24676 insertions(+), 1141 deletions(-)
+ 118 files changed, 24859 insertions(+), 1165 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -3664,7 +3673,7 @@ index 0000000..c025b5a
 +
 +#endif
 diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
-index b5e8fca..5873aa6 100644
+index b5e8fca..5c6ea4f 100644
 --- a/src/hardware/hw_main.c
 +++ b/src/hardware/hw_main.c
 @@ -12,8 +12,13 @@
@@ -6196,11 +6205,12 @@ index b5e8fca..5873aa6 100644
  	vis->tz = tz; // Keep tz for the simple sprite sorting that happens
  	vis->tracertz = tracertz;
  
-@@ -5157,11 +6692,20 @@ static void HWR_ProjectSprite(mobj_t *thing)
+@@ -5157,11 +6692,21 @@ static void HWR_ProjectSprite(mobj_t *thing)
  	if (rotsprite)
  	{
  		vis->gpatch = (patch_t *)rotsprite;
-+		vis->gbright = NULL;
++		vis->gbright = Patch_GetRotatedBrightmap(rotsprite,
++			R_CacheSpriteBrightMap(sprinfo, thing->frame & FF_FRAMEMASK));
  		vis->rotated = true;
  	}
  	else
@@ -6217,7 +6227,7 @@ index b5e8fca..5873aa6 100644
  
  	vis->mobj = thing;
  
-@@ -5233,7 +6777,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5233,7 +6778,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	interpmobjstate_t interp = {0};
  
  	// okay... this is a hack, but weather isn't networked, so it should be ok
@@ -6229,7 +6239,7 @@ index b5e8fca..5873aa6 100644
  	{
  		return;
  	}
-@@ -5319,6 +6867,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
+@@ -5319,6 +6868,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
  	vis->tz = tz;
  	vis->dispoffset = 0; // Monster Iestyn: 23/11/15: HARDWARE SUPPORT AT LAST
  	vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
@@ -6241,7 +6251,7 @@ index b5e8fca..5873aa6 100644
  	vis->flip = flip;
  	vis->mobj = (mobj_t *)thing;
  
-@@ -5396,6 +6949,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
+@@ -5396,6 +6950,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
  
  static gl_sky_t gl_sky;
  
@@ -6255,7 +6265,7 @@ index b5e8fca..5873aa6 100644
  static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, signed char yflip, float delta, boolean foglayer)
  {
  	const float radians = (float)(M_PIl / 180.0f);
-@@ -5426,6 +6986,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
+@@ -5426,6 +6987,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c,
  			vbo->v = (r / (float)sky->rows) + 0.5f;
  		else
  			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
@@ -6263,7 +6273,7 @@ index b5e8fca..5873aa6 100644
  	}
  
  	if (r != 4)
-@@ -5558,7 +7119,7 @@ static void HWR_DrawSkyBackground(player_t *player)
+@@ -5558,7 +7120,7 @@ static void HWR_DrawSkyBackground(player_t *player)
  		else
  			dometransform.flip = false;
  
@@ -6272,7 +6282,7 @@ index b5e8fca..5873aa6 100644
  			dometransform.mirror = true;
  		else
  			dometransform.mirror = false;
-@@ -5662,6 +7223,11 @@ static void HWR_DrawSkyBackground(player_t *player)
+@@ -5662,6 +7224,11 @@ static void HWR_DrawSkyBackground(player_t *player)
  			v[0].t = v[1].t -= ((float) angle / angleturn);
  		}
  
@@ -6284,7 +6294,7 @@ index b5e8fca..5873aa6 100644
  		HWD.pfnUnSetShader();
  		HWD.pfnDrawPolygon(NULL, v, 4, 0);
  	}
-@@ -5791,21 +7357,45 @@ static void HWR_SetShaderState(void)
+@@ -5791,21 +7358,45 @@ static void HWR_SetShaderState(void)
  	HWD.pfnSetShader(SHADER_DEFAULT);
  }
  
@@ -6341,7 +6351,7 @@ index b5e8fca..5873aa6 100644
  
  	// copy view cam position for local use
  	dup_viewx = viewx;
-@@ -5837,7 +7427,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5837,7 +7428,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	else
  		atransform.flip = false;
  
@@ -6350,7 +6360,7 @@ index b5e8fca..5873aa6 100644
  		atransform.mirror = true;
  	else
  		atransform.mirror = false;
-@@ -5857,15 +7447,37 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5857,15 +7448,37 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
  
  	//------------------------------------------------------------------------
@@ -6389,7 +6399,7 @@ index b5e8fca..5873aa6 100644
  
  	drawcount = 0;
  
-@@ -5873,6 +7485,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5873,6 +7486,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
  		gld_clipper_Clear();
  		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
@@ -6400,7 +6410,7 @@ index b5e8fca..5873aa6 100644
  #ifdef HAVE_SPHEREFRUSTRUM
  		gld_FrustrumSetup();
  #endif
-@@ -5952,17 +7568,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
+@@ -5952,17 +7569,165 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
  		ps_hw_nodedrawtime = 0;
  	}
  
@@ -6567,7 +6577,7 @@ index b5e8fca..5873aa6 100644
  }
  
  // ==========================================================================
-@@ -5973,7 +7737,9 @@ void HWR_RenderSkyboxView(player_t *player)
+@@ -5973,7 +7738,9 @@ void HWR_RenderSkyboxView(player_t *player)
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SkyboxFrame(viewssnum);
  
@@ -6577,7 +6587,7 @@ index b5e8fca..5873aa6 100644
  }
  
  // ==========================================================================
-@@ -5995,6 +7761,9 @@ void HWR_RenderPlayerView(void)
+@@ -5995,6 +7762,9 @@ void HWR_RenderPlayerView(void)
  {
  	player_t * player = &players[displayplayers[viewssnum]];
  
@@ -6587,7 +6597,7 @@ index b5e8fca..5873aa6 100644
  	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
  
  	FRGBAFloat ClearColor;
-@@ -6017,6 +7786,10 @@ void HWR_RenderPlayerView(void)
+@@ -6017,6 +7787,10 @@ void HWR_RenderPlayerView(void)
  		HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_BACKLIGHT, maplighting.backlight);
  	}
  
@@ -6598,7 +6608,7 @@ index b5e8fca..5873aa6 100644
  	if (viewssnum == 0) // Only do it if it's the first screen being rendered
  		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
  
-@@ -6027,17 +7800,55 @@ void HWR_RenderPlayerView(void)
+@@ -6027,17 +7801,55 @@ void HWR_RenderPlayerView(void)
  
  	// note: sets viewangle, viewx, viewy, viewz
  	R_SetupFrame(viewssnum);
@@ -6654,7 +6664,7 @@ index b5e8fca..5873aa6 100644
  #ifdef ALAM_LIGHTING
  	// BP: reset light between levels (we draw preview frame lights on current frame)
  	HWR_ResetLights();
-@@ -6081,6 +7892,49 @@ void CV_glanisotropic_OnChange(void)
+@@ -6081,6 +7893,49 @@ void CV_glanisotropic_OnChange(void)
  		HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
  }
  
@@ -6704,7 +6714,7 @@ index b5e8fca..5873aa6 100644
  //added by Hurdler: console varibale that are saved
  void HWR_AddCommands(void)
  {
-@@ -6094,6 +7948,9 @@ void HWR_AddSessionCommands(void)
+@@ -6094,6 +7949,9 @@ void HWR_AddSessionCommands(void)
  {
  	if (gl_sessioncommandsadded)
  		return;
@@ -6714,7 +6724,7 @@ index b5e8fca..5873aa6 100644
  	// Kept in case we ever need this again.
  	gl_sessioncommandsadded = true;
  }
-@@ -6138,6 +7995,8 @@ void HWR_Switch(void)
+@@ -6138,6 +7996,8 @@ void HWR_Switch(void)
  	// Set special states from CVARs
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
  	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
@@ -6723,7 +6733,7 @@ index b5e8fca..5873aa6 100644
  
  	// Load textures
  	if (!gl_maptexturesloaded)
-@@ -6241,6 +8100,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
+@@ -6241,6 +8101,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
  		blendmode |= PF_Fog;
  
  	blendmode |= PF_Modulated;	// No PF_Occlude means overlapping (incorrect) transparency
@@ -6733,7 +6743,7 @@ index b5e8fca..5873aa6 100644
  	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode, shader, false);
  }
  
-@@ -6257,7 +8119,8 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6257,7 +8120,8 @@ void HWR_DoPostProcessor(player_t *player)
  
  	// Armageddon Blast Flash!
  	// Could this even be considered postprocessor?
@@ -6743,7 +6753,7 @@ index b5e8fca..5873aa6 100644
  	{
  		FOutVector      v[4];
  		FSurfaceInfo Surf;
-@@ -6266,6 +8129,9 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6266,6 +8130,9 @@ void HWR_DoPostProcessor(player_t *player)
  		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
  		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
  
@@ -6753,7 +6763,7 @@ index b5e8fca..5873aa6 100644
  		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
  		if (player->flashpal == PAL_NUKE)
  		{
-@@ -6284,15 +8150,23 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6284,15 +8151,23 @@ void HWR_DoPostProcessor(player_t *player)
  	if(gamestate != GS_INTERMISSION)
  		HWD.pfnMakeScreenTexture();
  
@@ -6779,7 +6789,7 @@ index b5e8fca..5873aa6 100644
  
  		UINT8 x, y;
  		INT32 WAVELENGTH;
-@@ -6318,13 +8192,26 @@ void HWR_DoPostProcessor(player_t *player)
+@@ -6318,13 +8193,26 @@ void HWR_DoPostProcessor(player_t *player)
  			for (y = 0; y < SCREENVERTS; y++)
  			{
  				// Change X position based on its Y position.
@@ -26925,6 +26935,40 @@ index 9bff650..2ddbbb1 100644
  }
  
  void P_DoTimeOver(player_t *player)
+diff --git a/src/r_defs.h b/src/r_defs.h
+index af7e154..695981b 100644
+--- a/src/r_defs.h
++++ b/src/r_defs.h
+@@ -880,6 +880,16 @@ struct rotsprite_t
+ // Patches are used for sprites and all masked pictures, and we compose
+ // textures from the TEXTURES list of patches.
+ //
++#if defined(ROTSPRITE) && defined(HWRENDER)
++// Sampling coordinates of a rotated base patch, including its final crop.
++typedef struct
++{
++	fixed_t ca, sa, xcenter, ycenter;
++	INT32 width, height, canvaswidth, canvasheight, cropx, cropy;
++	boolean flip, valid;
++} patchrotation_t;
++#endif
++
+ struct patch_t
+ {
+ 	INT16 width, height;
+@@ -893,6 +903,12 @@ struct patch_t
+ 
+ #ifdef ROTSPRITE
+ 	rotsprite_t *rotated; // Rotated patches
++#ifdef HWRENDER
++	patchrotation_t rotation;
++	// Companion cache links live in the generated patch itself. Dependencies
++	// are detached before freeing either source, even if its address is reused.
++	patch_t *brightnext, *brightownernext, *brightmaps, *brightowner, *brightsource;
++#endif
+ #endif
+ };
+ 
 diff --git a/src/r_draw.h b/src/r_draw.h
 index b3b71e1..ed1dbf7 100644
 --- a/src/r_draw.h
@@ -27455,6 +27499,284 @@ index f17ef95..42643d3 100644
  boolean R_DoCulling(line_t *cullheight, line_t *viewcullheight, fixed_t vz, fixed_t bottomh, fixed_t toph);
  
  void R_GetRenderBlockMapDimensions(fixed_t drawdist, INT32 *xl, INT32 *xh, INT32 *yl, INT32 *yh);
+diff --git a/src/r_patch.cpp b/src/r_patch.cpp
+index 8333327..646b299 100644
+--- a/src/r_patch.cpp
++++ b/src/r_patch.cpp
+@@ -64,6 +64,9 @@ patch_t *Patch_Create(softwarepatch_t *source, size_t srcsize, void *dest)
+ }
+ 
+ static boolean g_patch_was_freed_this_frame = false;
++#if defined(ROTSPRITE) && defined(HWRENDER)
++static INT32 patch_free_depth;
++#endif
+ 
+ //
+ // Frees a patch from memory.
+@@ -72,6 +75,9 @@ static boolean g_patch_was_freed_this_frame = false;
+ static void Patch_FreeData(patch_t *patch)
+ {
+ 	INT32 i;
++#if defined(ROTSPRITE) && defined(HWRENDER)
++	Patch_InvalidateRotatedBrightmaps(patch);
++#endif
+ 
+ #ifdef HWRENDER
+ 	if (patch->hardware)
+@@ -110,8 +116,15 @@ void Patch_Free(patch_t *patch)
+ 	if (!patch || patch == missingpat)
+ 		return;
+ 
++#if defined(ROTSPRITE) && defined(HWRENDER)
++	++patch_free_depth;
++#endif
+ 	Patch_FreeData(patch);
+ 	Z_Free(patch);
++#if defined(ROTSPRITE) && defined(HWRENDER)
++	if (--patch_free_depth == 0)
++		Patch_FreeInvalidatedBrightmaps();
++#endif
+ }
+ 
+ boolean Patch_WasFreedThisFrame(void)
+@@ -137,7 +150,14 @@ static boolean Patch_FreeTagsCallback(void *mem)
+ 
+ void Patch_FreeTags(INT32 lowtag, INT32 hightag)
+ {
++#if defined(ROTSPRITE) && defined(HWRENDER)
++	++patch_free_depth;
++#endif
+ 	Z_IterateTags(lowtag, hightag, Patch_FreeTagsCallback);
++#if defined(ROTSPRITE) && defined(HWRENDER)
++	if (--patch_free_depth == 0)
++		Patch_FreeInvalidatedBrightmaps();
++#endif
+ }
+ 
+ void Patch_GenerateFlat(patch_t *patch, pictureflags_t flags)
+diff --git a/src/r_patch.h b/src/r_patch.h
+index 47de596..c6245e4 100644
+--- a/src/r_patch.h
++++ b/src/r_patch.h
+@@ -40,6 +40,11 @@ void *Patch_CreateGL(patch_t *patch);
+ #endif
+ 
+ #ifdef ROTSPRITE
++#ifdef HWRENDER
++patch_t *Patch_GetRotatedBrightmap(patch_t *rotated, patch_t *brightmap);
++void Patch_InvalidateRotatedBrightmaps(patch_t *patch);
++void Patch_FreeInvalidatedBrightmaps(void);
++#endif
+ void Patch_Rotate(patch_t *patch, INT32 angle, INT32 xpivot, INT32 ypivot, boolean flip);
+ patch_t *Patch_GetRotated(patch_t *patch, INT32 angle, boolean flip);
+ patch_t *Patch_GetRotatedSprite(
+diff --git a/src/r_patchrotation.c b/src/r_patchrotation.c
+index 0043299..2ee4c75 100644
+--- a/src/r_patchrotation.c
++++ b/src/r_patchrotation.c
+@@ -308,6 +308,119 @@ static void RotatedPatch_CalculateDimensions(
+ 	*newheight = max(height, max(h1, h2));
+ }
+ 
++// Both rasters use this exact inverse mapping; the brightmap's own header
++// offsets and opaque bounds must never influence its sampling or output crop.
++static void *RotatedPatch_Sample(patch_t *patch, INT32 dx, INT32 dy,
++	INT32 canvaswidth, INT32 canvasheight, fixed_t ca, fixed_t sa,
++	fixed_t xcenter, fixed_t ycenter, pictureflags_t flip)
++{
++	fixed_t x = (dx - canvaswidth / 2) * FRACUNIT;
++	fixed_t y = (dy - canvasheight / 2) * FRACUNIT;
++	INT32 sx = (FixedMul(x, ca) + FixedMul(y, sa) + xcenter) >> FRACBITS;
++	INT32 sy = (-FixedMul(x, sa) + FixedMul(y, ca) + ycenter) >> FRACBITS;
++	if (sx < 0 || sy < 0 || sx >= patch->width || sy >= patch->height)
++		return NULL;
++	return Picture_GetPatchPixel(patch, PICFMT_PATCH, sx, sy, flip);
++}
++
++#ifdef HWRENDER
++static patch_t *rotatedbrightmaps;
++static patch_t *invalidatedbrightmaps;
++static boolean freeingbrightmaps;
++
++void Patch_FreeInvalidatedBrightmaps(void)
++{
++	if (freeingbrightmaps)
++		return;
++	freeingbrightmaps = true;
++	while (invalidatedbrightmaps)
++	{
++		patch_t *entry = invalidatedbrightmaps;
++		invalidatedbrightmaps = entry->brightnext;
++		entry->brightnext = NULL;
++		Patch_Free(entry);
++	}
++	freeingbrightmaps = false;
++}
++
++void Patch_InvalidateRotatedBrightmaps(patch_t *patch)
++{
++	patch_t **link = &invalidatedbrightmaps;
++	// A queued companion may itself be visited by the ongoing tag purge.
++	while (*link)
++	{
++		if (*link == patch)
++		{
++			*link = patch->brightnext;
++			patch->brightnext = NULL;
++			break;
++		}
++		link = &(*link)->brightnext;
++	}
++	link = &rotatedbrightmaps;
++	while (*link)
++	{
++		patch_t *entry = *link;
++		if (entry == patch || entry->brightowner == patch || entry->brightsource == patch)
++		{
++			patch_t **ownerlink = &entry->brightowner->brightmaps;
++			while (*ownerlink != entry)
++				ownerlink = &(*ownerlink)->brightownernext;
++			*ownerlink = entry->brightownernext;
++			*link = entry->brightnext;
++			entry->brightownernext = entry->brightowner = entry->brightsource = NULL;
++			entry->brightnext = NULL;
++			if (entry != patch)
++			{
++				// Reclaim after the outer free/tag walk, never under its iterator.
++				entry->brightnext = invalidatedbrightmaps;
++				invalidatedbrightmaps = entry;
++			}
++		}
++		else
++			link = &entry->brightnext;
++	}
++}
++
++patch_t *Patch_GetRotatedBrightmap(patch_t *rotated, patch_t *brightmap)
++{
++	patch_t *entry;
++	patchrotation_t *transform = &rotated->rotation;
++	UINT16 *pixels;
++	INT32 x, y;
++	if (!brightmap || !transform->valid || brightmap->width != transform->width
++		|| brightmap->height != transform->height)
++		return NULL;
++	for (entry = rotated->brightmaps; entry; entry = entry->brightownernext)
++		if (entry->brightsource == brightmap)
++			return entry;
++
++	pixels = Z_Calloc(rotated->width * rotated->height * sizeof(UINT16), PU_STATIC, NULL);
++	for (y = 0; y < rotated->height; ++y)
++		for (x = 0; x < rotated->width; ++x)
++		{
++			UINT8 *pixel = (UINT8 *)RotatedPatch_Sample(brightmap, x + transform->cropx, y + transform->cropy,
++				transform->canvaswidth, transform->canvasheight, transform->ca, transform->sa,
++				transform->xcenter, transform->ycenter, transform->flip ? PICFLAGS_XFLIP : 0);
++			if (pixel)
++				pixels[y * rotated->width + x] = 0xFF00 | *pixel;
++		}
++	entry = (patch_t *)Picture_Convert(PICFMT_FLAT16, pixels, PICFMT_PATCH, 0, NULL,
++		rotated->width, rotated->height, 0, 0, 0);
++	Z_Free(pixels);
++	Z_ChangeTag(entry, PU_PATCH_ROTATED);
++	entry->leftoffset = rotated->leftoffset;
++	entry->topoffset = rotated->topoffset;
++	entry->brightownernext = rotated->brightmaps;
++	rotated->brightmaps = entry;
++	entry->brightowner = rotated;
++	entry->brightsource = brightmap;
++	entry->brightnext = rotatedbrightmaps;
++	rotatedbrightmaps = entry;
++	return entry;
++}
++#endif
++
+ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle, INT32 xpivot, INT32 ypivot, boolean flip)
+ {
+ 	patch_t *rotated;
+@@ -324,11 +437,10 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
+ 	fixed_t sa = rollsinang[angle];
+ 	fixed_t xcenter, ycenter;
+ 	INT32 idx = angle;
+-	INT32 x, y;
+-	INT32 sx, sy;
+ 	INT32 dx, dy;
+ 	INT32 ox, oy;
+ 	INT32 minx, miny, maxx, maxy;
++	INT32 cropx = 0, cropy = 0;
+ 
+ 	// Don't cache angle = 0
+ 	if (angle < 1 || angle >= ROTANGLES)
+@@ -371,29 +483,15 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
+ 	{
+ 		for (dx = 0; dx < newwidth; dx++)
+ 		{
+-			x = (dx - (newwidth / 2)) * FRACUNIT;
+-			y = (dy - (newheight / 2)) * FRACUNIT;
+-			sx = FixedMul(x, ca) + FixedMul(y, sa) + xcenter;
+-			sy = -FixedMul(x, sa) + FixedMul(y, ca) + ycenter;
+-
+-			sx >>= FRACBITS;
+-			sy >>= FRACBITS;
+-
+-			if (sx >= 0 && sy >= 0 && sx < width && sy < height)
++			UINT8 *input = (UINT8 *)RotatedPatch_Sample(patch, dx, dy, newwidth, newheight,
++				ca, sa, xcenter, ycenter, bflip);
++			if (input != NULL)
+ 			{
+-				void *input = Picture_GetPatchPixel(patch, PICFMT_PATCH, sx, sy, bflip);
+-				if (input != NULL)
+-				{
+-					rawdst[(dy * newwidth) + dx] = (0xFF00 | (*(UINT8 *)input));
+-					if (dx < minx)
+-						minx = dx;
+-					if (dy < miny)
+-						miny = dy;
+-					if (dx > maxx)
+-						maxx = dx;
+-					if (dy > maxy)
+-						maxy = dy;
+-				}
++				rawdst[(dy * newwidth) + dx] = (0xFF00 | *input);
++				if (dx < minx) minx = dx;
++				if (dy < miny) miny = dy;
++				if (dx > maxx) maxx = dx;
++				if (dy > maxy) maxy = dy;
+ 			}
+ 		}
+ 	}
+@@ -421,6 +519,8 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
+ 			src += newwidth;
+ 		}
+ 
++		cropx = minx;
++		cropy = miny;
+ 		ox -= minx;
+ 		oy -= miny;
+ 
+@@ -442,5 +542,22 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
+ 
+ 	rotated->leftoffset = ox;
+ 	rotated->topoffset = oy;
++#ifdef HWRENDER
++	rotated->rotation.ca = ca;
++	rotated->rotation.sa = sa;
++	rotated->rotation.xcenter = xcenter;
++	rotated->rotation.ycenter = ycenter;
++	rotated->rotation.width = patch->width;
++	rotated->rotation.height = patch->height;
++	rotated->rotation.canvaswidth = newwidth;
++	rotated->rotation.canvasheight = newheight;
++	rotated->rotation.cropx = cropx;
++	rotated->rotation.cropy = cropy;
++	rotated->rotation.flip = flip;
++	rotated->rotation.valid = true;
++#else
++	(void)cropx;
++	(void)cropy;
++#endif
+ }
+ #endif
 diff --git a/src/r_plane.cpp b/src/r_plane.cpp
 index 36f9b6b..52d0309 100644
 --- a/src/r_plane.cpp
@@ -27924,7 +28246,7 @@ index 7e608da..175c281 100644
  	ps_numdrawnodes++;
  	return node;
 diff --git a/src/r_things.h b/src/r_things.h
-index bf1e28b0..6de17b2 100644
+index bf1e28b..6de17b2 100644
 --- a/src/r_things.h
 +++ b/src/r_things.h
 @@ -64,6 +64,8 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t

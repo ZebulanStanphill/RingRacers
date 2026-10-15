@@ -28,6 +28,10 @@ if ($LASTEXITCODE -ne 0) { throw "Direct3D brightmap test compilation failed" }
 if ($LASTEXITCODE -ne 0) { throw "Production Direct3D brightmap shader regression failed" }
 & $Brightmap $Engine --negative-control
 if ($LASTEXITCODE -ne 0) { throw "Surface-colormap brightmap shader was not rejected" }
+& $Brightmap $Engine --negative-encore-missing
+if ($LASTEXITCODE -ne 0) { throw "Bright-only missing Encore remap was not rejected" }
+& $Brightmap $Engine --negative-encore-double
+if ($LASTEXITCODE -ne 0) { throw "Bright-only repeated Encore remap was not rejected" }
 
 # Generate the probe from the production driver; only the surrounding engine
 # state is supplied by the harness. GPU copies/readback use real Direct3D.

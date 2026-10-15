@@ -1,0 +1,169 @@
+// Production sprite remap selection, mapped cache, column conversion and light-table conversion.
+// Allocation/GPU mocks deliberately leave palette translation to the extracted engine code.
+#include <array>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+#include "r_things.h"
+#include "r_state.h"
+#include "r_draw.h"
+#include "r_skins.h"
+#include "v_video.h"
+#include "z_zone.h"
+#include "hardware/hw_glob.h"
+#include "hardware/hw_drv.h"
+
+static std::array<lighttable_t, COLORMAP_REMAPOFFSET + 256> maps{};
+lighttable_t *colormaps = maps.data();
+UINT8 *encoremap = nullptr;
+static RGBA_t mapPalette[256];
+RGBA_t *pLocalPalette = nullptr;
+static RGBA_t localPalette[256];
+static bool paletteRendering;
+boolean HWR_ShouldUsePaletteRendering() { return paletteRendering; }
+@@TEXTURE_PALETTE@@
+boolean R_CanShowSkinInDemo(INT32) { assert(false); return false; }
+boolean R_ThingIsFlashing(mobj_t *) { return false; }
+static UINT8 *R_GetTranslationColormap(INT32, int, UINT8) { assert(false); return nullptr; }
+static const UINT8 *select(mobj_t *thing) {
+    gl_vissprite_t result{}, *vis = &result; vis->mobj = thing;
+@@SELECT@@
+    return vis->colormap;
+}
+static const UINT8 *softwareFullbright(mobj_t *thing) {
+    gl_vissprite_t result{}, *vis = &result; vis->mobj = thing;
+    struct { lighttable_t *colormap, *fullbright, *lightmap; } dc{colormaps, nullptr, nullptr};
+@@SOFTWARE_FULLBRIGHT@@
+    return dc.fullbright;
+}
+UINT8 ASTBlendPaletteIndexes(UINT8, UINT8, int, UINT8) { std::abort(); }
+UINT32 ASTBlendTexturePixel(RGBA_t, RGBA_t, int, UINT8) { std::abort(); }
+void I_Error(const char *, ...) { std::abort(); }
+@@DRAW_COLUMN@@
+@@CONVERT_LIGHT_TABLE@@
+
+static std::vector<void *> allocations;
+static std::map<GLMipmap_t *, std::vector<UINT8>> pixels;
+static GLPatch_t hardware{};
+static GLMipmap_t base{};
+static GLMipmap_t *bound;
+static unsigned makes, uploads, updates;
+static unsigned bytesPerPixel = 4;
+void *Patch_CreateGL(patch_t *patch) {
+    hardware.mipmap = &base; patch->hardware = &hardware; return &hardware;
+}
+static void HWR_MakePatch(patch_t *patch, GLPatch_t *, GLMipmap_t *mip, boolean bitmap) {
+    assert(bitmap && patch->width == 256 && patch->height == 1); ++makes;
+    auto &out = pixels[mip]; out.assign(256 * bytesPerPixel, 0);
+    mip->data = out.data();
+    for(unsigned index = 0; index < 256; ++index) {
+        // One opaque texel per post, including every index; no chroma-key flags.
+        const UINT8 post[] = {0, 1, 0, static_cast<UINT8>(index), 0, 0xff};
+        HWR_DrawColumnInCache(reinterpret_cast<const column_t *>(post),
+            out.data() + index * bytesPerPixel, mip, 1, bytesPerPixel,
+            FRACUNIT, FRACUNIT, nullptr, 1, bytesPerPixel);
+    }
+}
+static void upload(GLMipmap_t *mip) { ++uploads; mip->downloaded = 1; }
+static void update(GLMipmap_t *mip) { assert(mip->downloaded); ++updates; }
+hwdriver_s hwdriver{};
+static void HWR_SetCurrentTexture(GLMipmap_t *mip) { bound = mip; }
+#undef Z_ChangeTag
+#define Z_ChangeTag(p,t) ((void)(p), assert((t) == PU_HWRCACHE_UNLOCKED))
+#undef Z_Calloc
+#define Z_Calloc(s,t,u) allocate(s,t,u)
+static void *allocate(size_t size, INT32 tag, void *user) {
+    assert(tag == PU_HWRPATCHCOLMIPMAP && !user);
+    auto *p = std::calloc(1, size); assert(p); allocations.push_back(p); return p;
+}
+#define M_Memcpy std::memcpy
+@@LOAD_PATCH@@
+@@UPDATE_PATCH@@
+@@GET_PATCH@@
+@@GET_MAPPED_PATCH@@
+
+static bool same(RGBA_t a, RGBA_t b) { return a.rgba == b.rgba; }
+static unsigned remap(unsigned index, unsigned shift) { return (index + shift) & 255; }
+static void fillRemap(unsigned shift) {
+    for(unsigned i = 0; i < 256; ++i) maps[COLORMAP_REMAPOFFSET + i] = remap(i, shift);
+}
+static void clear(patch_t &patch) {
+    for(auto *mip = base.nextcolormap; mip;) {
+        auto *next = mip->nextcolormap; std::free(mip); mip = next;
+    }
+    for(void *p : allocations) std::free(p);
+    allocations.clear(); pixels.clear(); base = {}; hardware = {}; patch.hardware = nullptr;
+    bound = nullptr; makes = uploads = updates = 0;
+}
+int main() {
+    hwdriver.pfnSetTexture = upload; hwdriver.pfnUpdateTexture = update;
+    pLocalPalette = localPalette;
+    for(unsigned i = 0; i < 256; ++i) {
+        maps[i] = i;
+        mapPalette[i].s = {static_cast<UINT8>(i), static_cast<UINT8>(255-i), static_cast<UINT8>(i^85), 255};
+        localPalette[i].s = {static_cast<UINT8>(i^173), static_cast<UINT8>(i), static_cast<UINT8>(255-i), 255};
+    }
+    std::array<lighttable_t, 256 * LIGHTLEVELS> tinted{};
+    for(unsigned row = 0; row < LIGHTLEVELS; ++row)
+        for(unsigned i = 0; i < 256; ++i) tinted[row*256+i] = remap(i, row + 19);
+    std::array<RGBA_t, 256 * (LIGHTLEVELS + 1)> lighttable{};
+    HWR_ConvertLightTable(tinted.data(), lighttable.data());
+    patch_t patch{}; patch.width = 256; patch.height = 1;
+    mobj_t arrow{}; arrow.sprite = SPR_SYM0;
+    unsigned checks = 0, missedMapRejected = 0, doubleMapRejected = 0;
+    for(bool palette : {false, true}) for(unsigned bpp : {1u, 2u, 3u, 4u}) {
+        paletteRendering = palette; bytesPerPixel = bpp;
+        clear(patch); fillRemap(73);
+        GLMipmap_t *mapped = nullptr;
+        // Normal -> Encore -> exempt -> cached Encore -> in-place remap change -> normal.
+        for(unsigned scenario = 0; scenario < 6; ++scenario) {
+            const bool encore = scenario != 0 && scenario != 5;
+            const bool exempt = scenario == 2;
+            encoremap = encore ? maps.data() + COLORMAP_REMAPOFFSET : nullptr;
+            arrow.flags = exempt ? MF_DONTENCOREMAP : 0;
+            if(scenario == 4) fillRemap(91);
+            const unsigned shift = encore && !exempt ? (scenario == 4 ? 91 : 73) : 0;
+            const auto *selected = select(&arrow);
+            assert(selected == colormaps + (shift ? COLORMAP_REMAPOFFSET : 0));
+            const auto *software = softwareFullbright(&arrow);
+            const unsigned beforeMakes = makes, beforeUpdates = updates;
+            HWR_GetMappedPatch(&patch, selected);
+            assert(bound && bound->data);
+            if(scenario == 1) { mapped = bound; assert(mapped != &base && makes == beforeMakes + 1); }
+            if(scenario == 2 || scenario == 5) assert(bound == &base && makes == beforeMakes);
+            if(scenario == 3) assert(bound == mapped && makes == beforeMakes && updates == beforeUpdates);
+            if(scenario == 4) assert(bound == mapped && makes == beforeMakes + 1 && updates == beforeUpdates + 1);
+            for(unsigned i = 0; i < 256; ++i) {
+                const unsigned expectedIndex = remap(i, shift);
+                assert(software[i] == expectedIndex); // Independent Software fullbright expectation.
+                const auto *pixel = pixels.at(bound).data() + i*bpp;
+                RGBA_t converted = HWR_GetTexturePalette()[expectedIndex];
+                const bool matches = bpp < 3 ? pixel[0] == expectedIndex && (bpp == 1 || pixel[1] == 255)
+                    : std::memcmp(pixel, &converted, bpp) == 0;
+                if(!matches) {
+                    std::fprintf(stderr, "Production column remap mismatch: scenario %u, palette %d, bpp %u, index %u\n",
+                        scenario, palette ? 1 : 0, bpp, i);
+                    clear(patch);
+                    return 1;
+                }
+                // Brightmap is a mask: row 32 consumes the ALREADY translated base index.
+                assert(same(lighttable[LIGHTLEVELS*256+expectedIndex], mapPalette[software[i]]));
+                assert(!same(lighttable[7*256+expectedIndex], mapPalette[software[i]]));
+                if(shift) {
+                    missedMapRejected += !same(lighttable[LIGHTLEVELS*256+i], mapPalette[software[i]]);
+                    doubleMapRejected += !same(lighttable[LIGHTLEVELS*256+remap(expectedIndex, shift)], mapPalette[software[i]]);
+                }
+                ++checks;
+            }
+        }
+        assert(uploads == 2 && updates == 1);
+    }
+    clear(patch);
+    assert(missedMapRejected == 3*2*4*256 && doubleMapRejected == missedMapRejected);
+    std::printf("Encore brightmaps: %u palette/column checks; %u missing/double-remap controls each rejected\n",
+        checks, missedMapRejected);
+}

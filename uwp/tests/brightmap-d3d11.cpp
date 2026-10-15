@@ -1,5 +1,5 @@
 // Exercise the actual SM4 palette shader through Direct3D's rasterizer. Brightmapped
-// palette texels must use the base colormap's full-bright row (32), while other texels
+// palette texels, including pretranslated Encore colors, must use the base colormap's full-bright row (32), while other texels
 // use the surface colormap row chosen by R_DoomColormap at the rasterized depth.
 // WARP makes the test independent of the runner's GPU.
 #define WIN32_LEAN_AND_MEAN
@@ -50,12 +50,47 @@ int ExpectedRow(float light,float z) {
     return (int)std::clamp(std::floor(DoomColormap(light,z)),0.f,31.f);
 }
 
+// Independent smooth-rendering expectation, with a colored surface tint and fade.
+// Fullbright mask pixels retain the pretranslated input RGB under both effects.
+Pixel SmoothColor(Pixel color,bool bright,float lighting,float z) {
+    if(bright)return color;
+    const float tint[]={.15f,.8f,.25f},fade[]={.1f,.2f,.45f};
+    float brightness=std::sqrt(color.r*color.r+color.g*color.g+color.b*color.b);
+    const float strength=.6f;
+    color.r=std::clamp(brightness*tint[0]*strength+color.r*(1-strength),0.f,1.f);
+    color.g=std::clamp(brightness*tint[1]*strength+color.g*(1-strength),0.f,1.f);
+    color.b=std::clamp(brightness*tint[2]*strength+color.b*(1-strength),0.f,1.f);
+    brightness=std::sqrt(color.r*color.r+color.g*color.g+color.b*color.b);
+    float fogBrightness=std::sqrt(fade[0]*fade[0]+fade[1]*fade[1]+fade[2]*fade[2]);
+    float amount=brightness<fogBrightness ? std::fabs(*std::max_element(fade,fade+3)-std::min({color.r,color.g,color.b}))
+        : std::fabs(std::max({color.r,color.g,color.b})-*std::min_element(fade,fade+3));
+    amount*=std::clamp(std::floor(DoomColormap(lighting,z))+.5f,0.f,31.f)/32.f*.3f;
+    auto channel=[&](float value,float target) {
+        if(std::fabs(value-target)<=amount)return target;
+        return value<target ? value+amount : value-amount;
+    };
+    return {channel(color.r,fade[0]),channel(color.g,fade[1]),channel(color.b,fade[2]),1.f};
+}
+
 int main(int argc,char **argv) {
-    Require(argc==2 || argc==3,"Pass the patched engine directory and optional --negative-control");
+    Require(argc==2 || argc==3,"Pass the patched engine directory and optional negative control");
     std::ifstream file(std::string(argv[1])+"/src/hardware/r_d3d11/shaders.hlsl");
     Require((bool)file,"Cannot read production shaders");
     std::string source((std::istreambuf_iterator<char>(file)),{});
     bool negative=argc==3 && std::string(argv[2])=="--negative-control";
+    bool missingEncore=argc==3 && std::string(argv[2])=="--negative-encore-missing";
+    bool doubleEncore=argc==3 && std::string(argv[2])=="--negative-encore-double";
+    Require(argc==2 || negative || missingEncore || doubleEncore,"Unknown negative control");
+    if(missingEncore || doubleEncore) {
+        // Simulate a bright-only loss/repetition of pretranslation in the actual shader.
+        // The control texture agrees with t_tex outside eligible Encore draws.
+        const std::string declaration="Texture2D t_tex : register(t0);";
+        auto resource=source.find(declaration);Require(resource!=std::string::npos,"Cannot insert Encore control resource");
+        source.insert(resource,"Texture2D t_encore_control : register(t15);\n");
+        auto function=source.find("float4 PSSoftware(VSOut i)");Require(function!=std::string::npos,"Cannot find sprite shader");
+        auto at=source.find("\tfloat light_gain",function);Require(at!=std::string::npos,"Cannot inject Encore control");
+        source.insert(at,"\tif (brightmap_mix > 0.0) { texel = t_encore_control.Sample(s_tex, i.uv); base_color = texel * u_poly_color; }\n");
+    }
     if(negative) {
         // The old palette path ignored the brightmap and used the surface colormap's row.
         const std::string good="brightmap_mix > 0.0 ? 32 : ";
@@ -98,11 +133,13 @@ int main(int argc,char **argv) {
     float identity[16]={};for(int i=0;i<4;++i)identity[i*5]=1;
     float projection[16]={};projection[0]=projection[5]=projection[11]=1;
     const float white[4]={1,1,1,1},clip[4]={0,0,0,1},fadeEnd=31;
+    const float tint[4]={.15f,.8f,.25f,.04f},fade[4]={.1f,.2f,.45f,.03f};
     int palette=1,alphaFunc=0;
     put("u_palette",&palette,sizeof palette);put("u_alpha_func",&alphaFunc,sizeof alphaFunc);
     put("u_projection",projection,sizeof projection);put("u_modelview",identity,sizeof identity);
     put("u_poly_color",white,sizeof white);put("u_color",white,sizeof white);
     put("u_clip_plane",clip,sizeof clip);put("u_fade_end",&fadeEnd,sizeof fadeEnd);
+    put("u_tint_color",tint,sizeof tint);put("u_fade_color",fade,sizeof fade);
     const UINT width=16,height=8;
     auto texture=[&](UINT w,UINT h,DXGI_FORMAT format,UINT bind,const void *data,UINT pitch) {
         D3D11_TEXTURE2D_DESC desc={};desc.Width=w;desc.Height=h;desc.MipLevels=desc.ArraySize=1;
@@ -123,6 +160,7 @@ int main(int argc,char **argv) {
     }
     const UINT pitch=static_cast<UINT>(width*sizeof(Pixel));
     auto texture2D=texture(width,height,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,texels.data(),pitch);
+    auto controlTexture=texture(width,height,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,texels.data(),pitch);
     auto brightTexture=texture(width,height,DXGI_FORMAT_R32G32B32A32_FLOAT,D3D11_BIND_SHADER_RESOURCE,brightmaps.data(),pitch);
     // Light table: rows 0-31 are (index, row/32, .5); row 32 is the full-bright row (index, 1, 1).
     std::vector<Pixel> table(256*33);
@@ -144,6 +182,8 @@ int main(int argc,char **argv) {
     ComPtr<ID3D11Texture2D> staging;Check(device->CreateTexture2D(&stagingDesc,nullptr,&staging));
     auto view=[&](ID3D11Texture2D *t) {ComPtr<ID3D11ShaderResourceView> v;Check(device->CreateShaderResourceView(t,nullptr,&v));return v;};
     auto texView=view(texture2D.Get()),brightView=view(brightTexture.Get()),tableView=view(lighttable.Get());
+    auto controlView=view(controlTexture.Get());
+    ID3D11ShaderResourceView *controlResource=controlView.Get();context->PSSetShaderResources(15,1,&controlResource);
     ComPtr<ID3D11ShaderResourceView> lookupView;Check(device->CreateShaderResourceView(paletteLookup.Get(),nullptr,&lookupView));
     ID3D11ShaderResourceView *surfaces[]={texView.Get(),brightView.Get()};context->PSSetShaderResources(0,2,surfaces);
     ID3D11ShaderResourceView *paletteResources[]={lookupView.Get(),tableView.Get()};context->PSSetShaderResources(2,2,paletteResources);
@@ -176,8 +216,23 @@ int main(int argc,char **argv) {
     const std::array<float,7> depths={{16.f,48.f,64.f,96.f,128.f,180.f,256.f}};
     const float sentinel[]={-1,-1,-1,-1};
     const float tolerance=1.f/512.f;
-    int brightPixels=0,surfacePixels=0,mismatches=0;
-    for(float lighting:lightings) {
+    int brightPixels=0,surfacePixels=0,mismatches=0,encoreBrightMismatches[2]={},unexpectedMismatches=0;
+    // A four-cycle detects both missing and repeated remapping (unlike an involution).
+    // Production cache pretranslation is verified separately by the native harness.
+    for(int mode=0;mode<3;++mode) for(int paletteMode=0;paletteMode<2;++paletteMode) {
+      palette=paletteMode;put("u_palette",&palette,sizeof palette);
+      for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
+        UINT k=(x+2*y)&3, translated=(k+(mode==1 ? 1 : 0))&3;
+        texels[y*width+x]={cells[translated][0]/63.f,cells[translated][1]/63.f,cells[translated][2]/63.f,1.f};
+      }
+      context->UpdateSubresource(texture2D.Get(),0,nullptr,texels.data(),pitch,0);
+      auto controlTexels=texels;
+      if(mode==1) for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
+        UINT k=((x+2*y)+(doubleEncore ? 2 : 0))&3;
+        controlTexels[y*width+x]={cells[k][0]/63.f,cells[k][1]/63.f,cells[k][2]/63.f,1.f};
+      }
+      context->UpdateSubresource(controlTexture.Get(),0,nullptr,controlTexels.data(),pitch,0);
+      for(float lighting:lightings) {
         put("u_lighting",&lighting,sizeof lighting);
         for(float depth:depths) {
             Vertex triangle[]={{-depth,-depth,depth,0.f,1.f},{-depth,3*depth,depth,0.f,-1.f},{3*depth,-depth,depth,2.f,1.f}};
@@ -195,10 +250,12 @@ int main(int argc,char **argv) {
             for(UINT y=0;y<height;++y)for(UINT x=0;x<width;++x) {
                 size_t i=y*width+x;
                 UINT k=(x+2*y)&3;
-                int index=paletteIndices[k];
+                int index=paletteIndices[(k+(mode==1 ? 1 : 0))&3];
                 bool bright=(((x>>2)+y)&1)!=0;
                 int row=bright ? 32 : ExpectedRow(lighting,probed[i].g);
-                Pixel expected=table[static_cast<size_t>(row*256+index)];
+                Pixel expected=paletteMode ? table[static_cast<size_t>(row*256+index)]
+                    : SmoothColor(texels[i],bright,lighting,probed[i].g);
+
                 Pixel p=actual[i];
                 bool match=std::fabs(p.r-expected.r)<tolerance && std::fabs(p.g-expected.g)<tolerance &&
                     std::fabs(p.b-expected.b)<tolerance && std::fabs(p.a-1.f)<tolerance;
@@ -206,13 +263,21 @@ int main(int argc,char **argv) {
                     if(!mismatches)fprintf(stderr,"First mismatch at (%u,%u), brightmap %d, lighting %g, depth %g: expected row %d (%g,%g,%g), got (%g,%g,%g,%g)\n",
                         x,y,bright?1:0,lighting,depth,row,expected.r,expected.g,expected.b,p.r,p.g,p.b,p.a);
                     ++mismatches;
+                    if(mode==1 && bright)++encoreBrightMismatches[paletteMode];else ++unexpectedMismatches;
                 }
                 if(bright)++brightPixels;else ++surfacePixels;
             }
         }
     }
-    if(negative)Require(mismatches>0,"Old surface-colormap brightmap row unexpectedly passed");
-    else Require(mismatches==0,"Production palette shader used the wrong brightmap light-table row");
-    printf("SM4 D3D11 WARP: %d brightmap pixels on row 32, %d surface-colormap pixels verified; %d mismatches%s\n",
-        brightPixels,surfacePixels,mismatches,negative?" (old brightmap row correctly rejected)":"");
+    }
+    if(missingEncore || doubleEncore) {
+        const int expectedMismatches=static_cast<int>(lightings.size()*depths.size()*width*height/2);
+        for(int count:encoreBrightMismatches)
+            Require(count==expectedMismatches,"Encore bright-only remap control must reject every bright pixel in both palette modes");
+        Require(unexpectedMismatches==0,"Encore control corrupted normal, exempt or dark pixels");
+    }
+    else if(negative)Require(mismatches>0,"Old surface-colormap brightmap row unexpectedly passed");
+    else Require(mismatches==0,"Production shader changed the expected remapped bright or surface color");
+    printf("SM4 D3D11 WARP: normal/Encore/exempt, palette on/off: %d bright and %d dark pixels; %d mismatches%s\n",
+        brightPixels,surfacePixels,mismatches,(negative || missingEncore || doubleEncore)?" (control correctly rejected)":"");
 }
