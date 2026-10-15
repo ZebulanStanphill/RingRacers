@@ -294,9 +294,10 @@ a missing or mismatched optimized render-target clear value: the runtime guarant
 the requested clear color, which the pixel oracle checks. It only affects clear
 performance. Scenes cover clears, blends, depth, indexed
 triangles, 2D lines and a tiny-ring stress test, and negative controls must fail. Each
-negative control is its own process; the runner keeps one per core going at once, since
-each replays the scenes before its own under GPU-based validation, and prints each one's
-output as it finishes.
+negative control is its own process that replays the scenes before its own with the debug
+layer on but GPU-based validation off, since it runs the same GPU work as the full run and
+only changes what its oracle expects; the runner keeps one per core going at once and
+prints each one's output as it finishes.
 New texture, model and sky scenes cover texture creation, point sampling, reuploads,
 delete-and-recreate, mip chains, sky fan-strip rebuilds, and model buffered/lerped
 UV fallback. Their negative controls are `texture`, `texture-update`,

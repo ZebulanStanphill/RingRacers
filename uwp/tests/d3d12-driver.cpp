@@ -146,8 +146,10 @@ int main(int argc,char **argv) {
     else if(argc!=1) return 2;
     ComPtr<ID3D12Debug> debug; ComPtr<ID3D12Debug1> gbv;
     if(FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))) || FAILED(debug.As(&gbv))) { fputs("D3D12 debug layer/GBV unavailable; install Windows Graphics Tools\n",stderr); return 77; }
-    debug->EnableDebugLayer(); gbv->SetEnableGPUBasedValidation(TRUE);
-    puts("D3D12 debug layer and GPU-based validation enabled");
+    // A negative control replays the same GPU work as the full run up to its scene and only changes what the oracle
+    // expects, so GPU-based validation, which makes WARP several times slower, would just repeat the full run's checks.
+    debug->EnableDebugLayer(); if(negative.empty()) gbv->SetEnableGPUBasedValidation(TRUE);
+    puts(negative.empty() ? "D3D12 debug layer and GPU-based validation enabled" : "D3D12 debug layer enabled (negative control: GPU-based validation skipped)");
     try {
         Core_ForceWarp(true); D3D12_SetRingBytesForTest(1024,512,2048);
         if(!function<boolean (*)()>("Init")() || !D3D12_Surface(W,H)) throw std::runtime_error("Init/Surface failed");

@@ -54,8 +54,9 @@ if ($LASTEXITCODE -eq 77) {
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
 # Each oracle must prove it rejects incorrect pixels. Failure is the required outcome.
-# Every control is its own process that replays the scenes before its own under GPU-based validation, which is
-# CPU work on WARP, so they run several at a time (one per core); the harness touches no files, so they don't collide.
+# Every control is its own process that replays the scenes before its own with the debug layer but without
+# GPU-based validation (the full run above validates the same work), and they run several at a time (one per
+# core); the harness touches no files, so they don't collide.
 $Scenes = @('startup-present','clear','readrect','surface-probe','opaque','translucent','additive','subtract','reverse','multiply','environment','masked','invert','fog','fog-remap','fog-palette','water-surface','water-refraction','water-group','water-group-counts','capture-mixed','capture-recreate','capture-skipped','depth','nodepth','noocclude','portal-supported','portal-aperture','portal-nested','portal-restore','portal-depth','portal-plane','indexed','line','rings','growth','shutdown','custom-shader','custom-shader-clean','custom-shader-invalid','custom-shader-nocustom','texture-guard','texture','texture-update','texture-reuse','mips','palette','palette-post','light-table-update','light-table-update-post','light-table-clear','screen-palette','palette-off','sky','model-buffered','model-lerped','model-fallback','screen-copy','final-screen','screen-flush','wipe-blend','wipe-mode','wipe-wiggle','wipe-fallback','wipe-after','postimg-identity','postimg-shift','fade-map-off','fade-map','fade-map-row','fade-map-clamp','fade-map-remake','fade-map-after','fade-map-reuse','resize-fade-map','resize-screen')
 $Workers = [Math]::Max(1, [Environment]::ProcessorCount)
 $Pending = [System.Collections.Generic.List[object]]::new()
