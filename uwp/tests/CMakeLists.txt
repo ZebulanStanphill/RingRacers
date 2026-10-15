@@ -19,7 +19,7 @@ file(GLOB templates CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/templates/*.i
 file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/addons/shader-smoke/source/*")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
-    ${templates} source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
+    ${templates} fixtures/sprite-rotation-baseline.c source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
     "${RR_SOURCE_DIR}/src/i_tcp.c"
     "${RR_SOURCE_DIR}/src/i_tcp_detail.h"
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
@@ -44,6 +44,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/hw_clip.c"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/r_things.cpp"
+    "${RR_SOURCE_DIR}/src/r_patchrotation.c"
+    "${RR_SOURCE_DIR}/src/r_patch.cpp"
+    "${RR_SOURCE_DIR}/src/r_picformats.c"
     "${RR_SOURCE_DIR}/src/p_mobj.c"
     "${RR_SOURCE_DIR}/src/p_user.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
@@ -109,6 +112,9 @@ regression(horizon_visibility horizon HWRENDER)
 regression(sky_surface_trace sky_trace _UWP HWRENDER)
 regression(surface_pixel_probe surface_probe _UWP HWRENDER)
 regression(sprite_brightmap sprite_brightmap _UWP HWRENDER HWPRECIP)
+regression(sprite_brightmap_negative_drop sprite_brightmap _UWP HWRENDER HWPRECIP TEST_BRIGHT_DROP)
+regression(sprite_brightmap_negative_transform sprite_brightmap _UWP HWRENDER HWPRECIP TEST_BRIGHT_TRANSFORM)
+set_tests_properties(sprite_brightmap_negative_drop sprite_brightmap_negative_transform PROPERTIES WILL_FAIL TRUE)
 regression(encore_brightmap encore_brightmap _UWP HWRENDER)
 foreach(control missing double)
     regression(encore_brightmap_negative_${control} encore_brightmap_negative_${control} _UWP HWRENDER)

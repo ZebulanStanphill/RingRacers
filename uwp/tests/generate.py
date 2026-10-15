@@ -273,7 +273,40 @@ def generate(engine, output):
                 "texel = mipmap->colormap->data[mipmap->colormap->data[texel]];")
         render(templates / "encore_brightmap.cpp.in", parts, output / ("encore_brightmap" + suffix + ".cpp"))
 
+    rotation = Source(engine / "src/r_patchrotation.c")
+    patch_source = Source(engine / "src/r_patch.cpp")
+    pictures = Source(engine / "src/r_picformats.c")
+    # C allocation assignments gain explicit casts only for the C++ harness.
+    def cpp_alloc(code):
+        for lhs, typ in [("rotsprite", "rotsprite_t"), ("rotsprite->patches", "void *"),
+                         ("rawdst", "UINT16"), ("rawconv", "UINT16"), ("pixels", "UINT16"),
+                         ("imgbuf", "UINT8"), ("img", "UINT8")]:
+            code = code.replace(lhs + " = Z_", lhs + " = (" + typ + " *)Z_")
+        code = code.replace("? PICFLAGS_XFLIP : 0", "? PICFLAGS_XFLIP : PICFLAGS_NONE")
+        code = code.replace(", 0, 0, 0);", ", 0, 0, PICFLAGS_NONE);")
+        code = code.replace("patch = W_CachePatchNum", "patch = (patch_t *)W_CachePatchNum")
+        code = code.replace("return rotsprite->patches[idx];", "return (patch_t *)rotsprite->patches[idx];")
+        return code
+    rotation_parts = "\n".join(cpp_alloc(rotation.function(name)) for name in [
+        "RotatedPatch_Create", "RotatedPatch_CalculateDimensions", "RotatedPatch_Sample",
+        "Patch_FreeInvalidatedBrightmaps", "Patch_InvalidateRotatedBrightmaps",
+        "Patch_GetRotatedBrightmap", "RotatedPatch_DoRotation", "Patch_GetRotatedSprite"])
+    rotation_parts = rotation_parts.replace("x + transform->cropx, y + transform->cropy,",
+        "x + transform->cropx\n#ifdef TEST_BRIGHT_TRANSFORM\n + 1\n#endif\n, y + transform->cropy,")
+    picture_parts = "\n".join(cpp_alloc(pictures.function(name)) for name in [
+        "Picture_FormatBPP", "Picture_IsInternalPatchFormat", "Picture_IsDoomPatchFormat",
+        "Picture_IsPatchFormat", "Picture_IsFlatFormat", "Picture_GetPatchPixel",
+        "Picture_PatchConvert", "Picture_FlatConvert", "Picture_Convert"])
+    free_parts = "\n".join(patch_source.function(name) for name in [
+        "Patch_Create", "Patch_FreeData", "Patch_Free", "Patch_FreeTagsCallback", "Patch_FreeTags"])
     sprite_parts = {
+        "ROTATION": rotation_parts,
+        "BASELINE": cpp_alloc(Source(Path(__file__).parent / "fixtures/sprite-rotation-baseline.c").section(
+            "static void Baseline_CalculateDimensions", "\n// END")),
+        "PICTURES": picture_parts,
+        "PATCHES": free_parts,
+        "TEXTURE_COORDS": function_section(hardware, "HWR_DrawSprite",
+            "\tif (spr->flip)", "\n\n\t// This needs to be AFTER"),
         "CACHE_BRIGHT": things.function("R_CacheSpriteBrightMap"),
         # C permits these void-pointer assignments; add only the C++ harness cast.
         "LOAD_BRIGHT": cache.function("HWR_GetSpriteBrightmap").replace(
