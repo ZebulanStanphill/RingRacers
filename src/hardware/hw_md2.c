@@ -29,6 +29,7 @@
 #include "hw_drv.h"
 #include "hw_light.h"
 #include "hw_md2.h"
+#include "hw_glob.h" // [UWP]: HWR_GetColor
 #include "../d_main.h"
 #include "../r_bsp.h"
 #include "../r_fps.h"
@@ -725,7 +726,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 	UINT8 colorbrightnesses[17];
 	UINT8 color_match_lookup[256]; // optimization attempt
 
-	blendcolor = V_GetColor(0); // initialize
+	blendcolor = HWR_GetColor(0); // initialize
 	memset(translation, 0, sizeof(translation));
 	memset(cutoff, 0, sizeof(cutoff));
 
@@ -805,7 +806,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 
 		for (i = 0; i < translen; i++) // moved from inside the loop to here
 		{
-			RGBA_t tempc = V_GetColor(translation[i]);
+			RGBA_t tempc = HWR_GetColor(translation[i]);
 			colorbrightnesses[i] = BlendLuminance(tempc.s.red, tempc.s.green, tempc.s.blue); // store brightnesses for comparison
 		}
 
@@ -834,7 +835,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 	}
 
 	if (skinnum == TC_BLINK)
-		blendcolor = V_GetColor(skincolors[color].ramp[3]);
+		blendcolor = HWR_GetColor(skincolors[color].ramp[3]);
 
 	while (size--)
 	{
@@ -1032,11 +1033,11 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 						mul = cutoff[firsti] - brightness;
 					}
 
-					blendcolor = V_GetColor(translation[firsti]);
+					blendcolor = HWR_GetColor(translation[firsti]);
 
 					if (mul > 0) // If it's 0, then we only need the first color.
 					{
-						nextcolor = V_GetColor(translation[secondi]);
+						nextcolor = HWR_GetColor(translation[secondi]);
 
 						// Find difference between points
 						r = (INT32)(nextcolor.s.red - blendcolor.s.red);

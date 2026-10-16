@@ -137,10 +137,20 @@ void HWR_FreeTexture(patch_t *patch);
 void HWR_FreeTextureData(patch_t *patch);
 void HWR_FreeTextureColormaps(patch_t *patch);
 void HWR_ClearAllTextures(void);
+void HWR_UWPSetEncoreMap(const UINT8 *map); // [UWP]: remakes cached textures when Encore's remap changes
 void HWR_FreeColormapCache(void);
 void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
 
 void HWR_SetPalette(RGBA_t *palette);
+
+// [UWP]: Palette rendering, from SRB2. Textures are made with the current palette lump's colors
+// (pMasterPalette), which shaders turn back into palette indices to light through the colormaps, as the
+// software renderer does; the frame is then turned into the screen's palette (gamma, flashes).
+RGBA_t *HWR_GetTexturePalette(void);
+#define HWR_GetColor(color) (HWR_GetTexturePalette()[(color)&0xFF])
+void HWR_SetMapPalette(void);
+UINT32 HWR_GetLightTableID(extracolormap_t *colormap);
+void HWR_ClearLightTables(void);
 
 
 // --------

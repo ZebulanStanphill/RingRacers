@@ -78,6 +78,13 @@ EXPORT void HWRAPI(UnSetShader) (void);
 EXPORT void HWRAPI(SetShaderInfo) (hwdshaderinfo_t info, INT32 value);
 EXPORT void HWRAPI(LoadCustomShader) (int number, char *code, size_t size, boolean isfragment);
 
+// [UWP]: Palette rendering, from SRB2
+EXPORT void HWRAPI(SetScreenPalette) (RGBA_t *palette);
+EXPORT void HWRAPI(SetPaletteLookup) (UINT8 *lut);
+EXPORT UINT32 HWRAPI(CreateLightTable) (RGBA_t *hw_lighttable);
+EXPORT void HWRAPI(UpdateLightTable) (UINT32 id, RGBA_t *hw_lighttable);
+EXPORT void HWRAPI(ClearLightTables) (void);
+
 // ==========================================================================
 //                                      HWR DRIVER OBJECT, FOR CLIENT PROGRAM
 // ==========================================================================
@@ -126,6 +133,12 @@ struct hwdriver_s
 
 	SetShaderInfo       pfnSetShaderInfo;
 	LoadCustomShader    pfnLoadCustomShader;
+
+	SetScreenPalette    pfnSetScreenPalette;
+	SetPaletteLookup    pfnSetPaletteLookup;
+	CreateLightTable    pfnCreateLightTable;
+	UpdateLightTable    pfnUpdateLightTable;
+	ClearLightTables    pfnClearLightTables;
 };
 
 extern struct hwdriver_s hwdriver;

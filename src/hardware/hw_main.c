@@ -194,6 +194,38 @@ static boolean HWR_UseShader(void)
 	return (cv_glshaders.value && gl_shadersavailable);
 }
 
+// [UWP]: Palette rendering, from SRB2: whether it's on
+static boolean gl_palette_rendering_state = false;
+
+boolean HWR_ShouldUsePaletteRendering(void)
+{
+	return gl_palette_rendering_state;
+}
+
+// [UWP]: Turns palette rendering on or off to follow its setting, which needs shaders and a driver that has it.
+// Textures are made again in the palette for the new state.
+void HWR_UpdatePaletteRendering(void)
+{
+	const boolean wanted = (pMasterPalette != NULL && cv_glpaletterendering.value && HWR_UseShader()
+		&& HWD.pfnSetScreenPalette && HWD.pfnSetPaletteLookup && HWD.pfnCreateLightTable);
+
+	if (wanted == gl_palette_rendering_state)
+		return;
+
+	I_OutputMsg("UWP: palette rendering %s\n", wanted ? "on" : "off");
+	gl_palette_rendering_state = wanted;
+	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, wanted);
+
+	// Every texture was made in the other palette
+	HWR_ClearAllTextures();
+	Z_FreeTag(PU_HWRCACHE);
+	Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+
+	// Sets the palettes for the new state, without a flash, which ST_doPaletteStuff sets again if needed
+	st_palette = 0;
+	V_SetPalette(0);
+}
+
 boolean HWR_OverrideObjectLightLevel(mobj_t *thing, INT32 *lightlevel)
 {
 	if (R_ThingIsFullBright(thing))
@@ -318,6 +350,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	Surface->LightInfo.fade_end = (colormap != NULL) ? colormap->fadeend : 31;
 
 	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
+
+	// [UWP]: palette rendering
+	Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(colormap) : 0;
 }
 
 UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
@@ -3656,7 +3691,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
 	v[003].y = v[004].y = v[005].y = v[011].y = v[012].y = v[013].y =
 		v[017].y = v[020].y = v[021].y = v[025].y = v[026].y = v[027].y = vis->gzt; // top
 
-	Surf.PolyColor = V_GetColor(R_GetBoundingBoxColor(vis->mobj));
+	Surf.PolyColor = HWR_GetColor(R_GetBoundingBoxColor(vis->mobj));
 
 	HWR_ProcessPolygon(&Surf, v, 24, PF_Modulated|PF_NoTexture|PF_WireFrame, SHADER_NONE, false);
 }
@@ -6156,6 +6191,8 @@ void HWR_Switch(void)
 	// Set special states from CVARs
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
+	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, gl_palette_rendering_state); // [UWP]
+	HWR_UpdatePaletteRendering(); // [UWP]
 
 	// Load textures
 	if (!gl_maptexturesloaded)
@@ -6275,7 +6312,8 @@ void HWR_DoPostProcessor(player_t *player)
 
 	// Armageddon Blast Flash!
 	// Could this even be considered postprocessor?
-	if (player->flashcount)
+	// [UWP]: Palette rendering shows the flash's palette instead
+	if (player->flashcount && !HWR_ShouldUsePaletteRendering())
 	{
 		FOutVector      v[4];
 		FSurfaceInfo Surf;

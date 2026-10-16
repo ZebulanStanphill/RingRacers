@@ -1479,6 +1479,9 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
 
 	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
 
+	// [UWP]: Palette rendering, from SRB2, which needs shaders
+	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
+
 #ifdef ALAM_LIGHTING
 		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
 		consvar_t cv_glcoronasize = OpenGL("gr_coronasize", "1").floating_point();

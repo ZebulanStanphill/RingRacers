@@ -74,6 +74,9 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
 		NULL, {.cvar = &cv_glshaders}, 0, 0},
 
+	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
+		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
+
 	{IT_SPACE | IT_NOTHING, NULL,  NULL,
 		NULL, {NULL}, 0, 0},
 

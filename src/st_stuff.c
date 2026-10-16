@@ -129,7 +129,7 @@ void ST_doPaletteStuff(void)
 		palette = 0;
 
 #ifdef HWRENDER
-	if (rendermode == render_opengl)
+	if (rendermode == render_opengl && !HWR_ShouldUsePaletteRendering()) // [UWP]: palette rendering has them
 		palette = 0; // No flashpals here in OpenGL
 #endif
 
@@ -137,7 +137,11 @@ void ST_doPaletteStuff(void)
 	{
 		st_palette = palette;
 
-		if (rendermode == render_soft)
+		if (rendermode == render_soft
+#ifdef HWRENDER
+			|| (rendermode == render_opengl && HWR_ShouldUsePaletteRendering())
+#endif
+			)
 		{
 			//V_SetPaletteLump(GetPalette()); // Reset the palette -- is this needed?
 			if (!r_splitscreen)
@@ -224,7 +228,7 @@ static inline void ST_Stop(void)
 		return;
 
 #ifdef HWRENDER
-	if (rendermode != render_opengl)
+	if (rendermode != render_opengl || HWR_ShouldUsePaletteRendering()) // [UWP]: palette rendering
 #endif
 		V_SetPalette(0);
 

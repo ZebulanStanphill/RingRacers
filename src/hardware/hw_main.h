@@ -100,6 +100,11 @@ extern consvar_t cv_glcoronasize;
 #endif
 
 extern consvar_t cv_glshaders, cv_glallowshaders;
+extern consvar_t cv_glpaletterendering; // [UWP]
+
+// [UWP]: Palette rendering, from SRB2
+boolean HWR_ShouldUsePaletteRendering(void);
+void HWR_UpdatePaletteRendering(void);
 extern consvar_t cv_glmodels;
 
 // SRB2Kart: We don't like these options.

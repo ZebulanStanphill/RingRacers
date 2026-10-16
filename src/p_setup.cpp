@@ -8837,6 +8837,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	{
 		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette, NULL, 0);
 	}
+#if defined (HWRENDER) && defined (_UWP)
+	if (rendermode == render_opengl)
+		HWR_UWPSetEncoreMap(encoremap);
+#endif
 	CON_SetupBackColormap();
 
 	// SRB2 determines the sky texture to be used depending on the map header.

@@ -206,8 +206,13 @@ static int comparePolygons(const void *p1, const void *p2)
 	if (diff != 0) return diff;
 
 	diff = poly1->surf.LightInfo.directional - poly2->surf.LightInfo.directional;
+	if (diff != 0) return diff;
 
-	return diff;
+	// [UWP]: palette rendering
+	if (poly1->surf.LightTableId != poly2->surf.LightTableId)
+		return poly1->surf.LightTableId < poly2->surf.LightTableId ? -1 : 1;
+
+	return 0;
 }
 
 static int comparePolygonsNoShaders(const void *p1, const void *p2)
@@ -275,6 +280,7 @@ void HWR_RenderBatches(void)
 	nextSurfaceInfo.LightInfo.fade_start = 0;
 	nextSurfaceInfo.LightInfo.light_level = 0;
 	nextSurfaceInfo.LightInfo.directional = false;
+	nextSurfaceInfo.LightTableId = 0;
 
 	currently_batching = false;// no longer collecting batches
 	if (!polygonArraySize)
@@ -431,7 +437,8 @@ void HWR_RenderBatches(void)
 					currentSurfaceInfo.LightInfo.light_level != nextSurfaceInfo.LightInfo.light_level ||
 					currentSurfaceInfo.LightInfo.fade_start != nextSurfaceInfo.LightInfo.fade_start ||
 					currentSurfaceInfo.LightInfo.fade_end != nextSurfaceInfo.LightInfo.fade_end ||
-					currentSurfaceInfo.LightInfo.directional != nextSurfaceInfo.LightInfo.directional)
+					currentSurfaceInfo.LightInfo.directional != nextSurfaceInfo.LightInfo.directional ||
+					currentSurfaceInfo.LightTableId != nextSurfaceInfo.LightTableId)
 				{
 					changeState = true;
 					changeSurfaceInfo = true;

@@ -25,6 +25,7 @@
 #include "../r_textures.h"
 #include "../w_wad.h"
 #include "../z_zone.h"
+#include "../i_system.h" // [UWP]: I_GetPreciseTime
 #include "../v_video.h"
 #include "../r_draw.h"
 #include "../r_patch.h"
@@ -123,7 +124,7 @@ static void HWR_DrawColumnInCache(const column_t *patchcol, UINT8 *block, GLMipm
 						 texelu16 = (UINT16)((alpha<<8) | texel);
 						 memcpy(dest, &texelu16, sizeof(UINT16));
 						 break;
-				case 3 : colortemp = V_GetColor(texel);
+				case 3 : colortemp = HWR_GetColor(texel);
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
 						 {
 							 RGBA_t rgbatexel;
@@ -132,7 +133,7 @@ static void HWR_DrawColumnInCache(const column_t *patchcol, UINT8 *block, GLMipm
 						 }
 						 memcpy(dest, &colortemp, sizeof(RGBA_t)-sizeof(UINT8));
 						 break;
-				case 4 : colortemp = V_GetColor(texel);
+				case 4 : colortemp = HWR_GetColor(texel);
 						 colortemp.s.alpha = alpha;
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
 						 {
@@ -233,7 +234,7 @@ static void HWR_DrawFlippedColumnInCache(const column_t *patchcol, UINT8 *block,
 						 texelu16 = (UINT16)((alpha<<8) | texel);
 						 memcpy(dest, &texelu16, sizeof(UINT16));
 						 break;
-				case 3 : colortemp = V_GetColor(texel);
+				case 3 : colortemp = HWR_GetColor(texel);
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
 						 {
 							 RGBA_t rgbatexel;
@@ -242,7 +243,7 @@ static void HWR_DrawFlippedColumnInCache(const column_t *patchcol, UINT8 *block,
 						 }
 						 memcpy(dest, &colortemp, sizeof(RGBA_t)-sizeof(UINT8));
 						 break;
-				case 4 : colortemp = V_GetColor(texel);
+				case 4 : colortemp = HWR_GetColor(texel);
 						 colortemp.s.alpha = alpha;
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
 						 {
@@ -495,7 +496,7 @@ static void HWR_GenerateTexture(GLMapTexture_t *grtex, INT32 texnum, boolean noe
 		INT32 j;
 		RGBA_t col;
 
-		col = V_GetColor(HWR_PATCHES_CHROMAKEY_COLORINDEX);
+		col = HWR_GetColor(HWR_PATCHES_CHROMAKEY_COLORINDEX);
 		for (j = 0; j < blockheight; j++)
 		{
 			for (i = 0; i < blockwidth; i++)
@@ -709,6 +710,7 @@ void HWR_ClearAllTextures(void)
 {
 	HWD.pfnClearMipMapCache(); // free references to the textures
 	HWR_FreePatchCache(true);
+	HWR_ClearLightTables(); // [UWP]: their colormaps may be freed next
 }
 
 void HWR_FreeColormapCache(void)
@@ -768,9 +770,31 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 	gl_maptexturesloaded = true;
 }
 
+// =================================================
+//             PALETTE HANDLING
+// =================================================
+
+// [UWP]: The palette textures are made with in palette rendering: the current palette lump's
+static RGBA_t mapPalette[256];
+
+RGBA_t *HWR_GetTexturePalette(void)
+{
+	return HWR_ShouldUsePaletteRendering() ? mapPalette : pLocalPalette;
+}
+
 void HWR_SetPalette(RGBA_t *palette)
 {
+	if (HWR_ShouldUsePaletteRendering())
+	{
+		// [UWP]: The palette the frame is turned into, which can change without changing the textures
+		HWD.pfnSetScreenPalette(palette);
+		HWR_SetMapPalette();
+		return;
+	}
+
 	HWD.pfnSetPalette(palette);
+	// [UWP]: so the next HWR_SetMapPalette updates everything
+	memset(mapPalette, 0, sizeof(mapPalette));
 
 	// hardware driver will flush there own cache if cache is non paletized
 	// now flush data texture cache so 32 bit texture are recomputed
@@ -779,6 +803,189 @@ void HWR_SetPalette(RGBA_t *palette)
 		Z_FreeTag(PU_HWRCACHE);
 		Z_FreeTag(PU_HWRCACHE_UNLOCKED);
 	}
+}
+
+// [UWP]: Makes the RGB -> palette index lookup table palette rendering's shaders use, from SRB2
+static void HWR_SetPaletteLookup(RGBA_t *palette)
+{
+	const precise_t start = I_GetPreciseTime();
+	UINT8 *lut = Z_Malloc(HWR_PALETTE_LUT_SIZE*HWR_PALETTE_LUT_SIZE*HWR_PALETTE_LUT_SIZE*sizeof(UINT8), PU_STATIC, NULL);
+	int r, g, b;
+
+#define STEP_SIZE (256/HWR_PALETTE_LUT_SIZE)
+	for (b = 0; b < HWR_PALETTE_LUT_SIZE; b++)
+	{
+		for (g = 0; g < HWR_PALETTE_LUT_SIZE; g++)
+		{
+			for (r = 0; r < HWR_PALETTE_LUT_SIZE; r++)
+			{
+				lut[b*HWR_PALETTE_LUT_SIZE*HWR_PALETTE_LUT_SIZE+g*HWR_PALETTE_LUT_SIZE+r] =
+					NearestPaletteColor(r*STEP_SIZE, g*STEP_SIZE, b*STEP_SIZE, palette);
+			}
+		}
+	}
+#undef STEP_SIZE
+
+	HWD.pfnSetPaletteLookup(lut);
+	Z_Free(lut);
+	I_OutputMsg("UWP: made the palette rendering lookup table in %.1f ms\n",
+		(I_GetPreciseTime() - start) * 1000.0 / I_GetPrecisePrecision());
+}
+
+// [UWP]: Updates the palette textures are made with to the current palette lump's, remaking the textures and
+// light tables if it changed. Only for palette rendering.
+void HWR_SetMapPalette(void)
+{
+	if (!pMasterPalette || !memcmp(mapPalette, pMasterPalette, sizeof(mapPalette)))
+		return;
+
+	memcpy(mapPalette, pMasterPalette, sizeof(mapPalette));
+	HWR_SetPaletteLookup(mapPalette);
+	HWD.pfnSetPalette(mapPalette); // flushes the driver's textures if it changed
+	HWR_ClearLightTables();
+
+	if (patchformat == GL_TEXFMT_RGBA || textureformat == GL_TEXFMT_RGBA)
+	{
+		Z_FreeTag(PU_HWRCACHE);
+		Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+	}
+}
+
+// [UWP]: Encore's remap is baked into the cached textures. Outside palette rendering, V_SetPalette frees them at
+// every level start, but palette rendering keeps them unless the palette changes, so the same map played again
+// with Encore toggled (or another map's Encore remap) would reuse the old colors. Call after R_ReInitColormaps.
+void HWR_UWPSetEncoreMap(const UINT8 *map)
+{
+	static UINT8 lastMap[256];
+	static boolean lastEncore = false;
+	const boolean encore = (map != NULL);
+
+	if (encore == lastEncore && (!encore || !memcmp(lastMap, map, sizeof(lastMap))))
+		return;
+
+	lastEncore = encore;
+	if (encore)
+		memcpy(lastMap, map, sizeof(lastMap));
+
+	if (!HWR_ShouldUsePaletteRendering() || vid.glstate != VID_GL_LIBRARY_LOADED)
+		return;
+
+	HWD.pfnClearMipMapCache();
+	Z_FreeTag(PU_HWRCACHE);
+	Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+}
+
+// [UWP]: Palette rendering's light tables: each colormap's 32 light levels of 256 palette indices, as the colors
+// they stand for. Encore's remap is already in the textures, so only the first, unremapped levels are used. A 33rd
+// row holds the base colormap's full-bright level, which brightmapped texels use like Software's dc->fullbright.
+typedef struct
+{
+	const extracolormap_t *colormap; // NULL for the default colormap
+	const lighttable_t *source;
+	INT32 rgba, fadergba;
+	UINT8 fadestart, fadeend, flags;
+	UINT32 id;
+} hwlighttable_t;
+
+static hwlighttable_t *gl_lighttables = NULL;
+static size_t gl_numlighttables = 0, gl_maxlighttables = 0;
+static size_t gl_lastlighttable = 0;
+
+static boolean HWR_LightTableMatches(const hwlighttable_t *table, const extracolormap_t *colormap, const lighttable_t *source)
+{
+	if (table->colormap != colormap || table->source != source)
+		return false;
+	if (colormap == NULL)
+		return true;
+	// A colormap can be changed in place
+	return table->rgba == colormap->rgba && table->fadergba == colormap->fadergba
+		&& table->fadestart == colormap->fadestart && table->fadeend == colormap->fadeend && table->flags == colormap->flags;
+}
+
+static void HWR_ConvertLightTable(const lighttable_t *source, RGBA_t *hw_lighttable)
+{
+	size_t i;
+
+	for (i = 0; i < 256 * LIGHTLEVELS; i++)
+		hw_lighttable[i] = mapPalette[source[i]];
+	for (i = 0; i < 256; i++)
+		hw_lighttable[256 * LIGHTLEVELS + i] = mapPalette[colormaps[i]];
+}
+
+UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
+{
+	static RGBA_t hw_lighttable[256 * (LIGHTLEVELS + 1)];
+	const lighttable_t *source = (colormap && colormap->colormap) ? colormap->colormap : colormaps;
+	hwlighttable_t *table;
+	size_t i;
+
+	if (!source || !HWD.pfnCreateLightTable)
+		return 0;
+
+	if (gl_lastlighttable < gl_numlighttables
+		&& HWR_LightTableMatches(&gl_lighttables[gl_lastlighttable], colormap, source))
+		return gl_lighttables[gl_lastlighttable].id;
+
+	for (i = 0; i < gl_numlighttables; i++)
+	{
+		table = &gl_lighttables[i];
+
+		if (table->colormap == colormap)
+		{
+			if (!HWR_LightTableMatches(table, colormap, source))
+			{
+				// Changed: update its texture
+				HWR_ConvertLightTable(source, hw_lighttable);
+				HWD.pfnUpdateLightTable(table->id, hw_lighttable);
+				table->source = source;
+				if (colormap)
+				{
+					table->rgba = colormap->rgba;
+					table->fadergba = colormap->fadergba;
+					table->fadestart = colormap->fadestart;
+					table->fadeend = colormap->fadeend;
+					table->flags = colormap->flags;
+				}
+			}
+			gl_lastlighttable = i;
+			return table->id;
+		}
+	}
+
+	if (gl_numlighttables == gl_maxlighttables)
+	{
+		gl_maxlighttables = gl_maxlighttables ? gl_maxlighttables * 2 : 64;
+		gl_lighttables = Z_Realloc(gl_lighttables, gl_maxlighttables * sizeof(*gl_lighttables), PU_STATIC, NULL);
+	}
+
+	table = &gl_lighttables[gl_numlighttables];
+	memset(table, 0, sizeof(*table));
+	table->colormap = colormap;
+	table->source = source;
+	if (colormap)
+	{
+		table->rgba = colormap->rgba;
+		table->fadergba = colormap->fadergba;
+		table->fadestart = colormap->fadestart;
+		table->fadeend = colormap->fadeend;
+		table->flags = colormap->flags;
+	}
+
+	HWR_ConvertLightTable(source, hw_lighttable);
+	table->id = HWD.pfnCreateLightTable(hw_lighttable);
+
+	gl_lastlighttable = gl_numlighttables++;
+	return table->id;
+}
+
+// [UWP]: Forgets the light tables, whose ids become invalid. Call when colormaps are freed or the palette changes.
+void HWR_ClearLightTables(void)
+{
+	gl_numlighttables = 0;
+	gl_lastlighttable = 0;
+
+	if (vid.glstate == VID_GL_LIBRARY_LOADED && HWD.pfnClearLightTables)
+		HWD.pfnClearLightTables();
 }
 
 // --------------------------------------------------------------------------
@@ -1225,12 +1432,12 @@ static void HWR_DrawPicInCache(UINT8 *block, INT32 pblockwidth, INT32 pblockheig
 							dest += sizeof(UINT16);
 							break;
 						case 3 :
-							col = V_GetColor(texel);
+							col = HWR_GetColor(texel);
 							memcpy(dest, &col, sizeof(RGBA_t)-sizeof(UINT8));
 							dest += sizeof(RGBA_t)-sizeof(UINT8);
 							break;
 						case 4 :
-							memcpy(dest, &V_GetColor(texel), sizeof(RGBA_t));
+							memcpy(dest, &HWR_GetColor(texel), sizeof(RGBA_t));
 							dest += sizeof(RGBA_t);
 							break;
 					}
@@ -1357,7 +1564,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
 		{
 			// fademask bpp is always 1, and is used just for alpha
 			texel = src[(posx)>>FRACBITS];
-			col = V_GetColor(texel);
+			col = HWR_GetColor(texel);
 			*dest = col.s.red; // take the red level of the colour and use it for alpha, as fademasks do
 
 			dest++;

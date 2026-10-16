@@ -21,6 +21,9 @@ extern "C" {
 #endif
 
 #define ZCLIP_PLANE 4.0f // Used for the actual game drawing
+
+// [UWP]: Palette rendering's RGB -> palette index lookup table is this many entries on each side (from SRB2)
+#define HWR_PALETTE_LUT_SIZE 64
 #define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
 
 // ==========================================================================
@@ -291,6 +294,7 @@ struct FSurfaceInfo
 	RGBA_t			TintColor;
 	RGBA_t			FadeColor;
 	FLightInfo		LightInfo;
+	UINT32			LightTableId; // [UWP]: the surface's light table for palette rendering (from SRB2), or 0
 };
 typedef struct FSurfaceInfo FSurfaceInfo;
 
@@ -304,6 +308,7 @@ enum hwdsetspecialstate
 	HWD_SET_SHADERS,
 	HWD_SET_TEXTUREFILTERMODE,
 	HWD_SET_TEXTUREANISOTROPICMODE,
+	HWD_SET_PALETTE_RENDERING, // [UWP]
 
 	HWD_NUMSTATE
 };

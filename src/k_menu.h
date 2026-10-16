@@ -425,6 +425,7 @@ typedef enum
 	vaopt_spacer10 = vaopt_legacygl_begin,
 	vaopt_3dmodels,
 	vaopt_shaders,
+	vaopt_paletterendering, // [UWP]
 	vaopt_spacer11,
 	vaopt_texturequal,
 	vaopt_anisotropic,
