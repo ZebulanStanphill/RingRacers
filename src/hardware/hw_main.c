@@ -4597,6 +4597,10 @@ static void HWR_DrawSprites(void)
 // HWR_AddSprites
 // During BSP traversal, this adds sprites by sector.
 // --------------------------------------------------------------------------
+// [UWP]: Whether the skybox's view is being rendered, which, as in the software renderer (portalskipprecipmobjs),
+// leaves out precipitation and things with RF_HIDEINSKYBOX
+static boolean gl_skyboxview = false;
+
 static UINT8 sectorlight;
 static void HWR_AddSprites(sector_t *sec)
 {
@@ -4621,6 +4625,12 @@ static void HWR_AddSprites(sector_t *sec)
 	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
 	for (thing = sec->thinglist; thing; thing = thing->snext)
 	{
+		// do not render in skybox
+		if ((thing->renderflags & RF_HIDEINSKYBOX) && gl_skyboxview)
+		{
+			continue;
+		}
+
 		if (R_ThingWithinDist(thing, limit_dist))
 		{
 			if (R_ThingVisible(thing))
@@ -4649,6 +4659,12 @@ static void HWR_AddPrecipitationSprites(void)
 
 	// no, no infinite draw distance for precipitation. this option at zero is supposed to turn it off
 	if (drawdist == 0)
+	{
+		return;
+	}
+
+	// do not render in skybox
+	if (gl_skyboxview)
 	{
 		return;
 	}
@@ -5973,7 +5989,9 @@ void HWR_RenderSkyboxView(player_t *player)
 	// note: sets viewangle, viewx, viewy, viewz
 	R_SkyboxFrame(viewssnum);
 
+	gl_skyboxview = true;
 	HWR_RenderViewpoint(player, drawsky, false);
+	gl_skyboxview = false;
 }
 
 // ==========================================================================
