@@ -17,6 +17,7 @@
 #include "../doomstat.h"
 #ifdef _UWP
 #include "../sdl/i_uwptrace.h"
+#include "../console.h"
 #endif
 
 #ifdef HWRENDER
@@ -1004,6 +1005,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		HWR_TraceSkyGeometry(0, (INT32)(subsector-subsectors), subsector->sector, NULL, levelflat->name,
 			planeVerts, nrPlaneVerts, PolyFlags);
 #endif
+#ifdef HAVE_D3D12
+	D3D12_SurfaceProbeSource(FOFsector ? "FOF plane" : isceiling ? "ceiling" : "floor",
+		FOFsector ? (INT32)(FOFsector-sectors) : subsector ? (INT32)(subsector-subsectors) : -1);
+#endif
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
 
 	if (subsector)
@@ -1073,6 +1078,9 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 					horizonpts[4].y = gl_viewz;
 
 					// Draw
+#ifdef HAVE_D3D12
+					D3D12_SurfaceProbeSource("horizon", (INT32)(line->linedef-lines));
+#endif
 					HWR_ProcessPolygon(&Surf, horizonpts, 6, PolyFlags, shader, true);
 				}
 			}
@@ -1247,6 +1255,10 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 				break;
 			}
 	}
+#endif
+#ifdef HAVE_D3D12
+	D3D12_SurfaceProbeSource(blendmode & PF_Invisible ? "sky occluder" : "wall",
+		gl_curline && gl_curline->linedef ? (INT32)(gl_curline->linedef-lines) : -1);
 #endif
 	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode|PF_Modulated|PF_Occlude, shader, false);
 }
@@ -7252,6 +7264,10 @@ void HWR_RenderPlayerView(void)
 		HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_BACKLIGHT, maplighting.backlight);
 	}
 
+#ifdef HAVE_D3D12
+	const boolean surfaceprobe = viewssnum == 0 && !con_destlines && !cv_glbatching.value && !r_splitscreen
+		&& D3D12_BeginSurfaceProbe();
+#endif
 	if (viewssnum == 0) // Only do it if it's the first screen being rendered
 		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
 
@@ -7262,12 +7278,23 @@ void HWR_RenderPlayerView(void)
 
 	// note: sets viewangle, viewx, viewy, viewz
 	R_SetupFrame(viewssnum);
+#ifdef HAVE_D3D12
+	if (surfaceprobe)
+		I_OutputMsg("UWP surface probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f batching=%d shaders=%d\n",
+			gamemap, (unsigned)leveltime, FIXED_TO_FLOAT(viewx), FIXED_TO_FLOAT(viewy), FIXED_TO_FLOAT(viewz),
+			(double)viewangle*(360.0/4294967296.0), (double)(INT32)aimingangle*(360.0/4294967296.0),
+			(double)(INT32)viewroll*(360.0/4294967296.0), FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd),
+			cv_glbatching.value, HWR_UseShader());
+#endif
 	framecount++; // timedemo
 
 	HWR_RenderViewpoint(player,
 			!skybox && drawsky, // Don't draw the regular sky if there's a skybox
 			true); // Main view is profiled
 
+#ifdef HAVE_D3D12
+	D3D12_EndSurfaceProbe();
+#endif
 	HWR_DoPostProcessor(player);
 }
 
@@ -7343,6 +7370,49 @@ void CV_glanisotropic_OnChange(void)
 		HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
 }
 
+#ifdef HAVE_D3D12
+static void HWR_SurfaceProbe_f(void)
+{
+	INT32 x = 15, y = 35;
+	if (COM_Argc() != 1 && COM_Argc() != 3)
+	{
+		CONS_Printf("gr_surfaceprobe [x_percent y_percent]: one world frame, top-left origin. Default: 15 35.\n");
+		return;
+	}
+	if (COM_Argc() == 3)
+	{
+		char *end;
+		long values[2];
+		INT32 i;
+		for (i = 0; i < 2; ++i)
+		{
+			const char *arg = COM_Argv(i+1);
+			values[i] = strtol(arg, &end, 10);
+			if (!*arg || *end || values[i] < 0 || values[i] > 100)
+			{
+				CONS_Printf("Surface probe coordinates must be whole percentages from 0 to 100.\n");
+				return;
+			}
+		}
+		x = (INT32)values[0]; y = (INT32)values[1];
+	}
+	if (rendermode != render_opengl || gamestate != GS_LEVEL || r_splitscreen)
+	{
+		CONS_Printf("Surface probe requires hardware rendering during a single-player view of a level.\n");
+		return;
+	}
+	if (cv_glbatching.value)
+	{
+		CONS_Printf("Turn Batching Off first (gr_batching off), then request the surface probe.\n");
+		return;
+	}
+	if (D3D12_RequestSurfaceProbe(x, y))
+		CONS_Printf("Surface probe armed at %d%% across, %d%% down. Close the console to capture one world frame; that frame may pause briefly.\n", x, y);
+	else
+		CONS_Printf("A surface probe is already pending.\n");
+}
+#endif
+
 //added by Hurdler: console varibale that are saved
 void HWR_AddCommands(void)
 {
@@ -7356,6 +7426,9 @@ void HWR_AddSessionCommands(void)
 {
 	if (gl_sessioncommandsadded)
 		return;
+#ifdef HAVE_D3D12
+	COM_AddCommand("gr_surfaceprobe", HWR_SurfaceProbe_f);
+#endif
 	// Kept in case we ever need this again.
 	gl_sessioncommandsadded = true;
 }
@@ -7505,6 +7578,9 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
 		blendmode |= PF_Fog;
 
 	blendmode |= PF_Modulated;	// No PF_Occlude means overlapping (incorrect) transparency
+#ifdef HAVE_D3D12
+	D3D12_SurfaceProbeSource("deferred wall", -1);
+#endif
 	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode, shader, false);
 }
 

@@ -18,6 +18,9 @@
 #include "hw_glob.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
+#ifdef HAVE_D3D12
+#include "r_d3d12/r_d3d12.h"
+#endif
 
 #include "../doomstat.h"    //gamemode
 #include "../i_video.h"     //rendermode
@@ -1011,6 +1014,9 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 	if (!grtex->mipmap.downloaded)
 		HWD.pfnSetTexture(&grtex->mipmap);
 	HWR_SetCurrentTexture(&grtex->mipmap);
+#ifdef HAVE_D3D12
+	D3D12_SurfaceProbeTexture(textures[tex]->name);
+#endif
 
 	// The system-memory data can be purged now.
 	Z_ChangeTag(grtex->mipmap.data, PU_HWRCACHE_UNLOCKED);
@@ -1274,6 +1280,10 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 #endif
 	else // set no texture
 		HWR_SetCurrentTexture(NULL);
+#ifdef HAVE_D3D12
+	D3D12_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
+		? textures[levelflat->u.texture.num]->name : levelflat->name);
+#endif
 }
 
 // --------------------+
