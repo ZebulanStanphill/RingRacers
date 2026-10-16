@@ -820,11 +820,15 @@ void F_IntroDrawer(void)
 {
 	if (intro_scenenum == 0)
 	{
+		// [UWP]: Skip the blue fill of the first tics. The loading screen already shows this card, so on a slow
+		// boot the blue reads as a flash between two copies of it.
+#ifndef _UWP
 		if (intro_curtime <= 5)
 		{
 			V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 157);
 			return;
 		}
+#endif
 
 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 31);
 		V_DrawScaledPatch(0, 0, 0,
