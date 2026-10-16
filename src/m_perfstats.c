@@ -25,6 +25,11 @@
 #include "hardware/hw_main.h"
 #endif
 
+#ifdef _UWP
+#include "r_fps.h"
+#include "screen.h"
+#endif
+
 struct perfstatcol;
 struct perfstatrow;
 
@@ -707,3 +712,208 @@ void M_DrawPerfStats(void)
 		}
 	}
 }
+
+#ifdef _UWP
+#define UWP_PERF_INTERVAL 5 // seconds between summaries
+
+precise_t ps_uwp_screentime, ps_uwp_twodeetime, ps_uwp_upscaletime, ps_uwp_imguitime, ps_uwp_cleanuptime,
+	ps_uwp_presenttime, ps_uwp_finishtime, ps_uwp_nextframetime;
+int ps_uwp_draws, ps_uwp_texturescreated, ps_uwp_textureuploads, ps_uwp_framebufferscreated, ps_uwp_atlasresets;
+
+static struct
+{
+	precise_t start;
+	int loops, frames, worldframes, tics;
+	precise_t work, worstwork;
+	precise_t render, bsp, spriteclip, portals, planes, masked, ui, swap;
+	precise_t screen, twodee, upscale, imgui, cleanup, present, finish, nextframe;
+	int draws, texturescreated, textureuploads, framebufferscreated, atlasresets;
+	precise_t tic, playerthink, thinkers, lua, acs, bots;
+	int checkpositions, luamobjhooks;
+	// Legacy GL's renderer
+	int hwframes;
+	precise_t hwskybox, hwnodesort, hwnodedraw, hwspritesort, hwspritedraw, hwbatchsort, hwbatchdraw;
+	INT64 hwpolys, hwverts, hwcalls, hwshaders, hwtextures;
+} uwp_perf;
+
+void PS_UWPAddTic(void)
+{
+	uwp_perf.tics++;
+	uwp_perf.tic += ps_tictime;
+	uwp_perf.playerthink += ps_playerthink_time;
+	uwp_perf.thinkers += ps_thinkertime;
+	uwp_perf.lua += ps_lua_thinkframe_time;
+	uwp_perf.acs += ps_acs_time;
+	// Bot ticcmds are built separately from the tic, once per tic
+	uwp_perf.bots += ps_botticcmd_time;
+	uwp_perf.checkpositions += ps_checkposition_calls;
+	uwp_perf.luamobjhooks += ps_lua_mobjhooks;
+}
+
+// Counts the level's mobjs by how much they do each tic
+static void PS_UWPCountMobjs(int *regular, int *scenery, int *nothink)
+{
+	thinker_t *thinker;
+
+	*regular = *scenery = *nothink = 0;
+
+	// Not set up until a level has been loaded
+	for (thinker = thlist[THINK_MOBJ].next; thinker && thinker != &thlist[THINK_MOBJ]; thinker = thinker->next)
+	{
+		mobj_t *mobj = (mobj_t *)thinker;
+
+		if (thinker->function.acp1 != (actionf_p1)P_MobjThinker)
+			continue;
+
+		if (mobj->flags & MF_NOTHINK)
+			(*nothink)++;
+		else if (mobj->flags & MF_SCENERY)
+			(*scenery)++;
+		else
+			(*regular)++;
+	}
+}
+
+void PS_UWPAddLoop(precise_t worktime, boolean displayed)
+{
+	const double ms = 1000.0 / I_GetPrecisePrecision();
+	const precise_t now = I_GetPreciseTime();
+	double seconds;
+
+	if (!uwp_perf.start)
+		uwp_perf.start = now;
+
+	uwp_perf.loops++;
+	uwp_perf.work += worktime;
+	if (worktime > uwp_perf.worstwork)
+		uwp_perf.worstwork = worktime;
+
+	// Includes the updates of loading screens and wipes, which happen outside of D_Display
+	uwp_perf.screen += ps_uwp_screentime;
+	uwp_perf.twodee += ps_uwp_twodeetime;
+	uwp_perf.upscale += ps_uwp_upscaletime;
+	uwp_perf.imgui += ps_uwp_imguitime;
+	uwp_perf.cleanup += ps_uwp_cleanuptime;
+	uwp_perf.present += ps_uwp_presenttime;
+	uwp_perf.finish += ps_uwp_finishtime;
+	uwp_perf.nextframe += ps_uwp_nextframetime;
+	uwp_perf.draws += ps_uwp_draws;
+	uwp_perf.texturescreated += ps_uwp_texturescreated;
+	uwp_perf.textureuploads += ps_uwp_textureuploads;
+	uwp_perf.framebufferscreated += ps_uwp_framebufferscreated;
+	uwp_perf.atlasresets += ps_uwp_atlasresets;
+	ps_uwp_screentime = ps_uwp_twodeetime = ps_uwp_upscaletime = ps_uwp_imguitime = ps_uwp_cleanuptime = 0;
+	ps_uwp_presenttime = ps_uwp_finishtime = ps_uwp_nextframetime = 0;
+	ps_uwp_draws = ps_uwp_texturescreated = ps_uwp_textureuploads = ps_uwp_framebufferscreated = ps_uwp_atlasresets = 0;
+
+	if (displayed)
+	{
+		uwp_perf.frames++;
+		uwp_perf.ui += ps_uitime;
+		uwp_perf.swap += ps_swaptime;
+
+		if (ps_rendercalltime)
+		{
+			uwp_perf.worldframes++;
+			uwp_perf.render += ps_rendercalltime;
+			uwp_perf.bsp += ps_bsptime;
+			uwp_perf.spriteclip += ps_sw_spritecliptime;
+			uwp_perf.portals += ps_sw_portaltime;
+			uwp_perf.planes += ps_sw_planetime;
+			uwp_perf.masked += ps_sw_maskedtime;
+
+#ifdef HWRENDER
+			if (rendermode == render_opengl)
+			{
+				uwp_perf.hwframes++;
+				uwp_perf.hwskybox += ps_hw_skyboxtime;
+				uwp_perf.hwnodesort += ps_hw_nodesorttime;
+				uwp_perf.hwnodedraw += ps_hw_nodedrawtime;
+				uwp_perf.hwspritesort += ps_hw_spritesorttime;
+				uwp_perf.hwspritedraw += ps_hw_spritedrawtime;
+				uwp_perf.hwbatchsort += ps_hw_batchsorttime;
+				uwp_perf.hwbatchdraw += ps_hw_batchdrawtime;
+				uwp_perf.hwpolys += ps_hw_numpolys;
+				uwp_perf.hwverts += ps_hw_numverts;
+				uwp_perf.hwcalls += ps_hw_numcalls;
+				uwp_perf.hwshaders += ps_hw_numshaders;
+				uwp_perf.hwtextures += ps_hw_numtextures;
+			}
+#endif
+		}
+	}
+
+	// Only set again by frames that render the world
+	ps_rendercalltime = 0;
+
+	seconds = (now - uwp_perf.start) * ms / 1000.0;
+	if (seconds < UWP_PERF_INTERVAL)
+		return;
+
+	I_OutputMsg("UWP perf: %.1f s at %dx%d (FPS cap %s, V-Sync %s, draw distance %s, skyboxes %s, parallel software %s)\n",
+		seconds, vid.width, vid.height,
+		cv_fpscap.string, cv_vidwait.string, cv_drawdist.string, cv_skybox.string, cv_parallelsoftware.string);
+	I_OutputMsg("UWP perf:   %.1f frames/s (%.1f with 3D) from %.1f loops/s; work %.1f ms per loop, %.1f ms at worst\n",
+		uwp_perf.frames / seconds, uwp_perf.worldframes / seconds, uwp_perf.loops / seconds,
+		uwp_perf.work * ms / uwp_perf.loops, uwp_perf.worstwork * ms);
+
+	if (uwp_perf.worldframes)
+	{
+		const int n = uwp_perf.worldframes;
+
+		I_OutputMsg("UWP perf:   3D %.1f ms per frame (BSP %.1f, sprite clip %.1f, portals and skybox %.1f, planes %.1f, masked %.1f)\n",
+			uwp_perf.render * ms / n, uwp_perf.bsp * ms / n, uwp_perf.spriteclip * ms / n,
+			uwp_perf.portals * ms / n, uwp_perf.planes * ms / n, uwp_perf.masked * ms / n);
+	}
+
+	if (uwp_perf.hwframes)
+	{
+		const int n = uwp_perf.hwframes;
+
+		// The batch timings and counts are of the last batch each frame drew, which is the main view's after the skybox's
+		I_OutputMsg("UWP perf:   Legacy GL: skybox %.1f, node sort %.1f, node draw %.1f, sprite sort %.1f, sprite draw %.1f, batch sort %.1f, batch draw %.1f ms per frame\n",
+			uwp_perf.hwskybox * ms / n, uwp_perf.hwnodesort * ms / n, uwp_perf.hwnodedraw * ms / n,
+			uwp_perf.hwspritesort * ms / n, uwp_perf.hwspritedraw * ms / n, uwp_perf.hwbatchsort * ms / n,
+			uwp_perf.hwbatchdraw * ms / n);
+		I_OutputMsg("UWP perf:   Legacy GL: %.0f polygons, %.0f vertices, %.0f draw calls, %.0f shader and %.0f texture changes per batch\n",
+			(double)uwp_perf.hwpolys / n, (double)uwp_perf.hwverts / n, (double)uwp_perf.hwcalls / n,
+			(double)uwp_perf.hwshaders / n, (double)uwp_perf.hwtextures / n);
+	}
+	if (uwp_perf.frames)
+	{
+		const int n = uwp_perf.frames;
+
+		I_OutputMsg("UWP perf:   UI %.1f ms, software screen %.1f ms, finish update %.1f ms per frame\n",
+			uwp_perf.ui * ms / n, uwp_perf.screen * ms / n, uwp_perf.swap * ms / n);
+		I_OutputMsg("UWP perf:   finish update: 2D %.1f, upscale %.1f, ImGui %.1f, cleanup %.1f, present %.1f, finish %.1f, next frame %.1f ms\n",
+			uwp_perf.twodee * ms / n, uwp_perf.upscale * ms / n, uwp_perf.imgui * ms / n, uwp_perf.cleanup * ms / n,
+			uwp_perf.present * ms / n, uwp_perf.finish * ms / n, uwp_perf.nextframe * ms / n);
+		I_OutputMsg("UWP perf:   %.1f draws, %.1f textures created, %.1f texture uploads, %.1f framebuffers created per frame; %d patch atlas resets\n",
+			(double)uwp_perf.draws / n, (double)uwp_perf.texturescreated / n, (double)uwp_perf.textureuploads / n,
+			(double)uwp_perf.framebufferscreated / n, uwp_perf.atlasresets);
+	}
+
+	if (uwp_perf.tics)
+	{
+		const int n = uwp_perf.tics;
+
+		int regular, scenery, nothink;
+
+		I_OutputMsg("UWP perf:   %.1f tics/s; logic %.1f ms per tic (players %.1f, thinkers %.1f, Lua %.1f, ACS %.1f), bots %.1f ms per tic\n",
+			n / seconds, uwp_perf.tic * ms / n, uwp_perf.playerthink * ms / n, uwp_perf.thinkers * ms / n,
+			uwp_perf.lua * ms / n, uwp_perf.acs * ms / n, uwp_perf.bots * ms / n);
+
+		// Only in a level: leaving one through D_ClearState frees its mobjs without resetting the thinker lists
+		if (gamestate == GS_LEVEL)
+		{
+			PS_UWPCountMobjs(&regular, &scenery, &nothink);
+			I_OutputMsg("UWP perf:   mobjs now: %d thinking, %d scenery, %d not thinking; per tic: %.0f P_CheckPosition calls, %.0f Lua mobj hooks\n",
+				regular, scenery, nothink, (double)uwp_perf.checkpositions / n, (double)uwp_perf.luamobjhooks / n);
+		}
+	}
+
+
+	memset(&uwp_perf, 0, sizeof uwp_perf);
+	uwp_perf.start = now;
+}
+#endif

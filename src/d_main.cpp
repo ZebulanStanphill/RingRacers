@@ -685,7 +685,13 @@ static bool D_Display(bool world)
 
 			if (rendermode == render_soft)
 			{
+#ifdef _UWP
+				const precise_t screenstart = I_GetPreciseTime();
+#endif
 				VID_DisplaySoftwareScreen();
+#ifdef _UWP
+				ps_uwp_screentime += I_GetPreciseTime() - screenstart;
+#endif
 			}
 
 			if (lastdraw)
@@ -922,6 +928,9 @@ void D_SRB2Loop(void)
 
 		bool ranwipe = false;
 		bool world = false;
+#ifdef _UWP
+		bool displayed = false;
+#endif
 
 		I_UpdateTime();
 
@@ -1067,6 +1076,9 @@ void D_SRB2Loop(void)
 			}
 
 			ranwipe = D_Display(world);
+#ifdef _UWP
+			displayed = true;
+#endif
 		}
 
 #ifdef HWRENDER
@@ -1183,6 +1195,10 @@ void D_SRB2Loop(void)
 			skiplaggyworld = false;
 		}
 
+#ifdef _UWP
+		const precise_t worktime = finishprecise - enterprecise;
+#endif
+
 		if (!singletics)
 		{
 			INT64 elapsed = (INT64)(finishprecise - enterprecise);
@@ -1199,6 +1215,10 @@ void D_SRB2Loop(void)
 		finishprecise = I_GetPreciseTime();
 		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
 		deltatics = deltasecs * NEWTICRATE;
+
+#ifdef _UWP
+		PS_UWPAddLoop(worktime, displayed);
+#endif
 	}
 }
 

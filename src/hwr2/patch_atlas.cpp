@@ -14,6 +14,11 @@
 
 #include "../r_patch.h"
 
+#ifdef _UWP
+// [UWP]: Counted for the performance summary in the log (m_perfstats.c)
+extern "C" int ps_uwp_atlasresets;
+#endif
+
 using namespace srb2;
 using namespace srb2::hwr2;
 using namespace srb2::rhi;
@@ -180,6 +185,9 @@ bool PatchAtlasCache::need_to_reset() const
 
 void PatchAtlasCache::reset(Rhi& rhi)
 {
+#ifdef _UWP
+	ps_uwp_atlasresets++;
+#endif
 	for (auto& atlas : atlases_)
 	{
 		rhi.destroy_texture(atlas.texture());

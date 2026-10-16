@@ -70,6 +70,17 @@ void PS_ResetBotInfo(void);
 
 void M_DrawPerfStats(void);
 
+#ifdef _UWP
+// [UWP]: The perfstats overlay is hard to read on Xbox, so these summarize the same timings in the log every few seconds
+void PS_UWPAddTic(void); // after each game tic
+void PS_UWPAddLoop(precise_t worktime, boolean displayed); // after each main loop iteration, with its time before sleeping
+
+// Timed by D_Display and I_FinishUpdate, and counted by the hardware renderer, for the summaries
+extern precise_t ps_uwp_screentime, ps_uwp_twodeetime, ps_uwp_upscaletime, ps_uwp_imguitime, ps_uwp_cleanuptime,
+	ps_uwp_presenttime, ps_uwp_finishtime, ps_uwp_nextframetime;
+extern int ps_uwp_draws, ps_uwp_texturescreated, ps_uwp_textureuploads, ps_uwp_framebufferscreated, ps_uwp_atlasresets;
+#endif
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

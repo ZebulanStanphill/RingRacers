@@ -6971,6 +6971,9 @@ boolean TryRunTics(tic_t realtics)
 			consistancy[gametic % BACKUPTICS] = Consistancy();
 
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
+#ifdef _UWP
+			PS_UWPAddTic();
+#endif
 
 			// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
 			if (client && gamestate == GS_LEVEL && leveltime > 1 && neededtic <= gametic + cv_netticbuffer.value)

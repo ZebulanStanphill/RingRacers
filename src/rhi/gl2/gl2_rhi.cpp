@@ -26,6 +26,8 @@
 
 #ifdef _UWP
 extern "C" void I_OutputMsg(const char *fmt, ...);
+// [UWP]: Counted for the performance summary in the log (m_perfstats.c)
+extern "C" int ps_uwp_draws, ps_uwp_texturescreated, ps_uwp_textureuploads, ps_uwp_framebufferscreated;
 #endif
 
 using namespace srb2;
@@ -660,6 +662,9 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 
 	GLuint name = 0;
 	gl_->GenTextures(1, &name);
+#ifdef _UWP
+	ps_uwp_texturescreated++;
+#endif
 
 	gl_->BindTexture(GL_TEXTURE_2D, name);
 
@@ -723,6 +728,9 @@ void Gl2Rhi::update_texture(
 	GL_ASSERT;
 	gl_->BindTexture(GL_TEXTURE_2D, t.texture);
 	GL_ASSERT;
+#ifdef _UWP
+	ps_uwp_textureuploads++;
+#endif
 	gl_->TexSubImage2D(
 		GL_TEXTURE_2D,
 		0,
@@ -1063,6 +1071,9 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
 		GLuint fb_name;
 		gl_->GenFramebuffers(1, &fb_name);
 		GL_ASSERT;
+#ifdef _UWP
+		ps_uwp_framebufferscreated++;
+#endif
 		gl_->BindFramebuffer(GL_FRAMEBUFFER, fb_name);
 		GL_ASSERT;
 		fb_itr = framebuffers_.insert({
@@ -1496,6 +1507,9 @@ void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
 
 	gl_->DrawArrays(map_primitive_mode(current_primitive_type_), first_vertex, vertex_count);
 	GL_ASSERT;
+#ifdef _UWP
+	ps_uwp_draws++;
+#endif
 }
 
 void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
@@ -1515,6 +1529,9 @@ void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
 		(const void*)((size_t)first_index * 2 + index_buffer_offset_)
 	);
 	GL_ASSERT;
+#ifdef _UWP
+	ps_uwp_draws++;
+#endif
 }
 
 void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::byte> out)

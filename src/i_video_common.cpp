@@ -48,6 +48,10 @@
 #include "st_stuff.h"
 #include "v_video.h"
 
+#ifdef _UWP
+#include "i_system.h"
+#endif
+
 extern "C" consvar_t cv_scr_scale, cv_scr_x, cv_scr_y;
 
 using namespace srb2;
@@ -213,8 +217,15 @@ void I_CaptureVideoFrame()
 extern "C" void I_OutputMsg(const char *fmt, ...);
 static int uwp_traceframe = 0;
 #define UWP_TRACE(step) do { if (uwp_traceframe < 3) I_OutputMsg("UWP: frame %d: %s\n", uwp_traceframe, step); } while (0)
+
+// [UWP]: Time the parts of I_FinishUpdate for the performance summary in the log (m_perfstats.c)
+extern "C" precise_t ps_uwp_twodeetime, ps_uwp_upscaletime, ps_uwp_imguitime, ps_uwp_cleanuptime, ps_uwp_presenttime,
+	ps_uwp_finishtime, ps_uwp_nextframetime;
+static precise_t uwp_stagestart;
+#define UWP_STAGE(total) do { const precise_t now = I_GetPreciseTime(); total += now - uwp_stagestart; uwp_stagestart = now; } while (0)
 #else
 #define UWP_TRACE(step) do {} while (0)
+#define UWP_STAGE(total) do {} while (0)
 #endif
 
 void I_StartDisplayUpdate(void)
@@ -271,6 +282,9 @@ void I_FinishUpdate(void)
 	}
 #endif
 
+#ifdef _UWP
+	uwp_stagestart = I_GetPreciseTime();
+#endif
 	temp_legacy_finishupdate_draws();
 
 	rhi::Rhi* rhi = sys::get_rhi(sys::g_current_rhi);
@@ -286,6 +300,7 @@ void I_FinishUpdate(void)
 	// better hope the drawing code left the context in a render pass, I guess
 	g_hw_state.twodee_renderer->flush(*rhi, g_2d);
 	rhi->pop_render_pass();
+	UWP_STAGE(ps_uwp_twodeetime);
 
 	UWP_TRACE("push default render pass");
 	rhi->push_default_render_pass(true);
@@ -336,19 +351,24 @@ void I_FinishUpdate(void)
 		g_hw_state.blit_rect->draw(*rhi);
 		break;
 	}
+	UWP_STAGE(ps_uwp_upscaletime);
 
 	UWP_TRACE("render imgui");
 	g_hw_state.imgui_renderer->render(*rhi);
 
 	rhi->pop_render_pass();
+	UWP_STAGE(ps_uwp_imguitime);
 
 	UWP_TRACE("postframe update");
 	postframe_update(*rhi);
+	UWP_STAGE(ps_uwp_cleanuptime);
 
 	UWP_TRACE("present");
 	rhi->present();
+	UWP_STAGE(ps_uwp_presenttime);
 	UWP_TRACE("finish");
 	rhi->finish();
+	UWP_STAGE(ps_uwp_finishtime);
 	UWP_TRACE("done");
 #ifdef _UWP
 	uwp_traceframe++;
@@ -358,4 +378,5 @@ void I_FinishUpdate(void)
 
 	// Immediately prepare to begin drawing the next frame
 	I_StartDisplayUpdate();
+	UWP_STAGE(ps_uwp_nextframetime);
 }
