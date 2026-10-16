@@ -42,6 +42,126 @@
 
 lua_State *gL = NULL;
 
+// [UWP]: The pointers that have userdata in LREG_VALID, kept beside it so LUA_InvalidateUserdata can skip asking Lua
+// about the many pointers that never had any, like each block freed from the level pools whenever a mobj moves.
+// Asking was about 4% of game logic on Xbox. A hash set with open addressing; if it ever can't grow, it's abandoned,
+// and every pointer is asked about again.
+#define VALIDUSERDATA_REMOVED ((void *)1)
+
+static void **validuserdata;
+static size_t validuserdata_capacity; // a power of 2, or 0 before the first pointer
+static size_t validuserdata_used; // slots that aren't empty, including removed pointers
+static boolean validuserdata_abandoned;
+
+static size_t ValidUserdata_Slot(void *data)
+{
+	UINT64 hash = (UINT64)(uintptr_t)data;
+
+	hash ^= hash >> 33;
+	hash *= 0xff51afd7ed558ccdULL;
+	hash ^= hash >> 33;
+	return (size_t)hash & (validuserdata_capacity - 1);
+}
+
+static void ValidUserdata_Clear(void)
+{
+	free(validuserdata);
+	validuserdata = NULL;
+	validuserdata_capacity = validuserdata_used = 0;
+	validuserdata_abandoned = false;
+}
+
+// Whether data may have userdata, which is always the case once abandoned
+static boolean ValidUserdata_Has(void *data)
+{
+	size_t i;
+
+	if (validuserdata_abandoned)
+		return true;
+
+	if (!validuserdata_capacity)
+		return false;
+
+	for (i = ValidUserdata_Slot(data); validuserdata[i]; i = (i + 1) & (validuserdata_capacity - 1))
+	{
+		if (validuserdata[i] == data)
+			return true;
+	}
+
+	return false;
+}
+
+static void ValidUserdata_Insert(void *data)
+{
+	size_t i = ValidUserdata_Slot(data);
+
+	while (validuserdata[i])
+		i = (i + 1) & (validuserdata_capacity - 1);
+
+	validuserdata[i] = data;
+	validuserdata_used++;
+}
+
+static void ValidUserdata_Add(void *data)
+{
+	if (validuserdata_abandoned)
+		return;
+
+	// Keep at most 3/4 of the slots in use, or Has() slows down, rebuilding without removed pointers when full
+	if ((validuserdata_used + 1) * 4 > validuserdata_capacity * 3)
+	{
+		void **old = validuserdata;
+		const size_t oldcapacity = validuserdata_capacity;
+		size_t live = 0, i;
+
+		for (i = 0; i < oldcapacity; i++)
+		{
+			if (old[i] && old[i] != VALIDUSERDATA_REMOVED)
+				live++;
+		}
+
+		validuserdata_capacity = oldcapacity ? oldcapacity : 1024;
+		while ((live + 1) * 2 > validuserdata_capacity)
+			validuserdata_capacity *= 2;
+
+		validuserdata = calloc(validuserdata_capacity, sizeof *validuserdata);
+		if (!validuserdata)
+		{
+			free(old);
+			validuserdata_capacity = validuserdata_used = 0;
+			validuserdata_abandoned = true;
+			return;
+		}
+
+		validuserdata_used = 0;
+		for (i = 0; i < oldcapacity; i++)
+		{
+			if (old[i] && old[i] != VALIDUSERDATA_REMOVED)
+				ValidUserdata_Insert(old[i]);
+		}
+		free(old);
+	}
+
+	ValidUserdata_Insert(data);
+}
+
+static void ValidUserdata_Remove(void *data)
+{
+	size_t i;
+
+	if (validuserdata_abandoned || !validuserdata_capacity)
+		return;
+
+	for (i = ValidUserdata_Slot(data); validuserdata[i]; i = (i + 1) & (validuserdata_capacity - 1))
+	{
+		if (validuserdata[i] == data)
+		{
+			validuserdata[i] = VALIDUSERDATA_REMOVED;
+			return;
+		}
+	}
+}
+
 // List of internal libraries to load from SRB2
 static lua_CFunction liblist[] = {
 	LUA_EnumLib, // global metatable for enums
@@ -475,6 +595,7 @@ void LUA_ClearState(void)
 	if (gL)
 		lua_close(gL);
 	gL = NULL;
+	ValidUserdata_Clear();
 
 	CONS_Printf(M_GetText("Pardon me while I initialize the Lua scripting interface...\n"));
 
@@ -757,6 +878,7 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 		lua_pushlightuserdata(L, data); // k (store the userdata via the data's pointer)
 		lua_pushvalue(L, -2); // v (copy of the userdata)
 		lua_rawset(L, -4);
+		ValidUserdata_Add(data);
 
 		// stack is left with the userdata on top, as if getting it had originally succeeded.
 
@@ -784,6 +906,11 @@ void LUA_InvalidateUserdata(void *data)
 	void **userdata;
 	if (!gL)
 		return;
+
+	// [UWP]: Most pointers never had userdata (see validuserdata)
+	if (!ValidUserdata_Has(data))
+		return;
+	ValidUserdata_Remove(data);
 
 	// fetch the userdata
 	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
