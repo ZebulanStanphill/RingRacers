@@ -1334,6 +1334,29 @@ static void init_imgui()
 	ImGui::StyleColorsDark();
 }
 
+#ifdef _UWP
+static void UWPLogGLStrings(void)
+{
+	using GetStringFn = const unsigned char *(WINAPI *)(unsigned int);
+	GetStringFn getstring = reinterpret_cast<GetStringFn>(SDL_GL_GetProcAddress("glGetString"));
+	static const struct { unsigned int name; const char *label; } strings[] = {
+		{0x1F00, "GL_VENDOR"}, {0x1F01, "GL_RENDERER"}, {0x1F02, "GL_VERSION"}, {0x8B8C, "GL_SHADING_LANGUAGE_VERSION"},
+	};
+
+	if (getstring == nullptr)
+	{
+		I_OutputMsg("UWP: glGetString not found\n");
+		return;
+	}
+
+	for (const auto& string : strings)
+	{
+		const unsigned char *value = getstring(string.name);
+		I_OutputMsg("UWP: %s: %s\n", string.label, value ? reinterpret_cast<const char *>(value) : "(null)");
+	}
+}
+#endif
+
 static SDL_bool Impl_CreateContext(void)
 {
 #ifdef HWRENDER
@@ -1371,6 +1394,9 @@ static SDL_bool Impl_CreateContext(void)
 	}
 	init_imgui();
 	SDL_GL_MakeCurrent(window, sdlglcontext);
+#ifdef _UWP
+	UWPLogGLStrings();
+#endif
 
 	if (!g_rhi)
 	{

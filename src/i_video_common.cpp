@@ -208,6 +208,15 @@ void I_CaptureVideoFrame()
 	hw_state->screen_capture->capture(*rhi);
 }
 
+#ifdef _UWP
+// [UWP]: Log each step of the first few frames, to find where the Xbox One X hangs
+extern "C" void I_OutputMsg(const char *fmt, ...);
+static int uwp_traceframe = 0;
+#define UWP_TRACE(step) do { if (uwp_traceframe < 3) I_OutputMsg("UWP: frame %d: %s\n", uwp_traceframe, step); } while (0)
+#else
+#define UWP_TRACE(step) do {} while (0)
+#endif
+
 void I_StartDisplayUpdate(void)
 {
 	if (rendermode == render_none)
@@ -230,6 +239,7 @@ void I_StartDisplayUpdate(void)
 		return;
 	}
 
+	UWP_TRACE("start display update");
 	if (rhi_changed(rhi))
 	{
 		// Reset all hardware 2 state
@@ -272,10 +282,12 @@ void I_FinishUpdate(void)
 		return;
 	}
 
+	UWP_TRACE("flush 2D");
 	// better hope the drawing code left the context in a render pass, I guess
 	g_hw_state.twodee_renderer->flush(*rhi, g_2d);
 	rhi->pop_render_pass();
 
+	UWP_TRACE("push default render pass");
 	rhi->push_default_render_pass(true);
 
 	// Upscale draw the backbuffer (with postprocessing maybe?)
@@ -304,6 +316,7 @@ void I_FinishUpdate(void)
 	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
 	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
 
+	UWP_TRACE("blit backbuffer");
 	switch (cv_scr_effect.value)
 	{
 	case 1:
@@ -324,14 +337,22 @@ void I_FinishUpdate(void)
 		break;
 	}
 
+	UWP_TRACE("render imgui");
 	g_hw_state.imgui_renderer->render(*rhi);
 
 	rhi->pop_render_pass();
 
+	UWP_TRACE("postframe update");
 	postframe_update(*rhi);
 
+	UWP_TRACE("present");
 	rhi->present();
+	UWP_TRACE("finish");
 	rhi->finish();
+	UWP_TRACE("done");
+#ifdef _UWP
+	uwp_traceframe++;
+#endif
 
 	FrameMark;
 

@@ -329,6 +329,22 @@ static void UWPDescribeDrives(char *out, size_t outsize)
 			len += snprintf(out + len, outsize - len, "%c: ok, ringracers found\n", letter);
 	}
 }
+
+precise_t i_uwplogtime = 0;
+
+void I_UWPLogMemoryLimit(void)
+{
+	UINT64 limit = 0, usage = 0;
+	int isXbox = 0;
+	const int result = I_UWPGetMemoryBudget(&limit, &usage, &isXbox);
+
+	// Xbox reported 5120 MB with App type both App and Game on an Xbox One X, so this doesn't tell them apart
+	if (result == 0)
+		I_OutputMsg("UWP: process memory budget %llu MB, usage %llu MB\n", limit >> 20, usage >> 20);
+	else
+		I_OutputMsg("UWP: process memory budget unavailable (HRESULT 0x%08x)\n", (unsigned)result);
+}
+
 #endif
 
 static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
@@ -1138,6 +1154,10 @@ void I_OutputMsg(const char *fmt, ...)
 	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
 #endif
 
+#ifdef _UWP
+	const precise_t logstart = I_GetPreciseTime();
+#endif
+
 #if defined (_WIN32) && defined (_MSC_VER)
 	OutputDebugStringA(txt);
 #endif
@@ -1151,6 +1171,10 @@ void I_OutputMsg(const char *fmt, ...)
 		fflush(logstream);
 		(void)d;
 	}
+#endif
+
+#ifdef _UWP
+	i_uwplogtime += I_GetPreciseTime() - logstart;
 #endif
 
 #if defined (_WIN32)

@@ -111,6 +111,9 @@ void Z_Init(void)
 
 	memfree = I_GetFreeMem(&total)>>20;
 	CONS_Printf("System memory: %uMB - Free: %uMB\n", total>>20, memfree);
+#ifdef _UWP
+	I_UWPLogMemoryLimit();
+#endif
 
 	// Note: This allocates memory. Watch out.
 	COM_AddDebugCommand("memfree", Command_Memfree_f);

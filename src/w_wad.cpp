@@ -819,6 +819,10 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 #endif
 	UINT8 md5sum[16];
 	int important;
+#ifdef _UWP
+	const precise_t uwploadstart = I_GetPreciseTime();
+	const precise_t uwplogstart = i_uwplogtime;
+#endif
 
 	if (!(refreshdirmenu & REFRESHDIR_ADDFILE))
 		refreshdirmenu = REFRESHDIR_NORMAL|REFRESHDIR_ADDFILE; // clean out cons_alerts that happened earlier
@@ -1050,6 +1054,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	DEH_UpdateMaxFreeslots();
 
 	W_InvalidateLumpnumCache();
+
+#ifdef _UWP
+	// [UWP]: Time each file, to see what makes startup slow on Xbox
+	I_OutputMsg("UWP: loading %s took %.1f s (%.1f s of it logging)\n", filename,
+		(double)(I_GetPreciseTime() - uwploadstart) / I_GetPrecisePrecision(),
+		(double)(i_uwplogtime - uwplogstart) / I_GetPrecisePrecision());
+#endif
 	return wadfile->numlumps;
 }
 

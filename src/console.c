@@ -1948,7 +1948,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
 	con_startup_loadprogress = newStep;
 
 	if (con_startup_loadprogress <= LOADED_ALLDONE)
+	{
+#ifdef _UWP
+		// [UWP]: Time each step, and the time spent logging, to see what makes startup slow on Xbox
+		static precise_t loadstart = 0;
+		static precise_t logstart = 0;
+
+		if (!loadstart)
+		{
+			loadstart = I_GetPreciseTime();
+			logstart = i_uwplogtime;
+		}
+
+		CONS_Printf("LOADING UPDATE - %s (%.1f s, %.1f s of it logging)\n", CON_LoadingStrings[con_startup_loadprogress],
+			(double)(I_GetPreciseTime() - loadstart) / I_GetPrecisePrecision(),
+			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
+#else
 		CONS_Printf("LOADING UPDATE - %s\n", CON_LoadingStrings[con_startup_loadprogress]);
+#endif
+	}
 
 	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
 		return;

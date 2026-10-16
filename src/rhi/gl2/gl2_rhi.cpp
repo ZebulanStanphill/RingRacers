@@ -23,6 +23,10 @@
 #include "../../core/vector.hpp"
 #include "../shader_load_context.hpp"
 
+#ifdef _UWP
+extern "C" void I_OutputMsg(const char *fmt, ...);
+#endif
+
 using namespace srb2;
 using namespace rhi;
 
@@ -833,6 +837,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
 	SRB2_ASSERT(platform_ != nullptr);
 	Gl2Program program;
 
+#ifdef _UWP
+	I_OutputMsg("UWP: compiling program %s\n", desc.name);
+#endif
 	auto [vert_srcs, frag_srcs] = platform_->find_shader_sources(desc.name);
 
 	// GL 2 note:
@@ -915,6 +922,9 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
 		gl_->DeleteShader(program.vertex_shader);
 		throw std::runtime_error(fmt::format("Pipeline program link failed: {}", String(link_error.data())));
 	}
+#ifdef _UWP
+	I_OutputMsg("UWP: linked program %s\n", desc.name);
+#endif
 
 	// get attribute information
 	GLint active_attribute_total = -1;

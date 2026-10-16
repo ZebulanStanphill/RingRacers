@@ -313,6 +313,19 @@ boolean I_HasOpenURL(void);
 
 void I_OpenURL(const char *data);
 
+#ifdef _UWP
+// [UWP]: Time I_OutputMsg has spent writing messages to the log file and debugger, to see how much logging slows startup
+extern precise_t i_uwplogtime;
+
+// [UWP]: Implemented by the launcher using MemoryManager. Returns 0 on success,
+// otherwise an HRESULT. Reports the actual process budget and whether this is Xbox.
+int I_UWPGetMemoryBudget(UINT64 *limit, UINT64 *usage, int *isXbox);
+
+// [UWP]: Logs the process budget. GlobalMemoryStatusEx reports physical memory, not this budget.
+void I_UWPLogMemoryLimit(void);
+
+#endif
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
