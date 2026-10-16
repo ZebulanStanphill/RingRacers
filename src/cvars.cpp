@@ -1478,6 +1478,8 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
 	consvar_t cv_glanisotropicmode = OpenGL("gr_anisotropicmode", "1").values(glanisotropicmode_cons_t).onchange(CV_glanisotropic_OnChange);
 
 	consvar_t cv_glbatching = OpenGL("gr_batching", "On").on_off().dont_save();
+	consvar_t cv_glbettertransparency = OpenGL("gr_bettertransparency", "Off").on_off()
+		.description("Sort transparent sprites and models among level surfaces; costs extra CPU time.");
 
 	// [UWP]: Palette rendering, from SRB2, which needs shaders
 	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
