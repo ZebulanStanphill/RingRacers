@@ -531,7 +531,15 @@ struct precipmobj_t
 };
 
 // It's extremely important that all mobj_t*-reading code have access to this.
+#ifdef _UWP
+void P_MobjThinker(mobj_t *mobj);
+FUNCINLINE static ATTRINLINE boolean P_MobjWasRemoved(const mobj_t *mobj)
+{
+	return !(mobj && mobj->thinker.function.acp1 == (actionf_p1)P_MobjThinker);
+}
+#else
 boolean P_MobjWasRemoved(const mobj_t *th);
+#endif
 
 struct actioncache_t
 {

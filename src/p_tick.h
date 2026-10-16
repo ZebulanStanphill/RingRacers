@@ -16,6 +16,9 @@
 #define __P_TICK__
 
 #include "doomdef.h"
+#if defined(_UWP) && !defined(PARANOIA)
+#include "p_mobj.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +53,18 @@ mobj_t *P_SetTarget2(mobj_t **mo, mobj_t *target
 
 #ifdef PARANOIA
 #define P_SetTarget(...) P_SetTarget2(__VA_ARGS__, __FILE__, __LINE__)
+#elif defined(_UWP)
+// Preserve both reference updates around callbacks, without an out-of-line call.
+FUNCINLINE static ATTRINLINE mobj_t *P_SetTargetInline(mobj_t **mop, mobj_t *targ)
+{
+	if (*mop)
+		(*mop)->thinker.references--;
+	if (targ)
+		targ->thinker.references++;
+	*mop = targ;
+	return targ;
+}
+#define P_SetTarget P_SetTargetInline
 #else
 #define P_SetTarget P_SetTarget2
 #endif

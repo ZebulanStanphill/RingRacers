@@ -12361,12 +12361,14 @@ void P_RemoveMobj(mobj_t *mobj)
 
 // This does not need to be added to Lua.
 // To test it in Lua, check mobj.valid
+#ifndef _UWP
 boolean P_MobjWasRemoved(const mobj_t *mobj)
 {
 	if (mobj && mobj->thinker.function.acp1 == (actionf_p1)P_MobjThinker)
 		return false;
 	return true;
 }
+#endif
 
 void P_FreePrecipMobj(precipmobj_t *mobj)
 {
