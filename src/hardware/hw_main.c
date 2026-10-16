@@ -1053,18 +1053,95 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 //
 // HWR_SplitWall
 //
+#ifdef _UWP
+// Intersect each light band with the ORIGINAL wall. A band can miss one end
+// of a sloped wall entirely; drawing an inverted quad there fills a huge false
+// triangle. Split at every crossing of the four linear height boundaries so
+// min(top)/max(bottom) are linear on each resulting span. No heap allocation.
+static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float endtop,
+	float bot, float endbot, FSurfaceInfo *surf, INT32 texnum, INT32 basetexnum,
+	FBITFIELD flags, FUINT lightnum, extracolormap_t *colormap)
+{
+	const UINT8 alpha = surf->PolyColor.s.alpha;
+	const float heights[4][2] = {{original[3].y, original[2].y},
+		{original[0].y, original[1].y}, {top, endtop}, {bot, endbot}};
+	float cuts[8] = {0.0f, 1.0f};
+	INT32 count = 2, i, j, span, end;
+	const float gap0 = heights[0][0]-heights[1][0];
+	const float gap1 = heights[0][1]-heights[1][1];
+	const float peg0 = gap0 ? (original[0].t-original[3].t)/gap0
+		: gap1 ? (original[1].t-original[2].t)/gap1 : 0.0f;
+	const float peg1 = gap1 ? (original[1].t-original[2].t)/gap1 : peg0;
+
+	for (i = 0; i < 4; ++i)
+		for (j = i+1; j < 4; ++j)
+		{
+			const float d0 = heights[i][0]-heights[j][0];
+			const float d1 = heights[i][1]-heights[j][1];
+			if ((d0 < 0 && d1 > 0) || (d0 > 0 && d1 < 0))
+			{
+				const float cut = d0/(d0-d1);
+				INT32 k = count;
+				while (k > 0 && cuts[k-1] > cut) { cuts[k] = cuts[k-1]; --k; }
+				cuts[k] = cut; ++count; // six pairs plus the two endpoints fit cuts[8]
+			}
+		}
+	for (span = 1; span < count; ++span)
+	{
+		FOutVector piece[4];
+		const float a = cuts[span-1], b = cuts[span], mid = (a+b)*0.5f;
+		float h[4];
+		if (!(b > a)) continue;
+		for (i = 0; i < 4; ++i) h[i] = heights[i][0]+(heights[i][1]-heights[i][0])*mid;
+		if (min(h[0], h[2]) <= max(h[1], h[3])) continue;
+		for (end = 0; end < 2; ++end)
+		{
+			const float f = end ? b : a;
+			const INT32 lower = end, upper = 3-end;
+			const float peg = peg0+(peg1-peg0)*f;
+			const float uvtop = original[3].t+(original[2].t-original[3].t)*f;
+			for (i = 0; i < 4; ++i) h[i] = heights[i][0]+(heights[i][1]-heights[i][0])*f;
+			piece[lower].x = piece[upper].x = original[0].x+(original[1].x-original[0].x)*f;
+			piece[lower].z = piece[upper].z = original[0].z+(original[1].z-original[0].z)*f;
+			piece[lower].s = original[0].s+(original[1].s-original[0].s)*f;
+			piece[upper].s = original[3].s+(original[2].s-original[3].s)*f;
+			piece[upper].y = min(h[0], h[2]);
+			piece[lower].y = max(h[1], h[3]);
+			// Coincident crossing endpoints may differ by float roundoff.
+			if (piece[lower].y > piece[upper].y)
+				piece[lower].y = piece[upper].y = (piece[lower].y+piece[upper].y)*0.5f;
+			piece[upper].t = uvtop+(h[0]-piece[upper].y)*peg;
+			piece[lower].t = uvtop+(h[0]-piece[lower].y)*peg;
+		}
+		surf->PolyColor.s.alpha = alpha;
+		if (flags & PF_Fog)
+			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+		else if (flags & PF_EnvironmentTrans)
+			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+		else
+			HWR_ProjectWall(piece, surf, flags, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+	}
+}
+#endif
+
 static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum, INT32 basetexnum, FSurfaceInfo* Surf, INT32 cutflag, ffloor_t *pfloor, FBITFIELD polyflags)
 {
 	/* SoM: split up and light walls according to the
 	 lightlist. This may also include leaving out parts
 	 of the wall that can't be seen */
 
-	float realtop, realbot, top, bot;
+	float realbot, top, bot;
+#ifndef _UWP
+	float realtop;
 	float pegt, pegb, pegmul;
+#endif
 	float height = 0.0f, bheight = 0.0f;
 
-	float endrealtop, endrealbot, endtop, endbot;
+	float endrealbot, endtop, endbot;
+#ifndef _UWP
+	float endrealtop;
 	float endpegt, endpegb, endpegmul;
+#endif
 	float endheight = 0.0f, endbheight = 0.0f;
 
 	// compiler complains when P_GetSlopeZAt is used in FLOAT_TO_FIXED directly
@@ -1079,20 +1156,34 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	INT32 solid, i;
 	lightlist_t *  list = sector->lightlist;
 	const UINT8 alpha = Surf->PolyColor.s.alpha;
+#ifdef _UWP
+	FOutVector original[4];
+	M_Memcpy(original, wallVerts, sizeof original);
+#endif
 	FUINT lightnum = sector->lightlevel;
 	extracolormap_t *colormap = NULL;
 
-	realtop = top = wallVerts[3].y;
+	top = wallVerts[3].y;
+#ifndef _UWP
+	realtop = top;
+#endif
 	realbot = bot = wallVerts[0].y;
+#ifndef _UWP
 	pegt = wallVerts[3].t;
 	pegb = wallVerts[0].t;
 	pegmul = (pegb - pegt) / (top - bot);
+#endif
 
-	endrealtop = endtop = wallVerts[2].y;
+	endtop = wallVerts[2].y;
+#ifndef _UWP
+	endrealtop = endtop;
+#endif
 	endrealbot = endbot = wallVerts[1].y;
+#ifndef _UWP
 	endpegt = wallVerts[2].t;
 	endpegb = wallVerts[1].t;
 	endpegmul = (endpegb - endpegt) / (endtop - endbot);
+#endif
 
 	for (i = 0; i < sector->numlights; i++)
 	{
@@ -1169,16 +1260,23 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		//Found a break;
 		bot = bheight;
 
+#ifndef _UWP
 		if (bot < realbot)
 			bot = realbot;
+#endif
 
 		endbot = endbheight;
 
+#ifndef _UWP
 		if (endbot < endrealbot)
 			endbot = endrealbot;
+#endif
 
 		Surf->PolyColor.s.alpha = alpha;
 
+#ifdef _UWP
+		HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap);
+#else
 		wallVerts[3].t = pegt + ((realtop - top) * pegmul);
 		wallVerts[2].t = endpegt + ((endrealtop - endtop) * endpegmul);
 		wallVerts[0].t = pegt + ((realtop - bot) * pegmul);
@@ -1196,6 +1294,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
 		else
 			HWR_ProjectWall(wallVerts, Surf, polyflags, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+#endif
 
 		top = bot;
 		endtop = endbot;
@@ -1208,6 +1307,9 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 
 	Surf->PolyColor.s.alpha = alpha;
 
+#ifdef _UWP
+	HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap);
+#else
 	wallVerts[3].t = pegt + ((realtop - top) * pegmul);
 	wallVerts[2].t = endpegt + ((endrealtop - endtop) * endpegmul);
 	wallVerts[0].t = pegt + ((realtop - bot) * pegmul);
@@ -1225,6 +1327,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
 	else
 		HWR_ProjectWall(wallVerts, Surf, polyflags, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+#endif
 }
 
 // HWR_DrawSkyWall
