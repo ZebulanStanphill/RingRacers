@@ -1310,7 +1310,18 @@ static UINT8 HWR_GetModelSprite2(md2_t *md2, skin_t *skin, UINT8 spr2, player_t 
 static void adjustTextureCoords(model_t *model, patch_t *patch)
 {
 	int i;
-	GLPatch_t *gpatch = ((GLPatch_t *)patch->hardware);
+	GLPatch_t *gpatch;
+
+	// [UWP]: The patch's hardware data, which has its max_s and max_t, only exists once it has been prepared, and
+	// changing video settings frees it, so a model that borrows its sprite's graphics could read through a null
+	// pointer when it was first drawn afterwards.
+	if (!patch)
+		return;
+	if (!patch->hardware || !((GLPatch_t *)patch->hardware)->mipmap->downloaded)
+		HWR_GetPatch(patch);
+	gpatch = ((GLPatch_t *)patch->hardware);
+	if (!gpatch)
+		return;
 
 	for (i = 0; i < model->numMeshes; i++)
 	{
@@ -1707,10 +1718,18 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			// Comparing floats with the != operator here should be okay because they
 			// are just copies of glpatches' max_s and max_t values.
 			// Instead of the != operator, memcmp is used to avoid a compiler warning.
-			if (memcmp(&(hwrPatch->max_s), &(md2->model->max_s), sizeof(md2->model->max_s)) != 0 ||
-				memcmp(&(hwrPatch->max_t), &(md2->model->max_t), sizeof(md2->model->max_t)) != 0)
-				adjustTextureCoords(md2->model, spr->gpatch);
+			// [UWP]: Compare the sprite's dimensions, as described above, rather than the model texture's, which a
+			// model drawn with its sprite may not have (hwrPatch was NULL then), and prepare the sprite first so its
+			// dimensions exist.
+			GLPatch_t *spritePatch;
 			HWR_GetMappedPatch(spr->gpatch, spr->colormap);
+			spritePatch = spr->gpatch->hardware;
+			if (spritePatch && (memcmp(&(spritePatch->max_s), &(md2->model->max_s), sizeof(md2->model->max_s)) != 0 ||
+				memcmp(&(spritePatch->max_t), &(md2->model->max_t), sizeof(md2->model->max_t)) != 0))
+			{
+				adjustTextureCoords(md2->model, spr->gpatch);
+				HWR_GetMappedPatch(spr->gpatch, spr->colormap); // adjusting can select the uncolored patch
+			}
 		}
 
 		if (spr->mobj->frame & FF_ANIMATE)
