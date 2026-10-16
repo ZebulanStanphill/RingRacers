@@ -24,6 +24,11 @@
 #include "../cxxutil.hpp"
 #include "../m_argv.h"
 
+#ifdef _UWP
+extern "C" void I_OutputMsg(const char *error, ...);
+extern "C" unsigned int I_UWPUsableProcessors(void);
+#endif
+
 using namespace srb2;
 
 static void do_work(ThreadPool::Task& work)
@@ -301,6 +306,15 @@ void I_ThreadPoolInit(void)
 {
 	SRB2_ASSERT(g_main_threadpool == nullptr);
 	size_t thread_count = std::min(static_cast<unsigned int>(9), std::thread::hardware_concurrency());
+#ifdef _UWP
+	// [UWP]: Limit workers when Xbox marks processors as the game's own. As an app it marks none, so keep the
+	// upstream hardware count then; counting only the unallocated processors picked the system's two cores.
+	const unsigned int usable = I_UWPUsableProcessors();
+	if (usable)
+	{
+		thread_count = std::min(static_cast<unsigned int>(9), usable);
+	}
+#endif
 	if (thread_count > 1)
 	{
 		// The main thread will act as a worker when waiting for pool idle
@@ -316,6 +330,11 @@ void I_ThreadPoolInit(void)
 	{
 		g_main_threadpool = std::make_unique<ThreadPool>(thread_count);
 	}
+
+#ifdef _UWP
+	I_OutputMsg("UWP: %u hardware threads, %u marked as the game's, %zu thread pool workers\n",
+		std::thread::hardware_concurrency(), usable, M_CheckParm("-singlethreaded") ? (size_t)0 : thread_count);
+#endif
 }
 
 void I_ThreadPoolShutdown(void)
