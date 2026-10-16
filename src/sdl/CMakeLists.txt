@@ -58,10 +58,14 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
 	)
 endif()
 
+if(NOT SRB2_CONFIG_UWP)
 target_link_libraries(SRB2SDL2
 	PRIVATE
 	$<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
 )
+else()
+	target_link_libraries(SRB2SDL2 PRIVATE SDL2) # TODO: I should cleanup uwp-dep namespaces
+endif()
 
 if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)
 	target_link_libraries(SRB2SDL2 PRIVATE m rt)

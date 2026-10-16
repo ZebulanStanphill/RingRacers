@@ -185,11 +185,13 @@ HMS_connect (const char *format, ...)
 	buffer->buffer = malloc(buffer->end);
 	buffer->needle = 0;
 
+#ifdef LOGMESSAGES
 	if (cv_masterserver_debug.value)
 	{
 		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 		curl_easy_setopt(curl, CURLOPT_STDERR, logstream);
 	}
+#endif
 
 	if (M_CheckParm("-bindaddr") && M_IsNextParm())
 	{

@@ -40,7 +40,8 @@ typedef UINT (WINAPI *p_timeEndPeriod) (UINT);
 typedef HANDLE (WINAPI *p_OpenFileMappingA) (DWORD, BOOL, LPCSTR);
 typedef LPVOID (WINAPI *p_MapViewOfFile) (HANDLE, DWORD, DWORD, DWORD, SIZE_T);
 
-#if defined(_WIN32) && !defined(__GNUC__)
+// [UWP]: No minidumps; the package directory is read-only and DbgHelp isn't usable from the app container
+#if defined(_WIN32) && !defined(__GNUC__) && !defined(_UWP)
 #define USE_DBGHELP
 #include <DbgHelp.h>
 #endif
@@ -2083,6 +2084,7 @@ static void Shittycopyerror(const char *name)
 
 static void Shittylogcopy(void)
 {
+#ifdef LOGMESSAGES
 	char buf[8192];
 	FILE *fp;
 	size_t r;
@@ -2110,6 +2112,7 @@ static void Shittylogcopy(void)
 	{
 		Shittycopyerror(logfilename);
 	}
+#endif // LOGMESSAGES
 }
 #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
 
@@ -2373,6 +2376,7 @@ static const char *locateWad(void)
 {
 	const char *envstr;
 	const char *WadPath;
+
 
 	I_OutputMsg("RINGRACERSWADDIR");
 	// does RINGRACERSWADDIR exist?

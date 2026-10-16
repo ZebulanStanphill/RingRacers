@@ -42,6 +42,10 @@
 //#define SDLMAIN
 #endif
 
+#ifdef _UWP
+#define SDLMAIN
+#endif
+
 #ifdef SDLMAIN
 #include "SDL_main.h"
 #elif defined(FORCESDLMAIN)
@@ -153,6 +157,7 @@ static void InitLogging(void)
 #if defined(_WIN32) && !defined(_MSC_VER)
 static void init_exchndl()
 {
+#ifndef _UWP
 	HMODULE exchndl_module = LoadLibraryA("exchndl.dll");
 
 	if (exchndl_module == NULL)
@@ -166,6 +171,7 @@ static void init_exchndl()
 		GetProcAddress(exchndl_module, "ExcHndlInit"));
 	if (pfnExcHndlInit != NULL)
 		(pfnExcHndlInit)();
+#endif
 }
 #endif
 
@@ -291,7 +297,7 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && !defined(_UWP)
 int WINAPI WinMain(HINSTANCE pInstance, HINSTANCE pPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
 	return main(__argc, __argv);

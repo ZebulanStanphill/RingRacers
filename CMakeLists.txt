@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
+include(FetchContent)
 
 if("${CMAKE_CURRENT_BINARY_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
 	message(FATAL_ERROR "In-source builds are blocked. Please build from a separate directory.")
@@ -90,6 +91,7 @@ option(SRB2_CONFIG_FORCE_NO_MS_BITFIELDS "Compile without -mno-ms-bitfields comp
 option(SRB2_CONFIG_PROFILEMODE "Compile for profiling (GCC only)." OFF)
 option(SRB2_CONFIG_TRACY "Compile with Tracy profiling enabled" OFF)
 option(SRB2_CONFIG_ASAN "Compile with AddressSanitizer (libasan)." OFF)
+option(SRB2_CONFIG_UWP "Compile in UWP compatibility mode (static lib for external launch)." OFF)
 set(SRB2_CONFIG_ASSET_DIRECTORY "" CACHE PATH "Path to directory that contains all asset files for the installer. If set, assets will be part of installation and cpack.")
 
 # Enable CCache
@@ -122,12 +124,23 @@ endif()
 
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
-find_package(SDL2 CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(Opus REQUIRED)
-if(WIN32 AND NOT MINGW)
+if(WIN32 AND NOT MINGW AND NOT SRB2_CONFIG_UWP)
 	find_package(cpptrace CONFIG REQUIRED)
 endif()
+
+if(NOT SRB2_CONFIG_UWP)
+	find_package(SDL2 CONFIG REQUIRED)
+else()
+	FetchContent_Declare(UwpLibs
+	    GIT_REPOSITORY https://github.com/worleydl/uwp-dep.git
+	    GIT_TAG daf2fb4ba18974bd25ebcc5ed4bba7a4b1ee33ed
+	)
+	FetchContent_MakeAvailable(UwpLibs)
+	add_compile_definitions(_UWP)
+endif()
+
 # Use the one in thirdparty/fmt to guarantee a minimum version
 #find_package(FMT CONFIG REQUIRED)
 
@@ -202,7 +215,7 @@ if(NOT "${SRB2_GIT_DIR}" STREQUAL "" AND "${SRB2_SDL2_EXE_NAME}" STREQUAL "")
 
 	list(APPEND EXE_NAME_PARTS "ringracers")
 
-	if(NOT "${SRB2_GIT_REVISION}" STREQUAL "master")
+	if(NOT "${SRB2_GIT_REVISION}" STREQUAL "master" AND NOT SRB2_CONFIG_UWP)
 		# substitute path-unsafe characters
 		string(REGEX REPLACE "[\\\/\^\$]" "_" SAFE_REVISION "${SRB2_GIT_REVISION}")
 		list(APPEND EXE_NAME_PARTS ${SAFE_REVISION})

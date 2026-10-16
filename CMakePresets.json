@@ -80,6 +80,13 @@
 			}
 		},
 		{
+			"name": "__uwp",
+			"hidden": true,
+			"cacheVariables": {
+				"SRB2_CONFIG_UWP": "ON"
+			}
+		},
+		{
 			"name": "__vcpkg-toolchain",
 			"hidden": true,
 			"cacheVariables": {
@@ -232,6 +239,12 @@
 			"binaryDir": "${sourceDir}/build/${presetName}",
 			"inherits": [ "__release-cl", "__ninja", "__vcpkg-toolchain", "__x64-windows" ]
 		},
+		{
+			"name": "ninja-x64_windows_uwp_vcpkg-release",
+			"hidden": false,
+			"binaryDir": "${sourceDir}/build/${presetName}",
+			"inherits": [ "__release-cl", "__ninja", "__uwp", "__vcpkg-toolchain", "__x64-windows" ]
+		},
 
 		{
 			"name": "ninja-x64_osx_vcpkg-debug",
@@ -324,6 +337,10 @@
 		{
 			"name": "ninja-x64_windows_vcpkg-release",
 			"configurePreset": "ninja-x64_windows_vcpkg-release"
+		},
+		{
+			"name": "ninja-x64_windows_uwp_vcpkg-release",
+			"configurePreset": "ninja-x64_windows_uwp_vcpkg-release"
 		},
 		{
 			"name": "ninja-x64_osx_vcpkg-debug",

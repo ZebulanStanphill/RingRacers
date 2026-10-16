@@ -1,6 +1,6 @@
 include(CheckCXXCompilerFlag)
 
-add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32
+set(SRB2_MAIN_SOURCES
 	comptime.c
 	cxxutil.hpp
 	md5.c
@@ -179,6 +179,12 @@ add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32
 	p_deepcopy.cpp
 )
 
+if (NOT SRB2_CONFIG_UWP)
+	add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32 ${SRB2_MAIN_SOURCES})
+else()
+	add_library(SRB2SDL2 STATIC ${SRB2_MAIN_SOURCES})
+endif()
+
 # Always compile some files with optimizations in Debug config.
 # This is to make the debugging experience less slow for the majority of cases.
 set(always_optimize_options "")
@@ -264,7 +270,9 @@ endif()
 
 if(MSVC OR CMAKE_CXX_LINK_EXECUTABLE MATCHES "lld-link\\.exe")
 	target_link_options(SRB2SDL2 PRIVATE /MANIFEST:NO)
-	target_link_libraries(SRB2SDL2 PRIVATE "dbghelp")
+	if(NOT SRB2_CONFIG_UWP)
+		target_link_libraries(SRB2SDL2 PRIVATE "dbghelp")
+	endif()
 
 endif()
 
@@ -353,7 +361,7 @@ target_link_libraries(SRB2SDL2 PRIVATE ZLIB::ZLIB)
 target_link_libraries(SRB2SDL2 PRIVATE PNG::PNG)
 target_link_libraries(SRB2SDL2 PRIVATE CURL::libcurl)
 target_link_libraries(SRB2SDL2 PRIVATE Opus::opus)
-if(WIN32 AND NOT MINGW)
+if(WIN32 AND NOT MINGW AND NOT SRB2_CONFIG_UWP)
 	target_link_libraries(SRB2SDL2 PRIVATE cpptrace::cpptrace)
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_CPPTRACE)
 endif()
@@ -392,6 +400,16 @@ if(SRB2_CONFIG_ENABLE_WEBM_MOVIES)
 		target_link_libraries(SRB2SDL2 PRIVATE libvpx::libvpx)
 	endif()
 	target_compile_definitions(SRB2SDL2 PRIVATE -DSRB2_CONFIG_ENABLE_WEBM_MOVIES)
+endif()
+
+if(SRB2_CONFIG_UWP)
+	target_link_libraries(SRB2SDL2 PRIVATE LIBUWP)
+
+	# Target the Xbox One's Jaguar CPU (btver2). Xbox Series X|S CPUs (Zen 2) support all of its instructions,
+	# and since it has no FMA, floating point math gives the same results as other x64 builds.
+	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+		target_compile_options(SRB2SDL2 PRIVATE "/clang:-march=btver2")
+	endif()
 endif()
 
 target_link_libraries(SRB2SDL2 PRIVATE nlohmann_json::nlohmann_json)
@@ -933,15 +951,17 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL Windows AND NOT "${SRB2_CONFIG_INTERNAL_LIBRA
 
 		#message(STATUS ADDITIONAL_DLLS="${ADDITIONAL_DLLS}")
 	endif()
-	add_custom_command(TARGET SRB2SDL2 POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			$<TARGET_RUNTIME_DLLS:SRB2SDL2>
-			${ADDITIONAL_DLLS}
+	if(NOT SRB2_CONFIG_UWP)
+		add_custom_command(TARGET SRB2SDL2 POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_RUNTIME_DLLS:SRB2SDL2>
+				${ADDITIONAL_DLLS}
 
-			$<TARGET_FILE_DIR:SRB2SDL2>
-		COMMAND_EXPAND_LISTS
-		COMMENT "Copying runtime DLLs"
-	)
+				$<TARGET_FILE_DIR:SRB2SDL2>
+			COMMAND_EXPAND_LISTS
+			COMMENT "Copying runtime DLLs"
+		)
+	endif()
 endif()
 
 # Setup clang-tidy
