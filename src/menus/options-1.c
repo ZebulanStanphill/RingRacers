@@ -73,6 +73,11 @@ menu_t OPTIONS_MainDef = {
 
 struct optionsmenu_s optionsmenu;
 
+#ifdef _UWP
+// [UWP]: Whether the button's slide to toptx/topty has started.
+static boolean optionsmenu_sliding = false;
+#endif
+
 void M_ResetOptions(void)
 {
 	optionsmenu.ticker = 0;
@@ -82,6 +87,9 @@ void M_ResetOptions(void)
 	optionsmenu.opty = 0;
 	optionsmenu.toptx = 0;
 	optionsmenu.topty = 0;
+#ifdef _UWP
+	optionsmenu_sliding = false;
+#endif
 
 	// BG setup:
 	optionsmenu.currcolour = OPTIONS_MainDef.extra1;
@@ -195,6 +203,9 @@ void M_OptionsTick(void)
 
 		optionsmenu.optx = optionsmenu.toptx;
 		optionsmenu.opty = optionsmenu.topty;
+#ifdef _UWP
+		optionsmenu_sliding = false;
+#endif
 	}
 	else
 	{
@@ -207,6 +218,22 @@ void M_OptionsTick(void)
 		{
 			tic_t t = I_GetTime();
 			tic_t n = t - optionsmenu.topt_start;
+#ifdef _UWP
+			// [UWP]: The menu ticks at most once a frame, so a frame longer than a tic skips
+			// tics. Start the slide once and end it on or after its last tic, instead of
+			// starting it over (bouncing the button back) when exactly its last tic was skipped.
+			if (!optionsmenu_sliding)
+			{
+				optionsmenu.topt_start = t;
+				optionsmenu_sliding = true;
+			}
+			else if (n >= M_OPTIONS_OFSTIME)
+			{
+				optionsmenu.optx = optionsmenu.toptx;
+				optionsmenu.opty = optionsmenu.topty;
+				optionsmenu_sliding = false;
+			}
+#else
 			if (n == M_OPTIONS_OFSTIME)
 			{
 				optionsmenu.optx = optionsmenu.toptx;
@@ -216,7 +243,14 @@ void M_OptionsTick(void)
 			{
 				optionsmenu.topt_start = I_GetTime();
 			}
+#endif
 		}
+#ifdef _UWP
+		else
+		{
+			optionsmenu_sliding = false;
+		}
+#endif
 
 		M_GonerCheckLooking();
 	}
