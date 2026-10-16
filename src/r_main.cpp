@@ -597,19 +597,13 @@ static inline void R_InitLightTables(void)
 //#define WOUGHMP_WOUGHMP // I got a fish-eye lens - I'll make a rap video with a couple of friends
 // it's kinda laggy sometimes
 
-#ifdef WOUGHMP_WOUGHMP
-#define AHHHH_IM_SO_MAAAAD { 0U, 0, FRACUNIT, NULL, 0, 0, {0}, {0}, false }
-#else
-#define AHHHH_IM_SO_MAAAAD { 0U,    FRACUNIT, NULL, 0, 0, {0}, {0}, false }
-#endif
-
 static struct viewmorph {
 	angle_t rollangle; // pre-shifted by fineshift
 #ifdef WOUGHMP_WOUGHMP
 	fixed_t fisheye;
 #endif
 
-	fixed_t zoomneeded;
+	fixed_t zoomneeded = FRACUNIT;
 	INT32 *scrmap;
 	INT32 scrmapsize;
 
@@ -617,14 +611,15 @@ static struct viewmorph {
 	INT16 ceilingclip[MAXVIDWIDTH], floorclip[MAXVIDWIDTH];
 
 	boolean use;
-} viewmorph[MAXSPLITSCREENPLAYERS] = {
-	AHHHH_IM_SO_MAAAAD,
-	AHHHH_IM_SO_MAAAAD,
-	AHHHH_IM_SO_MAAAAD,
-	AHHHH_IM_SO_MAAAAD,
-};
 
-#undef AHHHH_IM_SO_MAAAAD
+	// [UWP]: Store the start of each source row and step along it when drawing, instead of rebuilding and reading
+	// a full-screen pixel map. Row starts use the original float additions so parallel rows sample the same pixels.
+	boolean straight;
+	float mapx[MAXVIDHEIGHT / 2 + 1], mapy[MAXVIDHEIGHT / 2 + 1];
+	float mapcos, mapsin;
+	INT32 mapend, maprealend;
+	INT32 mapwidth, mapheight, mappitch;
+} viewmorph[MAXSPLITSCREENPLAYERS] = {};
 
 void R_CheckViewMorph(int s)
 {
@@ -633,9 +628,12 @@ void R_CheckViewMorph(int s)
 	float zoomfactor, rollcos, rollsin;
 	float x1, y1, x2, y2;
 	fixed_t temp;
-	INT32 end, vx, vy, pos, usedpos;
+	INT32 end, vx, vy;
 	INT32 realend;
+#ifdef WOUGHMP_WOUGHMP
+	INT32 pos, usedpos;
 	INT32 usedx, usedy;
+#endif
 
 	INT32 width = vid.width;
 	INT32 height = vid.height;
@@ -676,10 +674,13 @@ void R_CheckViewMorph(int s)
 #ifdef WOUGHMP_WOUGHMP
 		fisheye == v->fisheye &&
 #endif
-		v->scrmapsize == width * height)
+		v->mapwidth == width && v->mapheight == height && v->mappitch == vid.width)
 		return; // No change
 
 	v->rollangle = rollangle;
+	v->mapwidth = width;
+	v->mapheight = height;
+	v->mappitch = vid.width;
 #ifdef WOUGHMP_WOUGHMP
 	v->fisheye = fisheye;
 #endif
@@ -699,13 +700,15 @@ void R_CheckViewMorph(int s)
 		return;
 	}
 
-	if (v->scrmapsize != width * height)
+#ifdef WOUGHMP_WOUGHMP
+	if (fisheye && v->scrmapsize != width * height)
 	{
 		if (v->scrmap)
 			free(v->scrmap);
 		v->scrmap = static_cast<INT32*>(malloc(width * height * sizeof(INT32)));
 		v->scrmapsize = width * height;
 	}
+#endif
 
 	temp = FINECOSINE(rollangle);
 	rollcos = FIXED_TO_FLOAT(temp);
@@ -755,7 +758,10 @@ void R_CheckViewMorph(int s)
 		realend = ( realend << 1 ) - width;
 	}
 
+	v->straight = true;
+#ifdef WOUGHMP_WOUGHMP
 	pos = 0;
+#endif
 
 	// Pre-multiply rollcos and rollsin to use for positional stuff
 	rollcos /= zoomfactor;
@@ -818,6 +824,7 @@ void R_CheckViewMorph(int s)
 #ifdef WOUGHMP_WOUGHMP
 	if (fisheye)
 	{
+		v->straight = false;
 		for (vy = 0; vy < halfheight; vy++)
 		{
 			x2 = x1;
@@ -846,29 +853,17 @@ void R_CheckViewMorph(int s)
 #endif
 	x1 += halfwidth;
 	y1 += halfheight;
-
-	for (vy = 0; vy < halfheight; vy++)
+	for (vy = 0; vy < (height + 1) / 2; vy++)
 	{
-		x2 = x1;
-		y2 = y1;
+		v->mapx[vy] = x1;
+		v->mapy[vy] = y1;
 		x1 -= rollsin;
 		y1 += rollcos;
-
-		for (vx = 0; vx < width; vx++)
-		{
-			usedx = x2;
-			usedy = y2;
-
-			usedpos = usedx + usedy * vid.width;
-
-			v->scrmap[pos] = usedpos;
-			v->scrmap[end-pos] = realend-usedpos;
-
-			x2 += rollcos;
-			y2 += rollsin;
-			pos++;
-		}
 	}
+	v->mapcos = rollcos;
+	v->mapsin = rollsin;
+	v->mapend = end;
+	v->maprealend = realend;
 #ifdef WOUGHMP_WOUGHMP
 	}
 #endif
@@ -883,7 +878,9 @@ void R_ApplyViewMorph(int s)
 	INT32 width = vid.width;
 	INT32 height = vid.height;
 	INT32 p;
+#ifdef WOUGHMP_WOUGHMP
 	INT32 end;
+#endif
 
 	if (!viewmorph[s].use)
 		return;
@@ -913,12 +910,73 @@ void R_ApplyViewMorph(int s)
 		}
 	}
 
+#ifdef WOUGHMP_WOUGHMP
 	end = width * height;
+#endif
 
-	for (p = 0; p < end; p++)
+	const struct viewmorph *v = &viewmorph[s];
+	if (v->straight)
 	{
-		tmpscr[p] = srcscr[viewmorph[s].scrmap[p]];
+		const INT32 pitch = vid.width;
+		auto drawrows = [v, tmpscr, srcscr, width, pitch](INT32 first, INT32 last) {
+			for (INT32 y = first; y < last; y++)
+			{
+				float x2 = v->mapx[y];
+				float y2 = v->mapy[y];
+				INT32 pos = y * width;
+				for (INT32 x = 0; x < width; x++, pos++)
+				{
+					// Keep the original float additions and truncation, including the mirrored lower half.
+					const INT32 usedpos = (INT32)x2 + (INT32)y2 * pitch;
+					tmpscr[pos] = srcscr[usedpos];
+					tmpscr[v->mapend - pos] = srcscr[v->maprealend - usedpos];
+					x2 += v->mapcos;
+					y2 += v->mapsin;
+				}
+			}
+		};
+
+		if (cv_parallelsoftware.value && width * height >= 640 * 400)
+		{
+			srb2::g_main_threadpool->begin_sema();
+			for (INT32 first = 0; first < height / 2; first += 64)
+			{
+				const INT32 last = std::min(first + 64, height / 2);
+				srb2::g_main_threadpool->schedule([drawrows, first, last]() { drawrows(first, last); });
+			}
+			const auto sema = srb2::g_main_threadpool->end_sema();
+			srb2::g_main_threadpool->notify_sema(sema);
+			srb2::g_main_threadpool->wait_sema(sema);
+		}
+		else
+		{
+			drawrows(0, height / 2);
+		}
+
+		// An odd-height split view has a center row which the mirrored halves don't cover.
+		if (height & 1)
+		{
+			float rowx = v->mapx[height / 2];
+			float rowy = v->mapy[height / 2];
+			p = (height / 2) * width;
+			for (INT32 x = 0; x < width; x++, p++)
+			{
+				const INT32 usedpos = (INT32)rowx + (INT32)rowy * vid.width;
+				tmpscr[p] = srcscr[usedpos];
+				rowx += v->mapcos;
+				rowy += v->mapsin;
+			}
+		}
 	}
+#ifdef WOUGHMP_WOUGHMP
+	else
+	{
+		for (p = 0; p < end; p++)
+		{
+			tmpscr[p] = srcscr[v->scrmap[p]];
+		}
+	}
+#endif
 
 	VID_BlitLinearScreen(tmpscr, srcscr,
 			width*vid.bpp, height, width*vid.bpp, vid.width);
