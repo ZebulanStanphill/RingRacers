@@ -1388,77 +1388,62 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
 	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
 }
 
-static const INT32 picmode2GR[] =
+// Source pixels and GPU pixels can have different widths (RGB becomes RGBA).
+static const INT32 picmode2bpp[] = {1, 1, 2, 3, 4};
+static const GLTextureFormat_t picmode2GR[] =
 {
-	GL_TEXFMT_P_8,                // PALETTE
-	0,                            // INTENSITY          (unsupported yet)
-	GL_TEXFMT_ALPHA_INTENSITY_88, // INTENSITY_ALPHA    (corona use this)
-	0,                            // RGB24              (unsupported yet)
-	GL_TEXFMT_RGBA,               // RGBA32             (opengl only)
+	GL_TEXFMT_P_8,
+	GL_TEXFMT_RGBA, // opaque grayscale
+	GL_TEXFMT_ALPHA_INTENSITY_88,
+	GL_TEXFMT_RGBA, // opaque RGB
+	GL_TEXFMT_RGBA,
 };
 
 static void HWR_DrawPicInCache(UINT8 *block, INT32 pblockwidth, INT32 pblockheight,
 	INT32 blockmodulo, pic_t *pic, INT32 bpp)
 {
-	INT32 i,j;
-	fixed_t posx, posy, stepx, stepy;
-	UINT8 *dest, *src, texel;
-	UINT16 texelu16;
-	INT32 picbpp;
-	RGBA_t col;
+	INT32 x, y;
+	const INT32 width = SHORT(pic->width), height = SHORT(pic->height);
+	const INT32 picbpp = picmode2bpp[pic->mode];
 
-	stepy = ((INT32)SHORT(pic->height)<<FRACBITS)/pblockheight;
-	stepx = ((INT32)SHORT(pic->width)<<FRACBITS)/pblockwidth;
-	picbpp = format2bpp(picmode2GR[pic->mode]);
-	posy = 0;
-	for (j = 0; j < pblockheight; j++)
+	for (y = 0; y < pblockheight; y++)
 	{
-		posx = 0;
-		dest = &block[j*blockmodulo];
-		src = &pic->data[(posy>>FRACBITS)*SHORT(pic->width)*picbpp];
-		for (i = 0; i < pblockwidth;i++)
+		const INT32 sy = (INT32)(((INT64)y * 2 + 1) * height / ((INT64)pblockheight * 2));
+		UINT8 *dest = block + (size_t)y * blockmodulo;
+		for (x = 0; x < pblockwidth; x++, dest += bpp)
 		{
+			const INT32 sx = (INT32)(((INT64)x * 2 + 1) * width / ((INT64)pblockwidth * 2));
+			const UINT8 *src = pic->data + ((size_t)sy * width + sx) * picbpp;
 			switch (pic->mode)
-			{ // source bpp
-				case PALETTE :
-					texel = src[(posx+FRACUNIT/2)>>FRACBITS];
-					switch (bpp)
-					{ // destination bpp
-						case 1 :
-							*dest++ = texel; break;
-						case 2 :
-							texelu16 = (UINT16)(texel | 0xff00);
-							memcpy(dest, &texelu16, sizeof(UINT16));
-							dest += sizeof(UINT16);
-							break;
-						case 3 :
-							col = HWR_GetColor(texel);
-							memcpy(dest, &col, sizeof(RGBA_t)-sizeof(UINT8));
-							dest += sizeof(RGBA_t)-sizeof(UINT8);
-							break;
-						case 4 :
-							memcpy(dest, &HWR_GetColor(texel), sizeof(RGBA_t));
-							dest += sizeof(RGBA_t);
-							break;
+			{
+				case PALETTE:
+					if (bpp <= 2)
+					{
+						dest[0] = src[0];
+						if (bpp == 2) dest[1] = 255;
+					}
+					else
+					{
+						const RGBA_t col = HWR_GetColor(src[0]);
+						memcpy(dest, &col, bpp);
 					}
 					break;
-				case INTENSITY :
-					*dest++ = src[(posx+FRACUNIT/2)>>FRACBITS];
+				case INTENSITY:
+					dest[0] = dest[1] = dest[2] = src[0];
+					dest[3] = 255;
 					break;
-				case INTENSITY_ALPHA : // assume dest bpp = 2
-					memcpy(dest, src + ((posx+FRACUNIT/2)>>FRACBITS)*sizeof(UINT16), sizeof(UINT16));
-					dest += sizeof(UINT16);
+				case INTENSITY_ALPHA:
+					memcpy(dest, src, 2);
 					break;
-				case RGB24 :
-					break;  // not supported yet
-				case RGBA32 : // assume dest bpp = 4
-					dest += sizeof(UINT32);
-					memcpy(dest, src + ((posx+FRACUNIT/2)>>FRACBITS)*sizeof(UINT32), sizeof(UINT32));
+				case RGB24:
+					memcpy(dest, src, 3);
+					dest[3] = 255;
+					break;
+				case RGBA32:
+					memcpy(dest, src, 4);
 					break;
 			}
-			posx += stepx;
 		}
-		posy += stepy;
 	}
 }
 
@@ -1477,16 +1462,23 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
 		UINT8 *block;
 		size_t len;
 
-		pic = W_CacheLumpNum(lumpnum, PU_CACHE);
+		len = W_LumpLength(lumpnum);
+		if (len < sizeof(pic_t))
+			I_Error("HWR_GetPic: truncated picture header");
+		pic = (pic_t *)W_CacheLumpNum(lumpnum, PU_CACHE);
 		patch->width = SHORT(pic->width);
 		patch->height = SHORT(pic->height);
-		len = W_LumpLength(lumpnum) - sizeof (pic_t);
+		if (pic->mode > RGBA32 || patch->width <= 0 || patch->height <= 0)
+			I_Error("HWR_GetPic: invalid picture mode or dimensions");
+		len = (size_t)patch->width * patch->height * picmode2bpp[pic->mode];
+		if (len > W_LumpLength(lumpnum) - sizeof(pic_t))
+			I_Error("HWR_GetPic: truncated picture pixels");
 
 		grPatch->mipmap->width = (UINT16)patch->width;
 		grPatch->mipmap->height = (UINT16)patch->height;
 
 		if (pic->mode == PALETTE)
-			grPatch->mipmap->format = textureformat; // can be set by driver
+			grPatch->mipmap->format = (GLTextureFormat_t)textureformat; // can be set by driver
 		else
 			grPatch->mipmap->format = picmode2GR[pic->mode];
 
@@ -1497,7 +1489,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
 
 		if (patch->width  == SHORT(pic->width) &&
 			patch->height == SHORT(pic->height) &&
-			format2bpp(grPatch->mipmap->format) == format2bpp(picmode2GR[pic->mode]))
+			format2bpp(grPatch->mipmap->format) == picmode2bpp[pic->mode])
 		{
 			// no conversion needed
 			M_Memcpy(grPatch->mipmap->data, pic->data,len);
