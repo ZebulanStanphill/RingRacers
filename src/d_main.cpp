@@ -161,6 +161,7 @@ tic_t g_fast_forward = 0;
 tic_t g_fast_forward_clock_stop = INFTICS;
 
 postimg_t postimgtype[MAXSPLITSCREENPLAYERS];
+boolean postimgmirror[MAXSPLITSCREENPLAYERS]; // [UWP]: Mirror independently of water, heat and gravity flip.
 INT32 postimgparam[MAXSPLITSCREENPLAYERS];
 
 // These variables are in effect

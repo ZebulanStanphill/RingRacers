@@ -6311,7 +6311,7 @@ static void HWR_DrawSkyBackground(player_t *player)
 		else
 			dometransform.flip = false;
 
-		if (*type == postimg_mirror)
+		if (postimgmirror[R_GetViewNumber()]) // [UWP]: Mirror independently of distortion/flip.
 			dometransform.mirror = true;
 		else
 			dometransform.mirror = false;
@@ -6617,7 +6617,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 	else
 		atransform.flip = false;
 
-	if (*type == postimg_mirror)
+	if (postimgmirror[viewssnum]) // [UWP]: Mirror independently of distortion/flip.
 		atransform.mirror = true;
 	else
 		atransform.mirror = false;

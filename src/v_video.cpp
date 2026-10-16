@@ -3846,7 +3846,7 @@ void VID_DisplaySoftwareScreen()
 					postimgtype[i] == postimg_water && !cv_reducevfx.value,
 					postimgtype[i] == postimg_heat && !cv_reducevfx.value,
 					postimgtype[i] == postimg_flip,
-					postimgtype[i] == postimg_mirror
+					postimgmirror[i] != false // [UWP]: Mirror can accompany distortion or gravity flip.
 				}
 			}
 		);

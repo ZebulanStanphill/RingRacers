@@ -3964,8 +3964,7 @@ static void P_CalcPostImg(player_t *player, size_t viewnum)
 	}
 #endif
 
-	if (encoremode) // srb2kart
-		*type = postimg_mirror;
+	postimgmirror[viewnum] = encoremode; // [UWP]: Preserve distortion and gravity flip in Encore.
 }
 
 void P_DoTimeOver(player_t *player)

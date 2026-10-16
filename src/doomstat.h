@@ -276,6 +276,7 @@ extern boolean nodrawers;
 extern boolean noblit;
 extern boolean lastdraw;
 extern postimg_t postimgtype[MAXSPLITSCREENPLAYERS];
+extern boolean postimgmirror[MAXSPLITSCREENPLAYERS]; // [UWP]: Mirror independently of water, heat and gravity flip.
 extern INT32 postimgparam[MAXSPLITSCREENPLAYERS];
 
 extern INT32 viewwindowx, viewwindowy;

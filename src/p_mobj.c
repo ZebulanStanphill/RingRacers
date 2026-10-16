@@ -3899,11 +3899,8 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
 	if (thiscam->subsector == NULL || thiscam->subsector->sector == NULL)
 		return;
 
-	if (encoremode)
-	{
-		postimg = postimg_mirror;
-	}
-	else if (player->awayview.tics && player->awayview.mobj && !P_MobjWasRemoved(player->awayview.mobj)) // Camera must obviously exist
+	// [UWP]: Encore mirrors the view without replacing underwater/heat distortion.
+	if (player->awayview.tics && player->awayview.mobj && !P_MobjWasRemoved(player->awayview.mobj)) // Camera must obviously exist
 	{
 		camera_t dummycam;
 
@@ -3928,11 +3925,13 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
 			postimg = postimg_heat;
 	}
 
-	if (postimg != postimg_none)
+	// [UWP]: Store the mirror even when there is no distortion.
+	for (i = 0; i <= r_splitscreen; i++)
 	{
-		for (i = 0; i <= r_splitscreen; i++)
+		if (player == &players[displayplayers[i]])
 		{
-			if (player == &players[displayplayers[i]])
+			postimgmirror[i] = encoremode;
+			if (postimg != postimg_none)
 				postimgtype[i] = postimg;
 		}
 	}

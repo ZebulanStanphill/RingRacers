@@ -8571,7 +8571,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	}
 
 	for (i = 0; i <= r_splitscreen; i++)
+	{ // [UWP]: Reset the independent mirror along with the distortion.
 		postimgtype[i] = postimg_none;
+		postimgmirror[i] = false;
+	}
 
 	// Initial height of PointOfView
 	// will be set by player think.
@@ -9017,6 +9020,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		for (i = 0; i <= r_splitscreen; i++)
 		{
 			postimgtype[i] = postimg_none;
+			postimgmirror[i] = false; // [UWP]: Reset the independent mirror on level load.
 		}
 
 		if (marathonmode & MA_INGAME)

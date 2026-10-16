@@ -753,7 +753,10 @@ void P_Ticker(boolean run)
 	}
 
 	for (i = 0; i <= r_splitscreen; i++)
+	{ // [UWP]: Reset the independent mirror along with the distortion.
 		postimgtype[i] = postimg_none;
+		postimgmirror[i] = false;
+	}
 
 	P_MapStart();
 
