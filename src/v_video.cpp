@@ -1025,17 +1025,18 @@ void V_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c)
 	if (rendermode == render_none)
 		return;
 
-#ifdef HWRENDER
-	if (rendermode == render_opengl)
-	{
-		HWR_DrawFill(x, y, w, h, c);
-		return;
-	}
-#endif
-
 	UINT32 alphalevel;
 	if ((alphalevel = V_GetAlphaLevel(c)) >= 10)
 		return;
+
+#ifdef HWRENDER
+	if (rendermode == render_opengl)
+	{
+		// Resolve HUD fade flags before passing an explicit alpha level.
+		HWR_DrawFill(x, y, w, h, (c & ~V_ALPHAMASK) | (alphalevel << V_ALPHASHIFT));
+		return;
+	}
+#endif
 
 	if (!(c & V_NOSCALESTART))
 	{

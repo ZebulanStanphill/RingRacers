@@ -1149,12 +1149,17 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 {
 	FOutVector v[4];
 	FSurfaceInfo Surf;
+	const UINT32 alphalevel = (color & V_ALPHAMASK) >> V_ALPHASHIFT;
+	FBITFIELD flags = PF_Modulated|PF_NoTexture|PF_NoDepthTest;
 	float fx, fy, fw, fh;
 
 //  3--2
 //  | /|
 //  |/ |
 //  0--1
+
+	if (alphalevel >= 10)
+		return;
 
 	fx = (float)x;
 	fy = (float)y;
@@ -1168,26 +1173,35 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 
 		if (x == 0 && y == 0 && w == BASEVIDWIDTH && h == BASEVIDHEIGHT)
 		{
-			RGBA_t rgbaColour = HWR_GetColor(color);
-			FRGBAFloat clearColour;
-			clearColour.red = (float)rgbaColour.s.red / 255;
-			clearColour.green = (float)rgbaColour.s.green / 255;
-			clearColour.blue = (float)rgbaColour.s.blue / 255;
-			clearColour.alpha = 1;
-			HWD.pfnClearBuffer(true, false, &clearColour);
-			return;
+			if (alphalevel == 0)
+			{
+				RGBA_t rgbaColour = HWR_GetColor(color);
+				FRGBAFloat clearColour;
+				clearColour.red = (float)rgbaColour.s.red / 255;
+				clearColour.green = (float)rgbaColour.s.green / 255;
+				clearColour.blue = (float)rgbaColour.s.blue / 255;
+				clearColour.alpha = 1;
+				HWD.pfnClearBuffer(true, false, &clearColour);
+				return;
+			}
+
+			// Translucent fullscreen fills blend over the entire video surface.
+			fw = (float)vid.width;
+			fh = (float)vid.height;
 		}
+		else
+		{
+			fx *= dupx;
+			fy *= dupy;
+			fw *= dupx;
+			fh *= dupy;
 
-		fx *= dupx;
-		fy *= dupy;
-		fw *= dupx;
-		fh *= dupy;
-
-		intx = (INT32)fx;
-		inty = (INT32)fy;
-		V_AdjustXYWithSnap(&intx, &inty, color, dupx, dupy);
-		fx = (float)intx;
-		fy = (float)inty;
+			intx = (INT32)fx;
+			inty = (INT32)fy;
+			V_AdjustXYWithSnap(&intx, &inty, color, dupx, dupy);
+			fx = (float)intx;
+			fy = (float)inty;
+		}
 	}
 
 	if (fx >= vid.width || fy >= vid.height)
@@ -1229,8 +1243,13 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 
 	Surf.PolyColor = HWR_GetColor(color);
 
-	HWD.pfnDrawPolygon(&Surf, v, 4,
-		PF_Modulated|PF_NoTexture|PF_NoDepthTest);
+	if (alphalevel != 0)
+	{
+		Surf.PolyColor.s.alpha = softwaretranstogl[10-alphalevel];
+		flags |= PF_Translucent;
+	}
+
+	HWD.pfnDrawPolygon(&Surf, v, 4, flags);
 }
 
 #ifdef HAVE_PNG
