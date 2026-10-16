@@ -10,6 +10,8 @@
 
 #include "resource_management.hpp"
 
+#include <cstring>
+
 #include "../r_state.h"
 #include "../v_video.h"
 #include "../z_zone.h"
@@ -25,6 +27,8 @@ PaletteManager& PaletteManager::operator=(PaletteManager&&) = default;
 
 constexpr std::size_t kPaletteSize = 256;
 constexpr std::size_t kLighttableRows = LIGHTLEVELS;
+// Frames a colormap or lighttable texture is kept after it was last drawn
+constexpr uint32_t kTableLifetime = 300;
 
 void PaletteManager::update(Rhi& rhi)
 {
@@ -50,14 +54,20 @@ void PaletteManager::update(Rhi& rhi)
 		default_colormap_ = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, 1, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
 	}
 
-	// Palette
+	// Palette, uploaded only when it changes
 	{
 		std::array<byteColor_t, kPaletteSize> palette_32;
 		for (std::size_t i = 0; i < kPaletteSize; i++)
 		{
 			palette_32[i] = V_GetColor(i).s;
 		}
-		rhi.update_texture(palette_, {0, 0, kPaletteSize, 1}, PixelFormat::kRGBA8, tcb::as_bytes(tcb::span(palette_32)));
+		static_assert(sizeof(palette_32) == sizeof(palette_data_));
+		if (!palette_uploaded_ || std::memcmp(palette_data_.data(), palette_32.data(), sizeof(palette_32)) != 0)
+		{
+			std::memcpy(palette_data_.data(), palette_32.data(), sizeof(palette_32));
+			palette_uploaded_ = true;
+			rhi.update_texture(palette_, {0, 0, kPaletteSize, 1}, PixelFormat::kRGBA8, tcb::as_bytes(tcb::span(palette_32)));
+		}
 	}
 
 #if 0
@@ -79,7 +89,8 @@ void PaletteManager::update(Rhi& rhi)
 	}
 #endif
 
-	// Default colormap
+	// Default colormap, which never changes
+	if (!default_colormap_uploaded_)
 	{
 		std::array<uint8_t, kPaletteSize> data;
 		for (std::size_t i = 0; i < kPaletteSize; i++)
@@ -87,56 +98,82 @@ void PaletteManager::update(Rhi& rhi)
 			data[i] = i;
 		}
 		rhi.update_texture(default_colormap_, {0, 0, kPaletteSize, 1}, PixelFormat::kR8, tcb::as_bytes(tcb::span(data)));
+		default_colormap_uploaded_ = true;
 	}
 }
 
-void PaletteManager::destroy_per_frame_resources(Rhi& rhi)
+static void destroy_unused_tables(Rhi& rhi, srb2::HashMap<const uint8_t*, PaletteTable>& tables, uint32_t frame)
 {
-	for (auto colormap_tex : colormaps_)
+	for (auto itr = tables.begin(); itr != tables.end();)
 	{
-		rhi.destroy_texture(colormap_tex.second);
+		if (frame - itr->second.last_used_frame > kTableLifetime)
+		{
+			rhi.destroy_texture(itr->second.texture);
+			itr = tables.erase(itr);
+		}
+		else
+		{
+			++itr;
+		}
+	}
+}
+
+void PaletteManager::end_frame(Rhi& rhi)
+{
+	destroy_unused_tables(rhi, colormaps_, frame_);
+	destroy_unused_tables(rhi, lighttables_, frame_);
+	frame_++;
+}
+
+Handle<Texture> PaletteManager::find_or_create_table(
+	Rhi& rhi,
+	srb2::HashMap<const uint8_t*, PaletteTable>& tables,
+	const uint8_t* table,
+	uint32_t rows
+)
+{
+	const std::size_t size = kPaletteSize * rows;
+	tcb::span<const std::byte> table_bytes = tcb::as_bytes(tcb::span(table, size));
+
+	auto itr = tables.find(table);
+	if (itr == tables.end())
+	{
+		PaletteTable new_table;
+		new_table.texture = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, rows, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
+		new_table.data.resize(size);
+		std::memcpy(new_table.data.data(), table, size);
+		new_table.last_used_frame = frame_;
+		rhi.update_texture(new_table.texture, {0, 0, kPaletteSize, rows}, PixelFormat::kR8, table_bytes);
+
+		Handle<Texture> texture = new_table.texture;
+		tables.insert_or_assign(table, std::move(new_table));
+		return texture;
 	}
 
-	colormaps_.clear();
-
-	for (auto lighttable_tex : lighttables_)
+	// The first time a table is drawn in a frame, check that it hasn't changed (or been freed and its memory reused)
+	// since it was uploaded
+	PaletteTable& cached = itr->second;
+	if (cached.last_used_frame != frame_)
 	{
-		rhi.destroy_texture(lighttable_tex.second);
+		cached.last_used_frame = frame_;
+		if (std::memcmp(cached.data.data(), table, size) != 0)
+		{
+			std::memcpy(cached.data.data(), table, size);
+			rhi.update_texture(cached.texture, {0, 0, kPaletteSize, rows}, PixelFormat::kR8, table_bytes);
+		}
 	}
 
-	lighttables_.clear();
+	return cached.texture;
 }
 
 Handle<Texture> PaletteManager::find_or_create_colormap(Rhi& rhi, srb2::NotNull<const uint8_t*> colormap)
 {
-	if (colormaps_.find(colormap) != colormaps_.end())
-	{
-		return colormaps_[colormap];
-	}
-
-	Handle<Texture> texture = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, 1, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
-
-	tcb::span<const std::byte> map_bytes = tcb::as_bytes(tcb::span(colormap.get(), kPaletteSize));
-	rhi.update_texture(texture, {0, 0, kPaletteSize, 1}, PixelFormat::kR8, map_bytes);
-
-	colormaps_.insert_or_assign(colormap, texture);
-	return texture;
+	return find_or_create_table(rhi, colormaps_, colormap.get(), 1);
 }
 
 Handle<Texture> PaletteManager::find_or_create_extra_lighttable(Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable)
 {
-	if (lighttables_.find(lighttable) != lighttables_.end())
-	{
-		return lighttables_[lighttable];
-	}
-
-	Handle<Texture> texture = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, kLighttableRows, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
-
-	tcb::span<const std::byte> lighttable_bytes = tcb::as_bytes(tcb::span(lighttable.get(), kPaletteSize * kLighttableRows));
-	rhi.update_texture(texture, {0, 0, kPaletteSize, kLighttableRows}, PixelFormat::kR8, lighttable_bytes);
-	lighttables_.insert_or_assign(lighttable, texture);
-
-	return texture;
+	return find_or_create_table(rhi, lighttables_, lighttable.get(), kLighttableRows);
 }
 
 FlatTextureManager::FlatTextureManager() = default;

@@ -11,6 +11,7 @@
 #ifndef __SRB2_RHI_GL2_RHI_HPP__
 #define __SRB2_RHI_GL2_RHI_HPP__
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -93,6 +94,14 @@ struct Gl2Renderbuffer : public rhi::Renderbuffer
 	rhi::RenderbufferDesc desc;
 };
 
+struct Gl2UniformLocation
+{
+	srb2::String name;
+	int32_t location;
+	// The last value given to the uniform with set_uniform(int) or set_sampler
+	std::optional<int32_t> int_value;
+};
+
 struct Gl2Program : public rhi::Program
 {
 	uint32_t vertex_shader = 0;
@@ -100,6 +109,8 @@ struct Gl2Program : public rhi::Program
 	uint32_t program = 0;
 	srb2::HashMap<srb2::String, uint32_t> attrib_locations;
 	srb2::HashMap<srb2::String, uint32_t> uniform_locations;
+	// Uniform locations by name, searched without allocating
+	srb2::Vector<Gl2UniformLocation> uniform_cache;
 };
 
 struct Gl2ActiveUniform
@@ -116,6 +127,9 @@ class Gl2Rhi final : public Rhi
 
 	// OpenGL ES 2 context (e.g. ANGLE), which needs unsized texture formats and has no glClearDepth or glReadBuffer
 	bool gles_ = false;
+	// [UWP]: Single-channel textures are GL_RED (EXT_texture_rg) instead of GL_LUMINANCE, which ANGLE's Direct3D 11
+	// backend stores as RGBA, converting each upload on the CPU
+	bool red_textures_ = false;
 	GlProc clear_depthf_ = nullptr;
 
 	void clear_depth(float depth);
@@ -148,8 +162,24 @@ class Gl2Rhi final : public Rhi
 	CompareFunc stencil_front_func_;
 	CompareFunc stencil_back_func_;
 
+	// GL state set by this backend, so calls that wouldn't change it can be skipped. Each GL call is expensive
+	// through ANGLE, and the 2D renderer sets its whole state for every batch.
+	// The last rasterizer state set; empty when something else has changed that GL state
+	std::optional<RasterizerStateDesc> rasterizer_state_;
+	std::optional<Rect> viewport_;
+	// Textures bound to each texture unit. GL_TEXTURE0 is the active unit outside of set_sampler.
+	std::array<uint32_t, kMaxSamplers> bound_textures_ {};
+	uint32_t bound_array_buffer_ = 0;
+	uint32_t bound_index_buffer_ = 0;
+	// Vertex attribute arrays enabled since the last bind_program
+	uint32_t enabled_attribs_ = 0;
+
 	void apply_default_framebuffer(bool clear);
 	void apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear);
+
+	Gl2UniformLocation& find_uniform(Gl2Program& program, const char* name);
+	void bind_texture(uint32_t slot, uint32_t texture);
+	void bind_buffer(uint32_t target, uint32_t buffer);
 
 public:
 	Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func);

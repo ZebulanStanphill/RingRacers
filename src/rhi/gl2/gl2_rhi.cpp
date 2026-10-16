@@ -605,6 +605,11 @@ constexpr GLenum map_stencil_op(rhi::StencilOp op)
 	}
 }
 
+bool same_rect(const rhi::Rect& a, const rhi::Rect& b)
+{
+	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
 } // namespace
 
 Gl2Platform::~Gl2Platform() = default;
@@ -631,6 +636,23 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) : 
 		gl_->GenRenderbuffers = reinterpret_cast<PFNGLGENRENDERBUFFERSPROC>(load_func("glGenRenderbuffers"));
 		gl_->RenderbufferStorage = reinterpret_cast<PFNGLRENDERBUFFERSTORAGEPROC>(load_func("glRenderbufferStorage"));
 		clear_depthf_ = load_func("glClearDepthf");
+
+#ifdef _UWP
+		// [UWP]: The shaders only read the red channel of single-channel textures (the software-rendered screen,
+		// colormaps, lighttables), so GL_RED looks the same as GL_LUMINANCE, without ANGLE converting every upload
+		const char* extensions = reinterpret_cast<const char*>(gl_->GetString(GL_EXTENSIONS));
+		const char* name = "GL_EXT_texture_rg";
+		const size_t length = std::strlen(name);
+		for (const char* p = extensions; p && (p = std::strstr(p, name)) != nullptr; p += length)
+		{
+			if ((p == extensions || p[-1] == ' ') && (p[length] == ' ' || p[length] == '\0'))
+			{
+				red_textures_ = true;
+				break;
+			}
+		}
+		I_OutputMsg("UWP: single-channel textures are %s\n", red_textures_ ? "GL_RED (EXT_texture_rg)" : "GL_LUMINANCE");
+#endif
 	}
 }
 
@@ -646,6 +668,61 @@ void Gl2Rhi::clear_depth(float depth)
 	}
 }
 
+Gl2UniformLocation& Gl2Rhi::find_uniform(Gl2Program& program, const char* name)
+{
+	for (auto& uniform : program.uniform_cache)
+	{
+		if (std::strcmp(uniform.name.c_str(), name) == 0)
+		{
+			return uniform;
+		}
+	}
+
+	GLint location = gl_->GetUniformLocation(program.program, name);
+	GL_ASSERT;
+	program.uniform_cache.push_back({srb2::String(name), location, std::nullopt});
+	return program.uniform_cache.back();
+}
+
+void Gl2Rhi::bind_texture(uint32_t slot, uint32_t texture)
+{
+	const bool tracked = slot < bound_textures_.size();
+	if (tracked && bound_textures_[slot] == texture)
+	{
+		return;
+	}
+
+	if (slot != 0)
+	{
+		gl_->ActiveTexture(GL_TEXTURE0 + slot);
+		GL_ASSERT;
+	}
+	gl_->BindTexture(GL_TEXTURE_2D, texture);
+	GL_ASSERT;
+	if (slot != 0)
+	{
+		gl_->ActiveTexture(GL_TEXTURE0);
+		GL_ASSERT;
+	}
+	if (tracked)
+	{
+		bound_textures_[slot] = texture;
+	}
+}
+
+void Gl2Rhi::bind_buffer(uint32_t target, uint32_t buffer)
+{
+	uint32_t& bound = target == GL_ELEMENT_ARRAY_BUFFER ? bound_index_buffer_ : bound_array_buffer_;
+	if (bound == buffer)
+	{
+		return;
+	}
+
+	gl_->BindBuffer(target, buffer);
+	GL_ASSERT;
+	bound = buffer;
+}
+
 Gl2Rhi::~Gl2Rhi() = default;
 
 rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
@@ -657,6 +734,12 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 	{
 		// OpenGL ES 2 requires an unsized internal format matching the data format
 		internal_format = map_texture_format(desc.format);
+#ifdef _UWP
+		if (red_textures_ && internal_format == GL_LUMINANCE)
+		{
+			internal_format = GL_RED;
+		}
+#endif
 		format = internal_format;
 	}
 
@@ -666,7 +749,7 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 	ps_uwp_texturescreated++;
 #endif
 
-	gl_->BindTexture(GL_TEXTURE_2D, name);
+	bind_texture(0, name);
 
 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, map_texture_filter(desc.min));
 	GL_ASSERT;
@@ -688,10 +771,36 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 void Gl2Rhi::destroy_texture(rhi::Handle<rhi::Texture> handle)
 {
 	SRB2_ASSERT(texture_slab_.is_valid(handle) == true);
+
+	// Framebuffers are kept between frames, so delete the ones drawing to this texture
+	for (auto itr = framebuffers_.begin(); itr != framebuffers_.end();)
+	{
+		if (itr->first.color == handle)
+		{
+			GLuint fb_name = itr->second;
+			gl_->DeleteFramebuffers(1, &fb_name);
+			GL_ASSERT;
+			itr = framebuffers_.erase(itr);
+		}
+		else
+		{
+			++itr;
+		}
+	}
+
 	Gl2Texture casted = texture_slab_.remove(handle);
 	GLuint name = casted.texture;
 	gl_->DeleteTextures(1, &name);
 	GL_ASSERT;
+
+	// Deleting a texture unbinds it
+	for (auto& bound : bound_textures_)
+	{
+		if (bound == name)
+		{
+			bound = 0;
+		}
+	}
 }
 
 void Gl2Rhi::update_texture(
@@ -717,20 +826,32 @@ void Gl2Rhi::update_texture(
 	GLenum type = GL_UNSIGNED_BYTE;
 	GLuint size = 0;
 	std::tie(format, type, size) = map_pixel_data_format(data_format);
+	GLenum texture_format = map_texture_format(t.desc.format);
+#ifdef _UWP
+	if (gles_ && red_textures_)
+	{
+		// Created as GL_RED instead (see create_texture)
+		if (format == GL_LUMINANCE)
+		{
+			format = GL_RED;
+		}
+		if (texture_format == GL_LUMINANCE)
+		{
+			texture_format = GL_RED;
+		}
+	}
+#endif
 	SRB2_ASSERT(format != GL_ZERO && type != GL_ZERO);
-	SRB2_ASSERT(map_texture_format(t.desc.format) == format);
+	SRB2_ASSERT(texture_format == format);
 
 	int32_t expected_row_span = (((size * region.w) + kUnpackAlignment - 1) / kUnpackAlignment) * kUnpackAlignment;
 	SRB2_ASSERT(expected_row_span * region.h == data.size_bytes());
 	SRB2_ASSERT(region.x + region.w <= t.desc.width && region.y + region.h <= t.desc.height);
 
-	gl_->ActiveTexture(GL_TEXTURE0);
-	GL_ASSERT;
-	gl_->BindTexture(GL_TEXTURE_2D, t.texture);
-	GL_ASSERT;
 #ifdef _UWP
 	ps_uwp_textureuploads++;
 #endif
+	bind_texture(0, t.texture);
 	gl_->TexSubImage2D(
 		GL_TEXTURE_2D,
 		0,
@@ -756,10 +877,7 @@ void Gl2Rhi::update_texture_settings(
 	SRB2_ASSERT(texture_slab_.is_valid(texture) == true);
 	auto& t = texture_slab_[texture];
 
-	gl_->ActiveTexture(GL_TEXTURE0);
-	GL_ASSERT;
-	gl_->BindTexture(GL_TEXTURE_2D, t.texture);
-	GL_ASSERT;
+	bind_texture(0, t.texture);
 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, map_texture_wrap(u_wrap));
 	GL_ASSERT;
 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, map_texture_wrap(v_wrap));
@@ -782,8 +900,7 @@ rhi::Handle<rhi::Buffer> Gl2Rhi::create_buffer(const rhi::BufferDesc& desc)
 	gl_->GenBuffers(1, &name);
 	GL_ASSERT;
 
-	gl_->BindBuffer(target, name);
-	GL_ASSERT;
+	bind_buffer(target, name);
 
 	gl_->BufferData(target, desc.size, nullptr, usage);
 	GL_ASSERT;
@@ -802,6 +919,16 @@ void Gl2Rhi::destroy_buffer(rhi::Handle<rhi::Buffer> handle)
 
 	gl_->DeleteBuffers(1, &name);
 	GL_ASSERT;
+
+	// Deleting a buffer unbinds it
+	if (bound_array_buffer_ == name)
+	{
+		bound_array_buffer_ = 0;
+	}
+	if (bound_index_buffer_ == name)
+	{
+		bound_index_buffer_ = 0;
+	}
 }
 
 void Gl2Rhi::update_buffer(
@@ -831,8 +958,7 @@ void Gl2Rhi::update_buffer(
 		break;
 	}
 
-	gl_->BindBuffer(target, b.buffer);
-	GL_ASSERT;
+	bind_buffer(target, b.buffer);
 	gl_->BufferSubData(target, offset, data.size(), data.data());
 	GL_ASSERT;
 }
@@ -872,6 +998,23 @@ rhi::Handle<rhi::Renderbuffer> Gl2Rhi::create_renderbuffer(const rhi::Renderbuff
 void Gl2Rhi::destroy_renderbuffer(rhi::Handle<rhi::Renderbuffer> handle)
 {
 	SRB2_ASSERT(renderbuffer_slab_.is_valid(handle) == true);
+
+	// Framebuffers are kept between frames, so delete the ones using this depth-stencil buffer
+	for (auto itr = framebuffers_.begin(); itr != framebuffers_.end();)
+	{
+		if (itr->first.depth_stencil == handle)
+		{
+			GLuint fb_name = itr->second;
+			gl_->DeleteFramebuffers(1, &fb_name);
+			GL_ASSERT;
+			itr = framebuffers_.erase(itr);
+		}
+		else
+		{
+			++itr;
+		}
+	}
+
 	Gl2Renderbuffer casted = renderbuffer_slab_.remove(handle);
 	GLuint name = casted.renderbuffer;
 	gl_->DeleteRenderbuffers(1, &name);
@@ -1049,8 +1192,13 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
 	GL_ASSERT;
 	gl_->Disable(GL_SCISSOR_TEST);
 	GL_ASSERT;
+	if (rasterizer_state_)
+	{
+		rasterizer_state_->scissor_test = false;
+	}
 	gl_->Viewport(0, 0, fb_rect.w, fb_rect.h);
 	GL_ASSERT;
+	viewport_ = Rect {0, 0, fb_rect.w, fb_rect.h};
 
 	if (clear)
 	{
@@ -1175,13 +1323,15 @@ void Gl2Rhi::bind_program(Handle<Program> program)
 
 	gl_->UseProgram(prog.program);
 	current_program_ = program;
-	GLint max_attribs;
-	gl_->GetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_attribs);
-	GL_ASSERT;
-	for (GLint i = 0; i < max_attribs; i++)
+	// Only bind_vertex_attrib enables attribute arrays
+	for (GLuint i = 0; enabled_attribs_ != 0; i++)
 	{
-		gl_->DisableVertexAttribArray(i);
-		GL_ASSERT;
+		if (enabled_attribs_ & (1u << i))
+		{
+			gl_->DisableVertexAttribArray(i);
+			GL_ASSERT;
+			enabled_attribs_ &= ~(1u << i);
+		}
 	}
 }
 
@@ -1202,11 +1352,14 @@ void Gl2Rhi::bind_vertex_attrib(const char* name, Handle<Buffer> buffer, VertexA
 
 	GLint location = gl_->GetAttribLocation(prog.program, name);
 	GL_ASSERT;
-	SRB2_ASSERT(location >= 0);
-	gl_->BindBuffer(GL_ARRAY_BUFFER, cast_buffer.buffer);
-	GL_ASSERT;
+	SRB2_ASSERT(location >= 0 && location < 32);
+	bind_buffer(GL_ARRAY_BUFFER, cast_buffer.buffer);
 	gl_->EnableVertexAttribArray(location);
 	GL_ASSERT;
+	if (location >= 0 && location < 32)
+	{
+		enabled_attribs_ |= 1u << location;
+	}
 	gl_->VertexAttribPointer(
 		location,
 		vertex_attr_size,
@@ -1229,15 +1382,14 @@ void Gl2Rhi::bind_index_buffer(Handle<Buffer> buffer)
 
 	current_index_buffer_ = buffer;
 
-	gl_->BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib.buffer);
-	GL_ASSERT;
+	bind_buffer(GL_ELEMENT_ARRAY_BUFFER, ib.buffer);
 }
 
 void Gl2Rhi::set_uniform(const char* name, float value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform1f(location, value);
@@ -1248,18 +1400,18 @@ void Gl2Rhi::set_uniform(const char* name, int value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	Gl2UniformLocation& uniform = find_uniform(cast, name);
+	SRB2_ASSERT(uniform.location >= 0);
+	gl_->Uniform1i(uniform.location, value);
 	GL_ASSERT;
-	SRB2_ASSERT(location >= 0);
-	gl_->Uniform1i(location, value);
-	GL_ASSERT;
+	uniform.int_value = value;
 }
 
 void Gl2Rhi::set_uniform(const char* name, glm::vec2 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform2f(location, value.x, value.y);
@@ -1270,7 +1422,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec3 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform3f(location, value.x, value.y, value.z);
@@ -1281,7 +1433,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec4 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform4f(location, value.x, value.y, value.z, value.w);
@@ -1292,7 +1444,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec2 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform2i(location, value.x, value.y);
@@ -1303,7 +1455,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec3 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform3i(location, value.x, value.y, value.z);
@@ -1314,7 +1466,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec4 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->Uniform4i(location, value.x, value.y, value.z, value.w);
@@ -1325,7 +1477,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat2 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->UniformMatrix2fv(location, 1, false, glm::value_ptr(value));
@@ -1336,7 +1488,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat3 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->UniformMatrix3fv(location, 1, false, glm::value_ptr(value));
@@ -1347,7 +1499,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat4 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
-	GLint location = gl_->GetUniformLocation(cast.program, name);
+	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
 	gl_->UniformMatrix4fv(location, 1, false, glm::value_ptr(value));
@@ -1362,83 +1514,123 @@ void Gl2Rhi::set_sampler(const char* name, uint32_t slot, Handle<Texture> textur
 	Gl2Program& prog = program_slab_[*current_program_];
 	SRB2_ASSERT(texture_slab_.is_valid(texture));
 	Gl2Texture& tex = texture_slab_[texture];
-	GLint location = gl_->GetUniformLocation(prog.program, name);
-	GL_ASSERT;
-	SRB2_ASSERT(location >= 0);
-	GLenum active_texture = GL_TEXTURE0 + slot;
-	GLuint uniform_value = slot;
-	gl_->ActiveTexture(active_texture);
-	GL_ASSERT;
-	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
-	GL_ASSERT;
-	gl_->Uniform1i(location, uniform_value);
-	GL_ASSERT;
-	gl_->ActiveTexture(GL_TEXTURE0);
-	GL_ASSERT;
+	Gl2UniformLocation& uniform = find_uniform(prog, name);
+	SRB2_ASSERT(uniform.location >= 0);
+	bind_texture(slot, tex.texture);
+	// Sampler uniforms keep their value in the program, and usually get the same slot every time
+	if (uniform.int_value != static_cast<int32_t>(slot))
+	{
+		gl_->Uniform1i(uniform.location, slot);
+		GL_ASSERT;
+		uniform.int_value = slot;
+	}
 }
 
 void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 {
 	current_primitive_type_ = desc.primitive;
-	if (desc.cull == CullMode::kNone)
-	{
-		gl_->Disable(GL_CULL_FACE);
-	}
-	else
-	{
-		gl_->Enable(GL_CULL_FACE);
-		gl_->CullFace(map_cull_mode(desc.cull));
-	}
-	gl_->ColorMask(desc.color_mask.r, desc.color_mask.g, desc.color_mask.b, desc.color_mask.a);
 
-	GL_ASSERT;
-	gl_->FrontFace(map_winding(desc.winding));
-	GL_ASSERT;
-	if (desc.blend_enabled)
+	// Only change the GL state that differs from the last rasterizer state, unless something else changed it since
+	const std::optional<RasterizerStateDesc>& last = rasterizer_state_;
+
+	if (!last || last->cull != desc.cull)
 	{
-		gl_->Enable(GL_BLEND);
+		if (desc.cull == CullMode::kNone)
+		{
+			gl_->Disable(GL_CULL_FACE);
+		}
+		else
+		{
+			gl_->Enable(GL_CULL_FACE);
+			gl_->CullFace(map_cull_mode(desc.cull));
+		}
 	}
-	else
+	if (!last || last->color_mask.r != desc.color_mask.r || last->color_mask.g != desc.color_mask.g
+		|| last->color_mask.b != desc.color_mask.b || last->color_mask.a != desc.color_mask.a)
 	{
-		gl_->Disable(GL_BLEND);
+		gl_->ColorMask(desc.color_mask.r, desc.color_mask.g, desc.color_mask.b, desc.color_mask.a);
+		GL_ASSERT;
 	}
-	GL_ASSERT;
-	gl_->BlendFuncSeparate(
-		map_blend_factor(desc.blend_source_factor_color),
-		map_blend_factor(desc.blend_dest_factor_color),
-		map_blend_factor(desc.blend_source_factor_alpha),
-		map_blend_factor(desc.blend_dest_factor_alpha)
-	);
-	GL_ASSERT;
-	gl_->BlendEquationSeparate(
-		map_blend_function(desc.blend_color_function),
-		map_blend_function(desc.blend_alpha_function)
-	);
-	GL_ASSERT;
-	gl_->BlendColor(desc.blend_color.r, desc.blend_color.g, desc.blend_color.b, desc.blend_color.a);
-	GL_ASSERT;
-	if (desc.depth_test)
+	if (!last || last->winding != desc.winding)
 	{
-		gl_->Enable(GL_DEPTH_TEST);
+		gl_->FrontFace(map_winding(desc.winding));
+		GL_ASSERT;
 	}
-	else
+	if (!last || last->blend_enabled != desc.blend_enabled)
 	{
-		gl_->Disable(GL_DEPTH_TEST);
+		if (desc.blend_enabled)
+		{
+			gl_->Enable(GL_BLEND);
+		}
+		else
+		{
+			gl_->Disable(GL_BLEND);
+		}
+		GL_ASSERT;
 	}
-	GL_ASSERT;
-	gl_->DepthMask(desc.depth_write);
-	GL_ASSERT;
-	gl_->DepthFunc(map_compare_func(desc.depth_func));
-	GL_ASSERT;
-	if (desc.stencil_test)
+	if (!last || last->blend_source_factor_color != desc.blend_source_factor_color
+		|| last->blend_dest_factor_color != desc.blend_dest_factor_color
+		|| last->blend_source_factor_alpha != desc.blend_source_factor_alpha
+		|| last->blend_dest_factor_alpha != desc.blend_dest_factor_alpha)
 	{
-		gl_->Enable(GL_STENCIL_TEST);
+		gl_->BlendFuncSeparate(
+			map_blend_factor(desc.blend_source_factor_color),
+			map_blend_factor(desc.blend_dest_factor_color),
+			map_blend_factor(desc.blend_source_factor_alpha),
+			map_blend_factor(desc.blend_dest_factor_alpha)
+		);
+		GL_ASSERT;
 	}
-	else
+	if (!last || last->blend_color_function != desc.blend_color_function
+		|| last->blend_alpha_function != desc.blend_alpha_function)
 	{
-		gl_->Disable(GL_STENCIL_TEST);
+		gl_->BlendEquationSeparate(
+			map_blend_function(desc.blend_color_function),
+			map_blend_function(desc.blend_alpha_function)
+		);
+		GL_ASSERT;
 	}
-	GL_ASSERT;
+	if (!last || last->blend_color != desc.blend_color)
+	{
+		gl_->BlendColor(desc.blend_color.r, desc.blend_color.g, desc.blend_color.b, desc.blend_color.a);
+		GL_ASSERT;
+	}
+	if (!last || last->depth_test != desc.depth_test)
+	{
+		if (desc.depth_test)
+		{
+			gl_->Enable(GL_DEPTH_TEST);
+		}
+		else
+		{
+			gl_->Disable(GL_DEPTH_TEST);
+		}
+		GL_ASSERT;
+	}
+	if (!last || last->depth_write != desc.depth_write)
+	{
+		gl_->DepthMask(desc.depth_write);
+		GL_ASSERT;
+	}
+	if (!last || last->depth_func != desc.depth_func)
+	{
+		gl_->DepthFunc(map_compare_func(desc.depth_func));
+		GL_ASSERT;
+	}
+	if (!last || last->stencil_test != desc.stencil_test)
+	{
+		if (desc.stencil_test)
+		{
+			gl_->Enable(GL_STENCIL_TEST);
+		}
+		else
+		{
+			gl_->Disable(GL_STENCIL_TEST);
+		}
+		GL_ASSERT;
+	}
+	// Each rasterizer state resets the stencil reference and masks. The set_stencil functions clear
+	// rasterizer_state_, so if it's set, GL already has these values.
 	stencil_front_reference_ = 0;
 	stencil_back_reference_ = 0;
 	stencil_front_compare_mask_ = 0xFF;
@@ -1447,58 +1639,88 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 	stencil_back_write_mask_ = 0xFF;
 	stencil_front_func_ = desc.front_stencil_compare;
 	stencil_back_func_ = desc.back_stencil_compare;
-	gl_->StencilFuncSeparate(
-		GL_FRONT,
-		map_compare_func(stencil_front_func_),
-		stencil_front_reference_,
-		stencil_front_compare_mask_
-	);
-	GL_ASSERT;
-	gl_->StencilFuncSeparate(
-		GL_BACK,
-		map_compare_func(stencil_back_func_),
-		stencil_back_reference_,
-		stencil_back_compare_mask_
-	);
-	GL_ASSERT;
-	gl_->StencilMaskSeparate(GL_FRONT, stencil_front_write_mask_);
-	GL_ASSERT;
-	gl_->StencilMaskSeparate(GL_BACK, stencil_back_write_mask_);
-	GL_ASSERT;
-
-	gl_->StencilOpSeparate(
-		GL_FRONT,
-		map_stencil_op(desc.front_fail),
-		map_stencil_op(desc.front_depth_fail),
-		map_stencil_op(desc.front_pass)
-	);
-	GL_ASSERT;
-	gl_->StencilOpSeparate(
-		GL_BACK,
-		map_stencil_op(desc.back_fail),
-		map_stencil_op(desc.back_depth_fail),
-		map_stencil_op(desc.back_pass)
-	);
-	GL_ASSERT;
-	if (desc.scissor_test)
+	if (!last || last->front_stencil_compare != desc.front_stencil_compare)
 	{
-		gl_->Enable(GL_SCISSOR_TEST);
+		gl_->StencilFuncSeparate(
+			GL_FRONT,
+			map_compare_func(stencil_front_func_),
+			stencil_front_reference_,
+			stencil_front_compare_mask_
+		);
 		GL_ASSERT;
 	}
-	else
+	if (!last || last->back_stencil_compare != desc.back_stencil_compare)
 	{
-		gl_->Disable(GL_SCISSOR_TEST);
+		gl_->StencilFuncSeparate(
+			GL_BACK,
+			map_compare_func(stencil_back_func_),
+			stencil_back_reference_,
+			stencil_back_compare_mask_
+		);
+		GL_ASSERT;
 	}
-	gl_->Scissor(desc.scissor.x, desc.scissor.y, desc.scissor.w, desc.scissor.h);
-	GL_ASSERT;
+	if (!last)
+	{
+		gl_->StencilMaskSeparate(GL_FRONT, stencil_front_write_mask_);
+		GL_ASSERT;
+		gl_->StencilMaskSeparate(GL_BACK, stencil_back_write_mask_);
+		GL_ASSERT;
+	}
+	if (!last || last->front_fail != desc.front_fail || last->front_depth_fail != desc.front_depth_fail
+		|| last->front_pass != desc.front_pass)
+	{
+		gl_->StencilOpSeparate(
+			GL_FRONT,
+			map_stencil_op(desc.front_fail),
+			map_stencil_op(desc.front_depth_fail),
+			map_stencil_op(desc.front_pass)
+		);
+		GL_ASSERT;
+	}
+	if (!last || last->back_fail != desc.back_fail || last->back_depth_fail != desc.back_depth_fail
+		|| last->back_pass != desc.back_pass)
+	{
+		gl_->StencilOpSeparate(
+			GL_BACK,
+			map_stencil_op(desc.back_fail),
+			map_stencil_op(desc.back_depth_fail),
+			map_stencil_op(desc.back_pass)
+		);
+		GL_ASSERT;
+	}
+	if (!last || last->scissor_test != desc.scissor_test)
+	{
+		if (desc.scissor_test)
+		{
+			gl_->Enable(GL_SCISSOR_TEST);
+			GL_ASSERT;
+		}
+		else
+		{
+			gl_->Disable(GL_SCISSOR_TEST);
+		}
+	}
+	if (!last || !same_rect(last->scissor, desc.scissor))
+	{
+		gl_->Scissor(desc.scissor.x, desc.scissor.y, desc.scissor.w, desc.scissor.h);
+		GL_ASSERT;
+	}
+
+	rasterizer_state_ = desc;
 }
 
 void Gl2Rhi::set_viewport(const Rect& rect)
 {
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	if (viewport_ && same_rect(*viewport_, rect))
+	{
+		return;
+	}
+
 	gl_->Viewport(rect.x, rect.y, rect.w, rect.h);
 	GL_ASSERT;
+	viewport_ = rect;
 }
 
 void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
@@ -1601,6 +1823,9 @@ void Gl2Rhi::set_stencil_reference(CullMode face, uint8_t reference)
 	SRB2_ASSERT(face != CullMode::kNone);
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	// The next rasterizer state has to reset the stencil state
+	rasterizer_state_.reset();
+
 	if (face == CullMode::kFront)
 	{
 		stencil_front_reference_ = reference;
@@ -1628,6 +1853,9 @@ void Gl2Rhi::set_stencil_compare_mask(CullMode face, uint8_t compare_mask)
 	SRB2_ASSERT(face != CullMode::kNone);
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	// The next rasterizer state has to reset the stencil state
+	rasterizer_state_.reset();
+
 	if (face == CullMode::kFront)
 	{
 		stencil_front_compare_mask_ = compare_mask;
@@ -1654,6 +1882,9 @@ void Gl2Rhi::set_stencil_write_mask(CullMode face, uint8_t write_mask)
 {
 	SRB2_ASSERT(face != CullMode::kNone);
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
+
+	// The next rasterizer state has to reset the stencil state
+	rasterizer_state_.reset();
 
 	if (face == CullMode::kFront)
 	{
@@ -1704,13 +1935,8 @@ uint32_t Gl2Rhi::get_buffer_size(Handle<Buffer> buffer)
 
 void Gl2Rhi::finish()
 {
-	// I sure hope creating FBOs isn't costly on the driver!
-	for (auto& fbset : framebuffers_)
-	{
-		gl_->DeleteFramebuffers(1, (GLuint*)&fbset.second);
-		GL_ASSERT;
-	}
-	framebuffers_.clear();
+	// Framebuffers are kept between frames, since recreating them every frame is costly through ANGLE.
+	// destroy_texture and destroy_renderbuffer delete the ones using them.
 }
 
 void Gl2Rhi::copy_framebuffer_to_texture(
@@ -1758,8 +1984,7 @@ void Gl2Rhi::copy_framebuffer_to_texture(
 		GL_ASSERT;
 	}
 
-	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
-	GL_ASSERT;
+	bind_texture(0, tex.texture);
 	gl_->CopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_region.x, dst_region.y, src_region.x, src_region.y, dst_region.w, dst_region.h);
 	GL_ASSERT;
 }

@@ -109,7 +109,7 @@ static void preframe_update(Rhi& rhi)
 
 static void postframe_update(Rhi& rhi)
 {
-	g_hw_state.palette_manager->destroy_per_frame_resources(rhi);
+	g_hw_state.palette_manager->end_frame(rhi);
 }
 
 static void temp_legacy_finishupdate_draws()

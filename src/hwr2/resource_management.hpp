@@ -11,12 +11,23 @@
 #ifndef __SRB2_HWR2_RESOURCE_MANAGEMENT_HPP__
 #define __SRB2_HWR2_RESOURCE_MANAGEMENT_HPP__
 
+#include <array>
+
 #include "../core/hash_map.hpp"
 #include "../core/vector.hpp"
 #include "../rhi/rhi.hpp"
 
 namespace srb2::hwr2
 {
+
+/// @brief A colormap or lighttable uploaded as a texture. These are kept between frames and reuploaded only when
+/// their contents change, since creating textures every frame is costly through ANGLE.
+struct PaletteTable
+{
+	rhi::Handle<rhi::Texture> texture;
+	srb2::Vector<uint8_t> data;
+	uint32_t last_used_frame;
+};
 
 class PaletteManager
 {
@@ -27,8 +38,21 @@ class PaletteManager
 #endif
 	rhi::Handle<rhi::Texture> default_colormap_;
 
-	srb2::HashMap<const uint8_t*, rhi::Handle<rhi::Texture>> colormaps_;
-	srb2::HashMap<const uint8_t*, rhi::Handle<rhi::Texture>> lighttables_;
+	srb2::HashMap<const uint8_t*, PaletteTable> colormaps_;
+	srb2::HashMap<const uint8_t*, PaletteTable> lighttables_;
+	uint32_t frame_ = 0;
+
+	// The last palette and whether the default colormap were uploaded, so they're only uploaded when needed
+	std::array<uint8_t, 256 * 4> palette_data_ {};
+	bool palette_uploaded_ = false;
+	bool default_colormap_uploaded_ = false;
+
+	rhi::Handle<rhi::Texture> find_or_create_table(
+		rhi::Rhi& rhi,
+		srb2::HashMap<const uint8_t*, PaletteTable>& tables,
+		const uint8_t* table,
+		uint32_t rows
+	);
 
 public:
 	PaletteManager();
@@ -46,7 +70,8 @@ public:
 	rhi::Handle<rhi::Texture> default_colormap() const noexcept { return default_colormap_; }
 
 	void update(rhi::Rhi& rhi);
-	void destroy_per_frame_resources(rhi::Rhi& rhi);
+	/// @brief Destroys the colormap and lighttable textures that haven't been drawn in a while.
+	void end_frame(rhi::Rhi& rhi);
 
 	rhi::Handle<rhi::Texture> find_or_create_colormap(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> colormap);
 	rhi::Handle<rhi::Texture> find_or_create_extra_lighttable(rhi::Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable);
