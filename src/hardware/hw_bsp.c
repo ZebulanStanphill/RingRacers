@@ -249,6 +249,36 @@ static boolean SameVertice (polyvertex_t *p1, polyvertex_t *p2)
 }
 
 
+// a polygon the partition line doesn't split goes to the side
+// of the vertex farthest from the line, since float error can leave
+// a polygon that only touches the line a fraction of a unit across it
+static void UnsplitPoly(fdivline_t *bsp, poly_t *poly,
+                        poly_t **frontpoly, poly_t **backpoly)
+{
+	INT32 i;
+	double d, farthest = 0.0;
+
+	for (i = 0; i < poly->numpts; i++)
+	{
+		// > 0 on the right (front) side, as in R_PointOnSide
+		d = ((double)poly->pts[i].x - bsp->x) * bsp->dy
+		  - ((double)poly->pts[i].y - bsp->y) * bsp->dx;
+		if (fabs(d) > fabs(farthest))
+			farthest = d;
+	}
+
+	if (farthest < 0.0)
+	{
+		*frontpoly = NULL;
+		*backpoly = poly;
+	}
+	else
+	{
+		*frontpoly = poly;
+		*backpoly = NULL;
+	}
+}
+
 // split a _CONVEX_ polygon in two convex polygons
 // outputs:
 //   frontpoly : polygon on right side of bsp line
@@ -346,18 +376,14 @@ static void SplitPoly (fdivline_t *bsp,         //splitting parametric line
 		// linedefs where each side point the same sector, that is:
 		// the deep water effect with the original Doom
 
-		/// \todo make sure front poly is to front of partition line?
-
-		*frontpoly = poly;
-		*backpoly = NULL;
+		UnsplitPoly(bsp, poly, frontpoly, backpoly);
 		return;
 	}
 
 	if (pe < 0)
 	{
 		//I_Error("SplitPoly: only one point for split line (%d %d)", ps, pe);
-		*frontpoly = poly;
-		*backpoly = NULL;
+		UnsplitPoly(bsp, poly, frontpoly, backpoly);
 		return;
 	}
 	if (pe <= ps)
@@ -679,26 +705,67 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
 
 	// Recursively divide front space.
 	if (frontpoly)
-	{
 		WalkBSPNode(bsp->children[0], frontpoly, &bsp->children[0],bsp->bbox[0]);
 
-		// copy child bbox
-		M_Memcpy(bbox, bsp->bbox[0], 4*sizeof (fixed_t));
-	}
-	else
-		I_Error("WalkBSPNode: no front poly?");
+	// copy child bbox
+	// (a child without a polygon keeps its bbox from the nodes lump)
+	M_Memcpy(bbox, bsp->bbox[0], 4*sizeof (fixed_t));
 
 	// Recursively divide back space.
 	if (backpoly)
 	{
 		// Correct back bbox to include floor/ceiling convex polygon
 		WalkBSPNode(bsp->children[1], backpoly, &bsp->children[1], bsp->bbox[1]);
+	}
 
-		// enlarge bbox with second child
-		M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
-		                 bsp->bbox[1][BOXTOP   ]);
-		M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
-		                 bsp->bbox[1][BOXBOTTOM]);
+	// enlarge bbox with second child
+	M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
+	                 bsp->bbox[1][BOXTOP   ]);
+	M_AddToBox(bbox, bsp->bbox[1][BOXRIGHT ],
+	                 bsp->bbox[1][BOXBOTTOM]);
+}
+
+// a subsector thinner than SameVertice's tolerance can be left without a
+// polygon by the BSP walk; with GL nodes its segs still form a closed loop
+// around the exact subsector shape, so use that
+static void HWR_SegLoopPolys(void)
+{
+	size_t i, k, first = 0;
+	INT32 j, count;
+	seg_t *lseg;
+	poly_t *poly;
+
+	for (i = 0; i < numsubsectors; first += subsectors[i].numlines, i++)
+	{
+		count = subsectors[i].numlines;
+		if (extrasubsectors[i].planepoly || count < 3 || first + count > numsegs)
+			continue;
+
+		// the extended node loaders store each subsector's segs in turn,
+		// moving firstline past leading GL segs without changing numlines
+		if (subsectors[i].firstline < first || subsectors[i].firstline >= first + count)
+			continue;
+		for (k = first; k < subsectors[i].firstline; k++)
+			if (!segs[k].glseg)
+				break;
+		if (k < subsectors[i].firstline)
+			continue;
+
+		lseg = &segs[first];
+		for (j = 0; j < count; j++)
+			if (lseg[j].v2 != lseg[(j + 1) % count].v1)
+				break;
+		if (j < count)
+			continue;
+
+		poly = HWR_AllocPoly(count);
+		for (j = 0; j < count; j++)
+		{
+			poly->pts[j].x = FIXED_TO_FLOAT(lseg[j].v1->x);
+			poly->pts[j].y = FIXED_TO_FLOAT(lseg[j].v1->y);
+			poly->pts[j].z = 0.0f;
+		}
+		extrasubsectors[i].planepoly = poly;
 	}
 }
 
@@ -1015,6 +1082,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	rootpv++;
 
 	WalkBSPNode(bspnum, rootp, NULL,rootbbox);
+	HWR_SegLoopPolys();
 
 	i = SolveTProblem();
 	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
