@@ -73,6 +73,19 @@ finally {
 
 New-Item -ItemType Directory -Force $Deps | Out-Null
 
+# deps/SDL is only patched when it's made, so it remembers the commit and patches it was made from, and is made again
+# when they change
+$SdlStamp = Join-Path $SdlSource "patches.stamp"
+$SdlWanted = (@($SdlCommit) + ($SdlPatches | ForEach-Object { "$_ " + (Get-FileHash -Algorithm SHA256 (Join-Path $Root "patches/$_")).Hash })) -join "`n"
+if ((Test-Path $SdlSource) -and (-not (Test-Path $SdlStamp) -or (Get-Content -Raw $SdlStamp).Trim() -ne $SdlWanted)) {
+	Write-Host "SDL's commit or patches changed; fetching and patching it again."
+	foreach ($Dir in $SdlSource, $SdlBuild) {
+		if (Test-Path $Dir) {
+			Remove-Item -Recurse -Force $Dir
+		}
+	}
+}
+
 if (-not (Test-Path $SdlSource)) {
 	Exec { git init -q $SdlSource }
 	Exec { git -C $SdlSource config core.autocrlf false }
@@ -82,6 +95,7 @@ if (-not (Test-Path $SdlSource)) {
 	foreach ($SdlPatch in $SdlPatches) {
 		Exec { git -C $SdlSource apply (Join-Path $Root "patches/$SdlPatch") }
 	}
+	Set-Content $SdlStamp $SdlWanted
 }
 # Forward slashes so a trailing separator doesn't escape the closing quote when the path has spaces
 Exec { msbuild (Join-Path $SdlSource "VisualC-WinRT/SDL-UWP.vcxproj") -m -nologo -p:Configuration=Release -p:Platform=x64 "-p:OutDir=$($SdlBuild.Replace('\', '/'))/" }
