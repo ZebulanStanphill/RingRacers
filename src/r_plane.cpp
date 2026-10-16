@@ -341,6 +341,17 @@ static visplane_t *new_visplane(unsigned hash)
 	return check;
 }
 
+// [UWP]: Clears only the columns of a new visplane that can be on screen, plus the one after the last, which
+// R_DrawSinglePlane marks, instead of all MAXVIDWIDTH of them. Clearing them all was most of the 7% of 3D rendering
+// spent clearing memory at 640x400 on Xbox.
+static void R_ClearVisplaneColumns(visplane_t *pl)
+{
+	const size_t columns = std::min<size_t>(vid.width + 1, MAXVIDWIDTH);
+
+	memset(pl->top, 0xff, columns * sizeof pl->top[0]);
+	memset(pl->bottom, 0x00, columns * sizeof pl->bottom[0]);
+}
+
 //
 // R_FindPlane: Seek a visplane having the identical values:
 //              Same height, same flattexture, same lightlevel.
@@ -472,8 +483,7 @@ visplane_t *R_FindPlane(fixed_t height, INT32 picnum, INT32 lightlevel,
 	check->ripple = ripple;
 	check->damage = damage;
 
-	memset(check->top, 0xff, sizeof (check->top));
-	memset(check->bottom, 0x00, sizeof (check->bottom));
+	R_ClearVisplaneColumns(check);
 
 	return check;
 }
@@ -553,8 +563,7 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
 		pl = new_pl;
 		pl->minx = start;
 		pl->maxx = stop;
-		memset(pl->top, 0xff, sizeof pl->top);
-		memset(pl->bottom, 0x00, sizeof pl->bottom);
+		R_ClearVisplaneColumns(pl);
 	}
 	return pl;
 }
