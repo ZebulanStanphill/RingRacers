@@ -648,6 +648,29 @@ unsigned int I_UWPUsableProcessors(void)
 	return ours >= 2 ? ours : 0;
 }
 
+int I_UWPCpuSetMode(void)
+{
+	unsigned int ours = 0, others = 0;
+
+	for (const CpuSet& set : ReadCpuSets(false))
+	{
+		if (set.flags & kCpuSetAllocatedToUs)
+		{
+			ours++;
+		}
+		else if (set.flags & kCpuSetAllocated)
+		{
+			others++;
+		}
+	}
+
+	if (ours)
+	{
+		return 1;
+	}
+	return others ? 0 : -1;
+}
+
 void I_UWPLogCpuSets(void)
 {
 	auto getprocesssets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetProcessDefaultCpuSets"));

@@ -2021,6 +2021,9 @@ void D_SRB2Main(void)
 
 	CONS_Printf("Z_Init(): Init zone memory allocation daemon. \n");
 	Z_Init();
+#ifdef _UWP
+	I_UWPRequireGameMode();
+#endif
 	CON_SetLoadingProgress(LOADED_ZINIT);
 
 	M_NewGameDataStruct();

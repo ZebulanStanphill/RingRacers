@@ -327,6 +327,10 @@ int I_UWPIsSkipButtonDown(void);
 // [UWP]: Logs the process budget. GlobalMemoryStatusEx reports physical memory, not this budget.
 void I_UWPLogMemoryLimit(void);
 
+// [UWP]: Exits with a pop-up explaining how to set the app type to Game if Direct3D 12 hardware isn't available
+// (sdl/i_uwpd3d12.cpp). Logs signals that might tell the App and Game app types apart.
+void I_UWPRequireGameMode(void);
+
 // [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
 // Call from the main thread.
 void I_UWPStartProfiler(void);
@@ -341,6 +345,11 @@ void I_UWPLogCpuSets(void);
 // [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
 // doesn't mark any
 unsigned int I_UWPUsableProcessors(void);
+
+// [UWP]: How Xbox has given out processors: 1 if some are the game's own (Game resources), 0 if it holds some for
+// another process and none for the game (App resources: seen on Xbox One X every time the app type was App), or -1
+// if it doesn't say
+int I_UWPCpuSetMode(void);
 
 // [UWP]: Logs crashes, with their call stacks, to the log, which the game's signal handler misses on Xbox.
 // Call from the main thread.
