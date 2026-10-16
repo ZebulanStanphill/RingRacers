@@ -247,6 +247,7 @@ enum EPolyFlags
 	PF_ForceWrapX       = 0x00020000,   // Forces repeat texture on X
 	PF_ForceWrapY       = 0x00040000,   // Forces repeat texture on Y
 	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
+	PF_FogPlane         = 0x00400000,   // Fog uses Software plane-distance lighting
 	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles
 };
 

@@ -408,6 +408,11 @@ static sector_t *HWR_FindViewFog(void)
 {
 	ffloor_t *rover;
 	sector_t *control = NULL;
+#ifdef _UWP
+	// Shader fog remaps at its actual boundaries, including camera exit faces.
+	if (HWR_UseShader())
+		return NULL;
+#endif
 	const UINT32 required = FOF_EXISTS|FOF_RENDERALL|FOF_FOG|FOF_INVERTPLANES
 		|FOF_INVERTSIDES|FOF_DOUBLESHADOW;
 
@@ -522,7 +527,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	Surface->LightTableId = palette ? HWR_GetLightTableID(colormap) : 0;
 }
 
-UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
+UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap)
 {
 	RGBA_t realcolor, surfcolor;
 	INT32 alpha;
@@ -795,7 +800,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	for (i = 0, v3d = planeVerts; i < nrPlaneVerts; i++,v3d++,pv++)
 		SETUP3DVERT(v3d, pv->x, pv->y);
 
-	lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL));
+	if (!(PolyFlags & PF_Fog))
+		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL));
 	HWR_Lighting(&Surf, lightlevel, planecolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
 
 	if (PolyFlags & PF_EnvironmentTrans)
@@ -809,7 +815,12 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	if (HWR_UseShader())
 	{
 		if (PolyFlags & PF_Fog)
+		{
 			shader = SHADER_FOG;
+#ifdef _UWP
+			PolyFlags |= PF_FogPlane;
+#endif
+		}
 		else if (PolyFlags & PF_Ripple)
 			shader = SHADER_WATER;
 		else
@@ -1115,7 +1126,7 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 		}
 		surf->PolyColor.s.alpha = alpha;
 		if (flags & PF_Fog)
-			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, lightnum, colormap);
 		else if (flags & PF_EnvironmentTrans)
 			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
 		else
@@ -1289,7 +1300,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		wallVerts[1].y = endbot;
 
 		if (polyflags & PF_Fog)
-			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, lightnum, colormap);
 		else if (polyflags & PF_EnvironmentTrans)
 			HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
 		else
@@ -1322,7 +1333,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	wallVerts[1].y = endbot;
 
 	if (polyflags & PF_Fog)
-		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, true, lightnum, colormap);
 	else if (polyflags & PF_EnvironmentTrans)
 		HWR_AddTransparentWall(wallVerts, Surf, texnum, basetexnum, polyflags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
 	else
@@ -2111,7 +2122,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 
 					blendmode = PF_Fog|PF_NoTexture;
 
-					lightnum = HWR_CalcWallLight(rover->master->frontsector->lightlevel, gl_curline);
+					lightnum = rover->master->frontsector->lightlevel;
 					colormap = rover->master->frontsector->extra_colormap;
 
 					Surf.PolyColor.s.alpha = HWR_FogBlockAlpha(rover->master->frontsector->lightlevel, rover->master->frontsector->extra_colormap);
@@ -2242,7 +2253,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 
 					blendmode = PF_Fog|PF_NoTexture;
 
-					lightnum = HWR_CalcWallLight(rover->master->frontsector->lightlevel, gl_curline);
+					lightnum = rover->master->frontsector->lightlevel;
 					colormap = rover->master->frontsector->extra_colormap;
 
 					Surf.PolyColor.s.alpha = HWR_FogBlockAlpha(rover->master->frontsector->lightlevel, rover->master->frontsector->extra_colormap);
