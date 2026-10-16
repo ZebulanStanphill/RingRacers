@@ -59,6 +59,9 @@
 /// \note	SRB2CB port.
 ///      	SRB2CB itself ported this from PrBoom+
 #include "hw_clip.h"
+#ifdef HAVE_D3D12
+#include "r_d3d12/r_d3d12.h"
+#endif
 #ifdef _UWP
 #include "../i_time.h" // HWR_UWPLoadKeepAlive
 #endif
@@ -278,6 +281,100 @@ int ps_hw_numpolyflags = 0;
 int ps_hw_numcolors = 0;
 precise_t ps_hw_batchsorttime = 0;
 precise_t ps_hw_batchdrawtime = 0;
+
+#ifdef _UWP
+precise_t ps_hw_portaltime = 0;
+INT32 ps_hw_portals = 0;
+
+typedef struct hwr_portal_s
+{
+	struct hwr_portal_s *next;
+	line_t *entrance, *exit;
+	FOutVector aperture[4];
+	fixed_t x, y, z;
+	angle_t yaw, angle1, angle2;
+	boolean rendered;
+} hwr_portal_t;
+
+static INT32 *hwr_portalpartners; // PU_LEVEL; nulled by the zone allocator
+static boolean hwr_maphasportals, hwr_portalsearch;
+static INT32 hwr_portallevel;
+static line_t *hwr_portalexit;
+static float hwr_portalplane[4]; // world (x, height, map y)
+static angle_t hwr_portalangle1, hwr_portalangle2;
+static hwr_portal_t *hwr_portallist;
+
+static double HWR_PortalSide(fixed_t x, fixed_t y)
+{
+	// side 0 (front) is the RIGHT of the directed exit: dy*x - dx*y.
+	return (double)hwr_portalexit->dy * ((double)x - hwr_portalexit->v1->x)
+		- (double)hwr_portalexit->dx * ((double)y - hwr_portalexit->v1->y);
+}
+
+static boolean HWR_PortalBBox(const fixed_t *box)
+{
+	return !hwr_portalexit || HWR_PortalSide(box[BOXLEFT], box[BOXTOP]) >= 0
+		|| HWR_PortalSide(box[BOXLEFT], box[BOXBOTTOM]) >= 0
+		|| HWR_PortalSide(box[BOXRIGHT], box[BOXTOP]) >= 0
+		|| HWR_PortalSide(box[BOXRIGHT], box[BOXBOTTOM]) >= 0;
+}
+
+// One portal per entrance line, however many segs the nodebuilder split it into: each portal renders the whole
+// destination view, so per-seg portals would render it once per seg. The aperture is the whole line.
+static void HWR_CollectPortal(seg_t *seg)
+{
+	line_t *start = seg->linedef;
+	line_t *dest = &lines[hwr_portalpartners[start-lines]];
+	sector_t *front = start->frontsector;
+	hwr_portal_t *portal;
+	for (portal = hwr_portallist; portal; portal = portal->next)
+		if (portal->entrance == start)
+			return;
+	portal = Z_Calloc(sizeof(*portal), PU_STATIC, NULL);
+	// Keep Software's centers and fixed-point polar transform exactly.
+	fixed_t sx = (start->v1->x + start->v2->x)/2;
+	fixed_t sy = (start->v1->y + start->v2->y)/2;
+	fixed_t dx = (dest->v1->x + dest->v2->x)/2;
+	fixed_t dy = (dest->v1->y + dest->v2->y)/2;
+	angle_t rotation = R_PointToAngle2(0,0,dest->dx,dest->dy)
+		- R_PointToAngle2(start->dx,start->dy,0,0);
+	fixed_t distance = R_PointToDist2(sx,sy,viewx,viewy);
+	angle_t angle = R_PointToAngle2(sx,sy,viewx,viewy) + rotation;
+	const fixed_t x1 = start->v1->x, y1 = start->v1->y;
+	const fixed_t x2 = start->v2->x, y2 = start->v2->y;
+	// The line's ends as seen from this view, in the destination's frame; as in HWR_AddLine, v1 is the left end
+	// of a front side
+	const angle_t a1 = R_PointToAngle64(x1, y1), a2 = R_PointToAngle64(x2, y2);
+	portal->entrance = start;
+	portal->exit = dest;
+	portal->x = dx + FixedMul(FINECOSINE(angle>>ANGLETOFINESHIFT),distance);
+	portal->y = dy + FixedMul(FINESINE(angle>>ANGLETOFINESHIFT),distance);
+	portal->z = viewz + dest->frontsector->floorheight - front->floorheight;
+	portal->yaw = viewangle + rotation;
+	portal->angle1 = a1 + rotation;
+	portal->angle2 = a2 + rotation;
+	portal->aperture[0].x = portal->aperture[3].x = FIXED_TO_FLOAT(x1);
+	portal->aperture[1].x = portal->aperture[2].x = FIXED_TO_FLOAT(x2);
+	portal->aperture[0].z = portal->aperture[3].z = FIXED_TO_FLOAT(y1);
+	portal->aperture[1].z = portal->aperture[2].z = FIXED_TO_FLOAT(y2);
+	portal->aperture[0].y = FIXED_TO_FLOAT(P_GetZAt(front->f_slope,x1,y1,front->floorheight));
+	portal->aperture[1].y = FIXED_TO_FLOAT(P_GetZAt(front->f_slope,x2,y2,front->floorheight));
+	// r_segs captures topfrac from the front ceiling, even when it is SKY.
+	// SKY changes plane/wall-tier marking, not worldtop: no infinite extension.
+	portal->aperture[3].y = FIXED_TO_FLOAT(P_GetZAt(front->c_slope,x1,y1,front->ceilingheight));
+	portal->aperture[2].y = FIXED_TO_FLOAT(P_GetZAt(front->c_slope,x2,y2,front->ceilingheight));
+	// Append in BSP front-to-back order. Nearer aperture depth then rejects
+	// masks for farther siblings where their screen projections overlap.
+	if (!hwr_portallist)
+		hwr_portallist = portal;
+	else
+	{
+		hwr_portal_t *tail = hwr_portallist;
+		while (tail->next) tail = tail->next;
+		tail->next = portal;
+	}
+}
+#endif
 
 boolean gl_init = false;
 boolean gl_maploaded = false;
@@ -2388,6 +2485,9 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
+#ifdef _UWP
+	boolean portaloccludes = true;
+#endif
 
 	// SoM: Backsector needs to be run through R_FakeFlat
 	static sector_t tempsec;
@@ -2403,6 +2503,15 @@ static void HWR_AddLine(seg_t * line)
 	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
 	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
 
+#ifdef _UWP
+	// Behind the exit, or the exit line itself, which lies on the clip plane: Software's traversal starts in the exit's
+	// front sector, so it doesn't draw it either
+	if (hwr_portalexit && (line->linedef == hwr_portalexit
+		|| (HWR_PortalSide(v1x,v1y) < 0 && HWR_PortalSide(v2x,v2y) < 0)))
+		return;
+	if (hwr_portalexit)
+		portaloccludes = HWR_PortalSide(v1x,v1y) >= 0 && HWR_PortalSide(v2x,v2y) >= 0;
+#endif
 	// OPTIMIZE: quickly reject orthogonal back sides.
 	angle1 = R_PointToAngle64(v1x, v1y);
 	angle2 = R_PointToAngle64(v2x, v2y);
@@ -2418,13 +2527,35 @@ static void HWR_AddLine(seg_t * line)
 		return;
 	}
 
+#ifdef _UWP
+	if (line->side == 0 && line->linedef->special == 40 && hwr_portalpartners
+		&& hwr_portalpartners[line->linedef-lines] >= 0)
+	{
+		boolean active = hwr_portalsearch;
+		hwr_portal_t *portal;
+		if (hwr_portalsearch)
+			HWR_CollectPortal(line);
+		else
+			for (portal = hwr_portallist; portal; portal = portal->next)
+				if (portal->entrance == line->linedef && portal->rendered) { active = true; break; }
+		if (active)
+		{
+			if (portaloccludes)
+				gld_clipper_SafeAddClipRange(angle2,angle1);
+			return; // suppress every wall tier covering the active front-sector aperture
+		}
+	}
+#endif
 	checkforemptylines = true;
 
 	gl_backsector = line->backsector;
 
 	if (!line->backsector)
 	{
-		gld_clipper_SafeAddClipRange(angle2, angle1);
+#ifdef _UWP
+		if (portaloccludes)
+#endif
+			gld_clipper_SafeAddClipRange(angle2, angle1);
 	}
 	else
 	{
@@ -2445,13 +2576,19 @@ static void HWR_AddLine(seg_t * line)
 					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
 				return; // line is empty, don't even bother
 			// treat like wide open window instead
-			HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+#ifdef _UWP
+			if (!hwr_portalsearch)
+#endif
+				HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
 			return;
 		}
 
 		if (CheckClip(line, gl_frontsector, gl_backsector))
 		{
-			gld_clipper_SafeAddClipRange(angle2, angle1);
+#ifdef _UWP
+			if (portaloccludes)
+#endif
+				gld_clipper_SafeAddClipRange(angle2, angle1);
 			checkforemptylines = false;
 		}
 		// Reject empty lines used for triggers and special events.
@@ -2462,7 +2599,10 @@ static void HWR_AddLine(seg_t * line)
 			return;
 	}
 
-	HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+#ifdef _UWP
+	if (!hwr_portalsearch)
+#endif
+		HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
 	return;
 }
 
@@ -2870,6 +3010,18 @@ static void HWR_Subsector(size_t num)
 		line = NULL;
 	}
 
+#ifdef _UWP
+	if (hwr_portalsearch)
+	{
+		while (count--)
+		{
+			if (!line->glseg && !line->polyseg)
+				HWR_AddLine(line);
+			line++;
+		}
+		return;
+	}
+#endif
 	//SoM: 4/7/2000: Test to make Boom water work in Hardware mode.
 	gl_frontsector = R_FakeFlat(gl_frontsector, &tempsec, &floorlightlevel,
 								&ceilinglightlevel, false);
@@ -3253,10 +3405,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 	hwbbox = bsp->bbox[side];
 
 	// Recursively divide front space.
-	HWR_RenderBSPNode(bsp->children[side]);
+#ifdef _UWP
+	if (HWR_PortalBBox(bsp->bbox[side]))
+#endif
+		HWR_RenderBSPNode(bsp->children[side]);
 
 	// Possibly divide back space.
-	if (HWR_CheckBBox(bsp->bbox[side^1]))
+	if (HWR_CheckBBox(bsp->bbox[side^1])
+#ifdef _UWP
+		&& HWR_PortalBBox(bsp->bbox[side^1])
+#endif
+	)
 	{
 		// BP: big hack for a test in lighning ref : 1249753487AB
 		hwbbox = bsp->bbox[side^1];
@@ -5468,6 +5627,11 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
 	}
 
+#ifdef _UWP
+	// Software tests the interpolated origin before hitlag/sprite offsets.
+	if (hwr_portalexit && P_PointOnLineSide(interp.x,interp.y,hwr_portalexit) != 0)
+		return;
+#endif
 	dispoffset = thing->dispoffset;
 
 	// hitlag vibrating
@@ -5973,7 +6137,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	interpmobjstate_t interp = {0};
 
 	// okay... this is a hack, but weather isn't networked, so it should be ok
+#ifdef _UWP
+	if (hwr_portallevel == 0 && !P_PrecipThinker(thing))
+#else
 	if (!P_PrecipThinker(thing))
+#endif
 	{
 		return;
 	}
@@ -6569,21 +6737,25 @@ static void HWR_DrawViewFogSky(void)
 	HWD.pfnDrawPolygon(&surf, v, 4, PF_Modulated|PF_Multiplicative|PF_NoTexture|PF_NoDepthTest);
 }
 
-static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolean timing)
+#ifdef _UWP
+#ifdef HAVE_D3D12
+static void HWR_RenderPortalViews(player_t *player);
+#endif
+static void HWR_FreePortalViews(void);
+
+static void HWR_SetPortalViewLight(void)
+{
+	const angle_t angle = maplighting.angle - viewangle + ANGLE_90;
+	HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_X,FINECOSINE(angle>>ANGLETOFINESHIFT));
+	HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_Y,0);
+	HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_Z,-FINESINE(angle>>ANGLETOFINESHIFT));
+}
+#endif
+
+static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean timing)
 {
 	const float fpov = FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd);
 	postimg_t *type = &postimgtype[viewssnum];
-
-	{
-		// do we really need to save player (is it not the same)?
-		player_t *saved_player = stplyr;
-		stplyr = player;
-		ST_doPaletteStuff();
-		stplyr = saved_player;
-#ifdef ALAM_LIGHTING
-		HWR_SetLights(viewssnum);
-#endif
-	}
 
 	hwr_viewfog = HWR_FindViewFog();
 
@@ -6637,7 +6809,19 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
 
 	//------------------------------------------------------------------------
-	HWR_ClearView(); // Clears the depth buffer and resets the view I believe
+#ifdef _UWP
+	if (hwr_portallevel == 0)
+#endif
+		HWR_ClearView(); // Whole-screen depth/stencil clear only outside recursion
+#ifdef _UWP
+	else
+		HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
+			(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
+#ifdef HAVE_D3D12
+	D3D12_SetPortalStencil(hwr_portallevel);
+	D3D12_SetPortalPlane(NULL); // sky/fog live at infinity, not behind an exit plane
+#endif
+#endif
 
 	if (drawSkyTexture)
 		HWR_DrawSkyBackground(player);
@@ -6646,6 +6830,19 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = r_splitscreen;
+#ifdef _UWP
+	HWD.pfnSetTransform(&atransform);
+#ifdef HAVE_D3D12
+	D3D12_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
+#endif
+	if (hwr_portallevel > 0 && cv_glshaders.value) HWR_SetPortalViewLight();
+	HWR_SetShaderState();
+#ifdef HAVE_D3D12
+	if (!gl_skyboxview && hwr_maphasportals && cv_maxportals.value > hwr_portallevel
+		&& D3D12_PortalsSupported())
+		HWR_RenderPortalViews(player);
+#endif
+#endif
 
 	HWR_ClearSprites();
 
@@ -6655,6 +6852,10 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
 		gld_clipper_Clear();
 		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
+#ifdef _UWP
+		if (hwr_portalexit)
+			gld_clipper_SafeAddClipRange(hwr_portalangle1,hwr_portalangle2);
+#endif
 #ifdef HAVE_SPHEREFRUSTRUM
 		gld_FrustrumSetup();
 #endif
@@ -6739,6 +6940,13 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 		HWR_CreateDrawNodes();
 	}
 
+#ifdef _UWP
+	HWR_FreePortalViews();
+#ifdef HAVE_D3D12
+	D3D12_SetPortalPlane(NULL);
+	D3D12_SetPortalStencil(0);
+#endif
+#endif
 	HWD.pfnSetTransform(NULL);
 	HWD.pfnUnSetShader();
 
@@ -6746,6 +6954,152 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 	// moved here by hurdler so it works with the new near clipping plane
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 	hwr_viewfog = NULL; // do not leak into skybox, split-screen or subsequent 2D draws
+}
+
+#ifdef HAVE_D3D12
+// Only renderer globals are saved. validcount remains monotonic: restoring
+// an old value would alias sectors/subsectors stamped by a recursive traversal.
+// Lists of sprites/batches/drawnodes are empty before children and fully consumed
+// in each child, before the parent collects any of its own deferred drawing.
+typedef struct
+{
+	fixed_t x,y,z,sine,cosine,dupx,dupy,dupz;
+	angle_t yaw,pitch,roll,dupyaw,glpitch;
+	float glx,gly,glz,glsine,glcosine,ludsine,ludcosine,fov;
+	FTransform transform;
+	sector_t *sector,*fog;
+	line_t *exit;
+	float plane[4];
+	angle_t angle1,angle2;
+	INT32 level;
+	boolean sky;
+	hwr_portal_t *list;
+	void *clipper;
+} hwr_viewcontext_t;
+
+static void HWR_SavePortalView(hwr_viewcontext_t *c)
+{
+	c->x=viewx; c->y=viewy; c->z=viewz; c->yaw=viewangle;
+	c->pitch=aimingangle; c->roll=viewroll; c->sine=viewsin; c->cosine=viewcos;
+	c->dupx=dup_viewx; c->dupy=dup_viewy; c->dupz=dup_viewz; c->dupyaw=dup_viewangle;
+	c->glx=gl_viewx; c->gly=gl_viewy; c->glz=gl_viewz;
+	c->glsine=gl_viewsin; c->glcosine=gl_viewcos;
+	c->ludsine=gl_viewludsin; c->ludcosine=gl_viewludcos; c->glpitch=gl_aimingangle; c->fov=gl_fovlud;
+	c->transform=atransform; c->sector=viewsector; c->fog=hwr_viewfog;
+	c->exit=hwr_portalexit; memcpy(c->plane,hwr_portalplane,sizeof c->plane);
+	c->angle1=hwr_portalangle1; c->angle2=hwr_portalangle2; c->level=hwr_portallevel;
+	c->sky=drawsky; c->list=hwr_portallist; c->clipper=gld_clipper_SaveState();
+}
+
+static void HWR_RestorePortalView(const hwr_viewcontext_t *c)
+{
+	viewx=c->x; viewy=c->y; viewz=c->z; viewangle=c->yaw;
+	aimingangle=c->pitch; viewroll=c->roll; viewsin=c->sine; viewcos=c->cosine;
+	dup_viewx=c->dupx; dup_viewy=c->dupy; dup_viewz=c->dupz; dup_viewangle=c->dupyaw;
+	gl_viewx=c->glx; gl_viewy=c->gly; gl_viewz=c->glz;
+	gl_viewsin=c->glsine; gl_viewcos=c->glcosine;
+	gl_viewludsin=c->ludsine; gl_viewludcos=c->ludcosine; gl_aimingangle=c->glpitch; gl_fovlud=c->fov;
+	atransform=c->transform; viewsector=c->sector; hwr_viewfog=c->fog;
+	hwr_portalexit=c->exit; memcpy(hwr_portalplane,c->plane,sizeof c->plane);
+	hwr_portalangle1=c->angle1; hwr_portalangle2=c->angle2; hwr_portallevel=c->level;
+	drawsky=c->sky; hwr_portallist=c->list; gld_clipper_RestoreState(c->clipper);
+	HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
+		(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
+	HWD.pfnSetTransform(&atransform);
+	D3D12_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
+	D3D12_SetPortalStencil(hwr_portallevel);
+	if (cv_glshaders.value) HWR_SetPortalViewLight();
+	HWR_SetShaderState();
+}
+
+// Portals are drawn children-first through the stencil buffer, an approach
+// inspired by SRB2Kart Saturn's Legacy GL portals (Indev450/SRB2Kart-Saturn)
+static void HWR_RenderPortalViews(player_t *player)
+{
+	hwr_portal_t *portal;
+	const precise_t start = I_GetPreciseTime();
+	const boolean root = hwr_portallevel == 0;
+	angle_t frustum = gld_FrustumAngle(gl_aimingangle);
+	gld_clipper_Clear();
+	gld_clipper_SafeAddClipRange(viewangle+frustum,viewangle-frustum);
+	if (hwr_portalexit)
+		gld_clipper_SafeAddClipRange(hwr_portalangle1,hwr_portalangle2);
+	hwr_portalsearch = true;
+	HWR_RenderBSPNode((INT32)numnodes-1); // search: lines only; no draws or deferred lists
+	hwr_portalsearch = false;
+	for (portal=hwr_portallist; portal; portal=portal->next)
+	{
+		hwr_viewcontext_t parent;
+		const line_t *exit = portal->exit;
+		const float dx=FIXED_TO_FLOAT(exit->dx), dy=FIXED_TO_FLOAT(exit->dy);
+		const float length=sqrtf(dx*dx+dy*dy);
+		if (length == 0 || !D3D12_DrawPortalAperture(portal->aperture,hwr_portallevel,false))
+			continue;
+		// The first mask tests against the frame's cleared depth. Ancestors reset
+		// only their mask to far; finished siblings contribute entrance depth.
+		// Parent foreground has not drawn yet: it occludes portal color later.
+		D3D12_ResetPortalDepth(hwr_portallevel+1);
+		HWR_SavePortalView(&parent);
+		viewx=portal->x; viewy=portal->y; viewz=portal->z; viewangle=portal->yaw;
+		viewsin=FINESINE(viewangle>>ANGLETOFINESHIFT); viewcos=FINECOSINE(viewangle>>ANGLETOFINESHIFT);
+		viewsector=exit->frontsector;
+		hwr_portalexit=portal->exit; hwr_portallevel++;
+		hwr_portalangle1=portal->angle1; hwr_portalangle2=portal->angle2;
+		hwr_portalplane[0]=dy/length; hwr_portalplane[1]=0; hwr_portalplane[2]=-dx/length;
+		hwr_portalplane[3]=-hwr_portalplane[0]*FIXED_TO_FLOAT(exit->v1->x)
+			-hwr_portalplane[2]*FIXED_TO_FLOAT(exit->v1->y);
+		hwr_portallist=NULL;
+		ps_hw_portals++;
+		// Software adds skybox portals once, after the MAIN traversal. Line
+		// portal children therefore use the regular sky, not another skybox.
+		HWR_RenderViewPass(player,true,false);
+		HWR_RestorePortalView(&parent);
+		// ALWAYS depth overwrites child scene depth with the entrance depth;
+		// simultaneously decrement only stencil == n+1 back to n. No color.
+		D3D12_DrawPortalAperture(portal->aperture,hwr_portallevel,true);
+		portal->rendered=true;
+	}
+	// Only root accounts elapsed recursion, avoiding double-counting children.
+	if (root) ps_hw_portaltime += I_GetPreciseTime()-start;
+}
+#endif
+
+#ifdef _UWP
+static void HWR_FreePortalViews(void)
+{
+	while (hwr_portallist)
+	{
+		hwr_portal_t *next=hwr_portallist->next;
+		Z_Free(hwr_portallist);
+		hwr_portallist=next;
+	}
+}
+#endif
+
+static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolean timing)
+{
+	{
+		// do we really need to save player (is it not the same)?
+		player_t *saved_player = stplyr;
+		stplyr = player;
+		ST_doPaletteStuff();
+		stplyr = saved_player;
+#ifdef ALAM_LIGHTING
+		HWR_SetLights(viewssnum);
+#endif
+	}
+
+#ifdef _UWP
+	hwr_portallevel=0;
+	hwr_portalexit=NULL;
+	hwr_portallist=NULL;
+	hwr_portalsearch=false;
+#ifdef HAVE_D3D12
+	D3D12_SetPortalPlane(NULL);
+	D3D12_SetPortalStencil(0);
+#endif
+#endif
+	HWR_RenderViewPass(player,drawSkyTexture,timing);
 }
 
 // ==========================================================================
@@ -6780,6 +7134,9 @@ void HWR_RenderPlayerView(void)
 {
 	player_t * player = &players[displayplayers[viewssnum]];
 
+#ifdef _UWP
+	if (viewssnum == 0) ps_hw_portals=0, ps_hw_portaltime=0;
+#endif
 	const boolean skybox = (player->skybox.viewpoint && cv_skybox.value); // True if there's a skybox object and skyboxes are on
 
 	FRGBAFloat ClearColor;
@@ -6823,6 +7180,33 @@ void HWR_RenderPlayerView(void)
 
 void HWR_LoadLevel(void)
 {
+#ifdef _UWP
+	size_t i;
+	hwr_maphasportals=false;
+	Z_Free(hwr_portalpartners);
+	hwr_portalpartners=NULL;
+	for (i=0; i<numlines; i++)
+		if (lines[i].special == 40) { hwr_maphasportals=true; break; }
+	if (hwr_maphasportals)
+	{
+		Z_Malloc(numlines*sizeof(*hwr_portalpartners),PU_LEVEL,&hwr_portalpartners);
+		for (i=0; i<numlines; i++)
+		{
+			size_t p;
+			INT32 partner;
+			const mtag_t tag=Tag_FGet(&lines[i].tags);
+			hwr_portalpartners[i]=-1;
+			if (lines[i].special != 40 || !lines[i].frontsector) continue;
+			for (p=0; (partner=Tag_Iterate_Lines(tag,p)) >= 0; p++)
+			{
+				if (partner == (INT32)i || lines[partner].special != 40
+					|| Tag_FGet(&lines[partner].tags) != tag || !lines[partner].frontsector) continue;
+				hwr_portalpartners[i]=partner;
+				break;
+			}
+		}
+	}
+#endif
 #ifdef ALAM_LIGHTING
 	// BP: reset light between levels (we draw preview frame lights on current frame)
 	HWR_ResetLights();

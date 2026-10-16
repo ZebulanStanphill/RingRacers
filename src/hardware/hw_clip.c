@@ -320,6 +320,21 @@ void gld_clipper_Clear(void)
 	cliphead = NULL;
 }
 
+#ifdef _UWP
+void *gld_clipper_SaveState(void)
+{
+	void *state = cliphead;
+	cliphead = NULL;
+	return state;
+}
+
+void gld_clipper_RestoreState(void *state)
+{
+	gld_clipper_Clear();
+	cliphead = state;
+}
+#endif
+
 #define RMUL (1.6f/1.333333f)
 
 angle_t gld_FrustumAngle(angle_t tiltangle)

@@ -737,6 +737,8 @@ static struct
 	int hwframes;
 	precise_t hwskybox, hwnodesort, hwnodedraw, hwspritesort, hwspritedraw, hwbatchsort, hwbatchdraw;
 	INT64 hwpolys, hwverts, hwcalls, hwshaders, hwtextures;
+	precise_t hwportaltime;
+	INT64 hwportals;
 } uwp_perf;
 
 void PS_UWPAddTic(void)
@@ -832,6 +834,8 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 			{
 				uwp_perf.hwframes++;
 				uwp_perf.hwskybox += ps_hw_skyboxtime;
+				uwp_perf.hwportaltime += ps_hw_portaltime;
+				uwp_perf.hwportals += ps_hw_portals;
 				uwp_perf.hwnodesort += ps_hw_nodesorttime;
 				uwp_perf.hwnodedraw += ps_hw_nodedrawtime;
 				uwp_perf.hwspritesort += ps_hw_spritesorttime;
@@ -875,6 +879,8 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 	{
 		const int n = uwp_perf.hwframes;
 
+		I_OutputMsg("UWP perf:   Legacy GL: portals %.2f rendered, portal views %.2f CPU ms per frame\n",
+			(double)uwp_perf.hwportals/n, uwp_perf.hwportaltime*ms/n);
 		// The batch timings and counts are of the last batch each frame drew, which is the main view's after the skybox's
 		I_OutputMsg("UWP perf:   Legacy GL: skybox %.1f, node sort %.1f, node draw %.1f, sprite sort %.1f, sprite draw %.1f, batch sort %.1f, batch draw %.1f ms per frame\n",
 			uwp_perf.hwskybox * ms / n, uwp_perf.hwnodesort * ms / n, uwp_perf.hwnodedraw * ms / n,

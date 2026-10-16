@@ -148,6 +148,10 @@ extern float gl_viewsin, gl_viewcos;
 
 
 // Render stats
+#ifdef _UWP
+extern precise_t ps_hw_portaltime;
+extern INT32 ps_hw_portals;
+#endif
 extern precise_t ps_hw_skyboxtime;
 extern precise_t ps_hw_nodesorttime;
 extern precise_t ps_hw_nodedrawtime;
