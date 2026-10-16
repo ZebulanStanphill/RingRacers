@@ -288,6 +288,49 @@ static void write_backtrace(INT32 signal)
 #undef CRASHLOG_STDERR_WRITE
 #endif // UNIXBACKTRACE
 
+#ifdef _UWP
+// Describes which drives the app can see and where ringracers folders are, for the crash dialog
+static void UWPDescribeDrives(char *out, size_t outsize)
+{
+	size_t len = 0;
+	DWORD attributes;
+	char letter;
+
+	attributes = GetFileAttributesA("E:\\ringracers\\bios.pk3");
+	if (attributes == INVALID_FILE_ATTRIBUTES)
+		len += snprintf(out + len, outsize - len, "E:\\ringracers\\bios.pk3: error %lu\n", GetLastError());
+	else
+		len += snprintf(out + len, outsize - len, "E:\\ringracers\\bios.pk3: found\n");
+
+	for (letter = 'A'; letter <= 'Z' && len < outsize; letter++)
+	{
+		char path[16];
+		DWORD error;
+
+		snprintf(path, sizeof path, "%c:\\", letter);
+		attributes = GetFileAttributesA(path);
+		error = GetLastError();
+
+		// No drive with this letter
+		if (attributes == INVALID_FILE_ATTRIBUTES && (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND || error == ERROR_INVALID_DRIVE))
+			continue;
+
+		if (attributes == INVALID_FILE_ATTRIBUTES)
+		{
+			len += snprintf(out + len, outsize - len, "%c: error %lu\n", letter, error);
+			continue;
+		}
+
+		snprintf(path, sizeof path, "%c:\\ringracers", letter);
+		attributes = GetFileAttributesA(path);
+		if (attributes == INVALID_FILE_ATTRIBUTES)
+			len += snprintf(out + len, outsize - len, "%c: ok, ringracers error %lu\n", letter, GetLastError());
+		else
+			len += snprintf(out + len, outsize - len, "%c: ok, ringracers found\n", letter);
+	}
+}
+#endif
+
 static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dumpmade)
 {
 	static char finalmessage[2048];
@@ -295,6 +338,29 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
 
 	if (M_CheckParm("-dedicated"))
 		return;
+
+#ifdef _UWP
+	// [UWP]: The Xbox message dialog cuts off long text, so show only the error and save it next to the game data
+	{
+		char drives[1024];
+		FILE *errorfile;
+
+		UWPDescribeDrives(drives, sizeof drives);
+		snprintf(finalmessage, sizeof finalmessage, "%s\n\n%s", messagefordevelopers, drives);
+
+		errorfile = fopen("E:\\ringracers\\error.txt", "w");
+		if (errorfile)
+		{
+			fprintf(errorfile, "%s", finalmessage);
+			fclose(errorfile);
+		}
+
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+			"Dr. Robotnik's Ring Racers " VERSIONSTRING " Error",
+			finalmessage, NULL);
+		return;
+	}
+#endif
 
 	snprintf(
 		finalmessage,
