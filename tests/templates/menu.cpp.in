@@ -1,0 +1,102 @@
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <cstdint>
+#include <initializer_list>
+#include "i_time.h"
+#include "k_menu.h"
+
+menu_t OPTIONS_MainDef = {}, OPTIONS_GameplayItemsDef = {}, submenu = {};
+menu_t *currentMenu = &submenu;
+setup_player_t setup_player[MAXSPLITSCREENPLAYERS] = {};
+boolean menuwipe = false;
+tic_t shitsfree = 0, fakeTime = 1000;
+tic_t I_GetTime(void) { return fakeTime; }
+void M_GonerCheckLooking(void) {}
+
+@@MENU_STATE@@
+@@RESET_OPTIONS@@
+@@CHANGE_COLOR@@
+@@QUIT_OPTIONS@@
+@@TICK_OPTIONS@@
+
+void reset(tic_t time) {
+    fakeTime = time;
+    currentMenu = &OPTIONS_MainDef;
+    menuwipe = true;
+    M_ResetOptions();
+    M_OptionsTick();
+    assert(optionsmenu.optx == 140 && optionsmenu.opty == 70);
+    currentMenu = &submenu;
+    menuwipe = false;
+}
+
+void slide(tic_t step) {
+    const tic_t started = fakeTime;
+    M_OptionsTick();
+    assert(optionsmenu.topt_start == started);
+    while (fakeTime - started < M_OPTIONS_OFSTIME) {
+        fakeTime += step;
+        M_OptionsTick();
+        // Completion must never move the start time forward.
+        assert(optionsmenu.topt_start == started);
+    }
+    assert(optionsmenu.optx == optionsmenu.toptx);
+    assert(optionsmenu.opty == optionsmenu.topty);
+    for (int i = 0; i < 10; ++i) {
+        fakeTime += step;
+        M_OptionsTick();
+        assert(optionsmenu.topt_start == started);
+        assert(optionsmenu.optx == optionsmenu.toptx);
+    }
+}
+
+int main() {
+    unsigned cases = 0;
+    // Exact final tic remains supported on both platforms. UWP also finishes
+    // after slow frames skip that tic, including unsigned clock wraparound.
+    for (tic_t start : {1000u, UINT32_MAX - 2}) {
+#ifdef _UWP
+        for (tic_t step : {1u, 2u, 3u, 5u, 6u, 17u})
+#else
+        for (tic_t step : {1u, 5u})
+#endif
+        {
+            reset(start);
+            slide(step);
+            // Change target again without resetting the whole menu.
+            currentMenu = &OPTIONS_GameplayItemsDef;
+            slide(step);
+            assert(optionsmenu.optx == -160 && optionsmenu.opty == 50);
+            ++cases;
+        }
+    }
+
+#ifdef _UWP
+    // Reset while a slide is pending, then take the instant-wipe path. Neither
+    // transition may inherit an old slide's clock.
+    reset(2000);
+    M_OptionsTick();
+    fakeTime += 100;
+    M_ResetOptions();
+    M_OptionsTick();
+    assert(optionsmenu.topt_start == fakeTime);
+    fakeTime += M_OPTIONS_OFSTIME + 1;
+    M_OptionsTick();
+    assert(optionsmenu.optx == 160 && optionsmenu.opty == 50);
+
+    reset(3000);
+    M_OptionsTick();
+    fakeTime += 100;
+    optionsmenu.ticker = 0;
+    menuwipe = true;
+    currentMenu = &OPTIONS_GameplayItemsDef;
+    M_OptionsTick();
+    assert(optionsmenu.optx == -160 && optionsmenu.opty == 50);
+    menuwipe = false;
+    currentMenu = &submenu;
+    slide(6);
+    cases += 2;
+#endif
+    printf("%u menu transition, skipped-tic and reset cases passed\n", cases);
+}

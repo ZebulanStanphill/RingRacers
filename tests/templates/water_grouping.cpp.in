@@ -1,0 +1,21 @@
+    sector_t a={},b={}; pslope_t slopeA={},slopeB={};
+    planeinfo_t left={false,84*FRACUNIT,&a,PF_Ripple|PF_Translucent};
+    planeinfo_t right=left; right.FOFSector=&b;
+    planeinfo_t layer=left;layer.fixedheight+=FRACUNIT;
+    planeinfo_t plain=left;plain.blend=PF_Translucent;
+    assert(!HWR_WaterPlaneContinues(nullptr,&left));
+    assert(HWR_WaterPlaneContinues(&left,&right));
+    assert(!HWR_WaterPlaneContinues(&left,&layer));
+    assert(!HWR_WaterPlaneContinues(&left,&plain));
+    a.f_slope=&slopeA;b.f_slope=&slopeB;
+    assert(!HWR_WaterPlaneContinues(&left,&right));
+    b.f_slope=&slopeA;assert(HWR_WaterPlaneContinues(&left,&right));
+    a.f_slope=b.f_slope=nullptr;
+    // Reuse a snapshot for contiguous pieces; layers and walls invalidate it.
+    for(const auto &sequence : std::vector<std::vector<planeinfo_t*>>{{&left,&right},{&left,&layer},{&left,nullptr,&right},{&left,&plain,&right}}) {
+        DispatchWater(sequence,0);assert(Capture(&surface,PF_Translucent,poly,4));
+        size_t before=copies.size();
+        DispatchWater(sequence,(UINT)sequence.size()-1);
+        assert(Capture(&surface,PF_Translucent,poly,4));
+        assert(copies.size()==before+(sequence.size()!=2||sequence[1]!=&right));
+    }

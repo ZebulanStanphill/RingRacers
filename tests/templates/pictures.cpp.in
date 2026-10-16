@@ -1,0 +1,114 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <vector>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "m_swap.h"
+#include "hardware/hw_data.h"
+#include "hardware/hw_defs.h"
+static RGBA_t palette[256];
+#define HWR_GetColor(i) (palette[(i)&255])
+enum {PU_CACHE, PU_HWRCACHE_UNLOCKED};
+static int textureformat = GL_TEXFMT_P_8;
+static int format2bpp(int f) { return f == GL_TEXFMT_RGBA ? 4 : f == GL_TEXFMT_AP_88 || f == GL_TEXFMT_ALPHA_INTENSITY_88 ? 2 : 1; }
+static patch_t patch;
+static GLPatch_t gpuPatch;
+static GLMipmap_t mip;
+static std::vector<UINT8> lump;
+static int uploads;
+void *M_Memcpy(void *d, const void *s, size_t n) { return memcpy(d,s,n); }
+size_t W_LumpLength(lumpnum_t) { return lump.size(); }
+void *W_CacheLumpNum(lumpnum_t, int) { return reinterpret_cast<pic_t *>(lump.data()); }
+static patch_t *HWR_GetCachedGLPatch(lumpnum_t) { return &patch; }
+void I_Error(const char *, ...) { throw std::runtime_error("invalid picture"); }
+static void Z_Free(void *p) { free(p); mip.data = nullptr; }
+static void Z_Unlock(void *) {}
+static void Z_ChangeTag(void *, int) {}
+static UINT8 *MakeBlock(GLMipmap_t *m) {
+    m->data = calloc(m->width * m->height, format2bpp(m->format));
+    return static_cast<UINT8 *>(m->data);
+}
+static void SetTexture(GLMipmap_t *m) { assert(m == &mip && m->data); ++uploads; }
+static struct { void (*pfnSetTexture)(GLMipmap_t *); } HWD = {SetTexture};
+@@PICTURE_TABLES@@
+@@CONVERT@@
+@@GET_PIC@@
+
+static std::vector<UINT8> picture(int mode, int w, int h, bool extra = false) {
+    std::vector<UINT8> p(sizeof(pic_t) + w*h*picmode2bpp[mode] + (extra ? 13 : 0));
+    auto *pic = reinterpret_cast<pic_t *>(p.data());
+    pic->width = SHORT(w); pic->height = SHORT(h); pic->mode = mode;
+    for (int i = 0; i < w*h*picmode2bpp[mode]; ++i) pic->data[i] = (i*37 + 23) & 255;
+    return p;
+}
+static void reset() {
+    free(mip.data); mip = {}; gpuPatch = {}; patch = {};
+    gpuPatch.mipmap = &mip; patch.hardware = &gpuPatch;
+}
+static std::vector<UINT8> expected(const UINT8 *p, int mode, int bpp) {
+    if (mode == PALETTE) {
+        if (bpp == 1) return {p[0]};
+        if (bpp == 2) return {p[0],255};
+        const auto c = palette[p[0]];
+        const UINT8 *v = reinterpret_cast<const UINT8 *>(&c);
+        return {v,v+bpp};
+    }
+    if (mode == INTENSITY) return {p[0],p[0],p[0],255};
+    if (mode == RGB24) return {p[0],p[1],p[2],255};
+    return {p,p+bpp};
+}
+int main() {
+    for (int i = 0; i < 256; ++i) { palette[i].s.red = i; palette[i].s.green = 255-i; palette[i].s.blue = i^85; palette[i].s.alpha = 255; }
+    int cases = 0;
+    for (int mode = PALETTE; mode <= RGBA32; ++mode) {
+        for (int bpp = 1; bpp <= 4; ++bpp) {
+            if (mode != PALETTE && bpp != format2bpp(picmode2GR[mode])) continue;
+            for (int w : {1,2,7,19}) for (int h : {1,3,8})
+            for (int dw : {1,2,5,23}) for (int dh : {1,4,11}) {
+                auto raw = picture(mode,w,h);
+                auto *p = reinterpret_cast<pic_t *>(raw.data());
+                const int stride = dw*bpp + 7;
+                std::vector<UINT8> dst(stride*dh, 0xCD);
+                HWR_DrawPicInCache(dst.data(),dw,dh,stride,p,bpp);
+                for (int y = 0; y < dh; ++y) {
+                    for (int x = 0; x < dw; ++x) {
+                        const int sy = (2*y+1)*h/(2*dh), sx = (2*x+1)*w/(2*dw);
+                        auto v = expected(p->data + (sy*w+sx)*picmode2bpp[mode],mode,bpp);
+                        assert(std::equal(v.begin(),v.end(),dst.begin()+y*stride+x*bpp));
+                    }
+                    for (int x = dw*bpp; x < stride; ++x) assert(dst[y*stride+x] == 0xCD);
+                }
+                ++cases;
+            }
+        }
+        for (int fmt : {GL_TEXFMT_P_8,GL_TEXFMT_AP_88,GL_TEXFMT_RGBA}) {
+            reset(); textureformat = fmt; lump = picture(mode,7,3,true);
+            HWR_GetPic(0);
+            assert(mip.width == 7 && mip.height == 3 && uploads > 0);
+            int bpp = format2bpp(mip.format);
+            auto *p = reinterpret_cast<pic_t *>(lump.data());
+            for (int i = 0; i < 21; ++i) {
+                auto v = expected(p->data+i*picmode2bpp[mode],mode,bpp);
+                assert(!memcmp(static_cast<UINT8 *>(mip.data)+i*bpp,v.data(),bpp));
+            }
+        }
+    }
+    for (int error = 0; error < 5; ++error) {
+        reset(); lump = picture(RGB24,7,3);
+        auto *p = reinterpret_cast<pic_t *>(lump.data());
+        if (error == 0) lump.resize(3);
+        if (error == 1) p->mode = 255;
+        if (error == 2) p->width = 0;
+        if (error == 3) p->height = -1;
+        if (error == 4) lump.pop_back();
+        const int before = uploads;
+        bool rejected = false;
+        try { HWR_GetPic(0); } catch (const std::runtime_error &) { rejected = true; }
+        assert(rejected && uploads == before && !mip.data);
+    }
+    reset(); printf("%d picture conversions and malformed-lump checks passed\n",cases);
+}

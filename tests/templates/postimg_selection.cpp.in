@@ -1,0 +1,178 @@
+#include <cassert>
+#include <cstdio>
+#include <initializer_list>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "p_local.h"
+#include "p_slopes.h"
+#include "taglist.h"
+
+postimg_t postimgtype[MAXSPLITSCREENPLAYERS] = {};
+boolean postimgmirror[MAXSPLITSCREENPLAYERS] = {};
+INT32 postimgparam[MAXSPLITSCREENPLAYERS] = {};
+boolean encoremode = false;
+int r_splitscreen = 0;
+INT32 displayplayers[MAXSPLITSCREENPLAYERS] = {};
+player_t players[MAXPLAYERS] = {};
+const mobj_t *removed = nullptr;
+boolean P_MobjWasRemoved(const mobj_t *mo) { return !mo || mo == removed; }
+fixed_t P_GetFFloorTopZAt(const ffloor_t *floor, fixed_t, fixed_t) { return *floor->topheight; }
+fixed_t P_GetFFloorBottomZAt(const ffloor_t *floor, fixed_t, fixed_t) { return *floor->bottomheight; }
+INT32 Tag_FindLineSpecial(const INT16 special, const mtag_t tag) {
+    assert(special == 13);
+    return tag == 13 ? 0 : -1;
+}
+
+@@CAMERA_HEAT@@
+@@CAMERA_WATER@@
+@@CHASE@@
+@@FIRST_PERSON@@
+
+struct Fixture {
+    sector_t sector = {}, control = {}, awaySector = {};
+    subsector_t subsector = {}, awaySubsector = {};
+    line_t master = {};
+    ffloor_t floor = {};
+    mobj_t mo = {}, away = {};
+    camera_t cam = {};
+    fixed_t top = 64 * FRACUNIT, bottom = 0;
+    mtag_t tag = 0, controlTag = 0;
+    Fixture() {
+        sector.tags.count = control.tags.count = 1;
+        sector.tags.tags = &tag;
+        control.tags.tags = &controlTag;
+        subsector.sector = &sector;
+        awaySubsector.sector = &awaySector;
+        master.frontsector = &control;
+        floor.master = &master;
+        floor.topheight = &top;
+        floor.bottomheight = &bottom;
+        floor.fofflags = FOF_EXISTS;
+        mo.subsector = &subsector;
+        mo.height = 48 * FRACUNIT;
+        away.subsector = &awaySubsector;
+        away.z = 32 * FRACUNIT;
+        cam.subsector = &subsector;
+        cam.z = 24 * FRACUNIT;
+        cam.height = 16 * FRACUNIT;
+        players[0] = {};
+        players[0].mo = &mo;
+        players[0].viewheight = 32 * FRACUNIT;
+        removed = nullptr;
+    }
+    void heat() { tag = 13; sector.flags = MSF_HEATWAVE; }
+    void water() { sector.ffloors = &floor; floor.fofflags = static_cast<ffloortype_e>(FOF_EXISTS | FOF_SWIMMABLE); }
+};
+
+int cases = 0;
+void resetOutputs(boolean mirror) {
+    for (int i = 0; i < MAXSPLITSCREENPLAYERS; ++i) {
+        postimgtype[i] = postimg_none;
+        postimgmirror[i] = mirror;
+        postimgparam[i] = 123;
+        displayplayers[i] = i;
+    }
+    r_splitscreen = MAXSPLITSCREENPLAYERS - 1;
+}
+void check(Fixture &f, boolean chase, postimg_t expected) {
+    // Seed the opposite mirror state to check writes and clearing on ordinary tracks.
+    resetOutputs(!encoremode);
+    if (chase) P_CalcChasePostImg(&players[0], &f.cam);
+    else P_CalcPostImg(&players[0], 0);
+    assert(postimgtype[0] == expected);
+    assert(postimgmirror[0] == encoremode);
+    for (int i = 1; i < MAXSPLITSCREENPLAYERS; ++i) {
+        assert(postimgtype[i] == postimg_none);
+        assert(postimgmirror[i] == !encoremode);
+    }
+    for (INT32 param : postimgparam) assert(param == 123);
+    ++cases;
+}
+int main() {
+    for (boolean encore : {false, true}) {
+        encoremode = encore;
+        for (boolean chase : {false, true}) {
+            for (int kind = 0; kind < 4; ++kind) {
+                Fixture f;
+                if (kind & 1) f.heat();
+                if (kind & 2) f.water();
+                check(f, chase, kind & 2 ? postimg_water : kind & 1 ? postimg_heat : postimg_none);
+            }
+            // Heat inside a FOF rather than in the base sector.
+            Fixture f;
+            f.sector.ffloors = &f.floor;
+            f.control.flags = MSF_HEATWAVE;
+            f.controlTag = 13;
+            check(f, chase, postimg_heat);
+            f.water();
+            check(f, chase, postimg_water);
+            f.floor.fofflags = FOF_SWIMMABLE; // nonexistent FOF
+            check(f, chase, postimg_none);
+            f.floor.fofflags = static_cast<ffloortype_e>(FOF_EXISTS | FOF_SWIMMABLE);
+            f.control.flags = static_cast<decltype(f.control.flags)>(0);
+            f.controlTag = 0;
+            for (fixed_t boundary : {f.top, f.bottom}) {
+                f.cam.z = boundary - (f.cam.height >> 1);
+                f.mo.z = boundary - players[0].viewheight;
+                check(f, chase, postimg_none);
+            }
+            f.cam.z = 24 * FRACUNIT;
+            f.mo.z = 0;
+            f.floor.fofflags = static_cast<ffloortype_e>(FOF_EXISTS | FOF_SWIMMABLE | (chase ? FOF_BLOCKOTHERS : FOF_BLOCKPLAYER));
+            check(f, chase, postimg_none);
+        }
+        for (int kind = 0; kind < 4; ++kind) {
+            Fixture f;
+            if (kind & 1) f.heat();
+            if (kind & 2) f.water();
+            f.mo.eflags = MFE_VERTICALFLIP;
+            check(f, false, postimg_flip);
+        }
+        // Awayview water overrides a hot chase/first-person origin. Its height is
+        // the object's z, not the original camera's halfheight or player's eyes.
+        for (boolean chase : {false, true}) {
+            Fixture f;
+            f.heat();
+            f.awaySector.ffloors = &f.floor;
+            f.floor.fofflags = static_cast<ffloortype_e>(FOF_EXISTS | FOF_SWIMMABLE);
+            players[0].awayview.tics = 1;
+            players[0].awayview.mobj = &f.away;
+            f.cam.height = 128 * FRACUNIT;
+            check(f, chase, postimg_water);
+            removed = &f.away;
+            check(f, chase, postimg_heat);
+            removed = nullptr;
+            players[0].awayview.tics = 0;
+            check(f, chase, postimg_heat);
+        }
+        // Every matching active view receives type+mirror, even duplicate players.
+        Fixture f;
+        f.water();
+        resetOutputs(!encoremode);
+        displayplayers[2] = 0;
+        P_CalcChasePostImg(&players[0], &f.cam);
+        for (int i = 0; i < MAXSPLITSCREENPLAYERS; ++i) {
+            assert(postimgtype[i] == (i == 0 || i == 2 ? postimg_water : postimg_none));
+            assert(postimgmirror[i] == (i == 0 || i == 2 ? encoremode : !encoremode));
+        }
+        ++cases;
+        // Inactive matches and cameras without a valid sector cannot alter outputs.
+        resetOutputs(!encoremode);
+        displayplayers[2] = 0;
+        r_splitscreen = 0;
+        P_CalcChasePostImg(&players[0], &f.cam);
+        assert(postimgtype[2] == postimg_none && postimgmirror[2] == !encoremode);
+        ++cases;
+        for (bool missingSubsector : {false, true}) {
+            resetOutputs(!encoremode);
+            if (missingSubsector) f.cam.subsector = nullptr;
+            else f.subsector.sector = nullptr;
+            P_CalcChasePostImg(&players[0], &f.cam);
+            for (int i = 0; i < MAXSPLITSCREENPLAYERS; ++i) {
+                assert(postimgtype[i] == postimg_none && postimgmirror[i] == !encoremode);
+            }
+            ++cases;
+        }
+    }
+    printf("%d post-image selection cases passed: Encore/non-Encore, water/heat/flip, awayview and split views\n", cases);
+}

@@ -1,0 +1,154 @@
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <vector>
+#include "doomdef.h"
+#include "v_video.h"
+#include "screen.h"
+#include "hardware/hw_defs.h"
+
+// Record the two renderer boundaries, without running a GPU or the complete HUD.
+struct Quad { float r, g, b, a; INT32 x, y, w, h; };
+static std::vector<Quad> software;
+struct QuadBuilder {
+    Quad quad = {};
+    QuadBuilder &patch(std::nullptr_t) { return *this; }
+    QuadBuilder &color(float r, float g, float b, float a) { quad.r=r; quad.g=g; quad.b=b; quad.a=a; return *this; }
+    QuadBuilder &rect(INT32 x, INT32 y, INT32 w, INT32 h) { quad.x=x; quad.y=y; quad.w=w; quad.h=h; return *this; }
+    void done() { software.push_back(quad); }
+};
+static struct { QuadBuilder begin_quad() { return {}; } } g_2d;
+struct Polygon { RGBA_t color; std::array<FOutVector,4> vertices; FBITFIELD flags; };
+static std::vector<Polygon> polygons;
+static std::vector<FRGBAFloat> clears;
+static void DrawPolygon(FSurfaceInfo *surface, FOutVector *vertices, UINT32 count, FBITFIELD flags) {
+    assert(count == 4);
+    Polygon p = {}; p.color=surface->PolyColor; p.flags=flags;
+    std::copy(vertices, vertices+4, p.vertices.begin()); polygons.push_back(p);
+}
+static void ClearBuffer(boolean color, boolean depth, FRGBAFloat *value) {
+    assert(color && !depth); clears.push_back(*value);
+}
+static struct { decltype(&DrawPolygon) pfnDrawPolygon; decltype(&ClearBuffer) pfnClearBuffer; } HWD = {DrawPolygon,ClearBuffer};
+viddef_t vid;
+static enum { render_soft, render_opengl, render_none } rendermode;
+static fixed_t st_fadein = FRACUNIT;
+static UINT32 st_translucency = 10;
+INT32 r_splitscreen;
+static SINT8 viewnumber;
+static SINT8 R_GetViewNumber() { return viewnumber; }
+static INT32 K_GetDialogueSlide(INT32) { return 0; }
+static RGBA_t palette[256];
+RGBA_t *pLocalPalette = palette;
+#define HWR_GetColor(c) (palette[(c)&255])
+const cliprect_t *V_GetClipRect() { return nullptr; }
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SNAP@@
+@@HUD_ALPHA_TABLES@@
+@@GL_ALPHA_TABLE@@
+@@HUD_TRANSLUCENCY@@
+@@ALPHA_LEVEL@@
+@@HARDWARE_FILL@@
+@@FILL@@
+
+static bool close(float a, float b, float tolerance=.00001f) { return std::fabs(a-b)<tolerance; }
+static void reset() { software.clear(); polygons.clear(); clears.clear(); }
+static void resolution(INT32 width, INT32 height, INT32 dup) {
+    vid.width=width; vid.height=height; vid.dupx=vid.dupy=dup;
+}
+static int cases;
+static void parity(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color) {
+    reset(); rendermode=render_soft; V_DrawFill(x,y,w,h,color);
+    rendermode=render_opengl; V_DrawFill(x,y,w,h,color);
+    assert(clears.empty());
+    assert(software.size() == polygons.size());
+    if (!software.empty()) {
+        assert(software.size()==1);
+        const auto &s=software[0]; const auto &p=polygons[0];
+        assert(s.a>0 && p.color.s.alpha>0);
+        assert(close(s.a,p.color.s.alpha/255.f,1.f/255+.00001f));
+        assert(close(s.r,p.color.s.red/255.f) && close(s.g,p.color.s.green/255.f) && close(s.b,p.color.s.blue/255.f));
+        const FBITFIELD opaque=PF_Modulated|PF_NoTexture|PF_NoDepthTest;
+        assert(p.flags==(s.a==1 ? opaque : opaque|PF_Translucent));
+        // Undo clip-space conversion and compare against Software's submitted box.
+        assert(close((p.vertices[0].x+1)*(vid.width/2),s.x,.001f));
+        assert(close((1-p.vertices[0].y)*(vid.height/2),s.y,.001f));
+        assert(close((p.vertices[1].x-p.vertices[0].x)*(vid.width/2),s.w,.001f));
+        assert(close((p.vertices[0].y-p.vertices[3].y)*(vid.height/2),s.h,.001f));
+        for (const auto &v:p.vertices) assert(v.z==1);
+        assert(p.vertices[0].s==0 && p.vertices[1].s==1 && p.vertices[0].t==0 && p.vertices[3].t==1);
+    }
+    ++cases;
+}
+int main() {
+    for (int i=0;i<256;++i) {
+        palette[i].s.red=i; palette[i].s.green=255-i;
+        palette[i].s.blue=i^85; palette[i].s.alpha=255;
+    }
+    palette[31].rgba=0xff000000; // Watching underline is black.
+    resolution(320,200,1);
+    // The finish grade leaves the split HUD fully faded. Both paths must omit
+    // the actual Watching underline box, even though it is drawn after the grade.
+    st_fadein=0; st_translucency=10;
+    parity(135,172,50,2,V_SNAPTOBOTTOM|V_SPLITSCREEN|V_HUDTRANS|31);
+    assert(software.empty() && polygons.empty());
+
+    // Changing the global HUD setting must not override a split HUD's fade.
+    // Every HUD alpha flavor, both fade sources, slide override, and player-view
+    // layout execute the same production fill in Software and Legacy GL.
+    for (UINT32 hud:{V_HUDTRANSHALF,V_HUDTRANS,V_HUDTRANSDOUBLE})
+    for (int setting=0;setting<=10;++setting)
+    for (int fade=0;fade<=10;++fade)
+    for (int split=0;split<=3;++split)
+    for (bool slide:{false,true}) {
+        st_translucency=setting; st_fadein=fade*FRACUNIT/10;
+        r_splitscreen=split; viewnumber=split ? split : 0;
+        INT32 flags=hud|V_SNAPTOBOTTOM|V_SNAPTORIGHT|31;
+        if (split) flags|=V_SPLITSCREEN;
+        if (slide) flags|=V_SLIDEIN;
+        parity(35,72,50,2,flags);
+    }
+    st_fadein=FRACUNIT; st_translucency=10; r_splitscreen=0; viewnumber=0;
+    // All explicit levels, ordinary opaque boxes, and no-scale coordinates.
+    for (int alpha=0;alpha<=9;++alpha)
+    for (INT32 flags:{INT32(0),INT32(V_NOSCALESTART),INT32(V_SNAPTOBOTTOM|V_SNAPTORIGHT)}) {
+        resolution(853,480,2);
+        parity(35,72,50,2,(alpha<<V_ALPHASHIFT)|flags|73);
+    }
+    // Unsupported explicit levels must be rejected safely, including direct
+    // hardware calls (which receive resolved alpha rather than HUD sentinels).
+    for (int alpha=10;alpha<=15;++alpha) {
+        reset(); HWR_DrawFill(135,172,50,2,(alpha<<V_ALPHASHIFT)|31);
+        assert(polygons.empty() && clears.empty());
+    }
+    for (int alpha=13;alpha<=15;++alpha) {
+        parity(135,172,50,2,(alpha<<V_ALPHASHIFT)|31);
+        assert(software.empty() && polygons.empty());
+    }
+    // Opaque fullscreen uses its existing clear; translucent fullscreen must
+    // blend a quad across the actual video dimensions, including widescreen.
+    for (const auto &size:{std::array<int,3>{320,200,1},{1280,720,3},{853,480,2}}) {
+        resolution(size[0],size[1],size[2]);
+        reset(); rendermode=render_opengl; V_DrawFill(0,0,320,200,73);
+        assert(clears.size()==1 && polygons.empty());
+        assert(close(clears[0].red,palette[73].s.red/255.f) && clears[0].alpha==1);
+        for (int alpha=1;alpha<=9;++alpha) {
+            parity(0,0,320,200,(alpha<<V_ALPHASHIFT)|73);
+            assert(software[0].x==0 && software[0].y==0);
+            assert(software[0].w==vid.width && software[0].h==vid.height);
+            const auto &v=polygons[0].vertices;
+            assert(v[0].x==-1 && v[0].y==1 && v[1].x>=1 && v[3].y<=-1);
+            // Odd dimensions can overshoot by one pixel before GPU clipping.
+            assert(v[1].x<1.005f && v[3].y> -1.005f);
+        }
+        parity(0,0,320,200,V_NOSCALESTART|V_TRANSLUCENT|73);
+        assert(software[0].w==320 && software[0].h==200);
+    }
+    reset(); rendermode=render_none; V_DrawFill(135,172,50,2,31);
+    assert(software.empty() && polygons.empty() && clears.empty());
+    printf("%d fill cases preserve Software/Legacy GL visibility, alpha and geometry; fully faded Watching underline omitted\n",cases);
+}

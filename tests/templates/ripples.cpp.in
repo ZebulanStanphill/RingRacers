@@ -1,0 +1,140 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#include <vector>
+#include "hardware/hw_main.h"
+#include "hardware/hw_batching.h"
+#include "p_polyobj.h"
+#include "p_setup.h"
+#include "r_bsp.h"
+#include "r_plane.h"
+#include "r_textures.h"
+#include "z_zone.h"
+#include "d_netcmd.h"
+
+consvar_t cv_glshaders{}, cv_reducevfx{};
+boolean gl_shadersavailable = true;
+static sector_t *gl_frontsector;
+texture_t **textures;
+// Rotation is outside this feature's scope; all test inputs have zero angles.
+fixed_t finesine[5*FINEANGLES/4] = {};
+fixed_t *finecosine = &finesine[FINEANGLES/4];
+static void *allocation;
+static int draws, shaderUsed, textureResets;
+static FBITFIELD flagsUsed;
+static FSurfaceInfo surface;
+static std::vector<FOutVector> vertices;
+
+void *Z_Malloc2(size_t size, INT32, void *user, INT32, const char *, INT32) {
+    allocation = calloc(1, size);
+    assert(allocation);
+    if (user) *static_cast<void **>(user) = allocation;
+    return allocation;
+}
+void Z_Free2(void *ptr, const char *, INT32) { free(ptr); allocation = nullptr; }
+void CONS_Debug(UINT32, const char *, ...) {}
+char *sizeu1(size_t) { static char text[] = "oversized"; return text; }
+size_t W_LumpLength(lumpnum_t) { return 4096; }
+size_t R_FlatDimensionsFromLumpSize(size_t) { return 64; }
+boolean P_SectorUsesDirectionalLighting(const sector_t *) { return false; }
+void HWR_Lighting(FSurfaceInfo *surf, INT32, extracolormap_t *, boolean) {
+    memset(surf, 0, sizeof(*surf));
+    surf->PolyColor.s.alpha = 255;
+}
+void HWR_SetCurrentTexture(GLMipmap_t *texture) { assert(!texture); ++textureResets; }
+void HWR_ProcessPolygon(FSurfaceInfo *surf, FOutVector *verts, FUINT count,
+                        FBITFIELD flags, int shader, boolean horizon) {
+    assert(!horizon);
+    ++draws; surface = *surf; flagsUsed = flags; shaderUsed = shader;
+    vertices.assign(verts, verts + count);
+}
+
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@RIPPLE_PLANE@@
+@@USE_SHADER@@
+@@POLYOBJECT_PLANE@@
+@@RIPPLE_BLEND@@
+
+int main() {
+    sector_t control = {}, front = {};
+    ffloor_t rover = {};
+    vertex_t original[4] = {}, moved[4] = {};
+    vertex_t *pointers[4];
+    const int xy[4][2] = {{0,0}, {64,0}, {64,64}, {0,64}};
+    for (int i = 0; i < 4; ++i) {
+        original[i].x = xy[i][0]*FRACUNIT; original[i].y = xy[i][1]*FRACUNIT;
+        moved[i].x = original[i].x + 32*FRACUNIT;
+        moved[i].y = original[i].y - 16*FRACUNIT;
+        pointers[i] = &moved[i];
+    }
+    polyobj_t poly = {};
+    poly.numVertices = 4; poly.origVerts = original; poly.vertices = pointers;
+    unsigned cases = 0;
+    // Control-sector flags override the surrounding sector, with independent
+    // floor/ceiling selection. Fallback and no-sector cases must remain safe.
+    for (int source : {0,1,2})
+    for (int floor : {0,1}) for (int ceiling : {0,1})
+    for (int otherFloor : {0,1}) for (int otherCeiling : {0,1})
+    for (boolean isCeiling : {false,true})
+    for (int reduce : {0,1}) for (int enabled : {0,1}) for (int available : {0,1})
+    for (boolean translucent : {false,true}) {
+        control.flags = static_cast<sectorflags_t>((floor ? MSF_RIPPLE_FLOOR : 0)
+                          | (ceiling ? MSF_RIPPLE_CEILING : 0));
+        front.flags = static_cast<sectorflags_t>((otherFloor ? MSF_RIPPLE_FLOOR : 0)
+                          | (otherCeiling ? MSF_RIPPLE_CEILING : 0));
+        gl_frontsector = source == 2 ? nullptr : &front;
+        sector_t *fof = source == 0 ? &control : nullptr;
+        cv_reducevfx.value = reduce; cv_glshaders.value = enabled;
+        gl_shadersavailable = available;
+        bool selected = source == 0 ? (isCeiling ? ceiling : floor)
+                       : source == 1 ? (isCeiling ? otherCeiling : otherFloor) : false;
+        bool ripple = selected && !reduce && enabled && available;
+        FBITFIELD inputFlags = translucent ? PF_Translucent : PF_Occlude;
+        draws = textureResets = 0;
+        HWR_RenderPolyObjectPlane(&poly, isCeiling, 24*FRACUNIT, inputFlags,
+                                  192, nullptr, fof, 93, nullptr);
+        assert(draws == 1 && textureResets == 1);
+        assert(shaderUsed == (enabled && available ? (ripple ? SHADER_WATER : SHADER_FLOOR) : SHADER_DEFAULT));
+        assert(bool(flagsUsed & PF_Ripple) == ripple);
+        assert(bool(flagsUsed & PF_ColorMapped) == bool(enabled && available));
+        assert(flagsUsed & PF_Modulated);
+        assert(flagsUsed & PF_Occlude);
+        assert(bool(flagsUsed & PF_Translucent) == bool(translucent));
+        assert(bool(flagsUsed & PF_Masked) == !translucent);
+        assert(surface.PolyColor.s.alpha == (translucent ? 93 : 255));
+        assert(vertices.size() == 4);
+        for (int i = 0; i < 4; ++i) {
+            assert(vertices[i].x == xy[i][0]+32 && vertices[i].z == xy[i][1]-16);
+            assert(vertices[i].y == 24);
+            assert(vertices[i].s == xy[i][0]/64.0f && vertices[i].t == -xy[i][1]/64.0f);
+        }
+        ++cases;
+    }
+
+    // Regular sector planes and FOFs share Reduce VFX gating. FOF ripple flags
+    // override sector flags on both surfaces, rather than borrowing either flag.
+    for (int floor : {0,1}) for (int ceiling : {0,1})
+    for (int fofRipple : {0,1}) for (int reduce : {0,1})
+    for (boolean isCeiling : {false,true}) for (boolean useFof : {false,true}) {
+        front.flags = static_cast<sectorflags_t>((floor ? MSF_RIPPLE_FLOOR : 0)
+                          | (ceiling ? MSF_RIPPLE_CEILING : 0));
+        rover.fofflags = static_cast<ffloortype_e>(fofRipple ? FOF_RIPPLE : 0);
+        cv_reducevfx.value = reduce;
+        bool expected = !reduce && (useFof ? fofRipple : (isCeiling ? ceiling : floor));
+        assert(HWR_RippleBlend(&front, useFof ? &rover : nullptr, isCeiling) == (expected ? PF_Ripple : 0));
+        ++cases;
+    }
+    // Invalid polygons never reach the draw call or read absent vertex arrays.
+    draws = 0;
+    poly.numVertices = 2;
+    HWR_RenderPolyObjectPlane(&poly, false, 0, PF_Occlude, 0, nullptr, nullptr, 0, nullptr);
+    poly.numVertices = size_t(UINT16_MAX)+1;
+    HWR_RenderPolyObjectPlane(&poly, true, 0, PF_Occlude, 0, nullptr, nullptr, 0, nullptr);
+    assert(draws == 0);
+    free(allocation);
+    printf("%u polyobject shader/flag/geometry and regular-plane ripple cases passed\n", cases);
+}
