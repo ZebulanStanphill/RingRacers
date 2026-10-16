@@ -47,7 +47,6 @@ jobs:
           name: regression-results
           path: |
             build/regression/translated-shaders/*.hlsl
-            build/regression/translated-shaders-sm51/*.hlsl
             build/regression/results.xml
             build/regression/Testing/Temporary/LastTest.log
             build/regression/Testing/Temporary/LastTestsFailed.log
@@ -90,15 +89,7 @@ jobs:
         run: |
           $fxc = (Get-Command fxc -ErrorAction Stop).Source
           $fixtures = @(Get-ChildItem regression-results -Recurse -Filter *.hlsl | Where-Object { $_.Directory.Name -eq 'translated-shaders' })
-          if ($fixtures.Count -ne 97) { throw "Expected 97 translated shader stages; found $($fixtures.Count)" }
-          foreach ($fixture in $fixtures) {
-            $profile = if ($fixture.Name.EndsWith('.vert.hlsl')) { 'vs_4_0' } else { 'ps_4_0' }
-            & $fxc /nologo /O3 /T $profile /E main /Fo "$env:TEMP/rr-shader-test.cso" $fixture.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-          $fixtures = @(Get-ChildItem regression-results -Recurse -Filter *.hlsl | Where-Object { $_.Directory.Name -eq 'translated-shaders-sm51' })
-          if ($fixtures.Count -ne 78) { throw "Expected 78 SM5.1 translated shader stages; found $($fixtures.Count)" }
+          if ($fixtures.Count -ne 97) { throw "Expected 97 SM5.1 translated shader stages; found $($fixtures.Count)" }
           foreach ($fixture in $fixtures) {
             $profile = if ($fixture.Name.EndsWith('.vert.hlsl')) { 'vs_5_1' } else { 'ps_5_1' }
             & $fxc /nologo /O3 /T $profile /E main /Fo "$env:TEMP/rr-shader-test.cso" $fixture.FullName

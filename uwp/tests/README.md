@@ -76,10 +76,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   parser/linker and SPIRV-Cross emitter from `r_d3d12/`. Translate 36 shader/layout
   pairs with reordered varyings, uniforms/initializers, matrices and fragment
   coordinates; reject invalid interfaces, malformed/oversized sources and invalid
-  layouts, then verify compiler recovery. Native translation emits 78 general
-  SM5.1 stages. Windows CI compiles these and the 97 SM4 translator compatibility
-  fixtures (78 general and 19 smoke-test stages). The SM4 check only validates
-  translation compatibility; the engine ships SM5.1 shaders. The Direct3D 11
+  layouts, then verify compiler recovery. Check the expected constant-buffer
+  declarations, std140 pack offsets and resource slots directly, with every
+  register in space 0. Native translation emits 78 general Shader Model 5.1
+  stages to `translated-shaders`; Windows CI compiles these and the smoke-test
+  add-on's 19 stages there as SM5.1, for 97 total. The Direct3D 11
   dispatch and GPU factory harnesses were removed with that driver.
   `custom_shader_dispatch` runs the production Direct3D 12 loader, compiler,
   cleaner and shader selection with translation, shader compilation and pipeline
@@ -103,7 +104,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   through the production shader loader; native checks verify five stage bindings,
   water's default vertex stage, untouched targets, missing-path rejection, nine
   translated target/layout pairs and the water refraction variant. Windows CI
-  compiles the pack's 19 SM4 stages, bringing the combined translated corpus to 97.
+  compiles the pack's 19 SM5.1 stages, bringing the combined translated corpus to 97.
   The user confirmed the pack's markers on Xbox; its refracted water is untested there.
 - **Wall light slices:** execute production UWP wall splitting and clipping with
   real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel

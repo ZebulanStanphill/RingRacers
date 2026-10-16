@@ -90,7 +90,7 @@ int main(int argc,char **argv) {
             if(!TranslateLegacyShader(vertex,loaded[target].fragment,layout,refraction,error,true)) {
                 std::fprintf(stderr,"Packaged water refraction: %s\n",error.c_str());return 1;
             }
-            assert(refraction.vertex==hlsl.vertex&&refraction.fragment.find("register(t9)")!=std::string::npos);
+            assert(refraction.vertex==hlsl.vertex&&refraction.fragment.find("register(t9, space0)")!=std::string::npos);
             std::ofstream(dir/"smoke-water-refraction.frag.hlsl")<<refraction.fragment;
         }
     }

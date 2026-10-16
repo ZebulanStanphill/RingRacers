@@ -74,8 +74,7 @@ static int stageCompiles=0,pipelineCreations=0,failStageLayout=-1,failPipelineLa
 static bool failRefractionStage=false,failRefractionPipeline=false;
 static const char *failStage="";
 bool TranslateLegacyShader(const std::string &v,const std::string &p,int layout,
-    LegacyShaderHLSL &out,std::string &error,bool refraction,int shaderModel) {
-    assert(shaderModel==51);
+    LegacyShaderHLSL &out,std::string &error,bool refraction) {
     calls.push_back({v,p,layout,refraction});
     if(v=="bad"||p=="bad"||(refraction&&p=="no refraction")){error="invalid shader";return false;}
     if(refraction) assert(layout==LAYOUT_POLY);

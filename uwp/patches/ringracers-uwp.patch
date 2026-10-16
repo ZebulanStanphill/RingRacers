@@ -1,4 +1,4 @@
-From 3fb8bfe58df9eeabdfc599e0da04e50ecc5f1fdb Mon Sep 17 00:00:00 2001
+From 6e77938f715c60706b3257dd074b992c1a218f77 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -761,6 +761,15 @@ Agent: Codex (Sol, D3D11 driver removal)
 Model: gpt-6.1-sol
 Agent: Claude Code (Sonnet 5.5, comment tidy)
 Model: claude-sonnet-5-5
+Agent: Claude Code (Opus 5.5, design and review)
+Model: claude-opus-5-5
+
+- [UWP]: The add-on shader translator only produces Shader Model 5.1, the
+  Direct3D 12 driver's; the Shader Model 4 option was the removed Direct3D
+  11 driver's.
+
+Agent: Codex (Sol, SM5.1-only translator)
+Model: gpt-6.1-sol
 Agent: Claude Code (Opus 5.5, design and review)
 Model: claude-opus-5-5
 
@@ -7822,7 +7831,7 @@ index 0000000..29a80b0
 +#endif
 diff --git a/src/hardware/r_d3d12/custom_shader.cpp b/src/hardware/r_d3d12/custom_shader.cpp
 new file mode 100644
-index 0000000..6424957
+index 0000000..792b3b4
 --- /dev/null
 +++ b/src/hardware/r_d3d12/custom_shader.cpp
 @@ -0,0 +1,310 @@
@@ -8044,15 +8053,15 @@ index 0000000..6424957
 +    }
 +    for(size_t i=0;i<type.array.size();++i) {
 +        unsigned length=type.array_size_literal[i]?type.array[i]:compiler.get_constant(type.array[i]).scalar();
-+        if(length==0 || length>32) throw std::runtime_error("varying array is too large for Shader Model 4");
++        if(length==0 || length>32) throw std::runtime_error("varying array is too large for Shader Model 5.1");
 +        count*=length;
 +    }
-+    if(count==0 || count>32) throw std::runtime_error("varying is too large for Shader Model 4");
++    if(count==0 || count>32) throw std::runtime_error("varying is too large for Shader Model 5.1");
 +    return count;
 +}
 +
-+std::string HLSL(spirv_cross::CompilerHLSL &compiler, bool fragment, int shaderModel) {
-+    auto hlsl=compiler.get_hlsl_options(); hlsl.shader_model=shaderModel;
++std::string HLSL(spirv_cross::CompilerHLSL &compiler, bool fragment) {
++    auto hlsl=compiler.get_hlsl_options(); hlsl.shader_model=51;
 +    compiler.set_hlsl_options(hlsl);
 +    if(!fragment) {
 +        compiler.add_vertex_attribute_remap({0,"POSITION"});
@@ -8064,14 +8073,14 @@ index 0000000..6424957
 +    for(unsigned binding : {0u,4u,5u}) {
 +        spirv_cross::HLSLResourceBinding map;
 +        map.stage=stage; map.desc_set=0; map.binding=binding; map.cbv.register_binding=binding;
-+        if(shaderModel==51) map.cbv.register_space=map.srv.register_space=map.sampler.register_space=0;
++        map.cbv.register_space=map.srv.register_space=map.sampler.register_space=0;
 +        compiler.add_hlsl_resource_binding(map);
 +    }
 +    for(unsigned binding : {0u,1u,9u,10u}) {
 +        spirv_cross::HLSLResourceBinding map;
 +        map.stage=stage; map.desc_set=1; map.binding=binding;
 +        map.srv.register_binding=map.sampler.register_binding=binding;
-+        if(shaderModel==51) map.cbv.register_space=map.srv.register_space=map.sampler.register_space=0;
++        map.cbv.register_space=map.srv.register_space=map.sampler.register_space=0;
 +        compiler.add_hlsl_resource_binding(map);
 +    }
 +    return compiler.compile();
@@ -8079,7 +8088,7 @@ index 0000000..6424957
 +}
 +
 +bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
-+    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction, int shaderModel) {
++    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction) {
 +    output={}; error.clear();
 +    try {
 +        if(layout<0 || layout>2) throw std::runtime_error("invalid vertex layout");
@@ -8130,15 +8139,15 @@ index 0000000..6424957
 +                compiler.set_decoration(r.id,spv::DecorationLocation,locations.at(r.name));
 +        };
 +        assign(vertexCompiler,false); assign(fragmentCompiler,true);
-+        result.vertex=HLSL(vertexCompiler,false,shaderModel);
-+        result.fragment=HLSL(fragmentCompiler,true,shaderModel);
++        result.vertex=HLSL(vertexCompiler,false);
++        result.fragment=HLSL(fragmentCompiler,true);
 +        output=std::move(result);
 +        return true;
 +    } catch(const std::exception &e) { error=e.what(); return false; }
 +}
 diff --git a/src/hardware/r_d3d12/custom_shader.h b/src/hardware/r_d3d12/custom_shader.h
 new file mode 100644
-index 0000000..5a924df
+index 0000000..9fcecea
 --- /dev/null
 +++ b/src/hardware/r_d3d12/custom_shader.h
 @@ -0,0 +1,13 @@
@@ -8147,13 +8156,13 @@ index 0000000..5a924df
 +#define RR_CUSTOM_SHADER_H
 +#include <string>
 +struct LegacyShaderHLSL { std::string vertex, fragment; };
++// Output targets Shader Model 5.1 with all registers in space 0.
 +// layout: 0 polygon, 1 sky, 2 model (the driver's vertex buffer layouts).
 +// waterRefraction: the fragment stage also composites its alpha-tested result
 +// over the captured scene with ripple distortion (t9/t10/b5, as PSWaterRefraction).
-+// shaderModel: SPIRV-Cross target (40 for D3D11, 51 for D3D12 space 0).
-+// Its vertex stage and fragment inputs are the same as the normal variant's.
++// The refraction variant's vertex stage and fragment inputs are the same as the normal variant's.
 +bool TranslateLegacyShader(const std::string &vertex, const std::string &fragment,
-+    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction = false, int shaderModel = 40);
++    int layout, LegacyShaderHLSL &output, std::string &error, bool waterRefraction = false);
 +#endif
 diff --git a/src/hardware/r_d3d12/custom_shaders.cmake b/src/hardware/r_d3d12/custom_shaders.cmake
 new file mode 100644
@@ -14341,7 +14350,7 @@ index 0000000..3634027
 +#endif
 diff --git a/src/hardware/r_d3d12/r_d3d12.cpp b/src/hardware/r_d3d12/r_d3d12.cpp
 new file mode 100644
-index 0000000..6aab040
+index 0000000..cffe676
 --- /dev/null
 +++ b/src/hardware/r_d3d12/r_d3d12.cpp
 @@ -0,0 +1,3409 @@
@@ -17096,7 +17105,7 @@ index 0000000..6aab040
 +		for (int layout = 0; layout < NUMLAYOUTS; layout++)
 +		{
 +			LegacyShaderHLSL output; std::string error;
-+			if (!TranslateLegacyShader(vertex, fragment, layout, output, error, false, 51))
++			if (!TranslateLegacyShader(vertex, fragment, layout, output, error, false))
 +			{
 +				Log("custom shader %d: %s; keeping the built-in shader", type, error.c_str());
 +				valid = false; break;
@@ -17124,7 +17133,7 @@ index 0000000..6aab040
 +			// Same vertex stage and inputs; without it, custom water draws unrefracted.
 +			LegacyShaderHLSL output; std::string error;
 +			CustomProgram &program = shader.programs[LAYOUT_POLY];
-+			if (!TranslateLegacyShader(vertex, fragment, LAYOUT_POLY, output, error, true, 51))
++			if (!TranslateLegacyShader(vertex, fragment, LAYOUT_POLY, output, error, true))
 +				Log("custom water refraction: %s; drawing custom water without refraction", error.c_str());
 +			else if (!CompileCustomStage(output.fragment, "ps_5_1", program.refraction)
 +				|| !FindOrCreatePipeline(CustomValidationKey(type, LAYOUT_POLY, true)))
