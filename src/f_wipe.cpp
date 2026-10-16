@@ -501,6 +501,13 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		}
 		lastwipetic = nowtime;
 
+		// [UWP]: Legacy GL's D3D12 wipes use the same mode, reverse and wiggle as the RHI.
+		g_wipemode = wipemode;
+		g_wipetype = wipetype;
+		g_wipeframe = wipeframe - 1;
+		g_wipereverse = reverse;
+		g_wipeencorewiggle = encorewiggle ? wipeframe - 1 : 0;
+
 #ifdef HWRENDER
 		if (rendermode == render_opengl)
 			HWR_DoWipe(wipetype, wipeframe-1); // send in the wipe type and wipeframe because we need to cache the graphic
@@ -510,19 +517,6 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		if (rendermode != render_none) //this allows F_RunWipe to be called in dedicated servers
 		{
 			// F_DoWipe(fmask, fcolor, reverse);
-			g_wipemode = wipemode;
-			g_wipetype = wipetype;
-			g_wipeframe = wipeframe - 1;
-			g_wipereverse = reverse;
-
-			if (encorewiggle)
-			{
-				g_wipeencorewiggle = wipeframe - 1;
-			}
-			else
-			{
-				g_wipeencorewiggle = 0;
-			}
 			rhi::Rhi* rhi = srb2::sys::get_rhi(srb2::sys::g_current_rhi);
 			hwr2::HardwareState* hw_state = srb2::sys::main_hardware_state();
 
