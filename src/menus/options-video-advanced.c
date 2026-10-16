@@ -86,9 +86,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 #endif
 
-	{IT_SPACE | IT_NOTHING, NULL,  NULL,
-		NULL, {NULL}, 0, 0},
-
 	{IT_STRING | IT_CVAR, "Texture Quality", "Texture depth. Higher values are recommended.",
 		NULL, {.cvar = &cv_scr_depth}, 0, 0},
 
@@ -99,9 +96,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 	{IT_STRING | IT_CVAR, "Anisotropic", "Lower values will improve performance at a minor quality loss.",
 		NULL, {.cvar = &cv_glanisotropicmode}, 0, 0},
-
-	{IT_SPACE | IT_NOTHING, NULL,  NULL,
-		NULL, {NULL}, 0, 0},
 
 	{IT_STRING | IT_CVAR, "Sprite Billboarding", "Adjusts sprites when viewed from above or below to not make them appear flat.",
 		NULL, {.cvar = &cv_glspritebillboarding}, 0, 0},

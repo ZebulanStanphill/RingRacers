@@ -430,10 +430,8 @@ typedef enum
 #ifdef _UWP
 	vaopt_batching,
 #endif
-	vaopt_spacer11,
 	vaopt_texturequal,
 	vaopt_anisotropic,
-	vaopt_spacer12,
 	vaopt_billboarding,
 	vaopt_perspective,
 	vaopt_legacygl_end,
