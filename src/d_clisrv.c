@@ -3126,6 +3126,12 @@ static void Got_KickCmd(const UINT8 **p, INT32 playernum)
 			kickreason = KR_KICK;
 			break;
 		case KICK_MSG_PING_HIGH:
+#ifdef _UWP
+			if (client && pnum == consoleplayer)
+				I_OutputMsg("UWP: server delay-limit kick: delay %u tics, limit %u, game tic %u, received through %u, level tic %u\n",
+					(UINT32)playerpingtable[pnum], (UINT32)servermaxping,
+					(UINT32)gametic, (UINT32)neededtic, (UINT32)leveltime);
+#endif
 			HU_AddChatText(va("\x82*%s left the game (Broke delay limit)", player_names[pnum]), false);
 			kickreason = KR_PINGLIMIT;
 			break;
@@ -6462,6 +6468,30 @@ static void CL_SendClientKeepAlive(void)
 	netbuffer->packettype = PT_BASICKEEPALIVE;
 
 	HSendPacket(servernode, false, 0, 0);
+
+#if defined(_UWP) && defined(HWRENDER)
+	// BASICKEEPALIVE resets the connection timeout, but GetLag on the server
+	// still measures from the last acknowledged tic. During a slow Legacy GL
+	// load, acknowledge the tics GetPackets actually buffered without sending
+	// input or consistency for a simulation that is paused inside a net command.
+	if (netgame && rendermode == render_opengl && addedtogame
+		&& cl_mode == CL_CONNECTED && !cl_redownloadinggamestate
+		&& gamestate != GS_NULL && !demo.playback)
+	{
+		static tic_t lastacktime = (tic_t)-1;
+		const tic_t now = I_GetTime();
+		if (now != lastacktime)
+		{
+			const size_t packetsize = sizeof (clientcmd_pak) - sizeof (ticcmd_t) - sizeof (INT16);
+			lastacktime = now;
+			memset(&netbuffer->u.clientpak, 0, packetsize);
+			netbuffer->packettype = cl_packetmissed ? PT_NODEKEEPALIVEMIS : PT_NODEKEEPALIVE;
+			netbuffer->u.clientpak.client_tic = (UINT8)(gametic & UINT8_MAX);
+			netbuffer->u.clientpak.resendfrom = (UINT8)(neededtic & UINT8_MAX);
+			HSendPacket(servernode, false, 0, packetsize);
+		}
+	}
+#endif
 }
 
 static void SV_SendServerKeepAlive(void)

@@ -58,6 +58,9 @@
 /// \note	SRB2CB port.
 ///      	SRB2CB itself ported this from PrBoom+
 #include "hw_clip.h"
+#ifdef _UWP
+#include "../i_time.h" // HWR_UWPLoadKeepAlive
+#endif
 
 #define R_FAKEFLOORS
 #define HWPRECIP
@@ -69,6 +72,24 @@
 struct hwdriver_s hwdriver;
 
 #ifdef _UWP
+// Level loading takes seconds on Xbox. A netgame server sends a client at most 32
+// tics past the last one it acknowledged, and times out a client it doesn't hear
+// from. Keep answering during Legacy GL's part of the load, at most once per
+// tic, as the wipe and title-card loops already do.
+void HWR_UWPLoadKeepAlive(void)
+{
+	static tic_t last = 0;
+	tic_t now;
+	if (!netgame)
+		return;
+	I_UpdateTime();
+	now = I_GetTime();
+	if (now == last)
+		return;
+	last = now;
+	NetKeepAlive();
+}
+
 // Use renderer cache entry points: they include brightmaps, texture translation,
 // terrain/sector no-Encore flags, and the active level's Encore colormap. For
 // textures whose existing cache has only one remap variant, first sidedef/sector
@@ -102,6 +123,7 @@ void HWR_UWPPrecacheLevel(boolean players_only)
 					continue;
 				wallseen[tex] = 1;
 				HWR_GetTexture(tex, base[j]);
+				HWR_UWPLoadKeepAlive();
 				walls++;
 			}
 		}
@@ -123,6 +145,7 @@ void HWR_UWPPrecacheLevel(boolean players_only)
 					continue;
 				flatseen[pic[ceiling]] |= key;
 				HWR_GetLevelFlat(&levelflats[pic[ceiling]], noencore);
+				HWR_UWPLoadKeepAlive();
 				flats++;
 			}
 		}

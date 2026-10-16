@@ -1295,6 +1295,16 @@ void G_StartTitleCard(void)
 void G_PreLevelTitleCard(void)
 {
 #ifndef NOWIPE
+#if defined(_UWP) && defined(HWRENDER)
+	// The server keeps simulating while we load. Do not add a second of
+	// paused simulation after Legacy GL's precache: ST_Ticker/ST_Drawer will
+	// run the initialized title animation in the HUD while we catch up.
+	if (netgame && client && !demo.playback && rendermode == render_opengl)
+	{
+		I_OutputMsg("UWP: track title: Direct3D 12; running in the HUD during online catch-up\n");
+		return;
+	}
+#endif
 #ifdef _UWP
 	// Level loading leaves I_GetTime's cached clock stale.
 	I_UpdateTime();

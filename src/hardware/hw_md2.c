@@ -1439,6 +1439,7 @@ static void HWR_UWPPrecacheModel(md2_t *md2)
 	if (md2->notfound || md2->error || md2->scale < 0.0f)
 		return;
 	HWR_LoadModelResources(md2, NULL);
+	HWR_UWPLoadKeepAlive();
 }
 
 void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures_loaded)

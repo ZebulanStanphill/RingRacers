@@ -29,6 +29,7 @@ extern "C" {
 void HWR_Startup(void);
 #ifdef _UWP
 void HWR_UWPPrecacheLevel(boolean players_only);
+void HWR_UWPLoadKeepAlive(void);
 #endif
 void HWR_Switch(void);
 void HWR_Shutdown(void);

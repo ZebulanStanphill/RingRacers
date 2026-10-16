@@ -15,6 +15,9 @@
 #include "../doomstat.h"
 #ifdef HWRENDER
 #include "hw_glob.h"
+#ifdef _UWP
+#include "hw_main.h" // HWR_UWPLoadKeepAlive
+#endif
 #include "../r_local.h"
 #include "../z_zone.h"
 #include "../console.h"
@@ -634,6 +637,9 @@ static void loading_status(void)
 	V_DrawCenteredString(BASEVIDWIDTH/2, 70, V_YELLOWMAP, "USE AT ROBOTNIK'S RISK.");
 
 	I_UpdateNoVsync();
+#ifdef _UWP
+	HWR_UWPLoadKeepAlive();
+#endif
 }
 #endif
 
