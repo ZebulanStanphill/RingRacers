@@ -121,7 +121,7 @@ foreach(control missing double)
     set_tests_properties(encore_brightmap_negative_${control} PROPERTIES WILL_FAIL TRUE)
 endforeach()
 regression(spring_clip spring_clip _UWP HWRENDER)
-foreach(control full edge front nonspring)
+foreach(control full edge front nonspring bound)
     add_test(NAME spring_clip_negative_${control} COMMAND spring_clip --negative-${control})
     set_tests_properties(spring_clip_negative_${control} PROPERTIES WILL_FAIL TRUE TIMEOUT 60
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")

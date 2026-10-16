@@ -210,11 +210,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   the origin, and an ordinary sprite or always-on-top spring left untouched. FOF
   sides are admitted when opaque, whether solid or intangible; fog and translucent
   sides are not. Zone allocation and GPU submission are stubs that collect the
-  submitted triangles. CTest requires four negative controls to fail:
+  submitted triangles. CTest requires five negative controls to fail:
   `--negative-full` and `--negative-edge` restore the old per-pixel depth behavior,
   while `--negative-front` and `--negative-nonspring` inject the clipping errors the
   preservation cases guard against (ordering lost, or the `MF_SPRING` gate lost),
-  since old depth testing already preserves those two cases. Software draws every 3D floor
+  since old depth testing already preserves those two cases, and `--negative-bound`
+  (below) tells the clip it has more room than its buffer. Software draws every 3D floor
   side and plane nearer than the farthest one a sprite sorts behind over it, so those
   entries are subtracted together: the test records two sides whose nearer one fails its own
   test and checks that it is still subtracted (and not when recorded after the farther one),
@@ -232,7 +233,18 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and writes the first view's `gr_springprobe` log through a stub `I_OutputMsg`; the test fails when
   anything Software would paint over the spring remains, or when any of the spring is left
   visible at all (before the draw order rule about half of a full-size spring stayed visible
-  along the wall). Seg traversal,
+  along the wall). The buffers are bounded: a cut can add more than one corner when
+  a plane polygon's long edge is split into collinear corners and rounding leaves them
+  out of line, which once overran the stack on Metropolis. The half-plane clip is called on a
+  zigzag whose every edge crosses the plane, with too little room (it must return -1 and leave
+  guard slots holding sentinels untouched) and with exactly enough (12 corners), and the near-plane clip on a
+  32-corner silhouette that needs 48 (it must report none); `--negative-bound` passes a capacity
+  larger than the real output, so the guards change and the program fails. The smallest
+  fuzzed scene that overflowed (two sloped 3D floor planes of 29 and 32 corners, a 3D floor side, a full-size
+  spring; hex-float literals copied into the test) must submit only triangles or the quad and still draw something, and
+  3000 random views from a SplitMix64 generator (not `std::uniform_*_distribution`, which differs between
+  standard libraries) of such planes and sides must all finish. Without the bounds both
+  fail with an AddressSanitizer stack-buffer-overflow in `HWR_SpringHalfPlane`. Seg traversal,
   GPU depth/stencil and Xbox visuals still need separate validation.
 - **Palette brightmaps:** Windows WARP executes the production SM4 `PSSoftware` palette path. Brightmapped texels must use the base colormap's full-bright row at their palette index, while other texels keep the surface colormap row from `R_DoomColormap` at the rasterized depth. The negative control restores the old surface-colormap row for brightmapped texels and must fail. This validates the shader on WARP, not Xbox palette-rendering visuals.
 - **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production

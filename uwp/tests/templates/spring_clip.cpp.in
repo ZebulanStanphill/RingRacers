@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -519,9 +520,220 @@ static void Slivers(){
     assert(draws.empty());
     stubGz=stubGzt=NAN;gl_viewx=gl_viewy=gl_viewz=gl_viewsin=0;gl_viewcos=1;
 }
+// Spring clipping stays within its buffers. A convex polygon gains at most one corner per cut, but a 3D floor plane
+// whose long edge is split into many collinear corners (GL subsector polygons often are) gives the silhouette
+// pyramid nearly identical planes, and rounding leaves the corners they cut slightly out of line, so a later plane
+// crosses the outline several times. On an Xbox One X that overran the 36-corner buffers of HWR_DrawSpringPolygon,
+// and the stack cookie check ended the game without a crash log.
+static void ResetView(){gl_viewx=gl_viewy=gl_viewz=gl_viewsin=0;gl_viewcos=1;}
+constexpr int GuardSlots=24; // Room past a buffer for every corner these tests could write.
+static const FOutVector Sentinel={12345,-6789,31337,.25f,.75f};
+static int GuardsTouched(const std::vector<FOutVector> &buffer,int real){
+    int touched=0;
+    for(int i=0;i<(int)buffer.size();++i)
+        if((i<GuardSlots||i>=GuardSlots+real)&&std::memcmp(&buffer[i],&Sentinel,sizeof Sentinel)!=0)++touched;
+    return touched;
+}
+// Cuts a zigzag of eight corners, alternately either side of x=0, so every edge crosses the plane: four corners on
+// each side and eight crossings. The output holds `real` corners, though the clip is told it holds `told`.
+static int ZigzagGuards(INT32 real,INT32 told,boolean inside,INT32 &result){
+    FOutVector zigzag[8];hwr_springplane_t plane={1,0,0,0};
+    for(int i=0;i<8;++i)zigzag[i]={(i&1)?-1.f:1.f,(float)i,0,0,0};
+    std::vector<FOutVector> buffer(GuardSlots+real+GuardSlots,Sentinel);
+    result=HWR_SpringHalfPlane(zigzag,8,buffer.data()+GuardSlots,told,&plane,inside);
+    return GuardsTouched(buffer,real);
+}
+static void Bounds(){
+    ResetView();
+    for(boolean inside:{false,true}){
+        INT32 result;
+        // An output too small for the result is refused, with nothing written past it.
+        for(INT32 cap:{0,1,5,11}){assert(ZigzagGuards(cap,cap,inside,result)==0&&result==-1);}
+        // Just enough, and more than enough.
+        assert(ZigzagGuards(12,12,inside,result)==0&&result==12);
+        assert(ZigzagGuards(13,13,inside,result)==0&&result==12);
+    }
+    // The near-plane clip of a silhouette whose corners alternate in front of and behind the camera needs 48 corners,
+    // more than the 33 it has room for, and reports no silhouette.
+    hwr_springwall_t wall{};wall.numverts=HWR_SPRINGMAXVERTS;
+    for(int i=0;i<wall.numverts;++i)wall.v[i]={(i&1)?5.f:-5.f,(float)i,0,0,0};
+    std::vector<FOutVector> buffer(HWR_SPRINGMAXNEAR+GuardSlots,Sentinel);
+    assert(HWR_SpringClipNear(&wall,buffer.data())==0);
+    for(size_t i=HWR_SPRINGMAXNEAR;i<buffer.size();++i)assert(std::memcmp(&buffer[i],&Sentinel,sizeof Sentinel)==0);
+    // The same zigzag of four corners fits: two corners kept and four crossings.
+    wall.numverts=4;
+    assert(HWR_SpringClipNear(&wall,buffer.data())==6);
+}
+// The control: the clip is told it has room for 12 corners in an output of 5, so it overwrites the guard slots.
+static int NegativeBound(){
+    INT32 result;int touched=ZigzagGuards(5,12,true,result);
+    std::printf("negative control --negative-bound: result %d, %d guard slots overwritten\n",(int)result,touched);
+    PurgeLevel();return touched?1:0;
+}
+
+static void SetView(float vx,float vy,float vz,float c,float s,float ox,float oy,float oz,float half){
+    gl_viewx=vx;gl_viewy=vy;gl_viewz=vz;gl_viewcos=c;gl_viewsin=s;
+    float lx=gl_viewsin,ly=-gl_viewcos;int i=0;
+    for(auto uv:std::array<std::array<float,2>,4>{{{0,0},{1,0},{1,1},{0,1}}}){
+        float a=2*uv[0]-1,b=2*uv[1]-1;
+        fixture[i++]={ox+half*a*lx,oz-1+half*(b+1),oy+half*a*ly,uv[0],1-uv[1]};
+    }
+    thing.x=FLOAT_TO_FIXED(ox);thing.y=FLOAT_TO_FIXED(oy);spr.gx=ox;spr.gy=oy;
+}
+// Draws the spring and checks what was submitted: the quad or whole triangles, at finite coordinates.
+static void DrawChecked(){
+    HWR_DrawSprite(&spr);
+    for(auto &d:draws){
+        assert(d.v.size()==3||d.v.size()==4);
+        for(auto &p:d.v)assert(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)&&std::isfinite(p.s)&&std::isfinite(p.t));
+    }
+}
+
+// The minimal failing scene found by fuzzing (view 1189 of seed 4): two sloped 3D floor planes of 29 and 32 corners
+// whose first edges are chains of nearly collinear corners, a 3D floor side, and a full-size spring seen across them.
+// A single cut of the spring's triangle added four corners, and the polygon outgrew the 36-corner buffer.
+static const float scenePlane0[]={ // 29 corners: x, height, y
+    0x1.f59a12p+7f,0x1.a4b076p+8f,-0x1.f9c868p+10f,
+    0x1.e4e12cp+7f,0x1.a22964p+8f,-0x1.f823bcp+10f,
+    0x1.d42848p+7f,0x1.9fa25p+8f,-0x1.f67f12p+10f,
+    0x1.c36f62p+7f,0x1.9d1b3ep+8f,-0x1.f4da68p+10f,
+    0x1.b2b67cp+7f,0x1.9a942ap+8f,-0x1.f335bep+10f,
+    0x1.a1fd96p+7f,0x1.980d18p+8f,-0x1.f19114p+10f,
+    0x1.9144b2p+7f,0x1.958606p+8f,-0x1.efec68p+10f,
+    0x1.808bccp+7f,0x1.92fef2p+8f,-0x1.ee47bep+10f,
+    0x1.6fd2e6p+7f,0x1.9077ep+8f,-0x1.eca314p+10f,
+    0x1.5f1ap+7f,0x1.8df0ccp+8f,-0x1.eafe6ap+10f,
+    0x1.4e611cp+7f,0x1.8b69bap+8f,-0x1.e959cp+10f,
+    0x1.3da836p+7f,0x1.88e2a6p+8f,-0x1.e7b514p+10f,
+    0x1.2cef5p+7f,0x1.865b94p+8f,-0x1.e6106ap+10f,
+    0x1.1c366ap+7f,0x1.83d482p+8f,-0x1.e46bcp+10f,
+    0x1.0b7d84p+7f,0x1.814d6ep+8f,-0x1.e2c716p+10f,
+    0x1.f5893ep+6f,0x1.7ec65cp+8f,-0x1.e1226ap+10f,
+    0x1.d41774p+6f,0x1.7c3f48p+8f,-0x1.df7dcp+10f,
+    0x1.b2a5a8p+6f,0x1.79b836p+8f,-0x1.ddd916p+10f,
+    0x1.9133dep+6f,0x1.773124p+8f,-0x1.dc346cp+10f,
+    0x1.6fc212p+6f,0x1.74aa1p+8f,-0x1.da8fc2p+10f,
+    0x1.4e5048p+6f,0x1.7222fep+8f,-0x1.d8eb16p+10f,
+    0x1.2cde7cp+6f,0x1.6f9beap+8f,-0x1.d7466cp+10f,
+    0x1.0b6cb2p+6f,0x1.6d14d8p+8f,-0x1.d5a1c2p+10f,
+    0x1.d3f5ccp+5f,0x1.6a8dc4p+8f,-0x1.d3fd18p+10f,
+    0x1.911236p+5f,0x1.6806b2p+8f,-0x1.d2586ep+10f,
+    0x1.4e2eap+5f,0x1.657fap+8f,-0x1.d0b3c2p+10f,
+    0x1.0b4b0ap+5f,0x1.62f88cp+8f,-0x1.cf0f18p+10f,
+    -0x1.12f7b8p+7f,0x1.2f4ed2p+8f,-0x1.02b402p+11f,
+    0x1.3f9f32p+6f,0x1.7106bep+8f,-0x1.1810a8p+11f,
+};
+static const float scenePlane1[]={ // 32 corners: x, height, y
+    0x1.4d4ccap+8f,0x1.71755cp+8f,-0x1.2154f2p+11f,
+    0x1.4adf78p+8f,0x1.734688p+8f,-0x1.2053ecp+11f,
+    0x1.487228p+8f,0x1.7517b8p+8f,-0x1.1f52e4p+11f,
+    0x1.4604d6p+8f,0x1.76e8e4p+8f,-0x1.1e51dep+11f,
+    0x1.439786p+8f,0x1.78ba1p+8f,-0x1.1d50d8p+11f,
+    0x1.412a34p+8f,0x1.7a8b3cp+8f,-0x1.1c4fd2p+11f,
+    0x1.3ebce4p+8f,0x1.7c5c68p+8f,-0x1.1b4eccp+11f,
+    0x1.3c4f92p+8f,0x1.7e2d94p+8f,-0x1.1a4dc6p+11f,
+    0x1.39e242p+8f,0x1.7ffecp+8f,-0x1.194ccp+11f,
+    0x1.3774fp+8f,0x1.81cfecp+8f,-0x1.184bbap+11f,
+    0x1.3507ap+8f,0x1.83a118p+8f,-0x1.174ab4p+11f,
+    0x1.329a4ep+8f,0x1.857244p+8f,-0x1.1649aep+11f,
+    0x1.302cfep+8f,0x1.87437p+8f,-0x1.1548a8p+11f,
+    0x1.2dbfacp+8f,0x1.8914ap+8f,-0x1.1447ap+11f,
+    0x1.2b525cp+8f,0x1.8ae5ccp+8f,-0x1.13469ap+11f,
+    0x1.28e50cp+8f,0x1.8cb6f8p+8f,-0x1.124594p+11f,
+    0x1.2677bap+8f,0x1.8e8824p+8f,-0x1.11448ep+11f,
+    0x1.240a6ap+8f,0x1.90595p+8f,-0x1.104388p+11f,
+    0x1.219d18p+8f,0x1.922a7cp+8f,-0x1.0f4282p+11f,
+    0x1.1f2fc8p+8f,0x1.93fba8p+8f,-0x1.0e417cp+11f,
+    0x1.1cc276p+8f,0x1.95ccd4p+8f,-0x1.0d4076p+11f,
+    0x1.1a5526p+8f,0x1.979ep+8f,-0x1.0c3f7p+11f,
+    0x1.17e7d4p+8f,0x1.996f2cp+8f,-0x1.0b3e6ap+11f,
+    0x1.157a84p+8f,0x1.9b405cp+8f,-0x1.0a3d62p+11f,
+    0x1.130d32p+8f,0x1.9d1188p+8f,-0x1.093c5cp+11f,
+    0x1.109fe2p+8f,0x1.9ee2b4p+8f,-0x1.083b56p+11f,
+    0x1.0e329p+8f,0x1.a0b3ep+8f,-0x1.073a5p+11f,
+    0x1.0bc54p+8f,0x1.a2850cp+8f,-0x1.06394ap+11f,
+    0x1.0957eep+8f,0x1.a45638p+8f,-0x1.053844p+11f,
+    0x1.06ea9ep+8f,0x1.a62764p+8f,-0x1.04373ep+11f,
+    0x1.dfd016p+4f,0x1.6cf862p+8f,-0x1.0d0384p+11f,
+    0x1.917cb4p+6f,0x1.38465ep+8f,-0x1.2a2136p+11f,
+};
+static const float sceneSide[]={ // a 3D floor side's four corners
+    0x1.2aa248p+6f,0x1.2eded4p+8f,-0x1.0abaaep+11f,
+    0x1.a87892p+7f,0x1.520e88p+8f,-0x1.0ac70ap+11f,
+    0x1.a87892p+7f,0x1.f11e48p+8f,-0x1.0ac70ap+11f,
+    0x1.2aa248p+6f,0x1.f11e48p+8f,-0x1.0abaaep+11f,
+};
+static std::vector<FOutVector> Corners(const float *c,size_t n){
+    std::vector<FOutVector> poly(n);
+    for(size_t i=0;i<n;++i)poly[i]={c[3*i],c[3*i+1],c[3*i+2],0,0};
+    return poly;
+}
+static void Overrun(){
+    auto f=Solid();
+    Begin();hwr_springpeakpieces=0;
+    auto first=Corners(scenePlane0,29),second=Corners(scenePlane1,32),side=Corners(sceneSide,4);
+    HWR_AddSpringPlane(first.data(),(INT32)first.size(),&f);
+    HWR_AddSpringPlane(second.data(),(INT32)second.size(),&f);
+    HWR_AddSpringWall(side.data(),&f);
+    assert(hwr_numspringwalls==3);
+    SetView(-0x1.e1846p+5f,-0x1.f9f1f8p+10f,0x1.934fc8p+8f,0x1.e9d49cp-1f,-0x1.2a0f94p-2f,
+        0x1.53309p+6f,-0x1.0d9358p+11f,0x1.782a86p+8f,0x1p+5f);
+    DrawChecked();
+    assert(!draws.empty()); // Some of the spring is left, whether or not a triangle was kept whole.
+    ResetView();PurgeLevel();
+}
+
+// SplitMix64 and its own mapping to numbers, so that the sweep sees the same views on every standard library
+// (std::uniform_real_distribution and std::uniform_int_distribution differ between them).
+struct SplitMix {
+    uint64_t state;
+    uint64_t Next(){uint64_t z=(state+=0x9E3779B97F4A7C15ull);z=(z^(z>>30))*0xBF58476D1CE4E5B9ull;z=(z^(z>>27))*0x94D049BB133111EBull;return z^(z>>31);}
+    double U(double a,double b){return a+(b-a)*(double)(Next()>>11)*0x1p-53;}
+    int I(int a,int b){return a+(int)(Next()%(uint64_t)(b-a+1));}
+};
+// Springs among planes of three or four corners whose first edge is split into twenty to twenty-nine collinear ones
+// (a subsector polygon's long edge), and sides, at random cameras. Every view must finish within the buffers.
+static void Sweep(int views){
+    SplitMix r{2};auto f=Solid();size_t drawn=0;
+    for(int it=0;it<views;++it){
+        Begin();hwr_springpeakpieces=0;
+        float ox=(float)r.U(-4000,4000),oy=(float)r.U(-4000,4000),oz=(float)r.U(-200,600),half=r.I(0,1)?8.f:32.f;
+        double dist=r.U(20,600),dir=r.U(0,2*M_PI),ang=dir+M_PI+r.U(-0.7,0.7);
+        SetView((float)(ox+dist*std::cos(dir)),(float)(oy+dist*std::sin(dir)),(float)(oz+r.U(-150,250)),(float)std::cos(ang),(float)std::sin(ang),ox,oy,oz,half);
+        int occluders=r.I(1,40);
+        for(int k=0;k<occluders;++k){
+            // Somewhere between the camera and a bit past the spring.
+            double t=r.U(-0.2,1.1),cx=ox+(gl_viewx-ox)*t+r.U(-80,80),cy=oy+(gl_viewy-oy)*t+r.U(-80,80);
+            if(r.I(0,2)){
+                int corners=r.I(3,4);double radius=r.U(4,200),rot=r.U(0,2*M_PI);
+                std::vector<std::array<double,2>> base;
+                for(int c=0;c<corners;++c){double an=rot+2*M_PI*c/corners;base.push_back({cx+radius*std::cos(an),cy+radius*std::sin(an)});}
+                double pa=r.I(0,1)?r.U(-0.6,0.6):0,pb=r.I(0,1)?r.U(-0.6,0.6):0,pc=oz+r.U(-60,60);
+                std::vector<FOutVector> poly;
+                for(int c=0;c<corners&&(int)poly.size()<HWR_SPRINGMAXVERTS;++c){
+                    auto p=base[c],q=base[(c+1)%corners];int sub=c==0?r.I(20,29):0;
+                    for(int s=0;s<=sub&&(int)poly.size()<HWR_SPRINGMAXVERTS;++s){
+                        double u=(double)s/(sub+1);float x=(float)(p[0]+(q[0]-p[0])*u),z=(float)(p[1]+(q[1]-p[1])*u);
+                        poly.push_back({x,(float)(pa*x+pb*z+pc-pa*cx-pb*cy),z,0,0});
+                    }
+                }
+                HWR_AddSpringPlane(poly.data(),(INT32)poly.size(),&f);
+            }else{
+                double an=r.U(0,2*M_PI),len=r.U(2,200);float b0=(float)(oz+r.U(-80,40)),t0=(float)(b0+r.U(-10,200));
+                float b1=r.I(0,1)?b0:(float)(oz+r.U(-80,40)),t1=r.I(0,1)?t0:(float)(b1+r.U(-10,200));
+                auto w=Wall((float)cx,(float)cy,(float)(cx+len*std::cos(an)),(float)(cy+len*std::sin(an)),b0,b1,t0,t1);
+                HWR_AddSpringWall(w.data(),r.I(0,2)?&f:nullptr);
+            }
+        }
+        DrawChecked();drawn+=draws.size();
+        ResetView();PurgeLevel();
+    }
+    assert(drawn);
+}
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
+    if(argc>1&&std::string(argv[1])=="--negative-bound")return NegativeBound();
     if(argc>1)return Negative(argv[1]);
-    RunCases();ObliqueCamera();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();
+    RunCases();ObliqueCamera();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }
