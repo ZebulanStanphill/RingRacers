@@ -1,17 +1,12 @@
 # Direct3D 12 add-on shaders
 
-Add-on shaders from `SHADERS` lumps reach the Direct3D 12 renderer through the same
-load-time translation as the Direct3D 11 renderer, with two differences: the compiler
-targets Shader Model 5.1, and each translated program must build a pipeline state object
-(PSO) before it is used.
+Add-on shaders from `SHADERS` lumps are translated at load time to Shader Model 5.1, and each
+translated program must build a pipeline state object (PSO) before it is used.
 
 ## Translation and compilation
 
 - Legacy GL's GLSL goes through the pinned glslang and SPIRV-Cross translators to HLSL.
   The HLSL is then compiled with `D3DCompile` for the 5_1 profiles (`vs_5_1` and `ps_5_1`).
-- The Direct3D 11 renderer still uses Shader Model 4 (`vs_4_0` and `ps_4_0`), which is a
-  separate compiler target. The Shader Model 4 limits described in [CHANGES.md](../CHANGES.md)
-  don't apply to the Direct3D 12 path.
 - Every polygon, sky and model layout is translated and checked, not only the polygon one.
 
 ## Load-time PSO validation
@@ -59,10 +54,9 @@ Underwater and heat postprocessing always keeps its built-in shader.
 
 ## Tests
 
-- `tests/custom-shaders.cpp` (native) emits 78 general stages for each shader model and
-  checks identical register slots and std140 member offsets, with explicit space 0 for SM5.1.
-  The PK3 test adds 19 SM4 stages, retaining the existing total of 97 SM4 stages. Windows CI compiles the
-  SM5.1 and SM4 stages with `fxc` under both profiles.
+- `tests/custom-shaders.cpp` (native) emits 78 general Shader Model 5.1 stages and checks their register
+  slots and std140 member offsets, with every register in space 0. Windows CI compiles these and the
+  smoke-test add-on's 19 stages with `fxc` (`vs_5_1` and `ps_5_1`), for 97 total.
 - `tests/d3d12-driver.cpp` (WARP) covers the driver path:
   - `custom-shader` draws a fixed color from a custom fragment shader.
   - `custom-shader-clean` checks that cleaning the shaders returns to the built-in color.
@@ -70,5 +64,5 @@ Underwater and heat postprocessing always keeps its built-in shader.
   - `custom-shader-nocustom` is a negative control: with Ignore custom shaders set, the
     custom color must not appear.
 
-Xbox and Windows runs of these tests and their visual results are untested. See
+The WARP scenes run in Windows CI, and add-on shaders work on Xbox. See
 [the test README](../tests/README.md).

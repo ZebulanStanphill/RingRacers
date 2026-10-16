@@ -1,12 +1,12 @@
 # Direct3D 12 diagnostics
 
-The Direct3D 12 driver (**Direct3D 12 (test)**, `gr_d3d12`) has the Direct3D 11 driver's pixel history,
+The Direct3D 12 driver has the former Direct3D 11 driver's pixel history,
 plus two tools of its own for presenting and GPU hangs.
 
 ## Pixel history: `gr_surfaceprobe`
 
-`gr_surfaceprobe [x_percent y_percent]` (default `15 35`) works as it does under Direct3D 11, and
-logs the same lines, so existing tooling and readers work with either renderer:
+`gr_surfaceprobe [x_percent y_percent]` (default `15 35`) works as it did under the former Direct3D 11 driver and
+logs the same lines, so existing tooling and readers still work:
 
 ```
 surface probe: begin pixel=(x,y) screen=WxH format=N
@@ -18,7 +18,7 @@ surface probe: end draws=N color_changes=N rows_omitted=N overflow=0
 `raw` is the pixel as a little-endian RGBA8 DWORD. A `sample=` row appears for each draw that changed the
 pixel's color (the first 256), with up to eight `v` rows for polygon and batch draws.
 
-How the driver takes its samples differs from Direct3D 11's atlas:
+How the driver takes its samples differs from the former Direct3D 11 driver's atlas:
 
 - After each polygon, indexed batch, sky loop, model mesh or color clear, it transitions the screen to
   `COPY_SOURCE`, copies the one pixel into slot *i* of a single readback buffer with `CopyTextureRegion`, and
