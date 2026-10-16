@@ -6,9 +6,10 @@ Builds Ring Racers for UWP (Xbox Dev Mode).
 Builds the RingRacers submodule (ZebulanStanphill/RingRacers: Ring Racers with this
 port's engine changes) as a static library with the ninja-x64_windows_uwp_vcpkg-release
 preset, builds SDL2 for UWP with OpenGL ES through ANGLE
-(patches/sdl-angle.patch) and a fix for controllers showing up twice
-(patches/sdl-controller-duplicates.patch), downloads ANGLE, then generates and
-builds the UWP launcher solution in build/.
+(patches/sdl-angle.patch), a fix for controllers showing up twice
+(patches/sdl-controller-duplicates.patch) and a way for Direct3D 12 to take the
+window from ANGLE and give it back (patches/sdl-egl-surface-handoff.patch),
+downloads ANGLE, then generates and builds the UWP launcher solution in build/.
 
 Run from an x64 Visual Studio 2022 developer shell with VCPKG_ROOT set.
 #>
@@ -20,10 +21,10 @@ $Preset = "ninja-x64_windows_uwp_vcpkg-release"
 $LibBuild = Join-Path $Source "build/$Preset"
 $UwpBuild = Join-Path $Root "build"
 
-# worleydl's SDL2 for UWP, and our patches to it: switching it from Mesa to ANGLE, and keeping controllers from
-# showing up twice
+# worleydl's SDL2 for UWP, and our patches to it: switching it from Mesa to ANGLE, keeping controllers from showing up
+# twice, and letting Direct3D 12 take the window from ANGLE and give it back
 $SdlCommit = "c5f2ce7c4f792d4e42c81551fcb385dae96d98ce"
-$SdlPatches = "sdl-angle.patch", "sdl-controller-duplicates.patch"
+$SdlPatches = "sdl-angle.patch", "sdl-controller-duplicates.patch", "sdl-egl-surface-handoff.patch"
 $AngleVersion = "2.1.14"
 $AngleSha256 = "566F78D4FAB2086E694DC8F1EDCDB498EE549DADE8A198CA95246CFDD0632E98"
 

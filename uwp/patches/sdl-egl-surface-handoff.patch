@@ -1,0 +1,221 @@
+From 1825423ad89fc9f39f88b2180ffaf86640db50f6 Mon Sep 17 00:00:00 2001
+From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
+Date: Fri, 16 Oct 2026 14:29:57 -0500
+Subject: [PATCH] UWP: Let an app take the window from ANGLE and give it back
+
+A CoreWindow takes one swap chain at a time, and SDL gives it to ANGLE
+when it creates the window's EGL surface. An app that presents with its
+own swap chain (Direct3D 12 here) has to destroy that surface first, and
+recreate it when it hands the window back to OpenGL ES.
+
+SDL_WinRTReleaseGLSurface() makes no context current, which also clears
+SDL's record of the current window and context so that a later
+SDL_GL_MakeCurrent isn't skipped as redundant, then destroys the
+window's EGL surface. SDL_WinRTRestoreGLSurface() creates it again with
+the config the GL context was made with, the same way WINRT_CreateWindow
+does (now a shared helper), and leaves it to the caller to make the
+context current.
+---
+ include/SDL_system.h               |  33 ++++++++
+ src/video/winrt/SDL_winrtvideo.cpp | 127 ++++++++++++++++++++++-------
+ 2 files changed, 132 insertions(+), 28 deletions(-)
+
+diff --git a/include/SDL_system.h b/include/SDL_system.h
+index 4b7eadd..a15aecf 100644
+--- a/include/SDL_system.h
++++ b/include/SDL_system.h
+@@ -567,6 +567,39 @@ extern DECLSPEC const char * SDLCALL SDL_WinRTGetFSPathUTF8(SDL_WinRT_Path pathT
+  */
+ extern DECLSPEC SDL_WinRT_DeviceFamily SDLCALL SDL_WinRTGetDeviceFamily();
+ 
++/**
++ * Destroys a window's EGL surface, ANGLE's swap chain on the CoreWindow, so
++ * that something else can present to the window with its own swap chain: a
++ * CoreWindow takes one at a time.
++ *
++ * Makes no OpenGL context current (SDL's record of the current window and
++ * context is cleared too), so call it from the thread that uses the context.
++ * Nothing can be drawn to or swapped on the window with OpenGL ES until
++ * SDL_WinRTRestoreGLSurface.
++ *
++ * \param window the window whose EGL surface to destroy
++ * \returns 0 on success or a negative error code on failure; call
++ *          SDL_GetError() for more information.
++ *
++ * \sa SDL_WinRTRestoreGLSurface
++ */
++extern DECLSPEC int SDLCALL SDL_WinRTReleaseGLSurface(SDL_Window *window);
++
++/**
++ * Creates a window's EGL surface again after SDL_WinRTReleaseGLSurface, with
++ * the EGL config the window's OpenGL ES context was made with. Fails if the
++ * window's CoreWindow still has another swap chain. It doesn't make any
++ * context current: call SDL_GL_MakeCurrent afterwards.
++ *
++ * \param window the window to give an EGL surface back to
++ * \returns 0 on success (or if the window has an EGL surface already) or a
++ *          negative error code on failure; call SDL_GetError() for more
++ *          information.
++ *
++ * \sa SDL_WinRTReleaseGLSurface
++ */
++extern DECLSPEC int SDLCALL SDL_WinRTRestoreGLSurface(SDL_Window *window);
++
+ #endif /* __WINRT__ */
+ 
+ /**
+diff --git a/src/video/winrt/SDL_winrtvideo.cpp b/src/video/winrt/SDL_winrtvideo.cpp
+index c96156e..3769795 100644
+--- a/src/video/winrt/SDL_winrtvideo.cpp
++++ b/src/video/winrt/SDL_winrtvideo.cpp
+@@ -761,6 +761,103 @@ double uwp_get_refresh(void)
+     return returnValue;
+ }
+ 
++#if SDL_VIDEO_OPENGL_EGL
++/* Creates the window's EGL surface (ANGLE's swap chain on the CoreWindow) with
++ * the EGL config SDL_EGL_ChooseConfig last chose, which is the one the GL
++ * context was made with. Used by WINRT_CreateWindow, and to get the surface
++ * back after SDL_WinRTReleaseGLSurface.
++ */
++static int WINRT_CreateEGLSurface(_THIS, SDL_Window *window)
++{
++    SDL_WindowData *data = (SDL_WindowData *)window->driverdata;
++    SDL_VideoData *video_data = (SDL_VideoData *)_this->driverdata;
++
++    if (video_data->winrtEglWindow) { /* ... is the 'old' version of ANGLE/WinRT being used? */
++        /* Attempt to create a window surface using older versions of
++         * ANGLE/WinRT:
++         */
++        Microsoft::WRL::ComPtr<IUnknown> cpp_winrtEglWindow = video_data->winrtEglWindow;
++        data->egl_surface = ((eglCreateWindowSurface_Old_Function)_this->egl_data->eglCreateWindowSurface)(
++            _this->egl_data->egl_display,
++            _this->egl_data->egl_config,
++            cpp_winrtEglWindow, NULL);
++        if (data->egl_surface == NULL) {
++            return SDL_EGL_SetError("unable to create EGL native-window surface", "eglCreateWindowSurface");
++        }
++    } else if (data->coreWindow.Get() != nullptr) {
++        /* Attempt to create a window surface using newer versions of
++         * ANGLE/WinRT:
++         */
++        IInspectable *coreWindowAsIInspectable = reinterpret_cast<IInspectable *>(data->coreWindow.Get());
++        data->egl_surface = _this->egl_data->eglCreateWindowSurface(
++            _this->egl_data->egl_display,
++            _this->egl_data->egl_config,
++            (NativeWindowType)coreWindowAsIInspectable,
++            NULL);
++        if (data->egl_surface == NULL) {
++            return SDL_EGL_SetError("unable to create EGL native-window surface", "eglCreateWindowSurface");
++        }
++    } else {
++        return SDL_SetError("No supported means to create an EGL window surface are available");
++    }
++    return 0;
++}
++
++/* A CoreWindow takes one swap chain at a time. These let an app that presents
++ * with its own (Direct3D 12, say) take the window from ANGLE and give it back,
++ * by destroying and recreating the window's EGL surface.
++ */
++extern "C" DECLSPEC int SDLCALL
++SDL_WinRTReleaseGLSurface(SDL_Window *window)
++{
++    SDL_VideoDevice *_this = SDL_GetVideoDevice();
++    SDL_WindowData *data;
++
++    if (!_this || !_this->egl_data) {
++        return SDL_SetError("EGL not initialized");
++    }
++    if (!window || !window->driverdata) {
++        return SDL_SetError("Invalid window");
++    }
++    data = (SDL_WindowData *)window->driverdata;
++    if (data->egl_surface == EGL_NO_SURFACE) {
++        return 0;
++    }
++
++    /* Nothing may have the surface current when it is destroyed, or EGL would
++     * keep it (and the swap chain) alive. This clears SDL's record of the
++     * current window and context too, so that a later SDL_GL_MakeCurrent isn't
++     * skipped as redundant.
++     */
++    if (SDL_GL_MakeCurrent(window, NULL) != 0) {
++        return -1;
++    }
++    SDL_EGL_DestroySurface(_this, data->egl_surface);
++    data->egl_surface = EGL_NO_SURFACE;
++    return 0;
++}
++
++extern "C" DECLSPEC int SDLCALL
++SDL_WinRTRestoreGLSurface(SDL_Window *window)
++{
++    SDL_VideoDevice *_this = SDL_GetVideoDevice();
++    SDL_WindowData *data;
++
++    if (!_this || !_this->egl_data) {
++        return SDL_SetError("EGL not initialized");
++    }
++    if (!window || !window->driverdata || !(window->flags & SDL_WINDOW_OPENGL)) {
++        return SDL_SetError("Invalid OpenGL window");
++    }
++    data = (SDL_WindowData *)window->driverdata;
++    if (data->egl_surface != EGL_NO_SURFACE) {
++        return 0;
++    }
++    /* Doesn't make anything current: the caller does that. */
++    return WINRT_CreateEGLSurface(_this, window);
++}
++#endif /* SDL_VIDEO_OPENGL_EGL */
++
+ int WINRT_CreateWindow(_THIS, SDL_Window *window)
+ {
+     // Make sure that only one window gets created, at least until multimonitor
+@@ -805,7 +902,6 @@ int WINRT_CreateWindow(_THIS, SDL_Window *window)
+         data->egl_surface = EGL_NO_SURFACE;
+     } else {
+         /* OpenGL ES 2 was reuqested.  Set up an EGL surface. */
+-        SDL_VideoData *video_data = (SDL_VideoData *)_this->driverdata;
+ 
+         /* Call SDL_EGL_ChooseConfig and eglCreateWindowSurface directly,
+          * rather than via SDL_EGL_CreateSurface, as older versions of
+@@ -817,33 +913,8 @@ int WINRT_CreateWindow(_THIS, SDL_Window *window)
+             return -1;
+         }
+ 
+-        if (video_data->winrtEglWindow) { /* ... is the 'old' version of ANGLE/WinRT being used? */
+-            /* Attempt to create a window surface using older versions of
+-             * ANGLE/WinRT:
+-             */
+-            Microsoft::WRL::ComPtr<IUnknown> cpp_winrtEglWindow = video_data->winrtEglWindow;
+-            data->egl_surface = ((eglCreateWindowSurface_Old_Function)_this->egl_data->eglCreateWindowSurface)(
+-                _this->egl_data->egl_display,
+-                _this->egl_data->egl_config,
+-                cpp_winrtEglWindow, NULL);
+-            if (data->egl_surface == NULL) {
+-                return SDL_EGL_SetError("unable to create EGL native-window surface", "eglCreateWindowSurface");
+-            }
+-        } else if (data->coreWindow.Get() != nullptr) {
+-            /* Attempt to create a window surface using newer versions of
+-             * ANGLE/WinRT:
+-             */
+-            IInspectable *coreWindowAsIInspectable = reinterpret_cast<IInspectable *>(data->coreWindow.Get());
+-            data->egl_surface = _this->egl_data->eglCreateWindowSurface(
+-                _this->egl_data->egl_display,
+-                _this->egl_data->egl_config,
+-                (NativeWindowType)coreWindowAsIInspectable,
+-                NULL);
+-            if (data->egl_surface == NULL) {
+-                return SDL_EGL_SetError("unable to create EGL native-window surface", "eglCreateWindowSurface");
+-            }
+-        } else {
+-            return SDL_SetError("No supported means to create an EGL window surface are available");
++        if (WINRT_CreateEGLSurface(_this, window) != 0) {
++            return -1;
+         }
+     }
+ #elif SDL_VIDEO_OPENGL_WGL
+-- 
+2.50.1 (Apple Git-155)
+
