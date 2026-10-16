@@ -587,6 +587,36 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t 
 
 #ifdef DOPLANES
 
+// A two-sided line can be empty even when its sky ceiling heights differ.
+// Software rejects such lines before drawing horizon spans; extending an
+// opaque hardware floor anyway covers the sky behind translucent water.
+static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
+{
+	sector_t temp, *back;
+	boolean ceilingsky, floorsky;
+	if (line->glseg || line->linedef->special != HORIZONSPECIAL)
+		return false;
+	if (!line->backsector)
+		return true;
+	back = R_FakeFlat(line->backsector, &temp, NULL, NULL, true);
+	ceilingsky = front->ceilingpic == skyflatnum && back->ceilingpic == skyflatnum;
+	floorsky = front->floorpic == skyflatnum && back->floorpic == skyflatnum;
+	if (!ceilingsky && !floorsky)
+		return true; // retain ordinary horizon behavior
+	if (ceilingsky && floorsky && !R_IsDebugLine(line) && !line->polyseg
+		&& !line->sidedef->midtexture && ((!front->ffloors && !back->ffloors)
+			|| Tag_Compare(&front->tags, &back->tags)))
+		return false; // Software's all-sky fast path
+
+	// R_IsEmptyLine checks slope identity and all surface/lighting properties.
+	// Shared slopes define the plane height independently of the base height.
+	if ((ceilingsky || front->c_slope || front->ceilingheight == back->ceilingheight)
+		&& (floorsky || front->f_slope || front->floorheight == back->floorheight)
+		&& R_IsEmptyLine(line, front, back))
+		return false;
+	return true;
+}
+
 // -----------------+
 // HWR_RenderPlane  : Render a floor or ceiling convex polygon
 // -----------------+
@@ -805,7 +835,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 		for (i = 0; i < subsector->numlines; i++, line++)
 		{
-			if (!line->glseg && line->linedef->special == HORIZONSPECIAL && R_PointOnSegSide(dup_viewx, dup_viewy, line) == 0)
+			if (HWR_ShouldExtendHorizon(line, gl_frontsector) && R_PointOnSegSide(dup_viewx, dup_viewy, line) == 0)
 			{
 				P_ClosestPointOnLine(viewx, viewy, line->linedef, &v);
 				dist = FIXED_TO_FLOAT(R_PointToDist(v.x, v.y));
