@@ -13,6 +13,9 @@
 /// \brief game loop functions, events handling
 
 #include "doomdef.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "console.h"
 #include "d_main.h"
 #include "d_clisrv.h"
@@ -1300,12 +1303,36 @@ void G_PreLevelTitleCard(void)
 	tic_t endtime = strtime + (PRELEVELTIME*NEWTICRATERATIO);
 	tic_t nowtime = strtime;
 	tic_t lasttime = strtime;
+#ifdef _UWP
+	// Log the animation's rendered frames and drawing/presentation time.
+	const precise_t uwp_title_start = I_GetPreciseTime();
+	precise_t uwp_title_draw = 0, uwp_title_present = 0;
+	precise_t uwp_title_worst_draw = 0, uwp_title_worst_present = 0;
+	INT32 uwp_title_frames = 0;
+#endif
 	while (nowtime < endtime)
 	{
 		// draw loop
+#ifdef _UWP
+		const precise_t uwp_draw_start = I_GetPreciseTime();
+#endif
 		ST_runTitleCard();
 		ST_preLevelTitleCardDrawer();
+#ifdef _UWP
+		const precise_t uwp_present_start = I_GetPreciseTime();
+#endif
 		I_FinishUpdate(); 	// page flip or blit buffer
+#ifdef _UWP
+		const precise_t uwp_draw_time = uwp_present_start - uwp_draw_start;
+		const precise_t uwp_present_time = I_GetPreciseTime() - uwp_present_start;
+		uwp_title_draw += uwp_draw_time;
+		uwp_title_present += uwp_present_time;
+		if (uwp_draw_time > uwp_title_worst_draw)
+			uwp_title_worst_draw = uwp_draw_time;
+		if (uwp_present_time > uwp_title_worst_present)
+			uwp_title_worst_present = uwp_present_time;
+		uwp_title_frames++;
+#endif
 		NetKeepAlive();		// Prevent timeouts
 
 #ifdef HWRENDER
@@ -1323,6 +1350,17 @@ void G_PreLevelTitleCard(void)
 		}
 		lasttime = nowtime;
 	}
+#ifdef _UWP
+	{
+		const double uwp_ms = 1000.0 / I_GetPrecisePrecision();
+		const double uwp_frames = uwp_title_frames ? uwp_title_frames : 1;
+		I_OutputMsg("UWP: track title: %s; %d frames in %.1f ms; draw %.2f ms/frame (worst %.2f), present %.2f ms/frame (worst %.2f)\n",
+			rendermode == render_opengl ? "Direct3D 12" : "Software", uwp_title_frames,
+			(I_GetPreciseTime() - uwp_title_start) * uwp_ms,
+			uwp_title_draw * uwp_ms / uwp_frames, uwp_title_worst_draw * uwp_ms,
+			uwp_title_present * uwp_ms / uwp_frames, uwp_title_worst_present * uwp_ms);
+	}
+#endif
 #endif
 }
 
@@ -5994,6 +6032,10 @@ INT32 G_FindMapByNameOrCode(const char *mapname, char **realmapnamep)
 //
 void G_SetGamestate(gamestate_t newstate)
 {
+
+#ifdef _UWP
+	UWPTraceGamestate((INT32)gamestate, (INT32)newstate);
+#endif
 	gamestate = newstate;
 #ifdef HAVE_DISCORDRPC
 	DRPC_UpdatePresence();

@@ -20,6 +20,9 @@
 #include <tracy/tracy/Tracy.hpp>
 
 #include "doomdef.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "r_local.h"
 #include "p_local.h" // stplyr
 #include "g_game.h" // players
@@ -424,6 +427,9 @@ void V_ReloadPalette(void)
 // -------------+
 void V_SetPalette(INT32 palettenum)
 {
+#ifdef _UWP
+	UWPTraceFade("V_SetPalette palnum=%d configured=%d", palettenum, cv_palettenum.value);
+#endif
 	if (!pLocalPalette)
 		V_ReloadPalette();
 
@@ -453,6 +459,9 @@ void V_SetPalette(INT32 palettenum)
 
 void V_SetPaletteLump(const char *pal)
 {
+#ifdef _UWP
+	UWPTraceFade("V_SetPaletteLump name=%s", pal ? pal : "NULL");
+#endif
 	LoadPalette(pal);
 	V_SetPalette(0);
 }
@@ -1521,6 +1530,9 @@ void V_DrawVhsEffect(boolean rewind)
 //
 void V_DrawFadeScreen(UINT16 color, UINT8 strength)
 {
+#ifdef _UWP
+	UWPTraceFade("V_DrawFadeScreen color=%u strength=%u", color, strength);
+#endif
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
@@ -1599,6 +1611,9 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
 //
 void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
 {
+#ifdef _UWP
+	UWPTraceFade("V_DrawCustomFadeScreen lump=%s strength=%u", lump ? lump : "NULL", strength);
+#endif
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
@@ -1663,6 +1678,9 @@ void V_DrawFadeConsBack(INT32 plines)
 //
 void V_EncoreInvertScreen(void)
 {
+#ifdef _UWP
+	UWPTraceFade("V_EncoreInvertScreen");
+#endif
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{

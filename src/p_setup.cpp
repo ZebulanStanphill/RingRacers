@@ -17,6 +17,9 @@
 #include <fmt/format.h>
 
 #include "cxxutil.hpp"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 
 #include "doomdef.h"
 #include "d_main.h"
@@ -8520,6 +8523,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	boolean fade_shortcircuit = false;
 
+
+#ifdef _UWP
+	UWPTraceLevelLoad(false);
+#endif
 	levelloading = true;
 	g_reloadinggamestate = reloadinggamestate;
 
@@ -9017,6 +9024,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		levelloading = false;
 	}
 
+#ifdef _UWP
+	UWPTraceLevelLoad(true);
+#endif
 	if (rendermode != render_none && reloadinggamestate == false)
 	{
 		R_ResetViewInterpolation(0);

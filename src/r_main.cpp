@@ -17,6 +17,9 @@
 #include <algorithm>
 
 #include "doomdef.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "g_game.h"
 #include "g_input.h"
 #include "r_local.h"
@@ -1416,6 +1419,10 @@ void R_SetupFrame(int s)
 
 		R_SetupCommonFrame(player, r_viewmobj->subsector);
 	}
+#ifdef _UWP
+	if (s == 0)
+		UWPTraceView();
+#endif
 }
 
 void R_SkyboxFrame(int s)

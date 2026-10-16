@@ -33,8 +33,14 @@
 #endif
 
 #include <time.h>
+#ifdef _UWP
+#include <cstdarg>
+#endif
 
 #include "doomdef.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "am_map.h"
 #include "console.h"
 #include "d_net.h"
@@ -359,6 +365,227 @@ gamestate_t wipegamestate = GS_LEVEL;
 INT16 wipetypepre = -1;
 INT16 wipetypepost = -1;
 
+#ifdef _UWP
+// Main-thread diagnostics only. The clocks, counters and snapshots below are trace-owned.
+static precise_t uwp_traceOrigin, uwp_fadeStart, uwp_levelStart;
+static bool uwp_traceStarted = false, uwp_levelStarted = false;
+static INT32 uwp_traceState = GS_NULL;
+static UINT32 uwp_traceFrame, uwp_traceLoad, uwp_fadeLines, uwp_titleSamples;
+static UINT32 uwp_frameLines[2], uwp_lightFadeSamples;
+static INT32 uwp_lightFadeSector = -1;
+static bool uwp_windowNoted[2];
+static tic_t uwp_lastDrawTic;
+static INT32 uwp_lastPalette = INT32_MIN;
+static bool uwp_frameWanted, uwp_frameCaptured, uwp_worldDrawn;
+static INT32 uwp_frameWindow;
+static struct
+{
+	UINT32 frame;
+	tic_t tic, lt;
+	precise_t time;
+	fixed_t frac, x, y, z, rawx, rawy, rawz, vx, vy, vz;
+	angle_t va;
+	bool hasMobj;
+} uwp_frame;
+
+static precise_t UWPTraceNow(void)
+{
+	const precise_t now = I_GetPreciseTime();
+	if (!uwp_traceStarted)
+	{
+		uwp_traceStarted = true;
+		uwp_traceOrigin = uwp_fadeStart = now;
+	}
+	return now;
+}
+
+static double UWPTraceMs(precise_t elapsed)
+{
+	return elapsed * 1000.0 / I_GetPrecisePrecision();
+}
+
+static const char *UWPTraceRenderer(void)
+{
+	return rendermode == render_soft ? "Software/RHI" :
+		rendermode == render_opengl ? "LegacyGL/D3D12" : "none";
+}
+
+static void UWPTraceResetFade(precise_t now)
+{
+	uwp_fadeStart = now;
+	uwp_fadeLines = uwp_titleSamples = uwp_lightFadeSamples = 0;
+	uwp_lightFadeSector = -1;
+}
+
+void UWPTraceGamestate(INT32 oldstate, INT32 newstate)
+{
+	if (oldstate == newstate)
+		return;
+	const precise_t now = UWPTraceNow();
+	uwp_traceState = newstate;
+	UWPTraceResetFade(now);
+	// Transitions always open a new window; they cannot be hidden by the previous cap.
+	char line[384];
+	snprintf(line, sizeof line, "UWP fade: f=%u t=%.1f dt=0.0 load=%u gs=%d path=%s state=%d->%d wipegs=%d titlemap=%d\n",
+		uwp_traceFrame, UWPTraceMs(now - uwp_traceOrigin), uwp_traceLoad, newstate,
+		UWPTraceRenderer(), oldstate, newstate, (INT32)wipegamestate, titlemapinaction);
+	I_OutputMsg("%s", line);
+	uwp_fadeLines++;
+}
+
+void UWPTraceFade(const char *format, ...)
+{
+	if (uwp_traceState != (INT32)gamestate)
+		UWPTraceGamestate(uwp_traceState, (INT32)gamestate);
+	const precise_t now = UWPTraceNow();
+	if (now - uwp_fadeStart >= 10 * I_GetPrecisePrecision() || uwp_fadeLines >= 200)
+		return;
+	char event[384], line[640];
+	va_list args;
+	va_start(args, format);
+	vsnprintf(event, sizeof event, format, args);
+	va_end(args);
+	snprintf(line, sizeof line, "UWP fade: f=%u t=%.1f dt=%.1f load=%u gs=%d path=%s %s\n",
+		uwp_traceFrame, UWPTraceMs(now - uwp_traceOrigin), UWPTraceMs(now - uwp_fadeStart),
+		uwp_traceLoad, (INT32)gamestate, UWPTraceRenderer(), event);
+	I_OutputMsg("%s", line);
+	uwp_fadeLines++;
+}
+
+void UWPTraceLevelLoad(boolean loaded)
+{
+	const precise_t now = UWPTraceNow();
+	if (uwp_traceState != (INT32)gamestate)
+		UWPTraceGamestate(uwp_traceState, (INT32)gamestate);
+	if (!loaded)
+	{
+		uwp_traceLoad++;
+		uwp_levelStarted = false;
+		uwp_frameWanted = uwp_frameCaptured = uwp_worldDrawn = false;
+	}
+	UWPTraceResetFade(now);
+	if (loaded)
+	{
+		uwp_levelStart = now;
+		uwp_levelStarted = true;
+		uwp_frameLines[0] = uwp_frameLines[1] = 0;
+		uwp_windowNoted[0] = uwp_windowNoted[1] = false;
+		uwp_lastDrawTic = gametic;
+	}
+	UWPTraceFade("level-load=%s map=%d lt=%u", loaded ? "ready" : "begin", gamemap, (UINT32)leveltime);
+}
+
+void UWPTraceBeginFrame(void)
+{
+	++uwp_traceFrame; // D_Display and each actual wipe draw, including outside trace windows.
+}
+
+UINT32 UWPTraceFrameId(void)
+{
+	return uwp_traceFrame;
+}
+
+void UWPTraceTitleBackground(boolean started)
+{
+	static INT32 lastStarted = -1, lastColor, lastHide, lastMap;
+	static UINT32 lastLoad;
+	static precise_t lastWindow;
+	if (gamestate != GS_TITLESCREEN)
+		return;
+	if (lastStarted != (INT32)started || lastColor != curbgcolor || lastHide != curbghide
+		|| lastMap != titlemapinaction || lastLoad != uwp_traceLoad || lastWindow != uwp_fadeStart)
+	{
+		UWPTraceFade("title-bg=%s started=%d bgcolor=%d bghide=%d titlemap=%d",
+			!started ? "black" : curbgcolor >= 0 ? "fill" :
+			(!curbghide || !titlemapinaction) ? "sky-scroll" : "title-map",
+			started, curbgcolor, curbghide, titlemapinaction);
+		lastStarted = started; lastColor = curbgcolor; lastHide = curbghide;
+		lastMap = titlemapinaction; lastLoad = uwp_traceLoad; lastWindow = uwp_fadeStart;
+	}
+}
+
+void UWPTraceTitleLightFade(INT32 sector, INT32 light, INT32 source, INT32 dest, INT32 timer, INT32 step)
+{
+	if (gamestate != GS_TITLESCREEN || uwp_lightFadeSamples >= 20)
+		return;
+	if (uwp_lightFadeSector == -1)
+		uwp_lightFadeSector = sector;
+	if (sector == uwp_lightFadeSector)
+		UWPTraceFade("title-lightfade[%u] lt=%u sector=%d light=%d source=%d dest=%d timer=%d step=%.3f",
+			uwp_lightFadeSamples++, (UINT32)leveltime, sector, light, source, dest, timer, FIXED_TO_FLOAT(step));
+}
+
+void UWPTraceView(void)
+{
+	// Called at the end of R_SetupFrame for player 1, after view interpolation and
+	// before either renderer can replace the main camera with a skybox/portal camera.
+	if (viewssnum != 0)
+		return;
+	if (gamestate == GS_TITLESCREEN && uwp_titleSamples < 20)
+	{
+		const extracolormap_t *cm = viewsector ? viewsector->extra_colormap : NULL;
+		UWPTraceFade("title-light[%u] lt=%u curfade=%d lt_fade=%u sector=%d light=%d tint=%08x fog=%08x range=%u/%u",
+			uwp_titleSamples++, (UINT32)leveltime, curfadevalue, (UINT32)lt_fade,
+			viewsector ? (INT32)(viewsector - sectors) : -1, viewsector ? viewsector->lightlevel : -1,
+			cm ? (UINT32)cm->rgba : 0, cm ? (UINT32)cm->fadergba : 0,
+			cm ? cm->fadestart : 0, cm ? cm->fadeend : 31);
+	}
+	if (!uwp_frameWanted || !uwp_worldDrawn || gamestate != GS_LEVEL)
+		return;
+	uwp_frame.frame = uwp_traceFrame;
+	uwp_frame.time = I_GetPreciseTime();
+	uwp_frame.tic = gametic; uwp_frame.lt = leveltime; uwp_frame.frac = rendertimefrac;
+	uwp_frame.vx = viewx; uwp_frame.vy = viewy; uwp_frame.vz = viewz; uwp_frame.va = viewangle;
+	mobj_t *mo = players[displayplayers[0]].mo;
+	uwp_frame.hasMobj = mo != NULL;
+	if (mo)
+	{
+		interpmobjstate_t interp;
+		R_InterpolateMobjState(mo, R_UsingFrameInterpolation() && !paused ? rendertimefrac : FRACUNIT, &interp);
+		uwp_frame.x = interp.x; uwp_frame.y = interp.y; uwp_frame.z = interp.z;
+		uwp_frame.rawx = mo->x; uwp_frame.rawy = mo->y; uwp_frame.rawz = mo->z;
+	}
+	else
+	{
+		uwp_frame.x = uwp_frame.y = uwp_frame.z = 0;
+		uwp_frame.rawx = uwp_frame.rawy = uwp_frame.rawz = 0;
+	}
+	uwp_frameCaptured = true;
+}
+
+static void UWPTraceFinishFrame(bool wipe, bool presented)
+{
+	if (st_palette != uwp_lastPalette)
+	{
+		if (uwp_lastPalette == INT32_MIN)
+			UWPTraceFade("st_palette=%d initial", st_palette);
+		else
+			UWPTraceFade("st_palette=%d->%d", uwp_lastPalette, st_palette);
+		uwp_lastPalette = st_palette;
+	}
+	if (uwp_frameCaptured)
+	{
+		INT32 copied = -1, shown = -1;
+		UINT32 copyframe = 0, showframe = 0;
+		char line[640];
+		snprintf(line, sizeof line, "UWP frame: f=%u load=%u t=%.1f lt=%u tics=%u frac=%.3f mo=%d p=(%.1f,%.1f,%.1f) raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.1f,%.1f) title=%u/%u slot=%d/shown=%d copyf=%u/showf=%u present=%s\n",
+			uwp_frame.frame, uwp_traceLoad, UWPTraceMs(uwp_frame.time - uwp_levelStart),
+			(UINT32)uwp_frame.lt, (UINT32)(uwp_frame.tic - uwp_lastDrawTic), FIXED_TO_FLOAT(uwp_frame.frac),
+			uwp_frame.hasMobj, FIXED_TO_FLOAT(uwp_frame.x), FIXED_TO_FLOAT(uwp_frame.y), FIXED_TO_FLOAT(uwp_frame.z),
+			FIXED_TO_FLOAT(uwp_frame.rawx), FIXED_TO_FLOAT(uwp_frame.rawy), FIXED_TO_FLOAT(uwp_frame.rawz),
+			FIXED_TO_FLOAT(uwp_frame.vx), FIXED_TO_FLOAT(uwp_frame.vy), FIXED_TO_FLOAT(uwp_frame.vz),
+			uwp_frame.va / (double)ANG1, (UINT32)lt_ticker, (UINT32)lt_lasttic, copied, shown,
+			copyframe, showframe, presented ? (wipe ? "wipe" : "normal") : "none");
+		I_OutputMsg("%s", line);
+		uwp_frameLines[uwp_frameWindow]++;
+	}
+	// Count all actual world draws, including the gap between the two trace windows.
+	if (uwp_worldDrawn)
+		uwp_lastDrawTic = gametic;
+	uwp_frameWanted = uwp_frameCaptured = uwp_worldDrawn = false;
+}
+#endif
+
 static bool D_Display(bool world)
 {
 	bool ranwipe = false;
@@ -371,6 +598,10 @@ static bool D_Display(bool world)
 
 #ifdef _UWP
 	UWPProfPhase uwpprofphase(UWPPROF_2D);
+	if (uwp_traceState != (INT32)gamestate)
+		UWPTraceGamestate(uwp_traceState, (INT32)gamestate);
+	uwp_frameCaptured = uwp_frameWanted = uwp_worldDrawn = false;
+
 #endif
 
 	if (g_takemapthumbnail != TMT_NO)
@@ -482,6 +713,25 @@ static bool D_Display(bool world)
 	if (dedicated) //bail out after wipe logic
 		return false;
 
+#ifdef _UWP
+	UWPTraceBeginFrame();
+	const bool titleWindow = lt_ticker < lt_endtime + TICRATE;
+	const bool raceWindow = leveltime >= 10 * TICRATE && leveltime < 20 * TICRATE;
+	uwp_frameWindow = titleWindow ? 0 : 1;
+	if (gamestate == GS_LEVEL && uwp_levelStarted && (titleWindow || raceWindow)
+		&& uwp_frameLines[uwp_frameWindow] < 300)
+	{
+		uwp_frameWanted = true;
+		if (!uwp_windowNoted[uwp_frameWindow])
+		{
+			I_OutputMsg("UWP frame window: f=%u load=%u window=%s interp=%d frac=%.3f limit=300 angle=degrees slots=last-present copyf/showf=source-draw\n",
+				uwp_traceFrame, uwp_traceLoad, titleWindow ? "title" : "10-20s",
+				R_UsingFrameInterpolation(), FIXED_TO_FLOAT(rendertimefrac));
+			uwp_windowNoted[uwp_frameWindow] = true;
+		}
+	}
+#endif
+
 	// Catch runaway clipping rectangles.
 	V_ClearClipRect();
 
@@ -549,6 +799,9 @@ static bool D_Display(bool world)
 		{
 			if (!automapactive && !dedicated && cv_renderview.value && (world || forcerefresh))
 			{
+#ifdef _UWP
+				uwp_worldDrawn = true;
+#endif
 				R_ApplyLevelInterpolators(R_UsingFrameInterpolation() ? rendertimefrac : FRACUNIT);
 
 				viewwindowy = 0;
@@ -847,6 +1100,9 @@ static bool D_Display(bool world)
 		ps_swaptime = I_GetPreciseTime() - ps_swaptime;
 	}
 
+#ifdef _UWP
+	UWPTraceFinishFrame(wipe, !wipe || ranwipe);
+#endif
 	return ranwipe;
 }
 

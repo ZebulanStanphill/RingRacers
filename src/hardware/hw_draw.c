@@ -16,6 +16,9 @@
 #endif
 
 #include "../doomdef.h"
+#ifdef _UWP
+#include "../sdl/i_uwptrace.h"
+#endif
 
 #ifdef HWRENDER
 #include "hw_main.h"
@@ -738,6 +741,9 @@ void HWR_DrawConsoleBack(UINT32 color, INT32 height)
 
 void HWR_EncoreInvertScreen(void)
 {
+#ifdef _UWP
+	UWPTraceFade("HWR_EncoreInvertScreen");
+#endif
 	FOutVector v[4];
 	FSurfaceInfo Surf;
 
@@ -781,6 +787,9 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
 	else
 		Surf.PolyColor.s.alpha = workingstrength;
 
+#ifdef _UWP
+	UWPTraceFade("HWR_DrawCustomFadeScreen color=%u strength=%u rgba=%08x alpha=%u", color, strength, Surf.PolyColor.rgba, Surf.PolyColor.s.alpha);
+#endif
 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Modulated|PF_Translucent|PF_NoDepthTest);
 }
 

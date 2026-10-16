@@ -14,6 +14,9 @@
 ///        Fire flicker, light flash, strobe flash, lightning flash, glow, and fade.
 
 #include "doomdef.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "p_local.h"
 #include "r_state.h"
 #include "z_zone.h"
@@ -401,10 +404,16 @@ void T_LightFade(lightlevel_t *ll)
 	if (--ll->timer <= 0)
 	{
 		ll->sector->lightlevel = ll->destlevel; // set to dest lightlevel
+#ifdef _UWP
+		UWPTraceTitleLightFade((INT32)(ll->sector - sectors), ll->sector->lightlevel, ll->sourcelevel, ll->destlevel, ll->timer, ll->fixedpertic);
+#endif
 		P_RemoveLighting(ll->sector); // clear lightingdata, remove thinker
 		return;
 	}
 
 	ll->fixedcurlevel = ll->fixedcurlevel + ll->fixedpertic;
 	ll->sector->lightlevel = (ll->fixedcurlevel)>>FRACBITS;
+#ifdef _UWP
+	UWPTraceTitleLightFade((INT32)(ll->sector - sectors), ll->sector->lightlevel, ll->sourcelevel, ll->destlevel, ll->timer, ll->fixedpertic);
+#endif
 }

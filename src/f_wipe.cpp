@@ -14,6 +14,9 @@
 /// \brief SRB2 2.1 custom fade mask "wipe" behavior.
 
 #include "f_finale.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "i_video.h"
 #include "v_video.h"
 
@@ -463,6 +466,11 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 	if (staffsync)
 		return;
 
+#ifdef _UWP
+	const precise_t traceStart = I_GetPreciseTime();
+	UINT32 traceFrames = 0;
+	UWPTraceFade("F_RunWipe start mode=%u type=%u reverse=%d wiggle=%d colormap=%s menu=%d", wipemode, wipetype, reverse, encorewiggle, colormap ? colormap : "NULL", drawMenu);
+#endif
 	if (colormap != NULL)
 		clump = W_GetNumForName(colormap);
 
@@ -493,6 +501,10 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		if (!fmask)
 			break;
 
+#ifdef _UWP
+		UWPTraceBeginFrame();
+		++traceFrames;
+#endif
 		// wait loop
 		while (!((nowtime = I_GetTime()) - lastwipetic))
 		{
@@ -568,6 +580,9 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		NetKeepAlive(); // Update the network so we don't cause timeouts
 	}
 
+#ifdef _UWP
+	UWPTraceFade("F_RunWipe end mode=%u type=%u frames=%u ms=%.1f reverse=%d", wipemode, wipetype, traceFrames, (I_GetPreciseTime() - traceStart) * 1000.0 / I_GetPrecisePrecision(), reverse);
+#endif
 	WipeInAction = false;
 
 	if (fcolor)

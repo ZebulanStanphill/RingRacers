@@ -13,6 +13,9 @@
 /// \brief Title screen, intro, game evaluation, and credits.
 
 #include "doomdef.h"
+#ifdef _UWP
+#include "sdl/i_uwptrace.h"
+#endif
 #include "doomstat.h"
 #include "d_main.h"
 #include "d_netcmd.h"
@@ -1910,6 +1913,9 @@ void F_VersionDrawer(void)
 // (no longer) De-Demo'd Title Screen
 void F_TitleScreenDrawer(void)
 {
+#ifdef _UWP
+	UWPTraceTitleBackground(cache_gametrulystarted);
+#endif
 	boolean hidepics = false;
 
 	// Draw that sky!

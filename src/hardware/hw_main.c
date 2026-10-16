@@ -14,6 +14,9 @@
 #include <math.h>
 
 #include "../doomstat.h"
+#ifdef _UWP
+#include "../sdl/i_uwptrace.h"
+#endif
 
 #ifdef HWRENDER
 #include "hw_glob.h"
@@ -6322,6 +6325,9 @@ void HWR_DoPostProcessor(player_t *player)
 		v[0].y = v[1].x = v[1].y = v[2].x = 4.0f;
 		v[0].z = v[1].z = v[2].z = v[3].z = 4.0f; // 4.0 because of the same reason as with the sky, just after the screen is cleared so near clipping plane is 3.99
 
+#ifdef _UWP
+		UWPTraceFade("HWR_DoPostProcessor flashcount=%d flashpal=%d view=%d", player->flashcount, player->flashpal, R_GetViewNumber());
+#endif
 		// This won't change if the flash palettes are changed unfortunately, but it works for its purpose
 		if (player->flashpal == PAL_NUKE)
 		{
