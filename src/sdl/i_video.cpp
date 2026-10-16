@@ -32,6 +32,7 @@
 #ifdef _UWP
 extern "C" __declspec(dllimport) float uwp_GetRefreshRate();
 extern "C" __declspec(dllimport) void  uwp_GetScreenSize(int*, int*);
+extern "C" __declspec(dllimport) void  uwp_SetScreenSize(int, int);
 #endif
 
 #ifdef HAVE_SDL
@@ -1355,6 +1356,25 @@ static void UWPLogGLStrings(void)
 		I_OutputMsg("UWP: %s: %s\n", string.label, value ? reinterpret_cast<const char *>(value) : "(null)");
 	}
 }
+
+// [UWP]: Render at the size of ANGLE's window surface, which can be smaller than the HDMI display mode
+static void UWPUseSurfaceSize(void)
+{
+	using GetIntegervFn = void (WINAPI *)(unsigned int, int *);
+	GetIntegervFn getintegerv = reinterpret_cast<GetIntegervFn>(SDL_GL_GetProcAddress("glGetIntegerv"));
+	static boolean done = false;
+	int viewport[4] = {0, 0, 0, 0};
+
+	if (done || getintegerv == nullptr)
+		return;
+	done = true;
+
+	// A context's initial viewport is the size of the surface it was first made current with
+	getintegerv(0x0BA2 /* GL_VIEWPORT */, viewport);
+	I_OutputMsg("UWP: surface size %dx%d\n", viewport[2], viewport[3]);
+	if (viewport[2] > 0 && viewport[3] > 0)
+		uwp_SetScreenSize(viewport[2], viewport[3]);
+}
 #endif
 
 static SDL_bool Impl_CreateContext(void)
@@ -1383,8 +1403,16 @@ static SDL_bool Impl_CreateContext(void)
 	if (!sdlglcontext)
 	{
 		SDL_GL_ResetAttributes();
+#ifdef _UWP
+		// [UWP]: OpenGL ES 2 through ANGLE (Direct3D 11), since Xbox One consoles can't run Mesa's D3D12 driver
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+		I_OutputMsg("UWP: creating RHI GL context\n");
+#else
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+#endif
 		sdlglcontext = SDL_GL_CreateContext(window);
 	}
 	if (sdlglcontext == NULL)
@@ -1396,6 +1424,7 @@ static SDL_bool Impl_CreateContext(void)
 	SDL_GL_MakeCurrent(window, sdlglcontext);
 #ifdef _UWP
 	UWPLogGLStrings();
+	UWPUseSurfaceSize();
 #endif
 
 	if (!g_rhi)

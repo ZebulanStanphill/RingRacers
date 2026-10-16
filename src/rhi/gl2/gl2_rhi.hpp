@@ -114,6 +114,12 @@ class Gl2Rhi final : public Rhi
 
 	std::unique_ptr<GladGLContext> gl_;
 
+	// OpenGL ES 2 context (e.g. ANGLE), which needs unsized texture formats and has no glClearDepth or glReadBuffer
+	bool gles_ = false;
+	GlProc clear_depthf_ = nullptr;
+
+	void clear_depth(float depth);
+
 	Slab<Gl2Texture> texture_slab_;
 	Slab<Gl2Buffer> buffer_slab_;
 	Slab<Gl2Renderbuffer> renderbuffer_slab_;

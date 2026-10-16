@@ -23,6 +23,10 @@
 #include "../w_wad.h"
 #include "../z_zone.h"
 
+#ifdef _UWP
+extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
+#endif
+
 using namespace srb2;
 using namespace srb2::rhi;
 
@@ -118,6 +122,11 @@ rhi::Rect SdlGl2Platform::get_default_framebuffer_dimensions()
 	SRB2_ASSERT(window != nullptr);
 	int w;
 	int h;
+#ifdef _UWP
+	// [UWP]: Match vid.realwidth and vid.realheight, which come from libuwp
+	uwp_GetScreenSize(&w, &h);
+#else
 	SDL_GL_GetDrawableSize(window, &w, &h);
+#endif
 	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
 }

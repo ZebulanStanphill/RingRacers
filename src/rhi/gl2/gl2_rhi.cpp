@@ -10,6 +10,7 @@
 
 #include "gl2_rhi.hpp"
 
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -610,6 +611,37 @@ Gl2Rhi::Gl2Rhi(std::unique_ptr<Gl2Platform>&& platform, GlLoadFunc load_func) : 
 {
 	gl_ = std::make_unique<GladGLContext>();
 	gladLoadGLContext(gl_.get(), load_func);
+
+	const char* version = reinterpret_cast<const char*>(gl_->GetString(GL_VERSION));
+	gles_ = version != nullptr && std::strncmp(version, "OpenGL ES", 9) == 0;
+	if (gles_)
+	{
+		// Framebuffer objects are core in OpenGL ES 2, but glad only loads them for desktop GL 3.0 or
+		// ARB_framebuffer_object
+		gl_->BindFramebuffer = reinterpret_cast<PFNGLBINDFRAMEBUFFERPROC>(load_func("glBindFramebuffer"));
+		gl_->BindRenderbuffer = reinterpret_cast<PFNGLBINDRENDERBUFFERPROC>(load_func("glBindRenderbuffer"));
+		gl_->CheckFramebufferStatus = reinterpret_cast<PFNGLCHECKFRAMEBUFFERSTATUSPROC>(load_func("glCheckFramebufferStatus"));
+		gl_->DeleteFramebuffers = reinterpret_cast<PFNGLDELETEFRAMEBUFFERSPROC>(load_func("glDeleteFramebuffers"));
+		gl_->DeleteRenderbuffers = reinterpret_cast<PFNGLDELETERENDERBUFFERSPROC>(load_func("glDeleteRenderbuffers"));
+		gl_->FramebufferRenderbuffer = reinterpret_cast<PFNGLFRAMEBUFFERRENDERBUFFERPROC>(load_func("glFramebufferRenderbuffer"));
+		gl_->FramebufferTexture2D = reinterpret_cast<PFNGLFRAMEBUFFERTEXTURE2DPROC>(load_func("glFramebufferTexture2D"));
+		gl_->GenFramebuffers = reinterpret_cast<PFNGLGENFRAMEBUFFERSPROC>(load_func("glGenFramebuffers"));
+		gl_->GenRenderbuffers = reinterpret_cast<PFNGLGENRENDERBUFFERSPROC>(load_func("glGenRenderbuffers"));
+		gl_->RenderbufferStorage = reinterpret_cast<PFNGLRENDERBUFFERSTORAGEPROC>(load_func("glRenderbufferStorage"));
+		clear_depthf_ = load_func("glClearDepthf");
+	}
+}
+
+void Gl2Rhi::clear_depth(float depth)
+{
+	if (gles_)
+	{
+		reinterpret_cast<void (GLAD_API_PTR*)(GLfloat)>(clear_depthf_)(depth);
+	}
+	else
+	{
+		gl_->ClearDepth(depth);
+	}
 }
 
 Gl2Rhi::~Gl2Rhi() = default;
@@ -619,6 +651,12 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 	GLenum internal_format = map_internal_texture_format(desc.format);
 	SRB2_ASSERT(internal_format != GL_ZERO);
 	GLenum format = GL_RGBA;
+	if (gles_)
+	{
+		// OpenGL ES 2 requires an unsized internal format matching the data format
+		internal_format = map_texture_format(desc.format);
+		format = internal_format;
+	}
 
 	GLuint name = 0;
 	gl_->GenTextures(1, &name);
@@ -851,8 +889,8 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
 	srb2::Vector<const char*> frag_sources;
 	ShaderLoadContext vert_ctx;
 	ShaderLoadContext frag_ctx;
-	vert_ctx.set_version("120");
-	frag_ctx.set_version("120");
+	vert_ctx.set_version(gles_ ? "100" : "120");
+	frag_ctx.set_version(gles_ ? "100" : "120");
 	for (auto def : desc.defines)
 	{
 		vert_ctx.define(def);
@@ -1009,7 +1047,7 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
 	if (clear)
 	{
 		gl_->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-		gl_->ClearDepth(1.0f);
+		clear_depth(1.0f);
 		gl_->ClearStencil(0);
 		gl_->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 		GL_ASSERT;
@@ -1064,7 +1102,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
 
 	if (info.depth_load_op == rhi::AttachmentLoadOp::kClear)
 	{
-		gl_->ClearDepth(1.f);
+		clear_depth(1.f);
 		clear_bits |= GL_DEPTH_BUFFER_BIT;
 	}
 	if (info.stencil_load_op == rhi::AttachmentLoadOp::kClear)
@@ -1514,9 +1552,28 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
 	SRB2_ASSERT(rect.x + rect.w <= src_dim.w);
 	SRB2_ASSERT(rect.y + rect.h <= src_dim.h);
 
-	GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
-	gl_->ReadBuffer(read_buffer);
-	GL_ASSERT;
+	if (!gles_)
+	{
+		GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
+		gl_->ReadBuffer(read_buffer);
+		GL_ASSERT;
+	}
+
+	if (gles_ && format == PixelFormat::kRGB8)
+	{
+		// OpenGL ES 2 only guarantees RGBA readback, so read that and drop alpha
+		srb2::Vector<std::byte> rgba(static_cast<size_t>(rect.w) * rect.h * 4);
+		gl_->ReadPixels(rect.x, rect.y, rect.w, rect.h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+		GL_ASSERT;
+		for (uint32_t y = 0; y < rect.h; y++)
+		{
+			for (uint32_t x = 0; x < rect.w; x++)
+			{
+				std::memcpy(&out[y * pack_stride + x * 3], &rgba[(static_cast<size_t>(y) * rect.w + x) * 4], 3);
+			}
+		}
+		return;
+	}
 
 	gl_->ReadPixels(rect.x, rect.y, rect.w, rect.h, layout, type, out.data());
 	GL_ASSERT;
@@ -1677,9 +1734,12 @@ void Gl2Rhi::copy_framebuffer_to_texture(
 	SRB2_ASSERT(src_region.x + src_region.w <= src_dim.w);
 	SRB2_ASSERT(src_region.y + src_region.h <= src_dim.h);
 
-	GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
-	gl_->ReadBuffer(read_buffer);
-	GL_ASSERT;
+	if (!gles_)
+	{
+		GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
+		gl_->ReadBuffer(read_buffer);
+		GL_ASSERT;
+	}
 
 	gl_->BindTexture(GL_TEXTURE_2D, tex.texture);
 	GL_ASSERT;
