@@ -668,6 +668,12 @@ static bool D_Display(bool world)
 		I_UpdateNoBlit();
 	}
 
+#ifdef HAVE_D3D12
+	// Before any frame drawing or wipe capture: no in-flight batches hold GLMipmap pointers here.
+	if (rendermode == render_opengl && D3D12_TakeTextureFlushRequest())
+		HWR_ClearAllTextures();
+#endif
+
 	// save the current screen if about to wipe
 	wipe = (gamestate != wipegamestate);
 	if (wipe)
