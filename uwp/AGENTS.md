@@ -2,9 +2,14 @@
 
 Keep each commit focused: implement one change or fix per commit, with the
 documentation for that change. Split unrelated changes into separate commits,
-even when they're made in the same session. The engine changes stay one commit
-in the embedded patch, so each of this repository's commits updates
-`patches/ringracers-uwp.patch` with just its own change.
+even when they're made in the same session.
+
+The engine is the `RingRacers` submodule,
+[ZebulanStanphill/RingRacers](https://github.com/ZebulanStanphill/RingRacers):
+upstream's `maintenance-2.4` with our changes, one commit each, and their tests
+(follow its `AGENTS.md` there). An engine change is a commit in the fork, pushed
+there, plus a commit here that moves the submodule to it with that change's
+`CHANGES.md` entry.
 
 # Commit attribution
 
@@ -21,8 +26,8 @@ Model: gpt-6.1-sol
 ```
 
 Preserve the human Git author identity. Do not invent model names or attribute
-earlier work to the current agent. Apply this convention to embedded patch commit
-messages as well as this repository's commits.
+earlier work to the current agent. Apply this convention to the engine fork's
+commits as well as this repository's.
 
 # Delegating work
 
@@ -32,8 +37,7 @@ and replies to the user. Give each subagent a self-contained brief: the
 settled design, constraints, and the commit attribution to use.
 
 - Menial tasks (mechanical edits, searches, log extraction, documentation
-  updates, patch exports): prefer Haiku 5.5, falling back to the latest GPT
-  Luna model.
+  updates): prefer Haiku 5.5, falling back to the latest GPT Luna model.
 - Medium tasks (implementing a settled design, focused fixes, writing tests):
   prefer GPT-6.1-Sol, falling back to Sonnet 5.5.
 

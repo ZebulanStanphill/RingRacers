@@ -6,103 +6,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  regressions:
-    name: Native regression tests (ASan + UBSan)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Prepare patched v2.4 source
-        run: python3 tests/prepare-source.py build/regression-source
-
-      - name: Configure
-        run: >-
-          cmake -S tests -B build/regression
-          -DRR_SOURCE_DIR="$PWD/build/regression-source"
-          -DCMAKE_CXX_COMPILER=clang++
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DRR_SANITIZERS=ON
-
-      - name: Build tests
-        run: cmake --build build/regression --parallel 4
-
-      - name: Run tests
-        run: ctest --test-dir build/regression --output-on-failure --output-junit results.xml
-
-      - name: Upload installable shader test
-        uses: actions/upload-artifact@v7
-        with:
-          name: shader-smoke-test
-          path: |
-            tests/addons/shader-smoke/D_ShaderSmoke_v1.pk3
-            tests/addons/shader-smoke/README.md
-          if-no-files-found: error
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: regression-results
-          path: |
-            build/regression/translated-shaders/*.hlsl
-            build/regression/results.xml
-            build/regression/Testing/Temporary/LastTest.log
-            build/regression/Testing/Temporary/LastTestsFailed.log
-          if-no-files-found: warn
-
-  # The WARP renderer tests and the app build share nothing, so they run side by side and the build doesn't wait
-  # for the Linux job. A failed test still fails the run; the package is uploaded either way.
-  warp:
-    name: Direct3D renderer regressions (WARP)
-    needs: regressions
-    runs-on: windows-2022
-    timeout-minutes: 60
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up x64 MSVC environment
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ($LASTEXITCODE -ne 0 -or !$vs) { throw "Visual Studio C++ tools were not found" }
-          $before = [Environment]::GetEnvironmentVariables('Process')
-          & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
-          Get-Command cl.exe, fxc.exe, msbuild.exe -ErrorAction Stop | Select-Object Name, Source
-          # Each step starts a new shell; preserve the developer environment.
-          foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
-            if ($before[$entry.Key] -cne $entry.Value) {
-              "$($entry.Key)=$($entry.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            }
-          }
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: regression-results
-          path: regression-results
-
-      - name: Compile translated add-on shader fixtures
-        shell: pwsh
-        run: |
-          $fxc = (Get-Command fxc -ErrorAction Stop).Source
-          $fixtures = @(Get-ChildItem regression-results -Recurse -Filter *.hlsl | Where-Object { $_.Directory.Name -eq 'translated-shaders' })
-          if ($fixtures.Count -ne 97) { throw "Expected 97 SM5.1 translated shader stages; found $($fixtures.Count)" }
-          foreach ($fixture in $fixtures) {
-            $profile = if ($fixture.Name.EndsWith('.vert.hlsl')) { 'vs_5_1' } else { 'ps_5_1' }
-            & $fxc /nologo /O3 /T $profile /E main /Fo "$env:TEMP/rr-shader-test.cso" $fixture.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-
-      - name: Direct3D 12 renderer regressions (WARP + debug layer)
-        shell: pwsh
-        run: |
-          python tests/prepare-source.py build/shader-regression-source
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./tests/run-d3d12.ps1 -Engine build/shader-regression-source
-
   build:
     runs-on: windows-2022
     timeout-minutes: 180
@@ -112,7 +15,15 @@ jobs:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
 
     steps:
+      # The engine is the RingRacers submodule (ZebulanStanphill/RingRacers), whose own CI runs its tests
       - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Find the engine commit
+        id: engine
+        shell: pwsh
+        run: '"sha=$(git rev-parse HEAD:RingRacers)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
 
       # Full clone: Ring Racers' vcpkg.json pins a builtin-baseline commit
       - name: Set up vcpkg
@@ -126,7 +37,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: vcpkg-cache
-          key: vcpkg-${{ hashFiles('patches/ringracers-uwp.patch', 'build.ps1') }}
+          key: vcpkg-${{ steps.engine.outputs.sha }}-${{ hashFiles('build.ps1') }}
           restore-keys: vcpkg-
 
       - name: Set up x64 MSVC environment

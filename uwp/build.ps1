@@ -3,8 +3,8 @@
 Builds Ring Racers for UWP (Xbox Dev Mode).
 
 .DESCRIPTION
-Clones Ring Racers at the pinned release, applies patches/ringracers-uwp.patch,
-builds it as a static library with the ninja-x64_windows_uwp_vcpkg-release
+Builds the RingRacers submodule (ZebulanStanphill/RingRacers: Ring Racers with this
+port's engine changes) as a static library with the ninja-x64_windows_uwp_vcpkg-release
 preset, builds SDL2 for UWP with OpenGL ES through ANGLE
 (patches/sdl-angle.patch) and a fix for controllers showing up twice
 (patches/sdl-controller-duplicates.patch), downloads ANGLE, then generates and
@@ -12,15 +12,10 @@ builds the UWP launcher solution in build/.
 
 Run from an x64 Visual Studio 2022 developer shell with VCPKG_ROOT set.
 #>
-param(
-	[string]$RingRacersTag = "v2.4"
-)
-
 $ErrorActionPreference = "Stop"
 
 $Root = $PSScriptRoot
 $Source = Join-Path $Root "RingRacers"
-$Patch = Join-Path $Root "patches/ringracers-uwp.patch"
 $Preset = "ninja-x64_windows_uwp_vcpkg-release"
 $LibBuild = Join-Path $Source "build/$Preset"
 $UwpBuild = Join-Path $Root "build"
@@ -63,17 +58,12 @@ if (-not $env:VCPKG_ROOT -or -not (Test-Path (Join-Path $env:VCPKG_ROOT "scripts
 	throw "VCPKG_ROOT must point to a vcpkg checkout."
 }
 
-if (-not (Test-Path $Source)) {
-	# Force LF line endings so the patch applies regardless of the user's core.autocrlf
-	Exec { git clone --depth 1 --branch $RingRacersTag --config core.autocrlf=false --config core.eol=lf https://github.com/KartKrewDev/RingRacers.git $Source }
+if (-not (Test-Path (Join-Path $Source "CMakeLists.txt"))) {
+	Exec { git -C $Root submodule update --init RingRacers }
 }
 
 Push-Location $Source
 try {
-	if (-not (Select-String -Quiet -Path "CMakeLists.txt" -Pattern "SRB2_CONFIG_UWP")) {
-		Exec { git apply $Patch }
-	}
-
 	Exec { cmake --preset $Preset }
 	Exec { cmake --build --preset $Preset }
 }

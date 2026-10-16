@@ -67,7 +67,7 @@ Report bugs on [this repository's issues](https://github.com/ZebulanStanphill/ri
 
 ### GitHub Actions
 
-Every push runs the [native regression tests](tests/README.md) on Linux, then builds the app on Windows and uploads a `ringracers-uwp` artifact containing a sideloadable `.msix` and its `.cer`. In Xbox Device Portal, install the `.cer` along with the package. The certificate is new for each run, so uninstall the previous build before installing one from a different run.
+Every push builds the app on Windows and uploads a `ringracers-uwp` artifact containing a sideloadable `.msix` and its `.cer`. In Xbox Device Portal, install the `.cer` along with the package. The certificate is new for each run, so uninstall the previous build before installing one from a different run. The engine's native regression tests run in the fork's CI, described in [tests/README.md](https://github.com/ZebulanStanphill/RingRacers/blob/master/tests/README.md).
 
 ### Local
 
@@ -79,20 +79,21 @@ Requirements (Windows):
 - Git
 - [vcpkg](https://github.com/microsoft/vcpkg) cloned and bootstrapped, with `VCPKG_ROOT` pointing to it
 
+The repository has to be cloned with its submodules: `git clone --recurse-submodules https://github.com/ZebulanStanphill/ringracers-uwp.git`, or run `git submodule update --init` in an existing clone.
+
 From an **x64 Native Tools Command Prompt for VS 2022**:
 
 ```
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-This clones Ring Racers v2.4 into `RingRacers/`, applies the patch, and builds it; builds SDL2 and downloads ANGLE into `deps/`; then generates and builds the launcher solution at `build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
+This builds the `RingRacers` submodule (initializing it if it's missing); builds SDL2 and downloads ANGLE into `deps/`; then generates and builds the launcher solution at `build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
 
 ### Repository layout
 
-- `patches/ringracers-uwp.patch`: the engine changes, applied to Ring Racers v2.4.
+- `RingRacers/`: the [ZebulanStanphill/RingRacers](https://github.com/ZebulanStanphill/RingRacers) submodule, Ring Racers v2.4 with this port's engine changes as one commit each, along with their tests and Direct3D 12 docs.
 - `patches/sdl-angle.patch` and `patches/sdl-controller-duplicates.patch`: build [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) for OpenGL ES, and stop it from seeing each controller twice.
 - `uwp/`: the launcher app, which links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore).
-- `tests/`: [native regression tests](tests/README.md) that run engine checks with sanitizers, without game assets or an Xbox.
 - `tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ringracers-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 
 ## Credits
