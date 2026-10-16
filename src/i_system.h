@@ -321,6 +321,9 @@ extern precise_t i_uwplogtime;
 // otherwise an HRESULT. Reports the actual process budget and whether this is Xbox.
 int I_UWPGetMemoryBudget(UINT64 *limit, UINT64 *usage, int *isXbox);
 
+// [UWP]: Poll the gamepads directly, including while startup is busy on the main thread.
+int I_UWPIsSkipButtonDown(void);
+
 // [UWP]: Logs the process budget. GlobalMemoryStatusEx reports physical memory, not this budget.
 void I_UWPLogMemoryLimit(void);
 

@@ -49,22 +49,9 @@
    64-byte boundary.  (RFC 1321, 3.1: Step 1)  */
 static const unsigned char fillbuf[64] = { 0x80, 0 /*, 0, 0, ...  */ };
 
-/* Structure to save state of computation between the single steps.  */
-struct md5_ctx
-{
-  md5_uint32 A;
-  md5_uint32 B;
-  md5_uint32 C;
-  md5_uint32 D;
-
-  md5_uint32 total[2];
-  md5_uint32 buflen;
-  char buffer[128];
-};
-
 /* Initialize structure containing state of computation.
    (RFC 1321, 3.3: Step 3)  */
-static void md5_init_ctx (struct md5_ctx *ctx)
+void md5_init_ctx (struct md5_ctx *ctx)
 {
   ctx->A = 0x67452301;
   ctx->B = 0xefcdab89;
@@ -257,7 +244,7 @@ static void md5_process_block (const void *buffer, size_t len, struct md5_ctx *c
 }
 
 
-static void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
+void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
 {
   /* When we already have some bits in our internal buffer concatenate
      both inputs first.  */
@@ -304,7 +291,7 @@ static void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *c
 
    IMPORTANT: On some systems it is required that RESBUF is correctly
    aligned for a 32 bits value.  */
-static void *md5_finish_ctx (struct md5_ctx *ctx, void *resbuf)
+void *md5_finish_ctx (struct md5_ctx *ctx, void *resbuf)
 {
   /* Take yet unprocessed bytes into account.  */
   md5_uint32 bytes = ctx->buflen;

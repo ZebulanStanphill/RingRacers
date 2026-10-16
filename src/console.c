@@ -34,6 +34,9 @@
 #include "d_main.h"
 #include "k_menu.h"
 #include "filesrch.h"
+#ifdef _UWP
+#include "w_wad.h"
+#endif
 #include "m_misc.h"
 
 #ifdef HWRENDER
@@ -1938,6 +1941,9 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
 void CON_SetLoadingProgress(con_loadprogress_t newStep)
 {
 	const con_loadprogress_t expectedStep = con_startup_loadprogress + 1;
+#ifdef _UWP
+	W_UWPPollAssetCheck();
+#endif
 
 	if (newStep != expectedStep)
 	{
@@ -1999,6 +2005,10 @@ void CON_DrawLoadBar(void)
 
 	if (con_startup_loadprogress <= LOADED_ALLDONE)
 	{
+#ifdef _UWP
+		if (W_UWPAssetCheckRunning())
+			V_DrawString(4, BASEVIDHEIGHT - (barheight + 16 + 4), V_FORCEUPPERCASE, "Checking game files - press B to skip");
+#endif
 		V_DrawString(4, BASEVIDHEIGHT - (barheight + 8 + 4), V_FORCEUPPERCASE, CON_LoadingStrings[con_startup_loadprogress]);
 	}
 

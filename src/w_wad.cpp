@@ -43,6 +43,11 @@
 
 #include <algorithm>
 #include <cstddef>
+#ifdef _UWP
+#include <atomic>
+#include <chrono>
+#include "console.h"
+#endif
 
 #include "doomdef.h"
 #include "doomstat.h"
@@ -83,6 +88,14 @@
 #include "console.h"
 #endif
 
+#ifdef _UWP
+// After the engine headers: Windows' rpcndr.h defines a "small" macro that breaks st_stuff.h's ST_getRoundPicture
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef small
+#endif
+
 #ifndef O_BINARY
 #define O_BINARY 0
 #endif
@@ -114,12 +127,201 @@ static UINT16 lumpnumcacheindex = 0;
 UINT16 numwadfiles = 0; // number of active wadfiles
 wadfile_t *wadfiles[MAX_WADFILES]; // 0 to numwadfiles-1 are valid
 
+#ifdef _UWP
+// [UWP]: Set while W_InitFile checks and reads the directory of a main file verified in the background, so that
+// W_VerifyPK3 and ResGetLumpsZip don't read every zip entry's local header, which reads most of the file
+static boolean w_uwptrustlayout = false;
+#endif
+
 static FILE *g_shaderspk3file;
 static UINT16 g_shaderspk3numlumps;
 static lumpinfo_t *g_shaderspk3lumps;
 
 #ifndef NOMD5
 static void PrintMD5String(const UINT8 *md5, char *buf);
+#endif
+
+#ifdef _UWP
+// Only the main thread queues files, before starting the worker. The worker owns
+// all result fields until the release store of its final state; the main thread
+// reads them only after an acquire load. No zone allocations or engine logging
+// occur on the worker. Static storage has no exit-time destructors.
+enum uwpcheckstate_t { UWPCHECK_IDLE, UWPCHECK_RUNNING, UWPCHECK_VERIFIED, UWPCHECK_SKIPPED, UWPCHECK_FAILED };
+struct uwpcheckfile_t
+{
+	char filename[MAX_WADPATH];
+	UINT8 expected[MD5_LEN];
+	double seconds;
+	size_t bytes;
+};
+static uwpcheckfile_t uwpcheckfiles[32];
+static size_t uwpcheckcount, uwpcheckverified, uwpcheckfailedfile;
+static double uwpcheckseconds;
+static char uwpcheckerror[128], uwpcheckfound[2*MD5_LEN+1], uwpcheckwanted[2*MD5_LEN+1];
+static std::atomic<int> uwpcheckstate { UWPCHECK_IDLE };
+static std::atomic<bool> uwpcheckcancel { false };
+static boolean uwpcheckreported;
+
+static void W_UWPQueueAssetCheck(const char *filename, const UINT8 *expected)
+{
+	if (uwpcheckstate.load(std::memory_order_relaxed) != UWPCHECK_IDLE
+		|| uwpcheckcount == sizeof(uwpcheckfiles)/sizeof(uwpcheckfiles[0])
+		|| strlen(filename) >= MAX_WADPATH)
+		I_Error("UWP: Cannot queue asset check for %s\n", filename);
+	uwpcheckfile_t &file = uwpcheckfiles[uwpcheckcount++];
+	strcpy(file.filename, filename);
+	memcpy(file.expected, expected, MD5_LEN);
+}
+
+static double W_UWPCheckElapsed(std::chrono::steady_clock::time_point start)
+{
+	return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
+{
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+	const auto start = std::chrono::steady_clock::now();
+	const size_t chunksize = 1024*1024;
+	void *buffer = malloc(chunksize);
+	int outcome = UWPCHECK_VERIFIED;
+	if (!buffer)
+	{
+		strcpy(uwpcheckerror, "Cannot allocate file-check buffer");
+		outcome = UWPCHECK_FAILED;
+	}
+	for (size_t i = 0; buffer && i < uwpcheckcount; i++)
+	{
+		uwpcheckfailedfile = i;
+		uwpcheckfile_t &file = uwpcheckfiles[i];
+		const auto filestart = std::chrono::steady_clock::now();
+		FILE *handle = NULL;
+		md5_ctx ctx;
+		alignas(md5_uint32) UINT8 digest[MD5_LEN];
+		md5_init_ctx(&ctx);
+		if (uwpcheckcancel.load(std::memory_order_relaxed) || I_UWPIsSkipButtonDown())
+			outcome = UWPCHECK_SKIPPED;
+		else if (!(handle = fopen(file.filename, "rb")))
+		{
+			snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot open file (errno %d)", errno);
+			outcome = UWPCHECK_FAILED;
+		}
+		else
+		{
+			setvbuf(handle, NULL, _IONBF, 0);
+			for (;;)
+			{
+				if (uwpcheckcancel.load(std::memory_order_relaxed) || I_UWPIsSkipButtonDown())
+				{
+					outcome = UWPCHECK_SKIPPED;
+					break;
+				}
+				const size_t bytes = fread(buffer, 1, chunksize, handle);
+				file.bytes += bytes;
+				md5_process_bytes(buffer, bytes, &ctx);
+				if (ferror(handle))
+				{
+					snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot read file (errno %d)", errno);
+					outcome = UWPCHECK_FAILED;
+					break;
+				}
+				if (feof(handle))
+					break;
+			}
+			fclose(handle);
+		}
+		file.seconds = W_UWPCheckElapsed(filestart);
+		if (outcome != UWPCHECK_VERIFIED)
+			break;
+		md5_finish_ctx(&ctx, digest);
+		if (memcmp(digest, file.expected, MD5_LEN))
+		{
+			PrintMD5String(digest, uwpcheckfound);
+			PrintMD5String(file.expected, uwpcheckwanted);
+			outcome = UWPCHECK_FAILED;
+			break;
+		}
+		uwpcheckverified++;
+	}
+	free(buffer);
+	uwpcheckseconds = W_UWPCheckElapsed(start);
+	uwpcheckstate.store(outcome, std::memory_order_release);
+	return 0;
+}
+
+void W_UWPStartAssetCheck(void)
+{
+	if (uwpcheckstate.load(std::memory_order_relaxed) != UWPCHECK_IDLE)
+		return;
+	uwpcheckstate.store(UWPCHECK_RUNNING, std::memory_order_release);
+	HANDLE thread = CreateThread(NULL, 0, W_UWPAssetCheckWorker, NULL, 0, NULL);
+	if (thread)
+		CloseHandle(thread); // Detached: the worker uses only static POD state and its own file/buffer.
+	else
+	{
+		snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot start file-check thread (error %lu)", GetLastError());
+		uwpcheckstate.store(UWPCHECK_FAILED, std::memory_order_release);
+	}
+}
+
+boolean W_UWPAssetCheckRunning(void)
+{
+	return uwpcheckstate.load(std::memory_order_acquire) == UWPCHECK_RUNNING;
+}
+
+void W_UWPPollAssetCheck(void)
+{
+	const int state = uwpcheckstate.load(std::memory_order_acquire);
+	if (state == UWPCHECK_IDLE || state == UWPCHECK_RUNNING || uwpcheckreported)
+		return;
+	uwpcheckreported = true;
+	for (size_t i = 0; i < uwpcheckcount; i++)
+	{
+		const uwpcheckfile_t &file = uwpcheckfiles[i];
+		if (file.seconds > 0)
+			I_OutputMsg("UWP: asset check %s: %.2f s, %.1f MB/s\n", file.filename, file.seconds,
+				file.bytes / (1024.0*1024.0) / file.seconds);
+	}
+	if (state == UWPCHECK_VERIFIED)
+		I_OutputMsg("UWP: asset check verified all %u files in %.2f s\n", (unsigned)uwpcheckcount, uwpcheckseconds);
+	else if (state == UWPCHECK_SKIPPED)
+		I_OutputMsg("UWP: asset check skipped by the user after %.2f s, %u of %u verified\n",
+			uwpcheckseconds, (unsigned)uwpcheckverified, (unsigned)uwpcheckcount);
+	else
+	{
+		uwpcheckcancel.store(true, std::memory_order_relaxed);
+		I_OutputMsg("UWP: asset check failed after %.2f s, %u of %u verified\n",
+			uwpcheckseconds, (unsigned)uwpcheckverified, (unsigned)uwpcheckcount);
+		const char *filename = uwpcheckcount ? uwpcheckfiles[uwpcheckfailedfile].filename : "(no file)";
+#ifdef DEVELOP
+		if (uwpcheckerror[0])
+			CONS_Printf("Cannot verify game file %s: %s\n", filename, uwpcheckerror);
+		else
+			CONS_Printf("File %s does not match expected md5\n", filename);
+#else
+		if (uwpcheckerror[0])
+			I_Error("Cannot verify game file %s: %s\n", filename, uwpcheckerror);
+		else
+			I_Error(M_GetText("File is old, is corrupt or has been modified: %s (found md5: %s, wanted: %s)\n"),
+				filename, uwpcheckfound, uwpcheckwanted);
+#endif
+	}
+}
+
+void W_UWPFinishAssetCheck(void)
+{
+	const auto start = std::chrono::steady_clock::now();
+	while (W_UWPAssetCheckRunning())
+	{
+		CON_DrawLoadBar();
+		I_OsPolling();
+		I_UpdateNoBlit();
+		I_FinishUpdate();
+		I_Sleep(10);
+	}
+	I_OutputMsg("UWP: waited %.2f s for asset check\n", W_UWPCheckElapsed(start));
+	W_UWPPollAssetCheck();
+}
 #endif
 
 // W_Shutdown
@@ -473,6 +675,9 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
 
 		memset(lump_p->name, 0x00, 9);
 		strncpy(lump_p->name, fileinfo->name, 8);
+#ifdef _UWP
+		lump_p->uwplocalheader = false;
+#endif
 
 		if (WADNAMECHECK(fileinfo->name))
 		{
@@ -715,6 +920,9 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 		lump_p->position = LONG(zentry->offset); // NOT ACCURATE YET: we still need to read the local entry to find our true position
 		lump_p->disksize = LONG(zentry->compsize);
 		lump_p->size = LONG(zentry->size);
+#ifdef _UWP
+		lump_p->uwplocalheader = w_uwptrustlayout;
+#endif
 
 		fullname = static_cast<char*>(malloc(SHORT(zentry->namelen) + 1));
 		strlcpy(fullname, (char*)(zentry + 1), SHORT(zentry->namelen) + 1);
@@ -764,6 +972,14 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 	}
 
 	// Adjust lump position values properly
+#ifdef _UWP
+	// [UWP]: Or leave that until each lump is first read (W_UWPSeekLumpData)
+	if (w_uwptrustlayout)
+	{
+		*nlmp = numlumps;
+		return lumpinfo;
+	}
+#endif
 	for (i = 0, lump_p = lumpinfo; i < numlumps; i++, lump_p++)
 	{
 		// skip and ignore comments/extra fields
@@ -852,7 +1068,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	if ((handle = W_OpenWadFile(&filename, (mainfile ? NULL : "addons"), true)) == NULL)
 		return W_InitFileError(filename, startup);
 
+#ifdef _UWP
+	const boolean uwptrusted = mainfile;
+
+	w_uwptrustlayout = uwptrusted;
+#endif
 	important = W_VerifyNMUSlumps(filename, handle, startup);
+#ifdef _UWP
+	w_uwptrustlayout = false;
+#endif
 
 	if (important == -1)
 	{
@@ -868,6 +1092,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	// Let's not add a wad file if the MD5 matches
 	// an MD5 of an already added WAD file!
 	//
+#ifdef _UWP
+	// [UWP]: The music and sound files are the only main files without an expected MD5, and theirs is only compared
+	// with other files' to tell if they're already loaded (they're never sent to netgames or recorded in replays), so
+	// hashing the file name will do: reading all ~450 MB of them from a USB drive took ~25 s and couldn't detect
+	// anything. Main files with an expected MD5 use it below and are verified separately in the background.
+	if (mainfile && !md5expected)
+		md5_buffer(filename, strlen(filename), md5sum);
+	else if (!uwptrusted)
+#endif
 	W_MakeFileMD5(filename, md5sum);
 
 	if (md5expected)
@@ -894,6 +1127,14 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 			if (ix & 1) realmd5[ix>>1] = (UINT8)(realmd5[ix>>1]+n);
 			else realmd5[ix>>1] = (UINT8)(n<<4);
 		}
+
+#ifdef _UWP
+		if (uwptrusted)
+		{
+			memcpy(md5sum, realmd5, MD5_LEN);
+			W_UWPQueueAssetCheck(filename, realmd5);
+		}
+#endif
 
 		if (memcmp(realmd5, md5sum, 16) != 0)
 		{
@@ -946,7 +1187,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 		lumpinfo = ResGetLumpsStandalone(handle, &numlumps, "LUA_INIT");
 		break;
 	case RET_PK3:
+#ifdef _UWP
+		w_uwptrustlayout = uwptrusted;
+#endif
 		lumpinfo = ResGetLumpsZip(handle, &numlumps);
+#ifdef _UWP
+		w_uwptrustlayout = false;
+#endif
 		break;
 	case RET_WAD:
 		lumpinfo = ResGetLumpsWad(handle, &numlumps, filename);
@@ -1810,6 +2057,44 @@ void zerr(int ret)
 }
 #endif
 
+#ifdef _UWP
+// [UWP]: Finds where a lump's data starts from its zip entry's local header, which ResGetLumpsZip doesn't read for main
+// files when the asset check is skipped, then seeks offset bytes into the data. Reading past the header instead of
+// seeking keeps the start of the data in the file's buffer, so this costs little more than reading the data.
+static void W_UWPSeekLumpData(UINT16 wad, lumpinfo_t *l, size_t offset)
+{
+	FILE *handle = wadfiles[wad]->handle;
+	zlentry_t zlentry;
+	char skipped[256];
+	size_t toskip;
+
+	if (fseek(handle, (long)l->position, SEEK_SET) != 0 || fread(&zlentry, 1, sizeof zlentry, handle) < sizeof zlentry
+		|| memcmp(zlentry.signature, "PK\x03\x04", 4) != 0)
+	{
+		I_Error("Local headers for lump %s in %s are corrupt.\nCheck the game files at launch to find damaged files.",
+			l->fullname, wadfiles[wad]->filename);
+	}
+
+	l->position += sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen);
+	l->uwplocalheader = false;
+
+	if (offset)
+	{
+		fseek(handle, (long)(l->position + offset), SEEK_SET);
+		return;
+	}
+
+	for (toskip = SHORT(zlentry.namelen) + SHORT(zlentry.xtralen); toskip > 0;)
+	{
+		const size_t n = std::min(toskip, sizeof skipped);
+
+		if (fread(skipped, 1, n, handle) < n)
+			break;
+		toskip -= n;
+	}
+}
+#endif
+
 /** Reads bytes from the head of a lump.
   * Note: If the lump is compressed, the whole thing has to be read anyway.
   *
@@ -1843,6 +2128,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 	// We setup the desired file handle to read the lump data.
 	l = wadfiles[wad]->lumpinfo + lump;
 	handle = wadfiles[wad]->handle;
+#ifdef _UWP
+	if (l->uwplocalheader)
+		W_UWPSeekLumpData(wad, l, offset);
+	else
+#endif
 	fseek(handle, (long)(l->position + offset), SEEK_SET);
 
 	// But let's not copy it yet. We support different compression formats on lumps, so we need to take that into account.
@@ -2438,6 +2728,12 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
 		data_size +=
 			sizeof *zentry + SHORT(zentry->namelen) + SHORT(zentry->xtralen) + SHORT(zentry->commlen);
 
+#ifdef _UWP
+		// [UWP]: The local headers are only needed for the size check below, which is skipped too
+		if (w_uwptrustlayout)
+			continue;
+#endif
+
 		if (fseek(fp, LONG(zentry->offset), SEEK_SET) != 0)
 			return true;
 
@@ -2447,6 +2743,11 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
 		data_size +=
 			sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen) + LONG(zlentry.compsize);
 	}
+
+#ifdef _UWP
+	if (w_uwptrustlayout)
+		return verified;
+#endif
 
 	if (data_size < file_size)
 	{

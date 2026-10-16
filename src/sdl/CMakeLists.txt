@@ -65,6 +65,7 @@ target_link_libraries(SRB2SDL2
 )
 else()
 	target_link_libraries(SRB2SDL2 PRIVATE SDL2) # TODO: I should cleanup uwp-dep namespaces
+	target_sources(SRB2SDL2 PRIVATE i_uwpprofile.cpp)
 endif()
 
 if("${CMAKE_SYSTEM_NAME}" MATCHES Linux)

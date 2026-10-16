@@ -75,6 +75,9 @@ struct lumpinfo_t
 	char *fullname;         //                   e.g. "Folder/Subfolder/LongEntryName.extension"
 	size_t size;            // real (uncompressed) size
 	compmethod compression; // lump compression method
+#ifdef _UWP
+	boolean uwplocalheader; // [UWP]: position is still that of the zip entry's local header; data position is resolved on first use
+#endif
 };
 
 // =========================================================================
@@ -141,6 +144,14 @@ struct wadfile_t
 
 extern UINT16 numwadfiles;
 extern wadfile_t *wadfiles[MAX_WADFILES];
+
+#ifdef _UWP
+// [UWP]: Main files use expected MD5s and lazy zip local headers while a background worker verifies them.
+void W_UWPStartAssetCheck(void);
+boolean W_UWPAssetCheckRunning(void);
+void W_UWPPollAssetCheck(void);
+void W_UWPFinishAssetCheck(void);
+#endif
 
 // =========================================================================
 

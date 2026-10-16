@@ -1799,6 +1799,9 @@ void D_SRB2Main(void)
 	// load wad, including the main wad file
 	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
 	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
+#ifdef _UWP
+	W_UWPStartAssetCheck();
+#endif
 	mainwads = num_startupiwads - musicwads;
 	D_CleanFile(startupiwads, num_startupiwads);
 	num_startupiwads = 0;
@@ -2053,6 +2056,10 @@ void D_SRB2Main(void)
 		}
 	}
 
+#ifdef _UWP
+	// Finish verification before networking can start a game.
+	W_UWPFinishAssetCheck();
+#endif
 	// init all NETWORK
 	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
 	if (D_CheckNetGame())
