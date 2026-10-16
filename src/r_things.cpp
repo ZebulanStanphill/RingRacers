@@ -3080,6 +3080,49 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link);
 
 static drawnode_t nodebankhead;
 
+// [UWP]: When R_CreateDrawNodes may skip a node that doesn't share a column with the sprite it's sorting, without
+// reading what the node points to. Walking every node and reading that was most of R_DrawMasked's own time on Xbox.
+enum
+{
+	DRAWNODE_ALWAYSCHECK, // a node whose columns aren't known, or a splat sprite, which is sorted by its distance alone
+	DRAWNODE_SKIPOUTSIDE, // a plane, 3D floor side, or masked seg
+	DRAWNODE_SKIPOUTSIDEUNLESSSPLAT, // a sprite that isn't a splat, which is compared with splat sprites anyway
+};
+
+// Records the columns a node covers. Follows the order in which R_CreateDrawNodes checks what a node points to,
+// since a plane node can also have a seg. Each of those checks skips the node when it shares no column with the
+// sprite being sorted, except when comparing two sprites where either is a splat.
+static void R_SetDrawNodeColumns(drawnode_t *node)
+{
+	node->columncheck = DRAWNODE_SKIPOUTSIDE;
+
+	if (node->plane)
+	{
+		node->x1 = node->plane->minx;
+		node->x2 = node->plane->maxx;
+	}
+	else if (node->thickseg)
+	{
+		node->x1 = node->thickseg->x1;
+		node->x2 = node->thickseg->x2;
+	}
+	else if (node->seg)
+	{
+		node->x1 = node->seg->x1;
+		node->x2 = node->seg->x2;
+	}
+	else if (node->sprite)
+	{
+		node->x1 = node->sprite->x1;
+		node->x2 = node->sprite->x2;
+		node->columncheck = (node->sprite->cut & SC_SPLAT) ? DRAWNODE_ALWAYSCHECK : DRAWNODE_SKIPOUTSIDEUNLESSSPLAT;
+	}
+	else
+	{
+		node->columncheck = DRAWNODE_ALWAYSCHECK;
+	}
+}
+
 static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean tempskip)
 {
 	drawnode_t *entry;
@@ -3103,6 +3146,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				entry = R_CreateDrawNode(head);
 				entry->thickseg = ds;
 				entry->ffloor = ds->thicksides[i];
+				R_SetDrawNodeColumns(entry);
 			}
 		}
 		// Check for a polyobject plane, but only if this is a front line
@@ -3117,6 +3161,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				entry = R_CreateDrawNode(head);
 				entry->plane = plane;
 				entry->seg = ds;
+				R_SetDrawNodeColumns(entry);
 			}
 			ds->curline->polyseg->visplane = NULL;
 		}
@@ -3124,9 +3169,20 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		{
 			entry = R_CreateDrawNode(head);
 			entry->seg = ds;
+			R_SetDrawNodeColumns(entry);
 		}
 		if (ds->numffloorplanes)
 		{
+			// Scan the columns once per plane, rather than on each sorting pass.
+			for (p = 0; p < ds->numffloorplanes; p++)
+			{
+				plane = ds->ffloorplanes[p];
+				if (!plane)
+					continue;
+				R_PlaneBounds(plane);
+				if (plane->low < 0 || plane->high > vid.height || plane->high > plane->low || plane->polyobj)
+					ds->ffloorplanes[p] = NULL;
+			}
 			for (i = 0; i < ds->numffloorplanes; i++)
 			{
 				best = -1;
@@ -3136,14 +3192,6 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					if (!ds->ffloorplanes[p])
 						continue;
 					plane = ds->ffloorplanes[p];
-					R_PlaneBounds(plane);
-
-					if (plane->low < 0 || plane->high > vid.height || plane->high > plane->low || plane->polyobj)
-					{
-						ds->ffloorplanes[p] = NULL;
-						continue;
-					}
-
 					delta = abs(plane->height - viewz);
 					if (delta > bestdelta)
 					{
@@ -3156,6 +3204,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					entry = R_CreateDrawNode(head);
 					entry->plane = ds->ffloorplanes[best];
 					entry->seg = ds;
+					R_SetDrawNodeColumns(entry);
 					ds->ffloorplanes[best] = NULL;
 				}
 				else
@@ -3185,6 +3234,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		entry = R_CreateDrawNode(head);
 		entry->plane = plane;
 		// note: no seg is set, for what should be obvious reasons
+		R_SetDrawNodeColumns(entry);
 		PolyObjects[i].visplane = NULL;
 	}
 
@@ -3206,6 +3256,15 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 
 		for (r2 = head->next; r2 != head; r2 = r2->next)
 		{
+			// [UWP]: Skip a node that shares no column with this sprite without reading what it points to, as
+			// the checks below would after reading it (see R_SetDrawNodeColumns)
+			if ((r2->x1 > rover->x2 || r2->x2 < rover->x1)
+				&& (r2->columncheck == DRAWNODE_SKIPOUTSIDE
+					|| (r2->columncheck == DRAWNODE_SKIPOUTSIDEUNLESSSPLAT && !(rover->cut & SC_SPLAT))))
+			{
+				continue;
+			}
+
 			if (alwaysontop)
 			{
 				// Only sort behind other sprites; sorts in
@@ -3274,6 +3333,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				(entry->prev = r2->prev)->next = entry;
 				(entry->next = r2)->prev = entry;
 				entry->sprite = rover;
+				R_SetDrawNodeColumns(entry);
 				break;
 			}
 			else if (r2->thickseg)
@@ -3308,6 +3368,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					(entry->prev = r2->prev)->next = entry;
 					(entry->next = r2)->prev = entry;
 					entry->sprite = rover;
+					R_SetDrawNodeColumns(entry);
 					break;
 				}
 			}
@@ -3327,6 +3388,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					(entry->prev = r2->prev)->next = entry;
 					(entry->next = r2)->prev = entry;
 					entry->sprite = rover;
+					R_SetDrawNodeColumns(entry);
 					break;
 				}
 			}
@@ -3376,6 +3438,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					(entry->prev = r2->prev)->next = entry;
 					(entry->next = r2)->prev = entry;
 					entry->sprite = rover;
+					R_SetDrawNodeColumns(entry);
 					break;
 				}
 			}
@@ -3384,6 +3447,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		{
 			entry = R_CreateDrawNode(head);
 			entry->sprite = rover;
+			R_SetDrawNodeColumns(entry);
 		}
 	}
 }
@@ -3414,6 +3478,7 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link)
 	node->thickseg = NULL;
 	node->ffloor = NULL;
 	node->sprite = NULL;
+	node->columncheck = DRAWNODE_ALWAYSCHECK;
 
 	ps_numdrawnodes++;
 	return node;

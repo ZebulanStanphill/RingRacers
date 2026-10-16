@@ -266,6 +266,11 @@ struct drawnode_t
 
 	drawnode_t *next;
 	drawnode_t *prev;
+
+	// [UWP]: The columns this node covers, for R_CreateDrawNodes to skip nodes that don't share a column with the
+	// sprite it's sorting without reading what they point to, and when it may (see R_SetDrawNodeColumns)
+	INT32 x1, x2;
+	UINT8 columncheck;
 };
 
 void R_InitDrawNodes(void);
