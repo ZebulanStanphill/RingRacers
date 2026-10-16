@@ -368,13 +368,73 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 	}
 }
 
-void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap, const boolean directional)
+// A bounded approximation of Software's inward fog boundary remapping. Cache
+// only the camera sector's enclosing, neutral fog once per viewpoint; ordinary
+// per-surface FOF lighting still uses the existing lightlists. Colored fog,
+// water, outward fog and ambiguous overlapping volumes retain their old paths.
+static sector_t *hwr_viewfog;
+
+static boolean HWR_IsNeutralColormap(const extracolormap_t *colormap)
+{
+	return !colormap || (!(colormap->rgba & 0x00ffffff)
+		&& !(colormap->fadergba & 0x00ffffff));
+}
+
+static sector_t *HWR_FindViewFog(void)
+{
+	ffloor_t *rover;
+	sector_t *control = NULL;
+	const UINT32 required = FOF_EXISTS|FOF_RENDERALL|FOF_FOG|FOF_INVERTPLANES
+		|FOF_INVERTSIDES|FOF_DOUBLESHADOW;
+
+	if (!viewsector)
+		return NULL;
+
+	for (rover = viewsector->ffloors; rover; rover = rover->next)
+	{
+		sector_t *candidate;
+		if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_FOG)
+			|| viewz <= P_GetFFloorBottomZAt(rover, viewx, viewy)
+			|| viewz >= P_GetFFloorTopZAt(rover, viewx, viewy))
+			continue;
+
+		candidate = rover->master->frontsector;
+		if ((rover->fofflags & required) != required
+			|| (rover->fofflags & (FOF_NOSHADE|FOF_COLORMAPONLY|FOF_ALLSIDES|FOF_BOTHPLANES|FOF_SWIMMABLE|FOF_TRANSLUCENT))
+			|| !HWR_IsNeutralColormap(candidate->extra_colormap)
+			|| (control && control != candidate))
+			return NULL;
+		control = candidate;
+	}
+	return control;
+}
+
+static float HWR_ViewFogGain(void)
+{
+	// For a black tint Software uses 1 - alpha/24 (R_CreateLightTable).
+	// Fold it into modulation so brightmaps cannot bypass the initial black.
+	const extracolormap_t *colormap = hwr_viewfog->extra_colormap;
+	return colormap ? max(0.0f, 1.0f - R_GetRgbaA(colormap->rgba) / 24.0f) : 1.0f;
+}
+
+void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap, boolean directional)
 {
 	RGBA_t poly_color, tint_color, fade_color;
+	const boolean viewfog = hwr_viewfog && HWR_IsNeutralColormap(colormap);
+	const boolean palette = HWR_ShouldUsePaletteRendering();
+
+	if (viewfog)
+	{
+		light_level = min(light_level, hwr_viewfog->lightlevel);
+		colormap = hwr_viewfog->extra_colormap;
+		directional = false;
+	}
 
 	poly_color.rgba = 0xFFFFFFFF;
 	tint_color.rgba = (colormap != NULL) ? (UINT32)colormap->rgba : GL_DEFAULTMIX;
 	fade_color.rgba = (colormap != NULL) ? (UINT32)colormap->fadergba : GL_DEFAULTFOG;
+	if (viewfog && !palette)
+		tint_color.rgba = 0; // the neutral tint is applied once through modulation below
 
 	// Crappy backup coloring if you can't do shaders
 	if (!HWR_UseShader())
@@ -416,6 +476,14 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	// Clamp the light level, since it can sometimes go out of the 0-255 range from animations
 	light_level = min(max(light_level, 0), 255);
 
+	if (viewfog && !palette)
+	{
+		const float gain = HWR_ViewFogGain();
+		poly_color.s.red = (UINT8)(poly_color.s.red * gain);
+		poly_color.s.green = (UINT8)(poly_color.s.green * gain);
+		poly_color.s.blue = (UINT8)(poly_color.s.blue * gain);
+	}
+
 	Surface->PolyColor.rgba = poly_color.rgba;
 	Surface->TintColor.rgba = tint_color.rgba;
 	Surface->FadeColor.rgba = fade_color.rgba;
@@ -427,7 +495,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
 
 	// [UWP]: palette rendering
-	Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(colormap) : 0;
+	Surface->LightTableId = palette ? HWR_GetLightTableID(colormap) : 0;
 }
 
 UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
@@ -1776,6 +1844,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 
 				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
 					continue;
+				if ((rover->fofflags & FOF_FOG) && rover->master->frontsector == hwr_viewfog)
+					continue; // applied once to the view, not again as a brightening boundary
 				if (!(rover->fofflags & FOF_ALLSIDES) && rover->fofflags & FOF_INVERTSIDES)
 					continue;
 
@@ -1938,6 +2008,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 
 				if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERSIDES))
 					continue;
+				if ((rover->fofflags & FOF_FOG) && rover->master->frontsector == hwr_viewfog)
+					continue; // applied once to the view, not again as a brightening boundary
 				if (!(rover->fofflags & FOF_ALLSIDES || rover->fofflags & FOF_INVERTSIDES))
 					continue;
 
@@ -2741,6 +2813,8 @@ static void HWR_Subsector(size_t num)
 			centerHeight = P_GetFFloorBottomZAt(rover, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 
 			if (!(rover->fofflags & FOF_EXISTS) || !(rover->fofflags & FOF_RENDERPLANES))
+				continue;
+			if ((rover->fofflags & FOF_FOG) && rover->master->frontsector == hwr_viewfog)
 				continue;
 			if (sub->validcount == validcount)
 				continue;
@@ -5917,6 +5991,26 @@ static void HWR_SetShaderState(void)
 	HWD.pfnSetShader(SHADER_DEFAULT);
 }
 
+// Sky textures/skyboxes bypass HWR_Lighting. Attenuate their background before
+// drawing the world, keeping the viewport and depth buffer intact. This is a
+// neutral approximation, not Software's distance-dependent boundary colormap.
+static void HWR_DrawViewFogSky(void)
+{
+	FOutVector v[4] = {{0}};
+	FSurfaceInfo surf = {0};
+	const float gain = HWR_ViewFogGain() * max(0, min(255, hwr_viewfog->lightlevel)) / 255.0f;
+	const UINT8 color = (UINT8)(255.0f * gain);
+
+	v[0].x = v[3].x = v[0].y = v[1].y = -4.0f;
+	v[1].x = v[2].x = v[2].y = v[3].y = 4.0f;
+	v[0].z = v[1].z = v[2].z = v[3].z = 4.0f;
+	surf.PolyColor.s.red = surf.PolyColor.s.green = surf.PolyColor.s.blue = color;
+	surf.PolyColor.s.alpha = 255;
+	HWD.pfnSetTransform(NULL);
+	HWD.pfnUnSetShader();
+	HWD.pfnDrawPolygon(&surf, v, 4, PF_Modulated|PF_Multiplicative|PF_NoTexture|PF_NoDepthTest);
+}
+
 static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolean timing)
 {
 	const float fpov = FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd);
@@ -5932,6 +6026,8 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 		HWR_SetLights(viewssnum);
 #endif
 	}
+
+	hwr_viewfog = HWR_FindViewFog();
 
 	// copy view cam position for local use
 	dup_viewx = viewx;
@@ -5987,6 +6083,8 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 
 	if (drawSkyTexture)
 		HWR_DrawSkyBackground(player);
+	if (hwr_viewfog)
+		HWR_DrawViewFogSky();
 
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = r_splitscreen;
@@ -6089,6 +6187,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 	// added by Hurdler for correct splitscreen
 	// moved here by hurdler so it works with the new near clipping plane
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
+	hwr_viewfog = NULL; // do not leak into skybox, split-screen or subsequent 2D draws
 }
 
 // ==========================================================================
