@@ -2377,6 +2377,9 @@ static const char *locateWad(void)
 	const char *envstr;
 	const char *WadPath;
 
+#ifdef _UWP
+	return "E:\\ringracers";
+#endif
 
 	I_OutputMsg("RINGRACERSWADDIR");
 	// does RINGRACERSWADDIR exist?

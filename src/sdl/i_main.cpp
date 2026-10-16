@@ -148,6 +148,9 @@ static void InitLogging(void)
 	{
 		I_OutputMsg("Error symlinking latest-log.txt: %s\n", strerror(errno));
 	}
+#elif defined (_UWP)
+	// [UWP]: The working directory is the read-only package folder
+	logstream = fopen("E:\\ringracers\\latest-log.txt", "wt+");
 #else/*defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON)*/
 	logstream = fopen("latest-log.txt", "wt+");
 #endif/*defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON)*/

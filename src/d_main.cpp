@@ -1661,6 +1661,11 @@ void D_SRB2Main(void)
 		configfile[sizeof configfile - 1] = '\0';
 	}
 
+#ifdef _UWP
+	// [UWP]: Log setup normally creates this folder, but it's skipped with -nolog
+	I_mkdir(srb2home, 0755);
+#endif
+
 	// If config isn't writable, tons of behavior will be broken.
 	// Fail loudly before things get confusing!
 	{
@@ -2323,6 +2328,8 @@ const char *D_Home(void)
 
 #ifdef ANDROID
 	return "/data/data/org.srb2/";
+#elif _UWP
+	return "E:\\ringracers";
 #endif
 
 	if (M_CheckParm("-home") && M_IsNextParm())
