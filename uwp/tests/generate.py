@@ -102,7 +102,8 @@ def generate(engine, output):
         "GET_PIC": cache.function("HWR_GetPic"),
     }, output / "pictures.cpp")
 
-    driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
+    driver12 = Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp")
+    captures = Source(engine / "src/hardware/r_d3d12/d3d12_captures.inc")
     hardware = Source(engine / "src/hardware/hw_main.c")
     subprocess.run([sys.executable, str(Path(__file__).parent / "addons/shader-smoke/build.py"),
         "--check", "--header", str(output / "smoke_pk3.h")], check=True)
@@ -111,7 +112,31 @@ def generate(engine, output):
         "FIND_DEFS": hardware.function("HWR_FindShaderDefs"),
         "LOAD_SHADERS": hardware.function("HWR_LoadCustomShadersFromFile"),
     }, output / "custom_pk3.cpp")
-    fog = Source(engine / "src/hardware/r_d3d11/shaders.hlsl")
+    pipeline = Source(engine / "src/hardware/r_d3d12/d3d12_pipeline.cpp")
+    pipeline_header = Source(engine / "src/hardware/r_d3d12/d3d12_pipeline.h")
+    render(templates / "blend.cpp.in", {
+        "PIPELINE_ENUMS": pipeline_header.section("enum VSKind", "D3D12_BLEND_DESC MakeBlendDesc"),
+        "ENUMS": driver12.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
+        "BLEND": pipeline.function("Blend"),
+        "BLEND_DESC": pipeline.function("MakeBlendDesc"),
+        "DEPTH_DESC": pipeline.function("MakeDepthDesc"),
+        "STATE_KEY": driver12.function("StatePipelineKey"),
+        "SET_BLEND_MODE": driver12.function("SetBlendMode"),
+        "SET_BLEND": driver12.function("D3D_SetBlend"),
+    }, output / "blend.cpp")
+    render(templates / "custom_dispatch.cpp.in", {
+        "PIPELINE_ENUMS": pipeline_header.section("enum VSKind", "D3D12_BLEND_DESC MakeBlendDesc"),
+        "CUSTOM_STATE": driver12.section("struct CustomProgram\n{", "void SetBlendMode(FBITFIELD flags)"),
+        "PROGRAM_EXISTS": driver12.function("ProgramExists"),
+        "RETIRE": driver12.function("RetireCustomPipelines"),
+        "ADVANCE": driver12.function("AdvanceCustomGeneration"),
+        "VALIDATION_KEY": driver12.function("CustomValidationKey"),
+        "COMPILE": driver12.function("D3D_CompileShaders"),
+        "CLEAN": driver12.function("D3D_CleanShaders"),
+        "LOAD": driver12.function("D3D_LoadCustomShader"),
+        "SET_SHADER": driver12.function("D3D_SetShader"),
+    }, output / "custom_dispatch.cpp")
+    fog = Source(engine / "src/hardware/r_d3d12/shaders.hlsl")
     renderer = Source(engine / "src/r_main.cpp")
     fog_shader = fog.function("PSFogRemap").replace(" : SV_Target", "")
     fog_shader = fog_shader.replace("int3(", "makeint3(").replace("float4(", "make4(")
@@ -122,27 +147,11 @@ def generate(engine, output):
         "FOG_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("FogColormap")),
         "SOFTWARE_Z": renderer.function("R_InitLightTables"),
         "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
-        "BOUNDS": driver.function("FogCaptureBounds"),
+        "BOUNDS": captures.function("FogCaptureBounds"),
     }, output / "fog.cpp")
 
-    render(templates / "fog_capture.cpp.in", {
-        "MULTIPLY": driver.function("Multiply"),
-        "GLOBALS": driver.section("ComPtr<ID3D11Texture2D> g_fogScene;", "// Conservative projected bounds."),
-        "BOUNDS": driver.function("FogCaptureBounds"),
-        "CAPTURE": driver.function("CaptureFogScene"),
-        "INDEXED": driver.function("D3D_DrawIndexedTriangles"),
-    }, output / "fog_capture.cpp")
-    captures = Source(engine / "src/hardware/r_d3d12/d3d12_captures.inc")
-    driver12 = Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp")
     for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
         name = "Capture" + kind + "Scene"
-        # Compare the exact production initializer bytes, including padding,
-        # without introducing mocks for D3D11 device/context operations.
-        reference = function_section(driver, name, "\tstruct " + kind + "Constants",
-            "\tg_context->UpdateSubresource")
-        reference = ("std::vector<unsigned char> ReferenceConstants(FSurfaceInfo *surface, FBITFIELD flags){\n"
-            "(void)surface;\n" + reference + "auto p=reinterpret_cast<const unsigned char*>(&constants);\n"
-            "return {p,p+sizeof constants};\n}")
         split = f"""
         for(auto flags:{{FBITFIELD(PF_Translucent),FBITFIELD(PF_Additive),FBITFIELD(PF_Subtractive),
                 FBITFIELD(PF_ReverseSubtract),FBITFIELD(PF_Multiplicative),FBITFIELD(PF_Environment),
@@ -208,34 +217,17 @@ def generate(engine, output):
                 driver12.section("UINT64 g_testWaterCopies", "UINT8 g_waterConstantData")),
             "BOUNDS": captures.function(kind + "CaptureBounds").replace(kind + "CaptureBounds", "CaptureBounds"),
             "CAPTURE": captures.function(name).replace(name, "Capture").replace(kind + "CaptureBounds", "CaptureBounds"),
-            "REFERENCE_BOUNDS": driver.function(kind + "CaptureBounds").replace(kind + "CaptureBounds", "ReferenceBounds").replace("D3D11_BOX", "D3D12_BOX"),
-            "REFERENCE_CONSTANTS": reference,
+            "CAPTURE_KIND": "#define RR_TEST_WATER_CAPTURE" if kind == "Water" else "",
             "SPLIT_TEST": split,
             "SPECIFIC_TEST": specific,
+            "WATER_GROUPING": (templates / "water_grouping.cpp.in").read_text() if kind == "Water" else "",
+            "CONTINUES": hardware.function("HWR_WaterPlaneContinues") if kind == "Water" else "",
+            "DISPATCH": hardware.section("\t\tconst planeinfo_t *plane = sortnode[sortindex[i]].plane;", "\n#endif") if kind == "Water" else "",
             "SINE_FAILURE": "failSine=true;assert(!Capture(&surface,PF_Translucent,poly,4));failSine=false;" if kind == "Water" else "",
         }, output / (kind.lower() + "_capture_d3d12.cpp"))
         generated = output / (kind.lower() + "_capture_d3d12.cpp")
         generated.write_text(re.sub(r"\bScene\b", "g_" + kind.lower() + "Scene", generated.read_text()))
 
-    render(templates / "custom_dispatch.cpp.in", {
-        "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),
-        "CUSTOM_STATE": driver.section("struct CustomProgram\n{", "// r_opengl.c's Shader_SetUniforms"),
-        "COMPILE": driver.function("D3D_CompileShaders"),
-        "CLEAN": driver.function("D3D_CleanShaders"),
-        "LOAD": driver.function("D3D_LoadCustomShader"),
-        "SET_SHADER": driver.function("D3D_SetShader"),
-        "DISPATCH": driver.section("\tVSKind vs;\n\tPSKind ps;", "\n\tif (g_bound.layout != inputLayout)"),
-        "WATER": driver.section("\tconst FBITFIELD blend = PolyFlags &", "\n#else"),
-    }, output / "custom_dispatch.cpp")
-    render(templates / "custom_d3d11.cpp.in", {
-        "ENUMS": driver.section("enum VSKind", "struct ShaderCode"),
-        "MODEL_VERTEX": driver.section("struct ModelVertex", "// Dynamic buffers"),
-        "CONSTANTS": driver.section("struct Constants\n{", "ComPtr<ID3D11Buffer> g_constantBuffer;"),
-        "PROGRAMS": driver.section("struct CustomProgram\n{", "const CustomProgram *CustomDrawProgram"),
-        "COMPILE_STAGE": driver.function("CompileCustomStage"),
-        "CREATE_PROGRAM": driver.function("CreateCustomProgram"),
-        "CREATE_REFRACTION": driver.function("CreateCustomRefraction"),
-    }, output / "custom_d3d11.cpp")
     slopes = Source(engine / "src/p_slopes.c")
     render(templates / "wall_light.cpp.in", {
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
@@ -330,11 +322,11 @@ def generate(engine, output):
             "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
         "BATCH_NEXT": function_section(batching, "HWR_RenderBatches",
             "\t\tif (changeTexture)", "\n\t\tif (changePolyFlags)"),
-        "FIND_TEXTURE": driver.function("FindTexture"),
-        "BIND_TEXTURE": driver.function("BindTexture"),
-        "NO_TEXTURE": driver.function("SetNoTexture"),
-        "SET_TEXTURE": driver.function("SetTextureInternal"),
-        "UPLOAD_BIND": function_section(driver, "UpdateTextureInternal",
+        "FIND_TEXTURE": driver12.function("FindTexture"),
+        "BIND_TEXTURE": driver12.function("BindTexture"),
+        "NO_TEXTURE": driver12.function("SetNoTexture"),
+        "SET_TEXTURE": driver12.function("SetTextureInternal"),
+        "UPLOAD_BIND": function_section(driver12, "UpdateTextureInternal",
             "\tif (!(pTexInfo->flags & TF_BRIGHTMAP))", "\n\tTexture *texture = FindTexture(num);"),
     }
     for token, function, after in [
@@ -412,30 +404,19 @@ def generate(engine, output):
     }, output / "spring_clip.cpp")
 
     render(templates / "surface_probe.cpp.in", {
-        "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
         "COMMAND": hardware.function("HWR_SurfaceProbe_f"),
-        "REQUEST": driver.function("D3D11_RequestSurfaceProbe"),
-        "SOURCE": driver.function("D3D11_SurfaceProbeSource"),
-        "TEXTURE": driver.function("D3D11_SurfaceProbeTexture"),
     }, output / "surface_probe.cpp")
-    render(templates / "surface_probe_d3d11.cpp.in", {
-        "PROBE": driver.section("constexpr UINT kProbeWidth", "bool CanDraw()\n{"),
-        "REQUEST": driver.function("D3D11_RequestSurfaceProbe"),
-        "SOURCE": driver.function("D3D11_SurfaceProbeSource"),
-        "TEXTURE": driver.function("D3D11_SurfaceProbeTexture"),
-    }, output / "surface_probe_d3d11.cpp")
     render(templates / "sky_trace.cpp.in", {
         "TRACE": hardware.function("HWR_TraceSkyGeometry"),
         "PLANE_DISPATCH": hardware.section("\tif (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, \"~015\"))", "\n#endif"),
         "WALL_DISPATCH": hardware.section("\tif (gl_curline && !gl_curline->polyseg)", "\n#endif"),
     }, output / "sky_trace.cpp")
     render(templates / "distortion.cpp.in", {
-        "VERTEX": driver.function("PostImageVertex"),
+        "VERTEX": Source(engine / "src/hardware/r_d3d12/d3d12_screens.inc").function("PostImageVertex"),
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
     }, output / "distortion.cpp")
 
-    water = Source(engine / "src/hardware/r_d3d11/shaders.hlsl")
-    driver = Source(engine / "src/hardware/r_d3d11/r_d3d11.cpp")
+    water = Source(engine / "src/hardware/r_d3d12/shaders.hlsl")
     def native_water(name):
         code = water.function(name).replace(" : SV_Target", "")
         code = code.replace("int3(", "makeint3(").replace("float4(", "make4(")
@@ -444,23 +425,12 @@ def generate(engine, output):
         "OFFSET": native_water("WaterBackgroundOffset"),
         "BLEND": native_water("BlendWaterScene"),
         "WATER_SHADER": native_water("PSWaterRefraction"),
-        "BOUNDS": driver.function("WaterCaptureBounds"),
+        "BOUNDS": captures.function("WaterCaptureBounds"),
         "SOFTWARE_OFFSET": Source(engine / "src/r_plane.cpp").function("R_CalculateRippleOffset"),
         "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
     }, output / "water.cpp")
 
-    render(templates / "water_capture.cpp.in", {
-        "MULTIPLY": driver.function("Multiply"),
-        "CAPTURE_GLOBALS": driver.section("ComPtr<ID3D11Texture2D> g_waterScene;", "// Conservative projected bounds."),
-        "BOUNDS": driver.function("WaterCaptureBounds"),
-        "CAPTURE": driver.function("CaptureWaterScene"),
-        "CONTINUES": hardware.function("HWR_WaterPlaneContinues"),
-        "DISPATCH": hardware.section("\t\tconst planeinfo_t *plane = sortnode[sortindex[i]].plane;", "\n#endif"),
-        "OFFSET": native_water("WaterBackgroundOffset"),
-        "BLEND": native_water("BlendWaterScene"),
-        "WATER_SHADER": native_water("PSWaterRefraction"),
-    }, output / "water_capture.cpp")
 
     fixture = json.loads((templates.parent / "fixtures/water-palace-water.json").read_text())
     fixed = lambda value: str(int(value * 65536))
@@ -482,13 +452,6 @@ def generate(engine, output):
         "FIXTURE": "\n".join(fixture_code),
     }, output / "water_visibility.cpp")
 
-    render(templates / "blend.cpp.in", {
-        "ENUMS": driver.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
-        "TO_BLEND": driver.function("ToD3DBlend"),
-        "BLEND_STATE": driver.function("GetBlendState"),
-        "SET_BLEND_MODE": driver.function("SetBlendMode"),
-        "SET_BLEND": driver.function("D3D_SetBlend"),
-    }, output / "blend.cpp")
 
     render(templates / "sky.cpp.in", {
         "SETUP": Source(engine / "src/r_sky.c").function("R_SetupSkyDraw"),
@@ -550,7 +513,7 @@ def generate(engine, output):
         "FIRST_PERSON": Source(engine / "src/p_user.c").function("P_CalcPostImg"),
     }, output / "postimg_selection.cpp")
 
-    postimg = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PostImageUV")
+    postimg = Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("PostImageUV")
     postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
     reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(
         "\tvec2 texcoord0 = v_texcoord0;", "\n#ifdef ENABLE_S_SAMPLER1")
@@ -558,7 +521,7 @@ def generate(engine, output):
     reference = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", reference)
     render(templates / "postimg.cpp.in", {"SHADER": postimg, "REFERENCE": reference}, output / "postimg.cpp")
 
-    shader = Source(engine / "src/hardware/r_d3d11/shaders.hlsl").function("PSWipeFull")
+    shader = Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):
         shader = shader.replace(f"float{size}(", f"make{size}(")

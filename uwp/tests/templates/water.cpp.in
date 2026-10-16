@@ -27,7 +27,7 @@ void I_Error(const char *, ...) { abort(); }
 @@SOFTWARE_OFFSET@@
 using UINT=unsigned;
 struct Mat4 { float m[16]; };
-struct D3D11_BOX { UINT left,top,front,right,bottom,back; };
+struct D3D12_BOX { UINT left,top,front,right,bottom,back; };
 @@BOUNDS@@
 using float2 = float __attribute__((ext_vector_type(2)));
 using float3 = float __attribute__((ext_vector_type(3)));
@@ -76,7 +76,7 @@ int main() {
     for(int vx : {0,640}) for(int vy : {0,360}) {
         int vp[]={vx,vy,640,360};
         FOutVector vertices[4]={{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
-        D3D11_BOX box; WaterCaptureBounds(vertices,4,identity,vp,720,box);
+        D3D12_BOX box; WaterCaptureBounds(vertices,4,identity,vp,720,box);
         int top=720-vy-360;
         assert(box.left==(unsigned)vx+160 && box.right==(unsigned)vx+480);
         assert(box.top==(unsigned)top+90-16 && box.bottom==(unsigned)top+270+16);

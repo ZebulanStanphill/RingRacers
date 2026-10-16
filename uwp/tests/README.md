@@ -72,31 +72,31 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   load resets, tics across the unlogged gap, camera/presentation snapshots, missing
   player objects, unpresented frames, and that tracing
   leaves the player's object unchanged. Compile/run hardware and software variants.
-- **Add-on shader translation and dispatch:** compile the production GLSL adapter,
-  glslang parser/linker and SPIRV-Cross emitter. Translate 36 shader/layout pairs
-  with reordered varyings, uniforms/initializers, matrices and fragment coordinates;
-  reject invalid interfaces, malformed/oversized sources and invalid layouts,
-  then verify compiler recovery. Execute production driver loading/compilation and
-  shader selection with GPU creation stubs: missing-stage defaults, dirty caching,
-  atomic translation/GPU failures, Ignore custom shaders, sprite clipping variants,
-  custom model lighting, postprocessing priority and water. Custom water must
-  capture and select its refraction variant for every refracting blend mode,
-  capture the whole view with a custom vertex stage, and fall back to its ordinary
-  blended output after capture/variant failures, for non-ripple/opaque surfaces
-  and with Reduce VFX; Ignore custom shaders restores the built-in refraction.
-  Reverting the old custom-water guard fails these checks.
-  Native translation also emits the 78 general fixtures as SM5.1 stages for Direct3D 12.
-  Windows CI compiles those SM5.1 stages and the existing 97 SM4 stages (78 general and 19
-  smoke-test) with `fxc` under both profiles, then runs the production shader
-  and input-layout factory on WARP: 36,864 pixels verify polygon/sky/model data,
-  driver constants, UVs, GL fragment coordinates, alpha tests and portal clipping.
-  Translated custom water then draws through the production refraction variant in
-  four split-view quadrants at varying depths and tics: every composite must match
-  the built-in Software ripple oracle for all six blend modes, using depth and GL
-  coordinates measured by a translated probe; alpha-test holes leave the scene
-  untouched. The old unrefracted, framebuffer-blended output must fail.
-  Add-on visuals and load cost on Xbox remain untested; existing water and wall
-  confirmations do not validate custom shaders.
+- **Add-on shader translation:** compile the production GLSL adapter, glslang
+  parser/linker and SPIRV-Cross emitter from `r_d3d12/`. Translate 36 shader/layout
+  pairs with reordered varyings, uniforms/initializers, matrices and fragment
+  coordinates; reject invalid interfaces, malformed/oversized sources and invalid
+  layouts, then verify compiler recovery. Native translation emits 78 general
+  SM5.1 stages. Windows CI compiles these and the 97 SM4 translator compatibility
+  fixtures (78 general and 19 smoke-test stages). The SM4 check only validates
+  translation compatibility; the engine ships SM5.1 shaders. The Direct3D 11
+  dispatch and GPU factory harnesses were removed with that driver.
+  `custom_shader_dispatch` runs the production Direct3D 12 loader, compiler,
+  cleaner and shader selection with translation, shader compilation and pipeline
+  creation stubbed. With no add-on loaded nothing is translated or created and
+  the built-ins are selected. A fragment-only replacement gets the real built-in
+  vertex stage for the polygon, sky and model layouts and is selected per layout;
+  recompiling without a change translates nothing. A replacement that fails to
+  translate, to compile either stage on any one layout, or to create a pipeline
+  on any one layout is discarded whole, with its pipelines, leaving the built-ins
+  (and other types' replacements) in use; a later good load works again. Sprite
+  clipping shares the sprite replacement, a custom model shader is kept for lit
+  models unless a model-lighting replacement is supplied, Ignore custom shaders,
+  Shaders Off and postprocessing bypass add-ons, and custom water gets a
+  polygon-only refraction variant that, if it fails to translate, compile or
+  validate, leaves valid unrefracted water. Cleaning discards everything. The
+  Direct3D 12 WARP harness checks the same loader through pixels (below). Add-on
+  visuals and load cost on Xbox remain untested.
 - **Installable shader smoke test:** [download and instructions](addons/shader-smoke/README.md).
   The shipped PK3 marks ordinary floors/walls with magenta/green checkers and
   ripple-enabled water with moving cyan/orange bands. Its packaged entries pass
@@ -137,7 +137,13 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and `FixedDiv2`. ASan and all other UBSan checks remain enabled, including in
   traversal and lighting. No authored slope touches the affected FOF sectors;
   retaining the complete map still checks the other submitted sloped geometry.
-- **Pixel history diagnostic:** execute the production copy/readback and command handlers against padded-row resource mocks. Verify inactive paths make no GPU calls, the selected color's actual writer is reported, unchanged depth-only draws are excluded from color-writer rows, metadata stays immutable, 100% clamps to the final pixel, shader-off alpha is normalized, atlas rows/capacity and report limits are respected, partial allocation/readback failures clean up, and malformed coordinates or unsupported rendering modes are rejected. The Windows WARP harness also executes the same extracted driver functions on a real SM4 device: 130 command-ordered copies across atlas rows must preserve their earlier colors while the source remains bound, without changing the source target or binding. This validates the diagnostic, not the underlying brown-wall rendering.
+- **Pixel history diagnostic:** execute the production engine command handler.
+  Reject malformed coordinates and unsupported rendering modes, require batching
+  to be off, and check default and explicit coordinates passed to the Direct3D
+  12 request function. The former Direct3D 11 copy/readback mocks and extracted
+  SM4 device harness were removed. The Direct3D 12 WARP `surface-probe` scene
+  checks command-ordered copies, logged pixel ownership and the inactive path.
+  This validates the diagnostic, not the underlying brown-wall rendering.
 - **Suspect sky-surface diagnostics:** execute the production trace and both floor/wall dispatch conditions against real engine structures. Check per-type caps, one sampled frame per five-second interval and view, 64-bit frame IDs, map/time resets, portal/skybox exclusions, regular-floor selection, original sector IDs alongside fake-flat heights, settings, unchanged vertices, eight-vertex limits and bounded rows with one log write per surface. These checks validate diagnostics; they do not reproduce or fix the reported brown walls.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native
   Clang vector arithmetic, with CPU texture sampling stubs. Compare against an
@@ -183,21 +189,29 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   both production dispatchers with their pre-feature implementations fails the
   front-object draw-order assertion in both variants. Dependency stubs record
   draws and blend a shared CPU pixel; they do not render complete game scenes.
-- **Fog boundaries and captures:** compare 24,960 production shader row selections with the actual Software zlight/scalelight tables and 16,384 palette-remap samples. Exercise full/split viewport bounds, eye-plane crossings, entirely behind-camera/offscreen faces, retained captures, resize/texture/view/buffer failures, resource accounting, t8/b3 bindings and light/darkness constants. Shared blend tests verify complete fog/water composites retain color masks and restore ordinary blending. Custom dispatch tests check fog overrides, Ignore custom shaders and capture failure; wall-slice tests reject directional light adjustment on fog. Windows WARP executes the production SM4 fog shader for all light levels, wall/plane rows, varying depth, full/half-width viewports, palette lookup and smooth tint/fade. An injected reciprocal-depth shader must fail the same pixel oracle. Complete fog volumes, portal/stencil interactions, overlapping volume visuals, Xbox performance and every split-screen visual check still need device testing.
+- **Fog boundaries and captures:** compare 24,960 production shader row
+  selections with the actual Software zlight/scalelight tables and 16,384
+  palette-remap samples. Extract bounds from `r_d3d12/d3d12_captures.inc` and
+  exercise full/split viewports, eye-plane crossings and behind-camera/offscreen
+  faces. `fog_capture_d3d12` checks capture reuse, failure, resizing, resource
+  accounting, bindings and constants against fixed independent bounds and byte
+  initializer oracles from the former Direct3D 11 driver. Its obsolete native
+  capture harness was removed. Wall-slice tests reject directional light
+  adjustment on fog. Windows WARP executes the shipped SM5.1 path and rejects
+  a reciprocal-depth fog shader with the `fog-palette` oracle. Complete fog
+  volumes, overlapping visuals and Xbox performance still need device testing.
 - **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary, light-split and linkdraw paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. Separate negative executables must reject the previous dropped-map behavior and a one-pixel transform error. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
 - **Encore brightmap colors:** run production sprite colormap selection, Software
   full-bright selection, mapped-cache lookup/update, column conversion and light-table
   conversion. Check 12,288 combinations covering all 256 indices, 1/2/3/4-byte
   output, both palette settings, ordinary/Encore/exempt sprites, cache reuse and
   in-place remap changes. Generated production mutants that omit or repeat the
-  column remap must fail with a color mismatch. Windows `run-d3d11.ps1` separately
-  runs the production SM4 shader through WARP for 10,752 pixels in normal,
-  Encore and exempt modes with Palette Rendering on and off and colored tint/fade.
-  Shader controls that remove or repeat the remap only on bright pixels must
-  corrupt every eligible bright pixel in both palette modes and leave all other
-  pixels correct. The native test verifies production pretranslation; the WARP
-  test supplies pretranslated textures to verify shader behavior. These are
-  complementary boundary checks, not a complete game or Xbox visual test.
+  column remap must fail with a color mismatch. Direct3D 12 WARP checks normal,
+  Encore and exempt texels with Palette Rendering on and off. Separate controls
+  omit or repeat the remap on bright pixels for each palette setting. The native
+  test verifies production pretranslation; WARP supplies pretranslated textures
+  to verify shader behavior. These complement each other without running a
+  complete game or validating Xbox visuals.
 - **Spring wall silhouettes:** `spring_clip` executes the production silhouette
   helpers, the complete ordinary sprite draw function, both light-split sprite
   submissions, the solid-wall recording and both opaque FOF side recordings
@@ -246,7 +260,13 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   standard libraries) of such planes and sides must all finish. Without the bounds both
   fail with an AddressSanitizer stack-buffer-overflow in `HWR_SpringHalfPlane`. Seg traversal,
   GPU depth/stencil and Xbox visuals still need separate validation.
-- **Palette brightmaps:** Windows WARP executes the production SM4 `PSSoftware` palette path. Brightmapped texels must use the base colormap's full-bright row at their palette index, while other texels keep the surface colormap row from `R_DoomColormap` at the rasterized depth. The negative control restores the old surface-colormap row for brightmapped texels and must fail. This validates the shader on WARP, not Xbox palette-rendering visuals.
+- **Palette brightmaps:** Direct3D 12 WARP executes the production SM5.1
+  `PSSoftware` palette path. Brightmapped texels must use the base colormap's
+  full-bright row at their palette index; other texels keep the surface colormap
+  row at the rasterized depth. `brightmap-palette` varies light and depth and
+  checks normal, Encore and exempt texels. A surface-colormap shader mutant must
+  fail. `brightmap-smooth` covers the smooth-light path. Both scenes also have
+  separate expected-pixel negative controls. This does not validate Xbox visuals.
 - **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production
   `r_d3d12/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
   GPU. It checks `RingAllocator` alignment (including non-power-of-two), wraparound,
@@ -276,7 +296,8 @@ untouched padding.
 Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
 not copied into the tests. `#line` directives point compiler/sanitizer diagnostics
 back to those engine files. Only dependency stubs, inputs and expected behavior
-live in `templates/`. If a function or section moves incompatibly, generation
+live in `templates/`, including the frozen former-driver bounds and constant
+initializer references that independently check Direct3D 12 captures. If a function or section moves incompatibly, generation
 fails instead of silently skipping its test.
 
 These are isolated native checks. The network simulation does not run UDP clients
@@ -335,6 +356,30 @@ again after cleaning the shaders. `custom-shader-invalid` loads invalid GLSL, wh
 built-in fallback and draw the built-in color. `custom-shader-nocustom` sets Ignore custom
 shaders, so the custom-color oracle must fail: it's the negative control. They haven't been run
 locally, and Xbox results are untested. See [the Direct3D 12 add-on shader notes](../docs/d3d12-custom-shaders.md).
+Dispatch scenes run last, after the model and sky scenes, and replace only the fragment stage, so
+the built-in vertex stage places the geometry. `custom-none-quiet` compiles with nothing loaded,
+which must log no compilation, and `custom-none` draws the built-in color. A fragment for
+`SHADER_FLOOR` must show (64, 128, 191) on a polygon (`custom-layout-poly`, with the pixel outside
+the quad left alone), on the sky dome (`custom-layout-sky`) and on a model (`custom-layout-model`),
+the three layouts. `custom-recompile` compiles again without a change, which must log nothing.
+`custom-replace-invalid` replaces the working shader with invalid GLSL, which must draw the
+built-in color, and `custom-replace-recover` loads a good one again (191, 128, 64).
+`custom-sprite-clip` selects the clipping variant of a sprite replacement. `custom-model-kept`
+draws a model with Model Lighting on and only a model replacement, which stays in use, and
+`custom-model-lighting` adds a model-lighting replacement, which must take over. Failures that only
+the GPU can cause, such as one layout failing to create, are covered by the native test.
+`custom-water-refraction` loads a water fragment that outputs a fixed color with the surface's
+alpha and draws it over 64 colored bands at two tics. The result must be that color blended
+over the scenery shifted by the production ripple (four rows down, then eight up), which the
+unrefracted output differs from by several levels.
+Invisible-geometry scenes run all 100 pairs of blend modes through a depth-only draw: after a
+translucent sprite silhouette and an untextured sky wall (both Invisible, depth writing), the
+target keeps its color (`blend-invisible`), a farther visible surface is hidden by the depth they
+wrote (`blend-invisible-depth`), and a nearer visible surface blends in its own mode again
+(`blend-invisible-restore`). `blend-remap-mask` draws water and fog composites with Invisible set,
+which must leave the target alone, because the composites disable blending but keep the write mask, and
+`blend-remap-restore` draws a fog composite and then an ordinary translucent surface three times,
+which must blend over the remapped color each time.
 Palette scenes turn Palette Rendering on with a known 64³ lookup table (index 7 only
 where red is low and green and blue are high, otherwise 19), a light table and a screen
 palette. A colormapped textured polygon must read the light table's color from the screen
@@ -366,12 +411,12 @@ The DRED breadcrumbs logged by a timed-out GPU wait are also unexercised here.
 Fog and water scenes run the production capture path with the same tiny rings, so command-list
 submissions exercise rebinding and constant lifetimes. Fog draws over known scenery, including
 palette remapping through a light table. Water checks ordinary surface sampling and captured-scene
-refraction against the fixed-point sine and D3D11 blend math; grouped surfaces must keep their
+refraction against the fixed-point sine and independent blend math; grouped surfaces must keep their
 original captured background while later pieces draw. The `fog-remap`, `fog-palette`, `water-
 surface`, `water-refraction`, `water-group` and `water-group-counts` negative controls must each
 fail their oracle, and capture counters check the grouping under GPU-based validation. Native D3D12
-capture tests mock the texture, copy, binding and constant helpers, checking D3D11's bounds and
-constants, split views, clipping, failures, resizing and disjoint water growth. A growing water
+capture tests mock the texture, copy, binding and constant helpers, checking the former Direct3D 11 driver's fixed bounds and
+constant initializer oracles, split views, clipping, failures, resizing and disjoint water growth. A growing water
 capture uses one batched transition round trip around up to four strips; an unchanged grouped
 rectangle uses none. `capture-mixed` requires fog and water in the same command list;
 `capture-recreate` checks capture replacement after flushing resources still referenced by
@@ -398,7 +443,7 @@ texture on the second texture unit. `wipe-after` checks that a draw after a wipe
 mask of another size, still work, since the wipe passes end by resetting every binding.
 `postimg-identity` redraws the saved screen with no distortion, which must reproduce it,
 and `postimg-shift` with the water's sway, checking the pixels either side of the edge in
-every row against the sine. The grid argument of `PostImgRedraw` is ignored, as in the Direct3D 11
+every row against the sine. The grid argument of `PostImgRedraw` is ignored, as in the former Direct3D 11
 driver, so a shifted grid doesn't shift anything; the sway is what moves pixels.
 Fade map scenes give the master palette known colors and a table of three rows (identity,
 index 7 to 40, then 7 to 41 and 19 to 43). `fade-map` and `fade-map-row` check the strength's row,
@@ -421,7 +466,7 @@ do not change that lifecycle. They do not cover Xbox rendering or performance.
 
 The `regressions` job runs this suite with ASan and UBSan on every push, pull
 request, and manual workflow dispatch. The Windows `warp` job, which compiles the
-translated add-on shader fixtures and runs the Direct3D SM4 and Direct3D 12 WARP
+translated add-on shader fixtures and runs the Direct3D 12 WARP
 regressions, depends on it passing; the Windows `build` job runs alongside both,
 so a failed test fails the run but the package is still uploaded. CTest's JUnit
 report and detailed run log are uploaded as `regression-results`, including when
@@ -435,7 +480,21 @@ implementation. Keep randomized cases seeded and retain failing seeds as cases.
 To add a group, add its stubs/cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`. Register extracted production and reference source files as configure dependencies too, so editing Software's ripple calculation regenerates its water-refraction oracle.
 
-- **Water refraction:** extract Software's production fixed-point ripple calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader composites across blend modes, alpha values, distances, times and split-view edges. Native harnesses now supply depth for Direct3D's `SV_Position.w`; the earlier reciprocal-depth assumption was incorrect. Check projected capture bounds and native D3D blend-state construction/restoration. `water_capture` executes the actual capture function and transparent-node dispatch with mocked D3D resources: 21,888 composites across 2/16/96 overlapping water pieces must preserve the skyline contribution and a sharp edge. It checks one bounded copy for repeated pieces, disjoint rectangle expansion in all directions, changes of layer/slope, intervening walls/non-ripple planes, standalone draws, all four view rectangles, allocation failure and target resize. Each captured pixel is copied at most once per run; 200 short runs must copy over 98% fewer pixels than the old whole-view path, and fully clipped faces issue no copies. Reverting to per-face capture must fail. Actual GPU copies/allocation and depth/stencil execution require device validation. An earlier Xbox run confirmed the sky cutoff was fixed but still showed jagged scenery beyond the waterfall, with substantially fewer screen operations. The build 94 retest confirms working water effects and the separate wall light-slice fix for the brown walls. An earlier Grand Prix log exposed excessive whole-viewport copy cost. Bounded capture tests pass, but a controlled Xbox GPU comparison remains pending.
+- **Water refraction:** extract Software's production fixed-point ripple
+  calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader
+  composites across blend modes, alpha values, distances, times and split-view
+  edges. Extract projected bounds from `r_d3d12/d3d12_captures.inc`.
+  `water_capture_d3d12` checks bounded copies, disjoint rectangle growth, grouping,
+  allocation failures, resize and clipped faces. Its independent bounds and
+  constant byte initializer oracles are frozen versions from the former Direct3D
+  11 driver. Engine-side water-plane continuation and transparent-node dispatch
+  checks moved from the removed `water_capture` harness to this Direct3D 12
+  harness, retaining slope/layer changes and wall/non-ripple interruptions.
+  Direct3D 11 blend-state and capture harnesses were removed; Direct3D 12 WARP
+  checks the shipped blend/capture path and rejects a reciprocal-depth water
+  shader with the `water-refraction` oracle. The build 94 Xbox retest confirmed
+  working water effects and the separate wall light-slice fix. A controlled
+  Xbox GPU comparison of bounded captures remains pending.
 
 - **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment; the user confirmed the revised position on Xbox. They do not verify background visibility through water.
 
@@ -443,22 +502,23 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Internal FOF visibility:** extract Software's actual `R_DrawSinglePlane` rejection block, the hardware helper, and both face-admission conditions. Compare 945 decisions using real engine FOF structures, all CUTEXTRA/EXTRA/water/fog combinations, touching boundaries, moving control heights, and all 29 overlapping-water sectors recorded from vanilla 2.4 Water Palace in `fixtures/water-palace-water.json`. The old hardware height checks admit 15 internal water boundaries that Software suppresses. Removing the new condition from either face fails this test. This verifies the visibility decision; the reported scenery artifacts still require an Xbox retest.
 
-- **Direct3D water shader runtime:** Windows CI compiles the actual production
-  `VSPoly` and `PSWaterRefraction` shaders at SM4 and executes them on D3D11 WARP
-  at feature level 10.1. A probe measures pixel-position depth and checks it
-  against perspective interpolation, including a tilted triangle. Check 73,728
-  scenery samples across near/far depths, wave phases and four view rectangles;
-  samples outside the selected view must stay untouched. Use transparent water
-  to isolate the background row chosen by the production shader. Injecting the
-  old reciprocal-depth expression must fail the same pixel oracle. This covers
-  rasterizer semantics and real shader execution, while Xbox gameplay visuals
-  remain a separate device check.
+- **Invisible geometry and composite blend state:** `water_blend_state` executes the
+  production `SetBlendMode`, `D3D_SetBlend`, `StatePipelineKey`, `MakeBlendDesc` and
+  `MakeDepthDesc`, and decodes the state a draw would give its pipeline. All 100 pairs of
+  blend modes, including the translucent sprite-silhouette to untextured sky-wall
+  transition while Invisible stays set, must have a zero color write mask with depth
+  writing on and depth always off, and then restore RGB writes and the visible surface's
+  own blend. A water refraction or fog remap composite must disable blending and keep the
+  write mask for both mask settings, and the surface after it must get the translucent
+  blend again, after repeated use. The Direct3D 12 driver builds this override per draw
+  from the key rather than caching it, so there is no stale cached override to restore.
+  Windows WARP checks the same behavior through pixels (above). The state fix did not
+  resolve the reported brown walls; pixel history then identified inverted wall light
+  slices, and the user confirmed that separate fix in build 94.
 
-From an x64 Visual Studio developer PowerShell on Windows, run:
-
-```powershell
-python tests/prepare-source.py build/shader-regression-source
-./tests/run-d3d11.ps1 -Engine build/shader-regression-source
-```
-
-- **Invisible geometry state:** execute production `SetBlendMode`, `D3D_SetBlend` and `GetBlendState`, including the translucent sprite-silhouette to untextured sky-wall transition. All 100 pairs of blend modes must preserve the target color and depth writes, then restore RGB writes and the proper visible blend. The old implementation fails. This tests the actual D3D descriptor construction. The state fix did not resolve the reported brown walls. Pixel history subsequently identified inverted wall light slices, and the user confirmed that separate fix in build 94.
+- **Direct3D water shader runtime:** run `tests/run-d3d12.ps1` as described
+  above. The production SM5.1 capture/refraction path runs on Direct3D 12 WARP;
+  an injected reciprocal-depth shader must fail the same `water-refraction`
+  pixel oracle. The former SM4 WARP runner and its water, fog and brightmap
+  sources were deleted because that shader profile is no longer shipped.
+  Xbox gameplay visuals remain a separate device check.

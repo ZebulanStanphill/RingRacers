@@ -14,7 +14,7 @@
 #include "r_fps.h"
 #include "st_stuff.h"
 #include "sdl/i_uwptrace.h"
-#include "hardware/r_d3d11/r_d3d11.h"
+#include "hardware/r_d3d12/r_d3d12.h"
 precise_t fakeTime = 1;
 precise_t I_GetPreciseTime(void) { return fakeTime; }
 precise_t I_GetPrecisePrecision(void) { return 1000; }
@@ -49,7 +49,7 @@ void R_InterpolateMobjState(mobj_t *mo, fixed_t frac, interpmobjstate_t *out) {
 }
 boolean G_GamestateUsesLevel(void) { return gamestate == GS_LEVEL; }
 int presentQueries = 0;
-void D3D11_GetPresentTrace(INT32 *copy, INT32 *shown, UINT32 *cf, UINT32 *sf) {
+void D3D12_GetPresentTrace(INT32 *copy, INT32 *shown, UINT32 *cf, UINT32 *sf) {
     ++presentQueries;
     *copy = 2;
     *shown = 1;

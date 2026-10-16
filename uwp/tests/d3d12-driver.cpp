@@ -38,7 +38,7 @@
 using namespace rr_d3d12;
 static_assert((PF_Invert & PF_Occlude) == 0, "Inversion must not alias depth writes");
 static std::string logs, negative;
-static bool negativeRejected=false;
+static bool negativeRejected=false, shaderNegative=false;
 static std::vector<UINT8> lumpBytes; // what the stubbed wipe mask lump holds
 extern "C" {
 UINT8 g_wipemode=0, g_wipetype=0, g_wipeframe=0;
@@ -54,7 +54,7 @@ enum viewcontext_e viewcontext=VIEWCONTEXT_PLAYER1;
 lumpnum_t W_CheckNumForName(const char *n) { return (!strcmp(n,"FADE0000")||!strcmp(n,"FADE0001")) ? 1 : LUMPERROR; }
 size_t W_LumpLength(lumpnum_t) { return lumpBytes.size(); }
 void W_ReadLump(lumpnum_t, void *d) { memcpy(d,lumpBytes.data(),lumpBytes.size()); }
-consvar_t cv_gld3d12{}, cv_vidwait{}, cv_reducevfx{};
+consvar_t cv_vidwait{}, cv_reducevfx{};
 CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nullptr}};
 INT32 R_AdjustLightLevel(INT32 light) { return light; }
 void HWR_Startup() {}
@@ -101,11 +101,11 @@ static FSurfaceInfo surface(RGB c,int alpha=255) { FSurfaceInfo s={}; s.PolyColo
 static std::vector<FOutVector> quad(float z=1) { return {{-.8f*z,-.8f*z,z,0,0},{.8f*z,-.8f*z,z,0,0},{.8f*z,.8f*z,z,0,0},{-.8f*z,.8f*z,z,0,0}}; }
 static void draw(RGB c,FBITFIELD flags=0,float z=1,int alpha=255) { auto v=quad(z); auto s=surface(c,alpha); flags |= PF_Modulated|PF_NoTexture; blend(flags); polygon(&s,v.data(),(FUINT)v.size(),flags); }
 static std::vector<UINT8> pixels() { std::vector<UINT8> p(W*H*3,0xcd); readrect(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
-static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
+static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); if(!shaderNegative && negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d (got %d,%d,%d)\n",scene,x,y,c,p[(y*W+x)*3+c],want[c],p[(y*W+x)*3],p[(y*W+x)*3+1],p[(y*W+x)*3+2]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
 // Palette rendering's last step, read like expect reads the screen. scene names its own negative control.
-static void expectPost(const char *scene,RGB want,int x=32,int y=32) { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); validate(validationQueue); if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: palette pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("palette pixel oracle failed"); } }
+static void expectPost(const char *scene,RGB want,int x=32,int y=32) { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); validate(validationQueue); if(!shaderNegative && negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: palette pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("palette pixel oracle failed"); } }
 // Compares a pixel of an already read image; scene names its own negative control.
-static void check(const char *scene,const std::vector<UINT8> &p,int x,int y,RGB want,int width=W) { if(negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*width+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d (got %d,%d,%d expected %d,%d,%d)\n",scene,x,y,c,p[(y*width+x)*3+c],want[c],p[(y*width+x)*3],p[(y*width+x)*3+1],p[(y*width+x)*3+2],want[0],want[1],want[2]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
+static void check(const char *scene,const std::vector<UINT8> &p,int x,int y,RGB want,int width=W) { if(!shaderNegative && negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*width+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d (got %d,%d,%d expected %d,%d,%d)\n",scene,x,y,c,p[(y*width+x)*3+c],want[c],p[(y*width+x)*3],p[(y*width+x)*3+1],p[(y*width+x)*3+2],want[0],want[1],want[2]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
 static void fillRect(float x0,float x1,float y0,float y1,RGB c) { std::vector<FOutVector> v={{x0,y0,1,0,0},{x1,y0,1,0,0},{x1,y1,1,0,0},{x0,y1,1,0,0}}; auto s=surface(c); const FBITFIELD f=PF_Modulated|PF_NoTexture|PF_NoDepthTest; blend(f); polygon(&s,v.data(),4,f); }
 static void quadrants(RGB tl,RGB tr,RGB bl,RGB br) { reset({0,0,0}); fillRect(-1,0,0,1,tl); fillRect(0,1,0,1,tr); fillRect(-1,0,-1,0,bl); fillRect(0,1,-1,0,br); }
 // The screen's color at (x, y from the top) at the current size
@@ -142,12 +142,13 @@ static void validate(ID3D12InfoQueue *queue)
     if (Core_Errors()) throw std::runtime_error("production Core_Errors nonzero");
 }
 int main(int argc,char **argv) {
-    if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
+    if(argc==3 && (!strcmp(argv[1],"--negative-control") || !strcmp(argv[1],"--shader-negative-control"))) { negative=argv[2]; shaderNegative=!strcmp(argv[1],"--shader-negative-control"); }
     else if(argc!=1) return 2;
     ComPtr<ID3D12Debug> debug; ComPtr<ID3D12Debug1> gbv;
     if(FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))) || FAILED(debug.As(&gbv))) { fputs("D3D12 debug layer/GBV unavailable; install Windows Graphics Tools\n",stderr); return 77; }
-    // A negative control replays the same GPU work as the full run up to its scene and only changes what the oracle
-    // expects, so GPU-based validation, which makes WARP several times slower, would just repeat the full run's checks.
+    // Ordinary controls change the expected pixel; shader/input controls retain the correct oracle
+    // and inject a known regression. The production run validates GPU state for all these scenes.
+    // Skip GPU-based validation in controls because it makes WARP several times slower.
     debug->EnableDebugLayer(); if(negative.empty()) gbv->SetEnableGPUBasedValidation(TRUE);
     puts(negative.empty() ? "D3D12 debug layer and GPU-based validation enabled" : "D3D12 debug layer enabled (negative control: GPU-based validation skipped)");
     try {
@@ -195,9 +196,11 @@ int main(int argc,char **argv) {
           reset(); if(D3D12_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began twice for one request");
           draw(colors[0],PF_NoDepthTest); D3D12_EndSurfaceProbe(); expect("surface-probe-quiet",colors[0]);
           if(logs.find("surface probe:",quiet)!=std::string::npos) throw std::runtime_error("an inactive surface probe logged"); }
-        RGB src={160,96,64},dst={48,80,112}; const double a=128./255.;
+        RGB src={160,96,64},dst={48,80,112};
         struct Mode { const char *name; FBITFIELD flags; } modes[]={{"opaque",0},{"translucent",PF_Translucent},{"additive",PF_Additive},{"subtract",PF_Subtractive},{"reverse",PF_ReverseSubtract},{"multiply",PF_Multiplicative},{"environment",PF_Environment},{"masked",PF_Masked},{"invert",PF_Invert},{"fog",PF_Fog}};
-        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); RGB result={}; for(int c=0;c<3;c++) { double s=src[c],d=dst[c],v=s; switch(m.flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } expect(m.name,result); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
+        // The color of a source with this alpha drawn over a destination in one of these modes
+        auto blended=[](FBITFIELD flags,RGB source,RGB target,int alpha) { const double a=alpha/255.; RGB result={}; for(int c=0;c<3;c++) { double s=source[c],d=target[c],v=s; switch(flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } return result; };
+        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expect(m.name,blended(m.flags,src,dst,128)); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
         reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("depth",{200,40,20});
         draw({20,40,200},PF_NoDepthTest,1.5f); expect("nodepth",{20,40,200});
         reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("noocclude",{20,200,40});
@@ -449,6 +452,68 @@ int main(int argc,char **argv) {
             expect("light-table-update",oldColor,18,32); expect("light-table-update",newColor,46,32);
             expectPost("light-table-update-post",index19,18,32); expectPost("light-table-update-post",index7,46,32);
             D3D12_FinishUpdate(0);
+            // Bright texels use the base full-bright row (32), never the surface row.
+            // Distinct translated texels also check that Encore's cache pretranslation
+            // reaches bright pixels exactly once; the native cache tests verify that translation.
+            {
+                const RGB brightColors[]={{24,220,76},{220,64,144},{64,112,232},{232,192,32}};
+                const RGB darkColors[]={{72,96,120},{128,80,48},{48,112,80},{112,48,96}};
+                const RGB texelColors[]={{24,180,220},{180,60,80},{24,60,80},{180,180,220}};
+                const int indices[]={7,19,31,43};
+                auto brightLut=lut;
+                for(int b=0;b<lutSize;b++) for(int g=0;g<lutSize;g++) for(int r=0;r<lutSize;r++)
+                    brightLut[(b*lutSize+g)*lutSize+r]=(UINT8)(r<lutSize/2?(g>=lutSize/2?7:31):(g<lutSize/2?19:43));
+                setLookup(brightLut.data());
+                for(int row=0;row<33;row++) for(int k=0;k<4;k++)
+                    lightTable[row*256+indices[k]]=rgba(row==32?brightColors[k]:darkColors[k]);
+                updateLightTable(lightId,lightTable.data());
+                std::array<UINT8,4> brightTexel={255,255,255,255};
+                GLMipmap_t brightTexture={}; brightTexture.format=GL_TEXFMT_RGBA;
+                brightTexture.width=brightTexture.height=1; brightTexture.flags=TF_BRIGHTMAP;
+                brightTexture.data=brightTexel.data();
+                setShader(SHADER_SPRITE);
+                for(int mode=0;mode<3;mode++) for(int original=0;original<4;original++) for(bool bright:{false,true})
+                for(int lighting:{64,160}) for(float distance:{32.125f,128.125f,256.125f}) {
+                    const int index=(original+(mode==1?1:0))&3; // normal, Encore, and exempt
+                    int uploadedIndex=index;
+                    const bool encoreControl=shaderNegative && bright && mode==1 &&
+                        (negative=="brightmap-encore-missing" || negative=="brightmap-encore-double");
+                    if(encoreControl) uploadedIndex=(original+(negative=="brightmap-encore-double"?2:0))&3;
+                    for(int c=0;c<3;c++) paletteTexel[c]=(UINT8)texelColors[uploadedIndex][c];
+                    brightTexel[0]=brightTexel[1]=brightTexel[2]=bright?255:0;
+                    updateTexture(&paletteTexture); updateTexture(&brightTexture);
+                    reset(); texture(&paletteTexture); texture(&brightTexture);
+                    auto bs=surface({255,255,255}); bs.LightTableId=lightId;
+                    bs.LightInfo.light_level=lighting; bs.LightInfo.fade_end=31;
+                    auto q=quad(distance);
+                    polygon(&bs,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
+                    const char *scene=encoreControl?negative.c_str():"brightmap-palette";
+                    expect(scene,bright?brightColors[index]:darkColors[index]);
+                    D3D12_FinishUpdate(0);
+                }
+                // The smooth path must retain the same pretranslated colors at full light.
+                special(HWD_SET_PALETTE_RENDERING,0);
+                for(int mode=0;mode<3;mode++) for(int original=0;original<4;original++) for(bool bright:{false,true}) {
+                    const int index=(original+(mode==1?1:0))&3;
+                    int uploadedIndex=index;
+                    const bool encoreControl=shaderNegative && bright && mode==1 &&
+                        (negative=="brightmap-encore-missing-smooth" || negative=="brightmap-encore-double-smooth");
+                    if(encoreControl) uploadedIndex=(original+(negative=="brightmap-encore-double-smooth"?2:0))&3;
+                    for(int c=0;c<3;c++) paletteTexel[c]=(UINT8)texelColors[uploadedIndex][c];
+                    brightTexel[0]=brightTexel[1]=brightTexel[2]=bright?255:0;
+                    updateTexture(&paletteTexture); updateTexture(&brightTexture);
+                    reset(); texture(&paletteTexture); texture(&brightTexture);
+                    auto bs=surface({255,255,255}); bs.LightTableId=lightId;
+                    bs.LightInfo.light_level=255; bs.LightInfo.fade_end=31;
+                    auto q=quad(128.125f);
+                    polygon(&bs,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
+                    expect(encoreControl?negative.c_str():"brightmap-smooth",texelColors[index]);
+                    D3D12_FinishUpdate(0);
+                }
+                special(HWD_SET_PALETTE_RENDERING,1);
+                deleteTexture(&brightTexture);
+                paletteTexel={24,180,220,255}; updateTexture(&paletteTexture); setLookup(lut.data());
+            }
             // Palette fog chooses the captured scene index and Software's integer distance row.
             for(bool plane:{false,true}) {
                 const float distance=128.125f; const int lightnum=12;
@@ -522,7 +587,7 @@ int main(int argc,char **argv) {
             }
             function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); D3D12_FinishUpdate(0);
         }
-        // Water surface UV distortion and scene refraction use separate D3D11 equations.
+        // Water surface UV distortion and scene refraction use separate shader equations.
         {
             auto shader=function<void (*)(int)>("SetShader");
             auto shaderInfo=function<void (*)(hwdshaderinfo_t,INT32)>("SetShaderInfo");
@@ -914,10 +979,11 @@ int main(int argc,char **argv) {
         reset(); std::vector<FOutVector> huge(400,quad()[0]); huge[0]=quad()[0]; huge[1]=quad()[1]; huge[2]=quad()[2]; huge[3]=quad()[3]; auto hs=surface({32,220,96}); polygon(&hs,huge.data(),(FUINT)huge.size(),PF_Modulated|PF_NoTexture|PF_NoDepthTest); expect("growth",{32,220,96});
         D3D12_FinishUpdate(0); D3D12_LogPerf(1);
         if(logs.find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
+        // Four light-table updates: light-table-update, the brightmap scenes' rows, and fog-palette's two (plane and wall).
         { unsigned alive=9,uploads=0; int created=0,updated=0; double passes=0,ms=0; auto pp=logs.find("UWP perf:   D3D12: palette: rendering ");
           if(pp==std::string::npos) throw std::runtime_error("missing palette perf line");
           if(sscanf(logs.c_str()+pp,"UWP perf:   D3D12: palette: rendering %*s %u light tables alive, %d created, %d updated; %u LUT/palette uploads; %lf post passes per frame, %lf ms per frame",&alive,&created,&updated,&uploads,&passes,&ms)!=6
-             || alive!=0 || created!=98 || updated!=3 || uploads<6 || passes<=0) throw std::runtime_error("palette perf counters are wrong"); }
+             || alive!=0 || created!=98 || updated!=4 || uploads<6 || passes<=0) throw std::runtime_error("palette perf counters are wrong"); }
         { int full=0,twoPass=0,images=0,fades=0,fallbacks=0; auto sp=logs.find("UWP perf:   D3D12: screens: ");
           if(sp==std::string::npos) throw std::runtime_error("missing screens perf line");
           if(sscanf(logs.c_str()+sp,"UWP perf:   D3D12: screens: %*f per frame (%*f copies, %*f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay",&full,&twoPass,&images,&fades,&fallbacks)!=5
@@ -926,6 +992,155 @@ int main(int argc,char **argv) {
           if(logs.find("not drawn yet")!=std::string::npos || logs.find("postimage not drawn")!=std::string::npos) throw std::runtime_error("something still reports itself as not drawn"); }
         unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=logs.find("; wraps "); if(pos==std::string::npos || sscanf(logs.c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=logs.find("; grows ",pos); if(gp==std::string::npos || sscanf(logs.c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
         unsigned ringSubmissions=0; auto rp=logs.find("mid-frame: ring "); if(rp==std::string::npos || sscanf(logs.c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");
+        // Invisible geometry, such as depth-only sky walls and sprite silhouettes, never changes the target's color,
+        // whichever blend modes it passes through, and always writes depth. The visible surface after it blends with
+        // its own mode again.
+        {
+            for(const auto &from:modes) for(const auto &to:modes) {
+                reset(dst);
+                draw(src,from.flags|PF_Invisible|PF_Occlude,.5f,128);
+                draw(src,to.flags|PF_Invisible|PF_NoTexture|PF_Occlude,.5f,128);
+                expect("blend-invisible",dst);
+                // The depth it wrote hides a farther visible surface
+                draw(src,to.flags|PF_Occlude,1.5f,128);
+                expect("blend-invisible-depth",dst);
+                // A nearer visible surface blends over the target as its mode says
+                draw(src,to.flags|PF_Occlude,.25f,128);
+                expect("blend-invisible-restore",blended(to.flags,src,dst,128));
+            }
+            D3D12_FinishUpdate(0);
+        }
+        // Fog and water composites write the final color themselves, so they disable blending but keep the write mask,
+        // and the next surface blends normally again, however often a composite came before it.
+        {
+            auto shader=function<void (*)(int)>("SetShader");
+            auto shaderInfo=function<void (*)(hwdshaderinfo_t,INT32)>("SetShaderInfo");
+            special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON);
+            std::array<UINT8,4> transparent={0,0,0,1};
+            GLMipmap_t waterTexture={}; waterTexture.format=GL_TEXFMT_RGBA; waterTexture.width=waterTexture.height=1; waterTexture.data=transparent.data();
+            const RGB scenery={80,120,160};
+            auto fogSurface=surface({248,4,252},128); fogSurface.LightInfo.light_level=255; fogSurface.LightInfo.fade_end=31;
+            fogSurface.TintColor.s.red=51; fogSurface.TintColor.s.green=76; fogSurface.TintColor.s.blue=128; fogSurface.TintColor.s.alpha=10;
+            auto waterSurface=surface({255,255,255}); waterSurface.LightInfo.light_level=255; waterSurface.LightInfo.fade_end=31;
+            auto wide=quad(128.125f);
+            const FBITFIELD waterFlags=PF_Modulated|PF_ColorMapped|PF_Ripple|PF_Translucent|PF_NoDepthTest;
+            const FBITFIELD fogFlags=PF_Modulated|PF_ColorMapped|PF_Fog|PF_NoTexture|PF_NoDepthTest;
+            // The fog remap's color: a tint of the scenery's brightness, as the fog-remap scene computes it
+            RGB remapped={}; { const double brightness=std::sqrt(double(scenery[0]*scenery[0]+scenery[1]*scenery[1]+scenery[2]*scenery[2]));
+              const double strength=std::sqrt(9.*10/255); const int tint[]={51,76,128};
+              for(int c=0;c<3;c++) remapped[c]=(int)std::lround(std::clamp(brightness*tint[c]/255*strength+scenery[c]*(1-strength),0.,255.)); }
+            shaderInfo(HWD_SHADERINFO_LEVELTIME,6);
+            for(int use=0;use<3;use++) {
+                // With the write mask off, neither composite reaches the target
+                function<void (*)()>("UnSetShader")(); reset(scenery);
+                texture(&waterTexture); shader(SHADER_WATER); polygon(&waterSurface,wide.data(),4,waterFlags|PF_Invisible);
+                shader(SHADER_FOG); polygon(&fogSurface,wide.data(),4,fogFlags|PF_Invisible);
+                expect("blend-remap-mask",scenery);
+                // A fog remap draws its color, and the translucent surface after it blends over that color
+                function<void (*)()>("UnSetShader")(); reset(scenery);
+                shader(SHADER_FOG); polygon(&fogSurface,wide.data(),4,fogFlags);
+                function<void (*)()>("UnSetShader")();
+                draw(src,PF_Translucent|PF_NoDepthTest,1,128);
+                expect("blend-remap-restore",blended(PF_Translucent,src,remapped,128));
+            }
+            deleteTexture(&waterTexture); function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
+            D3D12_FinishUpdate(0);
+        }
+        // Add-on shaders are picked per vertex layout (polygon, sky and model), and a fragment-only replacement
+        // keeps the built-in vertex stage. The native custom_shader_dispatch test counts translations and injects
+        // creation failures; these scenes check what reaches the screen.
+        {
+            auto load=function<void (*)(int,char *,size_t,boolean)>("LoadCustomShader");
+            auto compile=function<boolean (*)()>("CompileShaders");
+            auto clean=function<void (*)()>("CleanShaders");
+            auto shader=function<void (*)(int)>("SetShader");
+            auto shaderInfo=function<void (*)(hwdshaderinfo_t,INT32)>("SetShaderInfo");
+            auto skyDome=function<void (*)(gl_sky_t *)>("RenderSkyDome");
+            auto setTransform=function<void (*)(FTransform *)>("SetTransform");
+            auto require=[&](const char *scene,bool ok,const char *why) { if(negative==scene) ok=false; if(!ok) { negativeRejected=negative==scene; throw std::runtime_error(why); } };
+            // Each successful add-on compilation logs one line
+            auto compilations=[&]() { size_t count=0; for(size_t at=0;(at=logs.find("compiled for polygon, sky and model layouts",at))!=std::string::npos;at++) count++; return count; };
+            auto loadFragment=[&](int type,const char *code) { load(type,const_cast<char *>(code),strlen(code),true); };
+            const char *const first="void main() { gl_FragColor = vec4(0.25, 0.5, 0.75, 1.0); }";
+            const char *const second="void main() { gl_FragColor = vec4(0.75, 0.5, 0.25, 1.0); }";
+            const RGB firstColor={64,128,191}, secondColor={191,128,64}, builtIn={200,40,16};
+            std::array<UINT8,4> texel={200,40,16,255};
+            GLMipmap_t customTexture={}; customTexture.format=GL_TEXFMT_RGBA; customTexture.width=customTexture.height=1; customTexture.data=texel.data();
+            // Every draw sets the identity transform first, as the engine sets its view after the sky: the sky dome
+            // leaves its own matrices behind, which would put the next polygon or model off screen.
+            auto drawPolygon=[&](float distance=1) {
+                reset(); setTransform(&identity); texture(&customTexture); auto q=quad(distance);
+                auto white=surface({255,255,255}); white.LightInfo.light_level=255; white.LightInfo.fade_end=31;
+                // Colormapped, as the engine draws every shaded surface: the driver keeps the tint and fade of the last
+                // colormapped surface (as r_opengl.c does), so an earlier scene's fog tint would otherwise carry over.
+                const FBITFIELD flags=PF_Modulated|PF_ColorMapped|PF_NoDepthTest; blend(flags); polygon(&white,q.data(),4,flags);
+            };
+            auto drawSky=[&]() { reset(); texture(nullptr); setTransform(&identity); blend(PF_NoTexture|PF_NoDepthTest); skyDome(&sky); };
+            auto drawModel=[&]() { reset(); setTransform(&identity); renderModel(&model,0,0,0,-1,&position,2,2,0,0,&modelSurface); };
+            special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON); special(HWD_SET_MODEL_LIGHTING,0);
+            clean();
+            // With none loaded, compiling does nothing and the built-in program draws
+            const size_t none=compilations();
+            require("custom-none-quiet",compile() && compilations()==none,"compiling without add-on shaders did work");
+            shader(SHADER_FLOOR); drawPolygon(); expect("custom-none",builtIn);
+            // A fragment-only replacement is drawn on every layout, with the built-in vertex stage placing the geometry
+            loadFragment(SHADER_FLOOR,first);
+            if(!compile() || compilations()!=none+1) throw std::runtime_error("fragment-only add-on shader did not compile");
+            shader(SHADER_FLOOR);
+            drawPolygon(); expect("custom-layout-poly",firstColor); expect("custom-layout-poly",{48,80,112},2,2);
+            drawSky(); expect("custom-layout-sky",firstColor);
+            drawModel(); expect("custom-layout-model",firstColor);
+            // Compiling again without a change translates nothing
+            require("custom-recompile",compile() && compilations()==none+1,"an unchanged add-on shader was compiled again");
+            // A bad replacement discards the working one, and a good one works again
+            const char *const invalid="void main() { gl_FragColor = vec4(; }";
+            loadFragment(SHADER_FLOOR,invalid);
+            if(!compile() || compilations()!=none+1) throw std::runtime_error("an invalid add-on shader disabled the built-in shaders");
+            shader(SHADER_FLOOR); drawPolygon(); expect("custom-replace-invalid",builtIn);
+            loadFragment(SHADER_FLOOR,second);
+            if(!compile() || compilations()!=none+2) throw std::runtime_error("a good add-on shader did not recover");
+            drawPolygon(); expect("custom-replace-recover",secondColor);
+            // Billboard clipping uses the sprite replacement
+            clean(); loadFragment(SHADER_SPRITE,first);
+            if(!compile()) throw std::runtime_error("sprite add-on shader did not compile");
+            // Far away, as sprites are: the clipping hack pulls depth in by 80/z, which puts a quad at depth 1 behind the camera.
+            shader(SHADER_SPRITECLIPHACK); drawPolygon(128.125f); expect("custom-sprite-clip",firstColor);
+            // A lit model keeps its custom model shader unless a model-lighting replacement is supplied
+            clean(); loadFragment(SHADER_MODEL,first);
+            if(!compile()) throw std::runtime_error("model add-on shader did not compile");
+            special(HWD_SET_MODEL_LIGHTING,1); shader(SHADER_MODEL); drawModel(); expect("custom-model-kept",firstColor);
+            loadFragment(SHADER_MODEL_LIGHTING,second);
+            if(!compile()) throw std::runtime_error("model lighting add-on shader did not compile");
+            shader(SHADER_MODEL); drawModel(); expect("custom-model-lighting",secondColor);
+            special(HWD_SET_MODEL_LIGHTING,0);
+            // Custom water composites its own color over the refracted scenery, as the built-in water does
+            clean();
+            const char *const waterFragment="#version 120\nuniform vec4 poly_color;\nvoid main() {\n gl_FragColor=vec4(0.25,0.5,0.75,poly_color.a);\n}\n";
+            loadFragment(SHADER_WATER,waterFragment);
+            if(!compile()) throw std::runtime_error("water add-on shader did not compile");
+            { const int alpha=128; const double a=alpha/255.; const float distance=128.125f;
+              auto ws=surface({255,255,255},alpha); ws.LightInfo.light_level=255; ws.LightInfo.fade_end=31;
+              for(int tick:{6,41}) {
+                  function<void (*)()>("UnSetShader")(); reset({0,0,0});
+                  for(int y=0;y<64;y++) fillRect(-1,1,1-(y+1)/32.f,1-y/32.f,{y*3,240-y*3,64});
+                  texture(&customTexture); shader(SHADER_WATER); shaderInfo(HWD_SHADERINFO_LEVELTIME,tick);
+                  auto wq=quad(distance);
+                  polygon(&ws,wq.data(),4,PF_Modulated|PF_ColorMapped|PF_Ripple|PF_Translucent|PF_NoDepthTest);
+                  auto image=pixels(); validate(validationQueue);
+                  const int angle=(tick*140+(int)std::floor(distance*128))&8191;
+                  const int shift=(int)std::floor(double(finesine[angle])/(4096+std::floor(distance*32)));
+                  if(!shift) throw std::runtime_error("custom water refraction would not shift the scenery");
+                  for(int y:{20,32,44}) {
+                      const int row=std::clamp(y+shift,0,63); const RGB scenery={row*3,240-row*3,64}, water={64,128,191};
+                      RGB want={}; for(int c=0;c<3;c++) want[c]=(int)std::lround(std::clamp((water[c]/255.)*a+(scenery[c]/255.)*(1-a),0.,1.)*255.);
+                      // The unrefracted result differs by half a shift of three levels per row
+                      check("custom-water-refraction",image,32,y,want);
+                  }
+                  D3D12_FinishUpdate(0);
+              } }
+            clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); special(HWD_SET_MODEL_LIGHTING,0);
+            deleteTexture(&customTexture); D3D12_FinishUpdate(0);
+        }
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(queue.Get());
         D3D12_Shutdown(); validate(queue.Get());
         const bool closed = Core_Device() == nullptr;

@@ -1,210 +1,243 @@
-#include <array>
+// DR. ROBOTNIK'S RING RACERS
+//-----------------------------------------------------------------------------
+// This program is free software distributed under the
+// terms of the GNU General Public License, version 2.
+// See the 'LICENSE' file for more details.
+//-----------------------------------------------------------------------------
+/// \file custom_dispatch.cpp.in
+/// \brief Native extraction checks for the Direct3D 12 driver's add-on shader loading and selection.
+///
+/// Executes the production D3D_LoadCustomShader, D3D_CompileShaders, D3D_CleanShaders, D3D_SetShader and
+/// CustomDrawProgram. Only translation, shader compilation and pipeline creation are stubs, so failures
+/// can be injected at any layout. The WARP pixel scenes in d3d12-driver.cpp cover what the GPU draws.
 #include <cassert>
+#include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
+#include "doomdef.h"
+#include "command.h"
 #include "hardware/hw_defs.h"
 #include "hardware/hw_glsl.h"
-#include "hardware/r_d3d11/custom_shader.h"
+#include "hardware/r_d3d12/custom_shader.h"
 #undef min
 #undef max
-#define LOG_ONCE(...) ((void)0)
-void Log(const char *,...) {}
-struct ID3D11VertexShader {}; struct ID3D11PixelShader {};
-struct ID3D11InputLayout {}; struct ID3D11Buffer {};
+using UINT16=uint16_t;
+using UINT64=uint64_t;
+#define D3D12_LOG_ONCE(...) ((void)0)
+#include "hardware/r_d3d12/pipeline_key.h"
+using namespace rr_d3d12;
+@@PIPELINE_ENUMS@@
+// The pieces of Direct3D that the extracted code names
+enum { D3D12_COMPARISON_FUNC_EQUAL=3, D3D12_STENCIL_OP_KEEP=1 };
+enum D3D12_PRIMITIVE_TOPOLOGY_TYPE { D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE=3 };
+struct ID3DBlob {}; struct ID3D12PipelineState {};
 template<class T> struct ComPtr {
     std::shared_ptr<T> p;
     T* Get() const{return p.get();} void Reset(){p.reset();}
     explicit operator bool() const{return bool(p);}
 };
-struct D3D11_BUFFER_DESC {unsigned ByteWidth=0,Usage=0,BindFlags=0;};
-enum {D3D11_USAGE_DEFAULT,D3D11_BIND_CONSTANT_BUFFER};
-struct Device {
-    bool fail=false;int allocations=0;
-    int CreateBuffer(D3D11_BUFFER_DESC *,void *,ComPtr<ID3D11Buffer> *out) {
-        ++allocations;if(fail)return -1;out->p=std::make_shared<ID3D11Buffer>();return 0;
-    }
-} device;
-Device *g_device=&device;
-bool Failed(int r,const char *){return r!=0;}
-struct Context {
-    int updates=0,vsBindings=0,psBindings=0;float height=0;
-    void UpdateSubresource(ID3D11Buffer *,int,void *,const float *v,int,int){++updates;height=v[0];}
-    void VSSetConstantBuffers(int slot,int n,ID3D11Buffer **p){assert(slot==4&&n==1&&*p);++vsBindings;}
-    void PSSetConstantBuffers(int slot,int n,ID3D11Buffer **p){assert(slot==4&&n==1&&*p);++psBindings;}
-} context;
-Context *g_context=&context;
-unsigned g_rtHeight=720;
-@@ENUMS@@
+struct UploadAllocation { void *cpu=nullptr; };
+// What the add-on tests record or inject
+static std::vector<std::string> logLines;
+static void Log(const char *format,...) {
+    char line[512]; va_list args; va_start(args,format); vsnprintf(line,sizeof line,format,args); va_end(args);
+    logLines.push_back(line);
+}
+static bool LogHas(const char *text) {
+    for(const auto &line:logLines) if(line.find(text)!=std::string::npos) return true;
+    return false;
+}
+static int deviceStub;
+static void *Core_Device() { return &deviceStub; }
+static void Core_Retire(ComPtr<ID3D12PipelineState> &) {}
 hwdshaderoption_t g_allowShaders=HWD_SHADEROPTION_ON;
-bool g_fogRemap=false,g_postImage=false,g_waterRefraction=false,g_modelLighting=false,g_shadersEnabled=false,g_shaderChanged=false;
+bool g_shadersEnabled=false,g_shaderChanged=false,g_modelLighting=false,g_postImage=false;
+bool g_waterRefraction=false,g_fogRemap=false;
 int g_program=-1,g_shaderCurrent=-1,g_shaderType=0;
 consvar_t cv_reducevfx{};
-struct {ID3D11VertexShader *vs=nullptr;ID3D11PixelShader *ps=nullptr;ID3D11InputLayout *layout=nullptr;} g_bound;
+UploadAllocation g_customViewConstants;
+UINT64 g_customViewFrame=0;
+std::unordered_map<PipelineKey,ComPtr<ID3D12PipelineState>,PipelineKeyHash> g_pipelines;
+PipelineKey g_lastKey={};
+ID3D12PipelineState *g_lastPipeline=nullptr,*g_boundPipeline=nullptr;
 @@CUSTOM_STATE@@
-static int translated=0,created=0,refractions=0,failLayout=-1;
-static bool failRefraction=false;
-static std::string lastVertex,lastFragment;
+@@PROGRAM_EXISTS@@
+// Translation, shader compilation and pipeline creation, with failures to inject
+struct Call { std::string vertex,fragment; int layout; bool refraction; };
+static std::vector<Call> calls;
+static int stageCompiles=0,pipelineCreations=0,failStageLayout=-1,failPipelineLayout=-1;
+static bool failRefractionStage=false,failRefractionPipeline=false;
+static const char *failStage="";
 bool TranslateLegacyShader(const std::string &v,const std::string &p,int layout,
     LegacyShaderHLSL &out,std::string &error,bool refraction,int shaderModel) {
-    assert(shaderModel==40);
-    ++translated;lastVertex=v;lastFragment=p;
+    assert(shaderModel==51);
+    calls.push_back({v,p,layout,refraction});
     if(v=="bad"||p=="bad"||(refraction&&p=="no refraction")){error="invalid shader";return false;}
-    if(refraction){assert(layout==LAYOUT_POLY);++refractions;}
-    out={v,refraction?p+" refraction":p};return true;
+    if(refraction) assert(layout==LAYOUT_POLY);
+    // The layout rides along in the text, so the compile stub can fail one layout
+    const std::string tag="L"+std::to_string(layout)+":";
+    out={tag+v,tag+(refraction?p+" refraction":p)};return true;
 }
-static bool CreateCustomProgram(const LegacyShaderHLSL &,Layout l,CustomProgram &p) {
-    ++created;if(l==failLayout)return false;
-    p.vertex.p=std::make_shared<ID3D11VertexShader>();p.pixel.p=std::make_shared<ID3D11PixelShader>();
-    p.layout.p=std::make_shared<ID3D11InputLayout>();return true;
+static bool CompileCustomStage(const std::string &hlsl,const char *profile,ComPtr<ID3DBlob> &code) {
+    ++stageCompiles;
+    assert(!strcmp(profile,"vs_5_1")||!strcmp(profile,"ps_5_1"));
+    const bool refraction=hlsl.size()>11 && hlsl.compare(hlsl.size()-11,11," refraction")==0;
+    if(refraction && failRefractionStage) return false;
+    if(failStageLayout>=0 && !strcmp(profile,failStage) && hlsl.compare(0,3,"L"+std::to_string(failStageLayout)+":")==0) return false;
+    code.p=std::make_shared<ID3DBlob>();return true;
 }
-static bool CreateCustomRefraction(const LegacyShaderHLSL &hlsl,CustomProgram &p) {
-    assert(hlsl.fragment.size()>11&&hlsl.fragment.compare(hlsl.fragment.size()-11,11," refraction")==0);
-    if(failRefraction)return false;
-    p.refraction.p=std::make_shared<ID3D11PixelShader>();return true;
+static ID3D12PipelineState *FindOrCreatePipeline(const PipelineKey &key) {
+    ++pipelineCreations;
+    const bool refraction=key.custom && key.ps>=NUMPS && (key.ps-NUMPS)%2==1;
+    if(refraction ? failRefractionPipeline : key.layout==failPipelineLayout) return nullptr;
+    auto &entry=g_pipelines[key];
+    if(!entry) entry.p=std::make_shared<ID3D12PipelineState>();
+    return entry.Get();
 }
+@@RETIRE@@
+@@ADVANCE@@
+@@VALIDATION_KEY@@
 @@COMPILE@@
 @@CLEAN@@
 @@LOAD@@
 @@SET_SHADER@@
-std::array<ComPtr<ID3D11VertexShader>,NUMVS> g_vertexShaders;
-std::array<ComPtr<ID3D11PixelShader>,NUMPS> g_pixelShaders;
-std::array<ComPtr<ID3D11InputLayout>,NUMLAYOUTS> g_layouts;
-struct Selection {ID3D11VertexShader *v;ID3D11PixelShader *p;ID3D11InputLayout *l;};
-Selection Select(Layout layout,bool wipe=false) {
-@@DISPATCH@@
-    return {vertexShader,pixelShader,inputLayout};
+static void Load(int type,const char *code,bool fragment=true) {
+    D3D_LoadCustomShader(type,const_cast<char*>(code),std::strlen(code),fragment);
 }
-static int captures=0,fogCaptures=0;
-static bool fogCaptureOK=true,waterCaptureOK=true,wholeViewCapture=false;
-bool CaptureFogScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT){++fogCaptures;return fogCaptureOK;}
-bool CaptureWaterScene(FSurfaceInfo *,FBITFIELD,FOutVector *,FUINT,bool wholeView){
-    ++captures;wholeViewCapture=wholeView;return waterCaptureOK;
+static const CustomProgram *Draw(int type,Layout layout) { g_program=type; return CustomDrawProgram(layout); }
+static int CustomPipelines(int type) {
+    int count=0;
+    for(const auto &entry:g_pipelines) count+=entry.first.custom && entry.first.vs==NUMVS+type;
+    return count;
 }
-void ArmWater(FBITFIELD PolyFlags) {
-    FSurfaceInfo surface{};FSurfaceInfo *pSurf=&surface;
-    FOutVector vertices[4]{};FUINT count=4;
-@@WATER@@
+static void ExpectDiscarded(int type) {
+    const CustomShader &shader=g_customShaders[type];
+    assert(!shader.valid);
+    for(const auto &program:shader.programs) assert(!program.vertex&&!program.pixel&&!program.refraction);
+    for(Layout layout:{LAYOUT_POLY,LAYOUT_SKY,LAYOUT_MODEL}) assert(!Draw(type,layout));
+    assert(CustomPipelines(type)==0);
 }
-static void Load(int type,const char *p,bool frag=true) {D3D_LoadCustomShader(type,const_cast<char*>(p),std::strlen(p),frag);}
 int main() {
-    for(auto &p:g_vertexShaders)p.p=std::make_shared<ID3D11VertexShader>();
-    for(auto &p:g_pixelShaders)p.p=std::make_shared<ID3D11PixelShader>();
-    for(auto &p:g_layouts)p.p=std::make_shared<ID3D11InputLayout>();
-    assert(D3D_CompileShaders());assert(translated==0&&created==0);
-    for(Layout layout:{LAYOUT_POLY,LAYOUT_SKY,LAYOUT_MODEL}) {
-        g_program=SHADER_WALL;const auto base=Select(layout);
-        assert(base.p==g_pixelShaders[PS_SOFTWARE].Get());assert(context.updates==0);
-    }
-    // Fragment-only replacement gets the real shared built-in vertex stage.
+    const Layout layouts[]={LAYOUT_POLY,LAYOUT_SKY,LAYOUT_MODEL};
+    // No add-on shaders: nothing is translated, compiled or created, and the built-in programs are selected.
+    assert(D3D_CompileShaders());
+    assert(calls.empty()&&stageCompiles==0&&pipelineCreations==0&&g_pipelines.empty());
+    for(int type=1;type<NUMBASESHADERS;++type) for(Layout layout:layouts) assert(!Draw(type,layout));
+    // A fragment-only replacement gets the real built-in vertex stage for every layout, and is selected per layout.
     Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
-    assert(translated==3&&created==3&&refractions==0&&lastVertex==gl_shadersources[SHADER_WALL].vertex);
-    for(auto &p:g_customShaders[SHADER_WALL].programs)assert(!p.refraction);
-    for(Layout layout:{LAYOUT_POLY,LAYOUT_SKY,LAYOUT_MODEL}) {
-        g_program=SHADER_WALL;const auto custom=Select(layout);
-        assert(custom.v==g_customShaders[SHADER_WALL].programs[layout].vertex.Get());
-        assert(custom.p==g_customShaders[SHADER_WALL].programs[layout].pixel.Get());
-        assert(custom.l==g_customShaders[SHADER_WALL].programs[layout].layout.Get());
-        assert(context.height==720&&context.vsBindings==context.psBindings);
+    assert(calls.size()==3&&stageCompiles==6&&pipelineCreations==3);
+    for(int layout=0;layout<3;++layout) {
+        assert(calls[layout].layout==layout&&!calls[layout].refraction);
+        assert(calls[layout].vertex==gl_shadersources[SHADER_WALL].vertex&&calls[layout].fragment=="fragment");
     }
-    const int before=translated;assert(D3D_CompileShaders());assert(translated==before);
+    const CustomShader &wall=g_customShaders[SHADER_WALL];
+    assert(wall.valid&&wall.generation==g_customGeneration&&CustomPipelines(SHADER_WALL)==3);
+    for(Layout layout:layouts) {
+        const CustomProgram *program=Draw(SHADER_WALL,layout);
+        assert(program==&wall.programs[layout]&&program->vertex&&program->pixel&&!program->refraction);
+    }
+    assert(wall.programs[LAYOUT_POLY].vertex.Get()!=wall.programs[LAYOUT_SKY].vertex.Get());
+    // Other base shaders keep their built-in programs
+    for(Layout layout:layouts) assert(!Draw(SHADER_FLOOR,layout));
+    // Recompiling without changes translates, compiles and creates nothing
+    const size_t translated=calls.size();const int compiled=stageCompiles,created=pipelineCreations;
+    assert(D3D_CompileShaders());
+    assert(calls.size()==translated&&stageCompiles==compiled&&pipelineCreations==created);
+    // Ignore custom shaders, shaders off and postprocessing all bypass the add-on
     for(auto mode:{HWD_SHADEROPTION_OFF,HWD_SHADEROPTION_NOCUSTOM}) {
-        g_allowShaders=mode;const int updates=context.updates;
-        assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_SOFTWARE].Get());assert(context.updates==updates);
+        g_allowShaders=mode;for(Layout layout:layouts) assert(!Draw(SHADER_WALL,layout));
     }
     g_allowShaders=HWD_SHADEROPTION_ON;
-    // Updating a working replacement with either translation or GPU creation
-    // failure must atomically discard it and leave built-in programs usable.
-    Load(SHADER_WALL,"bad");assert(D3D_CompileShaders());assert(!g_customShaders[SHADER_WALL].valid);
-    assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_SOFTWARE].Get());
-    Load(SHADER_WALL,"fragment");failLayout=LAYOUT_SKY;assert(D3D_CompileShaders());
-    for(auto &p:g_customShaders[SHADER_WALL].programs)assert(!p.vertex&&!p.pixel&&!p.layout);
-    failLayout=-1;Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
-    assert(g_customShaders[SHADER_WALL].valid);
-    // Billboard clipping variants share sprite replacements; custom models
-    // are retained unless a separate model-lighting replacement is supplied.
-    Load(SHADER_SPRITE,"sprite");Load(SHADER_MODEL,"model");assert(D3D_CompileShaders());
-    assert(g_customShaders[SHADER_SPRITECLIPHACK].fragment=="sprite");
-    assert(g_customShaders[SHADER_SPRITECLIPHACK].valid);
-    g_modelLighting=true;D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL);
+    g_postImage=true;for(Layout layout:layouts) assert(!Draw(SHADER_WALL,layout));
+    g_postImage=false;
+    // A replacement that fails to translate, compile or create atomically discards the whole replacement
+    // (including a working one it replaces), leaves the built-ins in use, and a later good load works again.
+    Load(SHADER_WALL,"bad");assert(D3D_CompileShaders());
+    ExpectDiscarded(SHADER_WALL);assert(LogHas("keeping the built-in shader"));
+    Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders()&&g_customShaders[SHADER_WALL].valid);
+    for(const char *stage:{"vs_5_1","ps_5_1"}) for(int layout=0;layout<3;++layout) {
+        failStage=stage;failStageLayout=layout;
+        Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
+        ExpectDiscarded(SHADER_WALL);
+        failStageLayout=-1;
+        Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
+        assert(g_customShaders[SHADER_WALL].valid&&Draw(SHADER_WALL,(Layout)layout));
+    }
+    for(int layout=0;layout<3;++layout) {
+        logLines.clear();failPipelineLayout=layout;
+        Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
+        ExpectDiscarded(SHADER_WALL);assert(LogHas("pipeline validation failed"));
+        failPipelineLayout=-1;
+        Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
+        assert(g_customShaders[SHADER_WALL].valid&&CustomPipelines(SHADER_WALL)==3);
+    }
+    // One type's failure leaves another type's replacement alone
+    Load(SHADER_FLOOR,"floor");assert(D3D_CompileShaders()&&g_customShaders[SHADER_FLOOR].valid);
+    failPipelineLayout=LAYOUT_MODEL;Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders());
+    ExpectDiscarded(SHADER_WALL);assert(g_customShaders[SHADER_FLOOR].valid&&Draw(SHADER_FLOOR,LAYOUT_MODEL));
+    failPipelineLayout=-1;
+    // Billboard clipping shares the sprite replacement, including its vertex stage once supplied
+    calls.clear();
+    Load(SHADER_SPRITE,"sprite");assert(D3D_CompileShaders());
+    assert(g_customShaders[SHADER_SPRITECLIPHACK].fragment=="sprite"&&g_customShaders[SHADER_SPRITECLIPHACK].valid);
+    assert(g_customShaders[SHADER_SPRITE].valid&&Draw(SHADER_SPRITECLIPHACK,LAYOUT_POLY));
+    bool clipVertex=false;
+    for(const auto &call:calls) clipVertex=clipVertex||(call.vertex==gl_shadersources[SHADER_SPRITECLIPHACK].vertex&&call.fragment=="sprite");
+    assert(clipVertex);
+    Load(SHADER_SPRITE,"sprite vertex",false);assert(D3D_CompileShaders());
+    assert(g_customShaders[SHADER_SPRITECLIPHACK].vertex=="sprite vertex"&&g_customShaders[SHADER_SPRITECLIPHACK].valid);
+    // A custom model shader is kept for lit models unless a separate model-lighting replacement is supplied
+    Load(SHADER_MODEL,"model");assert(D3D_CompileShaders());
+    g_modelLighting=true;
+    D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL);
+    g_allowShaders=HWD_SHADEROPTION_NOCUSTOM;D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL_LIGHTING);
+    g_allowShaders=HWD_SHADEROPTION_ON;D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL);
     Load(SHADER_MODEL_LIGHTING,"lit model");assert(D3D_CompileShaders());
     D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL_LIGHTING);
-    // Normal water retains one capture/composite with blending replaced.
-    g_program=SHADER_WATER;ArmWater(PF_Ripple|PF_Translucent);
-    assert(g_waterRefraction&&captures==1&&!wholeViewCapture);
-    assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
-    // Custom water gets a polygon-only composite variant, translated after
-    // its three ordinary layouts, and keeps its custom vertex stage/layout.
-    int translations=translated;
-    Load(SHADER_WATER,"custom water");assert(D3D_CompileShaders());
-    assert(translated==translations+4&&refractions==1);
-    const CustomProgram *water=g_customShaders[SHADER_WATER].programs;
-    assert(water[LAYOUT_POLY].refraction&&!water[LAYOUT_SKY].refraction&&!water[LAYOUT_MODEL].refraction);
-    ArmWater(PF_Ripple|PF_Translucent);
-    assert(g_waterRefraction&&captures==2&&!wholeViewCapture);
-    auto refracted=Select(LAYOUT_POLY);
-    assert(refracted.p==water[LAYOUT_POLY].refraction.Get()&&refracted.p!=water[LAYOUT_POLY].pixel.Get());
-    assert(refracted.v==water[LAYOUT_POLY].vertex.Get()&&refracted.l==water[LAYOUT_POLY].layout.Get());
-    for(FBITFIELD blend:{PF_Additive,PF_Subtractive,PF_ReverseSubtract,PF_Multiplicative,PF_Environment}) {
-        ArmWater(PF_Ripple|blend);assert(g_waterRefraction&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].refraction.Get());
-    }
-    // Without a capture the ordinary custom output is blended normally.
-    const int armed=captures;
-    waterCaptureOK=false;ArmWater(PF_Ripple|PF_Translucent);
-    assert(!g_waterRefraction&&captures==armed+1&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
-    waterCaptureOK=true;
-    for(FBITFIELD flags:{FBITFIELD(PF_Translucent),FBITFIELD(PF_Ripple|PF_Masked),FBITFIELD(PF_Ripple)}) {
-        ArmWater(flags);assert(!g_waterRefraction&&captures==armed+1);
-        assert(Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
-    }
-    cv_reducevfx.value=1;ArmWater(PF_Ripple|PF_Translucent);
-    assert(!g_waterRefraction&&captures==armed+1&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
+    g_modelLighting=false;D3D_SetShader(SHADER_MODEL);assert(g_shaderCurrent==SHADER_MODEL);
+    // Reduce VFX replaces the water shader, and no shader and Shaders Off disable programs
+    cv_reducevfx.value=1;D3D_SetShader(SHADER_WATER);assert(g_shaderCurrent==SHADER_FLOOR);
     cv_reducevfx.value=0;
-    // Ignore custom shaders restores the built-in refraction program.
-    g_allowShaders=HWD_SHADEROPTION_NOCUSTOM;ArmWater(PF_Ripple|PF_Translucent);
-    assert(g_waterRefraction&&captures==armed+2&&!wholeViewCapture);
-    assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
+    // Choosing a shader ends any water or fog composite
+    g_waterRefraction=g_fogRemap=true;D3D_SetShader(SHADER_WALL);assert(!g_waterRefraction&&!g_fogRemap);
+    D3D_SetShader(SHADER_NONE);assert(!g_shadersEnabled&&g_program==-1&&g_shaderCurrent==-1);
+    D3D_SetShader(SHADER_WALL);assert(g_shadersEnabled&&g_shaderCurrent==SHADER_WALL);
+    g_allowShaders=HWD_SHADEROPTION_OFF;D3D_SetShader(SHADER_WALL);assert(!g_shadersEnabled);
     g_allowShaders=HWD_SHADEROPTION_ON;
-    // A custom vertex stage may displace water; capture its whole view.
-    Load(SHADER_WATER,"wave vertex",false);assert(D3D_CompileShaders()&&refractions==2);
-    ArmWater(PF_Ripple|PF_Translucent);
-    assert(g_waterRefraction&&captures==armed+3&&wholeViewCapture);
-    assert(Select(LAYOUT_POLY).p==g_customShaders[SHADER_WATER].programs[LAYOUT_POLY].refraction.Get());
-    // A failed composite variant leaves valid, unrefracted custom water.
-    for(int failure=0;failure<2;++failure) {
-        failRefraction=failure==1;Load(SHADER_WATER,failure?"custom water":"no refraction");
-        assert(D3D_CompileShaders()&&g_customShaders[SHADER_WATER].valid);
-        assert(!water[LAYOUT_POLY].refraction&&water[LAYOUT_POLY].pixel);
-        const int before=captures;ArmWater(PF_Ripple|PF_Translucent);
-        assert(!g_waterRefraction&&captures==before&&Select(LAYOUT_POLY).p==water[LAYOUT_POLY].pixel.Get());
+    // Custom water gets a polygon-only composite variant, translated after its three ordinary layouts
+    for(Layout layout:layouts) assert(!Draw(SHADER_WATER,layout));
+    calls.clear();const int pipelinesBefore=pipelineCreations;
+    Load(SHADER_WATER,"custom water");assert(D3D_CompileShaders());
+    assert(calls.size()==4&&!calls[2].refraction&&calls[3].refraction&&calls[3].layout==LAYOUT_POLY);
+    assert(calls[3].vertex==gl_shadersources[SHADER_WATER].vertex&&calls[3].fragment=="custom water");
+    const CustomProgram *water=g_customShaders[SHADER_WATER].programs;
+    assert(g_customShaders[SHADER_WATER].valid&&water[LAYOUT_POLY].refraction);
+    assert(!water[LAYOUT_SKY].refraction&&!water[LAYOUT_MODEL].refraction);
+    assert(pipelineCreations==pipelinesBefore+4&&CustomPipelines(SHADER_WATER)==4);
+    assert(Draw(SHADER_WATER,LAYOUT_POLY)->refraction.Get()==water[LAYOUT_POLY].refraction.Get());
+    // A refraction variant that fails to translate, compile or validate leaves valid, unrefracted custom water
+    for(int failure=0;failure<3;++failure) {
+        logLines.clear();
+        failRefractionStage=failure==1;failRefractionPipeline=failure==2;
+        Load(SHADER_WATER,failure==0?"no refraction":"custom water");assert(D3D_CompileShaders());
+        assert(g_customShaders[SHADER_WATER].valid&&water[LAYOUT_POLY].pixel&&!water[LAYOUT_POLY].refraction);
+        assert(LogHas("without refraction"));
+        for(Layout layout:layouts) assert(Draw(SHADER_WATER,layout)==&water[layout]);
     }
-    failRefraction=false;
-    Load(SHADER_WATER,"bad");assert(D3D_CompileShaders()&&!g_customShaders[SHADER_WATER].valid);
-    ArmWater(PF_Ripple|PF_Translucent);assert(g_waterRefraction&&Select(LAYOUT_POLY).p==g_pixelShaders[PS_WATERREFRACTION].Get());
-    g_allowShaders=HWD_SHADEROPTION_ON;
-    // Fog remapping and custom fog own their output independently of water.
-    g_program=SHADER_FOG;ArmWater(PF_Fog);
-    assert(g_fogRemap&&!g_waterRefraction&&fogCaptures==1);
-    assert(Select(LAYOUT_POLY).p==g_pixelShaders[PS_FOGREMAP].Get());
-    Load(SHADER_FOG,"custom fog");assert(D3D_CompileShaders());ArmWater(PF_Fog);
-    assert(!g_fogRemap&&fogCaptures==1);
-    assert(Select(LAYOUT_POLY).p==g_customShaders[SHADER_FOG].programs[LAYOUT_POLY].pixel.Get());
-    g_allowShaders=HWD_SHADEROPTION_NOCUSTOM;ArmWater(PF_Fog);
-    assert(g_fogRemap&&fogCaptures==2);
-    fogCaptureOK=false;ArmWater(PF_Fog);
-    assert(!g_fogRemap&&Select(LAYOUT_POLY).p==g_pixelShaders[PS_FOG].Get());
-    fogCaptureOK=true;g_allowShaders=HWD_SHADEROPTION_ON;
-    // Water/heat postprocessing must win over any previously selected custom slot.
-    g_postImage=true;
-    for(int type=1;type<NUMBASESHADERS;++type) {
-        g_program=type;const int updates=context.updates;const auto post=Select(LAYOUT_POLY);
-        assert(post.v==g_vertexShaders[VS_POSTIMAGE].Get()&&post.p==g_pixelShaders[PS_POSTIMAGE].Get());
-        assert(context.updates==updates);
-    }
-    g_postImage=false;cv_reducevfx.value=1;D3D_SetShader(SHADER_WATER);assert(g_shaderCurrent==SHADER_FLOOR);
-    D3D_SetShader(SHADER_NONE);assert(!g_shadersEnabled&&g_program==-1);
-    D3D_CleanShaders();for(auto &s:g_customShaders)assert(!s.valid&&s.vertex.empty()&&s.fragment.empty());
-    assert(!g_customViewConstants);
-    puts("Production custom dispatch: built-in fallback, three layouts, compile failure/recovery, settings, sprites/models, water captures and postprocessing passed");
+    failRefractionStage=failRefractionPipeline=false;
+    Load(SHADER_WATER,"bad");assert(D3D_CompileShaders());ExpectDiscarded(SHADER_WATER);
+    // Cleaning discards every replacement and its pipelines
+    const UINT16 generation=g_customGeneration;
+    D3D_CleanShaders();
+    assert(g_customGeneration!=generation&&g_customGeneration!=0);
+    for(const auto &shader:g_customShaders) assert(!shader.valid&&shader.vertex.empty()&&shader.fragment.empty());
+    for(const auto &entry:g_pipelines) assert(!entry.first.custom);
+    for(int type=1;type<NUMBASESHADERS;++type) for(Layout layout:layouts) assert(!Draw(type,layout));
+    assert(!g_customViewConstants.cpu&&g_customViewFrame==UINT64_MAX);
+    puts("Production custom dispatch: built-in selection, vertex defaults, atomic discard on translation, compile and pipeline failures, recompile caching, sprite clipping, model lighting and water refraction passed");
 }

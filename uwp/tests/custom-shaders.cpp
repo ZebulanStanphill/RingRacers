@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include "hardware/r_d3d11/custom_shader.h"
+#include "hardware/r_d3d12/custom_shader.h"
 #include "hardware/hw_defs.h"
 #include "hardware/hw_glsl.h"
 static void Write(const std::filesystem::path &dir, const std::string &name, const LegacyShaderHLSL &s) {

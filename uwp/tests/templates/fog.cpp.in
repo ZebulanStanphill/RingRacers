@@ -30,7 +30,7 @@ static void InitScale() {
 @@FOG_ROW@@
 using UINT=unsigned;
 struct Mat4 { float m[16]; };
-struct D3D11_BOX { UINT left,top,front,right,bottom,back; };
+struct D3D12_BOX { UINT left,top,front,right,bottom,back; };
 @@BOUNDS@@
 using float2 = float __attribute__((ext_vector_type(2)));
 using float3 = float __attribute__((ext_vector_type(3)));
@@ -75,7 +75,7 @@ int main() {
     for(unsigned vx : {0u,640u}) for(unsigned vy : {0u,360u}) {
         int vp[]={(int)vx,(int)vy,640,360};
         FOutVector vertices[4] = {{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
-        D3D11_BOX box; FogCaptureBounds(vertices,4,identity,vp,720,box);
+        D3D12_BOX box; FogCaptureBounds(vertices,4,identity,vp,720,box);
         assert(box.left==vx+160 && box.right==vx+480);
         assert(box.top==720-vy-360+90 && box.bottom==720-vy-90);
         assert(box.front==0 && box.back==1);

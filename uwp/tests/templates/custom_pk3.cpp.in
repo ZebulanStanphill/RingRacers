@@ -11,7 +11,7 @@
 #include <strings.h>
 #include "hardware/hw_defs.h"
 #include "hardware/hw_glsl.h"
-#include "hardware/r_d3d11/custom_shader.h"
+#include "hardware/r_d3d12/custom_shader.h"
 #include "smoke_pk3.h"
 #undef min
 #undef max

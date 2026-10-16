@@ -6,7 +6,7 @@ find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
 set(RR_SOURCE_DIR "" CACHE PATH "Patched Ring Racers v2.4 source checkout")
 option(RR_SANITIZERS "Run with AddressSanitizer and UndefinedBehaviorSanitizer" ON)
 
-if(NOT EXISTS "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
+if(NOT EXISTS "${RR_SOURCE_DIR}/src/hardware/r_d3d12/shaders.hlsl")
     message(FATAL_ERROR "Set RR_SOURCE_DIR to patched v2.4; see tests/README.md")
 endif()
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
@@ -29,8 +29,10 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/hw_draw.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_batching.c"
-    "${RR_SOURCE_DIR}/src/hardware/r_d3d11/r_d3d11.cpp"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/r_d3d12.cpp"
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_pipeline.cpp"
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_pipeline.h"
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_screens.inc"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_captures.inc"
     "${RR_SOURCE_DIR}/src/menus/options-1.c"
     "${RR_SOURCE_DIR}/src/d_main.cpp"
@@ -49,7 +51,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_picformats.c"
     "${RR_SOURCE_DIR}/src/p_mobj.c"
     "${RR_SOURCE_DIR}/src/p_user.c"
-    "${RR_SOURCE_DIR}/src/hardware/r_d3d11/shaders.hlsl")
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d12/shaders.hlsl")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate.py"
         --engine "${RR_SOURCE_DIR}" --output "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -100,11 +102,9 @@ regression(split_distortion distortion _UWP HWRENDER)
 regression(postimg_math postimg)
 regression(postimg_selection postimg_selection)
 regression(water_math water _UWP HWRENDER)
-regression(water_capture water_capture _UWP HWRENDER)
 regression(water_visibility water_visibility HWRENDER)
 regression(water_blend_state blend _UWP)
 regression(fog_boundaries fog HWRENDER _UWP)
-regression(fog_capture fog_capture _UWP)
 regression(fog_capture_d3d12 fog_capture_d3d12 _UWP)
 regression(water_capture_d3d12 water_capture_d3d12 _UWP)
 regression(sky_offsets sky)
@@ -145,14 +145,14 @@ add_test(NAME source_extraction
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_source.py")
 set_tests_properties(source_extraction PROPERTIES TIMEOUT 10)
 
-include("${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shaders.cmake")
+include("${RR_SOURCE_DIR}/src/hardware/r_d3d12/custom_shaders.cmake")
 regression(custom_shader_pk3 custom_pk3 HWRENDER _UWP)
-target_sources(custom_shader_pk3 PRIVATE "${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shader.cpp")
+target_sources(custom_shader_pk3 PRIVATE "${RR_SOURCE_DIR}/src/hardware/r_d3d12/custom_shader.cpp")
 target_link_libraries(custom_shader_pk3 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
 # Match the general translation suite's artifact directory for Windows fxc.
 target_compile_definitions(custom_shader_pk3 PRIVATE SMOKE_OUTPUT="${CMAKE_CURRENT_BINARY_DIR}/translated-shaders")
 add_executable(custom_shader_translation custom-shaders.cpp
-    "${RR_SOURCE_DIR}/src/hardware/r_d3d11/custom_shader.cpp")
+    "${RR_SOURCE_DIR}/src/hardware/r_d3d12/custom_shader.cpp")
 target_compile_features(custom_shader_translation PRIVATE cxx_std_17)
 target_include_directories(custom_shader_translation PRIVATE "${RR_SOURCE_DIR}/src")
 target_link_libraries(custom_shader_translation PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
