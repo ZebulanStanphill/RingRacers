@@ -2686,6 +2686,23 @@ static FBITFIELD HWR_RippleBlend(sector_t *sector, ffloor_t *rover, boolean ceil
 	return !cv_reducevfx.value && R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
 }
 
+// Match R_DrawSinglePlane's CUTEXTRA visibility rule before queuing either
+// face. A boundary inside matching water/fog is not an exposed surface; drawing
+// it would refract the already-composited outer volume again.
+static boolean HWR_FOFPlaneIsHidden(const ffloor_t *plane, fixed_t height)
+{
+	const ffloor_t *other;
+	if (!(plane->fofflags & FOF_CUTEXTRA) || !(plane->fofflags & FOF_EXTRA))
+		return false;
+
+	for (other = plane->target->ffloors; other; other = other->next)
+		if ((other->fofflags & FOF_EXTRA)
+			&& (plane->fofflags & (FOF_FOG|FOF_SWIMMABLE)) == (other->fofflags & (FOF_FOG|FOF_SWIMMABLE))
+			&& height < *other->topheight && height > *other->bottomheight)
+			return true;
+	return false;
+}
+
 // -----------------+
 // HWR_Subsector    : Determine floor/ceiling planes.
 //                  : Add sprites of things in sector.
@@ -2875,7 +2892,8 @@ static void HWR_Subsector(size_t num)
 			if (sub->validcount == validcount)
 				continue;
 
-			if (centerHeight <= locCeilingHeight &&
+			if (!HWR_FOFPlaneIsHidden(rover, *rover->bottomheight) &&
+			    centerHeight <= locCeilingHeight &&
 			    centerHeight >= locFloorHeight &&
 			    ((dup_viewz < cullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
 			     (dup_viewz > cullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
@@ -2923,7 +2941,8 @@ static void HWR_Subsector(size_t num)
 			cullHeight   = P_GetFFloorTopZAt(rover, viewx, viewy);
 			centerHeight = P_GetFFloorTopZAt(rover, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 
-			if (centerHeight >= locFloorHeight &&
+			if (!HWR_FOFPlaneIsHidden(rover, *rover->topheight) &&
+			    centerHeight >= locFloorHeight &&
 			    centerHeight <= locCeilingHeight &&
 			    ((dup_viewz > cullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
 			     (dup_viewz < cullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
