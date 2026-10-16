@@ -24,6 +24,10 @@
 #include "hw_main.h"
 #include "hw_glob.h"
 #include "hw_drv.h"
+#ifdef HAVE_D3D12
+#include "hw_batching.h"
+#include "r_d3d12/r_d3d12.h"
+#endif
 
 #include "../m_misc.h" //FIL_WriteFile()
 #include "../r_draw.h" //viewborderlump
@@ -762,6 +766,36 @@ void HWR_EncoreInvertScreen(void)
 
 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Invert|PF_NoDepthTest);
 }
+
+#ifdef HAVE_D3D12
+// Apply the software fade table now, before subsequent HUD/2D drawing.
+void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength)
+{
+	const lumpnum_t lumpnum = lump ? W_CheckNumForName(lump) : LUMPERROR;
+	extern boolean currently_batching;
+
+	// The old quad went directly to the driver; it did not participate in batching.
+	// Player views normally finish their batches before this call. Flush defensively
+	// so no queued world geometry can be drawn over the remapped screen.
+	if (currently_batching)
+		HWR_RenderBatches();
+
+	if (HWR_ShouldUsePaletteRendering() && lumpnum != LUMPERROR)
+	{
+		const size_t size = W_LumpLength(lumpnum);
+		if (size >= 256 && size % 256 == 0 && size / 256 <= 256
+			&& D3D12_ApplyFadeMap(W_CacheLumpNum(lumpnum, PU_CACHE), size, lumpnum, strength))
+		{
+			UWPTraceFade("HWR_DrawCustomFadeMap path=exact lump=%s strength=%u row=%u rows=%u",
+				lump, strength, (unsigned)min((size_t)strength, size / 256 - 1), (unsigned)(size / 256));
+			return;
+		}
+	}
+
+	UWPTraceFade("HWR_DrawCustomFadeMap path=overlay lump=%s strength=%u", lump ? lump : "NULL", strength);
+	HWR_DrawCustomFadeScreen(lump && strcmp(lump, "FADEMAP1") == 0 ? 0 : 31, strength);
+}
+#endif
 
 void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
 {

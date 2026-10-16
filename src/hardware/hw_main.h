@@ -39,6 +39,9 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength);
 void HWR_DrawConsoleBack(UINT32 color, INT32 height);
 void HWR_EncoreInvertScreen(void);
 void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength);
+#ifdef HAVE_D3D12
+void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength);
+#endif
 void HWR_DrawTutorialBack(UINT32 color, INT32 boxheight);
 void HWR_RenderSkyboxView(player_t *player);
 void HWR_RenderPlayerView(void);
