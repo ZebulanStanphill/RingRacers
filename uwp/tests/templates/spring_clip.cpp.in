@@ -55,7 +55,11 @@ static GLMapTexture_t texture{};
 static GLMapTexture_t *grTex=&texture;
 static consvar_t cv_debugrender_spriteclip{};
 static int splitCalls,vertexCalls;
-static void HWR_SpriteVertices(gl_vissprite_t *,FOutVector *v){++vertexCalls;std::copy(fixture.begin(),fixture.end(),v);}
+// The sprite's own heights, as HWR_ProjectSprite sets them from the patch: the fixture's span unless a case sets them.
+static float stubGz=NAN,stubGzt=NAN;
+static void HWR_SpriteVertices(gl_vissprite_t *s,FOutVector *v){++vertexCalls;std::copy(fixture.begin(),fixture.end(),v);
+    auto [lo,hi]=std::minmax_element(fixture.begin(),fixture.end(),[](const FOutVector &a,const FOutVector &b){return a.y<b.y;});
+    s->gz=std::isnan(stubGz)?lo->y:stubGz;s->gzt=std::isnan(stubGzt)?hi->y:stubGzt;}
 static void HWR_SplitSprite(gl_vissprite_t *) { ++splitCalls; }
 static void HWR_LinkDrawHackAdd(FOutVector *,gl_vissprite_t *){}
 static boolean R_ThingIsFloorSprite(mobj_t *){return false;}
@@ -340,6 +344,11 @@ static void Planes(){
     // The sprite pokes through the plane (its top at 2 is over a plane at 1; its bottom at -2 under one at -1).
     Begin();camera(10);record(Slab(1));DrawEntry();ExactQuad();
     Begin();camera(-10);record(Slab(-1));DrawEntry();ExactQuad();
+    // Only the quad's corners reach over the plane (a tilt or a sloped light cut can do that, as on Metropolis's
+    // bumpers); the sprite's own heights are under it, and Software sorts by those, so the plane applies.
+    Begin();camera(10);stubGz=-2;stubGzt=2;record(Slab(3));DrawEntry();assert(Samples(fixture,{Slab(3)})==0);
+    Begin();camera(-10);stubGz=-2;stubGzt=2;record(Slab(-3));DrawEntry();assert(Samples(fixture,{Slab(-3)})==0);
+    stubGz=stubGzt=NAN;
     // The camera is level with the plane, which is edge-on.
     Begin();camera(5);record(Slab(5));DrawEntry();ExactQuad();
     // The plane is wholly behind the sprite's origin, beside it, or above or below its screen rows.

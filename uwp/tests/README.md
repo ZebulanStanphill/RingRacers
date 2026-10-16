@@ -221,7 +221,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and a plane swept up by a side. The production plane recorder (`HWR_AddSpringFOFPlane`,
   extracted from `HWR_Subsector`'s call sites) is run on a 70-corner subsector polygon
   and must split it into three pieces. Plane cases put a slab over a camera-above spring and
-  under a camera-below one (hidden), and leave the spring whole when it pokes through,
+  under a camera-below one (hidden), hide it when only the quad's corners reach past the plane
+  (the sprite's own heights decide, as in Software), and leave the spring whole when it pokes through,
   the plane is edge-on, behind the origin, beside it, off its rows, fog or see-through,
   and for a sloped plane find the height per point. `--metropolis` replays the nine wedge-shaped
   3D floors of the yellow bumpers in Metropolis (map geometry copied into the test, the
