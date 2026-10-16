@@ -941,6 +941,7 @@ void D_SRB2Loop(void)
 		bool world = false;
 #ifdef _UWP
 		bool displayed = false;
+		bool skippedframe = false;
 #endif
 
 		I_UpdateTime();
@@ -1094,6 +1095,12 @@ void D_SRB2Loop(void)
 			displayed = true;
 #endif
 		}
+#ifdef _UWP
+		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
+		{
+			skippedframe = true;
+		}
+#endif
 
 #ifdef HWRENDER
 		// Only take screenshots after drawing.
@@ -1217,10 +1224,22 @@ void D_SRB2Loop(void)
 		{
 			INT64 elapsed = (INT64)(finishprecise - enterprecise);
 
+#ifndef _UWP
 			// in the case of "match refresh rate" + vsync, don't sleep at all
 			const boolean vsync_with_match_refresh = cv_vidwait.value && cv_fpscap.value == 0;
+#else
+			// [UWP]: This is usually a good idea but for some reason no sleep really screws up the frame timings on xbox
+			const boolean vsync_with_match_refresh = false;
+#endif
 
-			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
+			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh
+#ifdef _UWP
+				// [UWP]: A frame skipped to catch up on game logic gets no sleep, so the next one is drawn right away.
+				// Sleeping out the skipped frame's time left the game idle 16% of the time in Time Attack on Xbox,
+				// at 24 FPS.
+				&& !skippedframe
+#endif
+			)
 			{
 				I_SleepDuration(capbudget - (finishprecise - enterprecise));
 			}
