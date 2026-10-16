@@ -267,6 +267,667 @@ static float gl_fovlud;
 static angle_t gl_aimingangle;
 static void HWR_SetTransformAiming(FTransform *trans, player_t *player, boolean skybox);
 
+// [UWP]: Software hides a spring that sits inside a wall. R_ClipVisSprite clips a sprite by the silhouette of every
+// solid seg that isn't behind its origin (a one-sided wall, or a two-sided seg's upper or lower wall), and
+// R_CreateDrawNodes draws a 3D floor's side over the sprite when the side's scale at the sprite's middle column is
+// nearer. Legacy GL instead depth-tests the camera-facing quad, so the parts of a spring that stick out through the
+// faces of the block it sits in (Metropolis's yellow bumpers) stayed visible. Springs, and only springs, get
+// Software's rule here: the BSP walk records the solid sides it accepts, and each spring subtracts the screen
+// silhouette of every recorded side Software would draw over it from its quad. Other sprites keep per-pixel depth
+// testing. Cost is one pass over the recorded sides per spring.
+//
+// R_CreateDrawNodes also lists every 3D floor side and 3D floor plane (ffloorplanes), nearest last, and inserts the
+// sprite before the FARTHEST node it sorts behind; each node after it, which is every nearer side and plane, is
+// then drawn over the sprite whether or not it would have sorted behind the sprite itself. A wedge-shaped bumper
+// is nine 3D floors whose faces, seen along the wall, tile over the spring behind them. So 3D floor entries (sides
+// and planes, "thick" below) are not tested one by one: the farthest one that applies decides, and every thick entry
+// recorded up to it is subtracted. They are recorded nearest first, which is the reverse of the draw order. A 3D
+// floor plane sorts the sprite behind it when it shares screen columns and rows with the sprite, the sprite lies
+// entirely under it (camera above) or over it (camera below), and part of it is nearer than the sprite. Sides of
+// ordinary segs are still tested one by one, as R_ClipVisSprite does.
+#define HWR_SPRINGNEAR 0.01 // closest depth a silhouette is projected from
+#define HWR_SPRINGMAXPIECES 256 // stop subtracting once this many triangles remain
+#define HWR_SPRINGMAXVERTS 32 // most corners of a recorded silhouette; a larger plane polygon is fan-split
+#define HWR_SPRINGMAXCLIP (HWR_SPRINGMAXVERTS + 4) // a triangle clipped by every edge of one, plus the near plane
+#define HWR_SPRINGMAXNEAR (HWR_SPRINGMAXVERTS + 1) // a silhouette clipped to the near plane
+
+typedef struct
+{
+	FOutVector v[HWR_SPRINGMAXVERTS]; // A side's four corners, or a plane's convex polygon
+	INT32 numverts;
+	boolean thick; // 3D floor side or plane, ordered by R_CreateDrawNodes rather than tested alone
+	boolean plane; // v is the polygon of a horizontal or sloped plane at height a*x + b*z + c
+	double a, b, c;
+} hwr_springwall_t;
+
+static hwr_springwall_t *hwr_springwalls;
+static size_t hwr_numspringwalls, hwr_springwallcapacity;
+
+typedef struct
+{
+	double x, y, z, d;
+} hwr_springplane_t;
+
+typedef struct
+{
+	FOutVector v[3];
+} hwr_springtriangle_t;
+
+static hwr_springtriangle_t *hwr_springpieces[2];
+static size_t hwr_springpiececapacity[2];
+
+// What Software decides a spring's sorting from, found once per sprite.
+typedef struct
+{
+	double depth; // origin depth along the view direction
+	double originx, originy; // origin relative to the camera
+	double rayx, rayy; // ray through the sprite's middle screen column
+	double left, right; // screen extent of the quad, as lateral/depth
+	double bottom, top; // world height of the quad's lowest and highest corners
+} hwr_springview_t;
+
+// Software draws neither a fog 3D floor nor a see-through one over a sprite as a solid.
+static boolean HWR_SpringSeeThrough(const ffloor_t *fof)
+{
+	return fof && ((fof->fofflags & FOF_FOG)
+		|| ((fof->fofflags & FOF_TRANSLUCENT) && (fof->alpha < 256 || fof->blend)));
+}
+
+static hwr_springwall_t *HWR_SpringNewWall(void)
+{
+	if (!hwr_springwalls)
+		hwr_springwallcapacity = 0; // PU_LEVEL was released.
+	if (hwr_numspringwalls == hwr_springwallcapacity)
+	{
+		hwr_springwallcapacity = hwr_springwallcapacity ? hwr_springwallcapacity * 2 : 256;
+		Z_Realloc(hwr_springwalls, hwr_springwallcapacity * sizeof(hwr_springwall_t), PU_LEVEL, &hwr_springwalls);
+	}
+	return &hwr_springwalls[hwr_numspringwalls++];
+}
+
+// Records a side that Software would draw over a spring: a solid one-sided wall, or the opaque side of a 3D floor.
+// Called before lighting splits the wall, with the top and bottom already set.
+static void HWR_AddSpringWall(const FOutVector *v, const ffloor_t *fof)
+{
+	hwr_springwall_t *wall;
+	INT32 i;
+	if (HWR_SpringSeeThrough(fof))
+		return;
+	wall = HWR_SpringNewWall();
+	for (i = 0; i < 4; i++)
+	{
+		wall->v[i].x = v[i].x; wall->v[i].y = v[i].y; wall->v[i].z = v[i].z;
+		wall->v[i].s = wall->v[i].t = 0; // Recording precedes texture setup.
+	}
+	wall->numverts = 4;
+	wall->plane = false;
+	// Sloped top/bottom bounds may meet inside this seg. Keep only the
+	// positive-height part, as the wall light splitter does when drawing.
+	{
+		double h0 = wall->v[3].y - wall->v[0].y;
+		double h1 = wall->v[2].y - wall->v[1].y;
+		if (h0 <= 0 && h1 <= 0)
+		{
+			hwr_numspringwalls--;
+			return;
+		}
+		if (h0 < 0 || h1 < 0)
+		{
+			double t = h0 / (h0 - h1);
+			FOutVector point = wall->v[0];
+			point.x += (wall->v[1].x - point.x) * t;
+			point.y += (wall->v[1].y - point.y) * t;
+			point.z += (wall->v[1].z - point.z) * t;
+			if (h0 < 0) wall->v[0] = wall->v[3] = point;
+			else wall->v[1] = wall->v[2] = point;
+		}
+	}
+	wall->thick = fof != NULL;
+}
+
+// Records the convex polygon of a 3D floor's top or bottom plane (GL coordinates, y the height), which Software
+// draws over a sprite it sorts behind. The plane may be sloped; its height at any point is found from three corners.
+static void HWR_AddSpringPlane(const FOutVector *v, INT32 n, const ffloor_t *fof)
+{
+	hwr_springwall_t *plane;
+	INT32 i, j = 1, k = 1;
+	double longest = -1, area = 0, ex, ez, fx, fz, ey, fy, det;
+	if (n < 3 || n > HWR_SPRINGMAXVERTS || HWR_SpringSeeThrough(fof))
+		return;
+	for (i = 1; i < n; i++) // The corner farthest from the first, then the one farthest from that line.
+	{
+		double dx = (double)v[i].x - v[0].x, dz = (double)v[i].z - v[0].z;
+		if (dx * dx + dz * dz > longest)
+			longest = dx * dx + dz * dz, j = i;
+	}
+	ex = (double)v[j].x - v[0].x; ez = (double)v[j].z - v[0].z; ey = (double)v[j].y - v[0].y;
+	for (i = 1; i < n; i++)
+	{
+		double cross = fabs(ex * ((double)v[i].z - v[0].z) - ez * ((double)v[i].x - v[0].x));
+		if (cross > area)
+			area = cross, k = i;
+	}
+	if (area < 1e-6)
+		return; // Edge-on from above: no area to cover anything.
+	fx = (double)v[k].x - v[0].x; fz = (double)v[k].z - v[0].z; fy = (double)v[k].y - v[0].y;
+	det = ex * fz - ez * fx;
+	plane = HWR_SpringNewWall();
+	for (i = 0; i < n; i++)
+	{
+		plane->v[i].x = v[i].x; plane->v[i].y = v[i].y; plane->v[i].z = v[i].z;
+		plane->v[i].s = plane->v[i].t = 0;
+	}
+	plane->numverts = n;
+	plane->thick = plane->plane = true;
+	plane->a = (ey * fz - fy * ez) / det;
+	plane->b = (ex * fy - fx * ey) / det;
+	plane->c = v[0].y - plane->a * v[0].x - plane->b * v[0].z;
+}
+
+static double HWR_SpringDistance(const hwr_springplane_t *p, const FOutVector *v)
+{
+	return p->x * v->x + p->y * v->y + p->z * v->z + p->d;
+}
+
+static boolean HWR_SpringSamePoint(const FOutVector *a, const FOutVector *b)
+{
+	return a->x == b->x && a->y == b->y && a->z == b->z;
+}
+
+static FOutVector HWR_SpringLerp(const FOutVector *a, const FOutVector *b, double t)
+{
+	FOutVector v;
+	v.x = a->x + (b->x - a->x) * t;
+	v.y = a->y + (b->y - a->y) * t;
+	v.z = a->z + (b->z - a->z) * t;
+	v.s = a->s + (b->s - a->s) * t;
+	v.t = a->t + (b->t - a->t) * t;
+	return v;
+}
+
+// Clip a polygon to one half-plane, into room for max corners. A convex polygon gains at most one corner per cut,
+// but rounding can leave corners cut along nearly collinear silhouette edges slightly out of line, so a plane can
+// cross the outline more than twice. Returns -1, never writing out[max] or beyond, if the result needs more.
+static INT32 HWR_SpringHalfPlane(const FOutVector *in, INT32 n, FOutVector *out, INT32 max,
+	const hwr_springplane_t *plane, boolean inside)
+{
+	INT32 i, count = 0;
+	for (i = 0; i < n; i++)
+	{
+		const FOutVector *a = &in[i], *b = &in[(i + 1) % n];
+		double da = HWR_SpringDistance(plane, a), db = HWR_SpringDistance(plane, b);
+		boolean ina = inside ? da >= 0 : da < 0; // A point on the plane is inside, never outside.
+		boolean inb = inside ? db >= 0 : db < 0;
+		if (ina)
+		{
+			if (count >= max)
+				return -1;
+			out[count++] = *a;
+		}
+		if (ina != inb)
+		{
+			if (count >= max)
+				return -1;
+			out[count++] = HWR_SpringLerp(a, b, da / (da - db));
+		}
+	}
+	return count;
+}
+
+static double HWR_SpringDepth(double x, double y)
+{
+	return x * gl_viewcos + y * gl_viewsin;
+}
+
+static double HWR_SpringLateral(double x, double y)
+{
+	return x * gl_viewsin - y * gl_viewcos;
+}
+
+// Finds what Software's ordering uses for this spring. Returns false when the
+// quad reaches the camera plane, which Software never draws; it's left alone.
+// Its heights are the sprite's own (gz and gzt, the patch at the thing's
+// position), as Software's are: the quad's corners don't do, since the
+// billboarding tilt and a sloped light boundary can raise one above a 3D
+// floor plane the sprite sits under, and Software sorts it behind that plane.
+static boolean HWR_SpringSetView(hwr_springview_t *view, const FOutVector *quad, float gx, float gy, float gz, float gzt)
+{
+	double mid;
+	INT32 i;
+	view->originx = (double)gx - gl_viewx;
+	view->originy = (double)gy - gl_viewy;
+	view->depth = HWR_SpringDepth(view->originx, view->originy);
+	if (view->depth <= HWR_SPRINGNEAR)
+		return false;
+	view->bottom = gz;
+	view->top = gzt;
+	view->left = DBL_MAX;
+	view->right = -DBL_MAX;
+	for (i = 0; i < 4; i++)
+	{
+		double x = quad[i].x - gl_viewx, y = quad[i].z - gl_viewy;
+		double vd = HWR_SpringDepth(x, y), screen;
+		if (vd <= HWR_SPRINGNEAR)
+			return false;
+		screen = HWR_SpringLateral(x, y) / vd;
+		view->left = fmin(view->left, screen);
+		view->right = fmax(view->right, screen);
+	}
+	mid = (view->left + view->right) * 0.5;
+	view->rayx = gl_viewcos + mid * gl_viewsin;
+	view->rayy = gl_viewsin - mid * gl_viewcos;
+	return true;
+}
+
+// The recorded polygon clipped to the near plane, without repeated corners; at most HWR_SPRINGMAXNEAR of them.
+// Returns 0 if it doesn't fit, which callers treat as no silhouette.
+static INT32 HWR_SpringClipNear(const hwr_springwall_t *wall, FOutVector *v)
+{
+	hwr_springplane_t nearplane = {gl_viewcos, 0, gl_viewsin,
+		-gl_viewx * gl_viewcos - gl_viewy * gl_viewsin - HWR_SPRINGNEAR};
+	INT32 n = HWR_SpringHalfPlane(wall->v, wall->numverts, v, HWR_SPRINGMAXNEAR, &nearplane, true), i;
+	if (n < 0)
+		return 0;
+	// Remove coincident corners at a sloped wall's zero-height endpoint.
+	for (i = 0; i < n && n >= 3; )
+	{
+		INT32 j = (i + 1) % n;
+		if (HWR_SpringSamePoint(&v[i], &v[j]))
+		{
+			memmove(&v[i], &v[i + 1], sizeof(FOutVector) * (n - i - 1));
+			n--;
+		}
+		else i++;
+	}
+	return n;
+}
+
+// Whether R_CreateDrawNodes sorts the spring behind this 3D floor plane (its r2->plane test).
+static boolean HWR_SpringPlaneApplies(const hwr_springwall_t *plane, const hwr_springview_t *view)
+{
+	FOutVector v[HWR_SPRINGMAXNEAR];
+	double cameraz = plane->a * gl_viewx + plane->b * gl_viewy + plane->c;
+	double objectz = plane->a * (view->originx + gl_viewx) + plane->b * (view->originy + gl_viewy) + plane->c;
+	double nearest = DBL_MAX, left = DBL_MAX, right = -DBL_MAX, low = DBL_MAX, high = -DBL_MAX;
+	INT32 i, n;
+
+	// The spring has to lie wholly on the far side of the plane from the camera.
+	if (cameraz < gl_viewz)
+	{
+		if (view->top >= objectz)
+			return false;
+	}
+	else if (cameraz > gl_viewz)
+	{
+		if (view->bottom <= objectz)
+			return false;
+	}
+	else
+		return false; // Edge-on: Software never draws it.
+
+	n = HWR_SpringClipNear(plane, v);
+	if (n < 3)
+		return false;
+	for (i = 0; i < n; i++)
+	{
+		double x = v[i].x - gl_viewx, y = v[i].z - gl_viewy, depth = fmax(HWR_SpringDepth(x, y), 1e-6);
+		double screen = HWR_SpringLateral(x, y) / depth, row = (v[i].y - gl_viewz) / depth;
+		nearest = fmin(nearest, depth);
+		left = fmin(left, screen);
+		right = fmax(right, screen);
+		low = fmin(low, row);
+		high = fmax(high, row);
+	}
+
+	// Part of the plane is nearer than the sprite's origin, in the sprite's screen columns and rows.
+	return nearest < view->depth && right >= view->left && left <= view->right
+		&& (view->bottom - gl_viewz) / view->depth <= high && (view->top - gl_viewz) / view->depth >= low;
+}
+
+// Whether Software draws this side over the spring, rather than the spring over it.
+static boolean HWR_SpringWallApplies(const hwr_springwall_t *wall, const hwr_springview_t *view)
+{
+	double ax, ay, bx, by, da, db, nearest, farthest;
+
+	if (wall->plane)
+		return HWR_SpringPlaneApplies(wall, view);
+
+	ax = wall->v[0].x - gl_viewx; ay = wall->v[0].z - gl_viewy;
+	bx = wall->v[1].x - gl_viewx; by = wall->v[1].z - gl_viewy;
+	da = HWR_SpringDepth(ax, ay); db = HWR_SpringDepth(bx, by);
+	nearest = fmin(da, db); farthest = fmax(da, db);
+
+	// Scale of the whole side is below the sprite's: it's entirely behind it.
+	if (wall->thick ? nearest >= view->depth : nearest > view->depth)
+		return false;
+
+	// The silhouette has to share a screen column with the sprite.
+	if (nearest > HWR_SPRINGNEAR)
+	{
+		double sa = HWR_SpringLateral(ax, ay) / da, sb = HWR_SpringLateral(bx, by) / db;
+		if (fmax(sa, sb) < view->left || fmin(sa, sb) > view->right)
+			return false;
+	}
+
+	if (wall->thick)
+	{
+		// R_CreateDrawNodes compares scale at the sprite's middle screen column,
+		// extending the side's line past its ends, not each pixel's depth.
+		double cross = view->rayx * (by - ay) - view->rayy * (bx - ax), raydepth;
+		if (fabs(cross) < 1e-12)
+			return false;
+		raydepth = (ax * by - ay * bx) / cross;
+		return raydepth > 0 && raydepth < view->depth;
+	}
+
+	// R_ClipVisSprite clips by a seg that is wholly nearer than the origin, or that
+	// crosses it with the origin on its back side (opposite the camera).
+	return farthest <= view->depth || (ax * by - ay * bx)
+		* ((bx - ax) * (view->originy - ay) - (by - ay) * (view->originx - ax)) < 0;
+}
+
+// The pyramid from the camera through the side's silhouette, as inward-facing planes.
+static INT32 HWR_SpringWallPlanes(const hwr_springwall_t *wall, hwr_springplane_t *planes)
+{
+	FOutVector v[HWR_SPRINGMAXNEAR], center;
+	INT32 n = HWR_SpringClipNear(wall, v), i;
+	center.x = center.y = center.z = 0;
+	if (n < 3)
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		center.x += v[i].x / n;
+		center.y += v[i].y / n;
+		center.z += v[i].z / n;
+	}
+	for (i = 0; i < n; i++)
+	{
+		const FOutVector *a = &v[i], *b = &v[(i + 1) % n];
+		double ax = a->x - gl_viewx, ay = a->y - gl_viewz, az = a->z - gl_viewy;
+		double bx = b->x - gl_viewx, by = b->y - gl_viewz, bz = b->z - gl_viewy;
+		double length;
+		hwr_springplane_t *p = &planes[i];
+		p->x = ay * bz - az * by;
+		p->y = az * bx - ax * bz;
+		p->z = ax * by - ay * bx;
+		length = sqrt(p->x * p->x + p->y * p->y + p->z * p->z);
+		if (length < 1e-12)
+			return 0; // Edge through the camera: no finite silhouette.
+		p->x /= length;
+		p->y /= length;
+		p->z /= length;
+		p->d = -p->x * gl_viewx - p->y * gl_viewz - p->z * gl_viewy;
+		if (HWR_SpringDistance(p, &center) < 0)
+		{
+			p->x = -p->x; p->y = -p->y; p->z = -p->z; p->d = -p->d;
+		}
+	}
+	return n;
+}
+
+// A piece too thin to cover a pixel: under HWR_SPRINGTHIN screen units (lateral/depth) across, about a
+// hundredth of a pixel. Cuts along an edge two silhouettes share leave such slivers, their corners apart
+// only by float rounding, and the GPU still rasterizes them as one-pixel dashes.
+#define HWR_SPRINGTHIN 1e-4
+static boolean HWR_SpringThin(const FOutVector *a, const FOutVector *b, const FOutVector *c)
+{
+	double sx[3], sy[3], longest = 0, area2;
+	const FOutVector *v[3] = {a, b, c};
+	INT32 i;
+	for (i = 0; i < 3; i++)
+	{
+		double x = v[i]->x - gl_viewx, y = v[i]->z - gl_viewy, depth = fmax(HWR_SpringDepth(x, y), 1e-6);
+		sx[i] = HWR_SpringLateral(x, y) / depth;
+		sy[i] = (v[i]->y - gl_viewz) / depth;
+	}
+	for (i = 0; i < 3; i++)
+	{
+		double ex = sx[(i + 1) % 3] - sx[i], ey = sy[(i + 1) % 3] - sy[i];
+		longest = fmax(longest, sqrt(ex * ex + ey * ey));
+	}
+	area2 = fabs((sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]));
+	return area2 <= HWR_SPRINGTHIN * longest; // twice the area over the longest edge is the least width
+}
+
+static void HWR_SpringAppend(INT32 buffer, size_t *count, const FOutVector *v, INT32 n)
+{
+	INT32 i;
+	if (!hwr_springpieces[buffer])
+		hwr_springpiececapacity[buffer] = 0;
+	if (*count + n > hwr_springpiececapacity[buffer])
+	{
+		hwr_springpiececapacity[buffer] = (*count + n) * 2 + 32;
+		Z_Realloc(hwr_springpieces[buffer], hwr_springpiececapacity[buffer]
+			* sizeof(hwr_springtriangle_t), PU_LEVEL, &hwr_springpieces[buffer]);
+	}
+	for (i = 1; i + 1 < n; i++)
+	{
+		hwr_springtriangle_t *t;
+		if (HWR_SpringSamePoint(&v[0], &v[i]) || HWR_SpringSamePoint(&v[i], &v[i + 1])
+			|| HWR_SpringSamePoint(&v[0], &v[i + 1]) || HWR_SpringThin(&v[0], &v[i], &v[i + 1]))
+			continue; // Repeated corner or a sliver: no pixel to cover.
+		t = &hwr_springpieces[buffer][(*count)++];
+		t->v[0] = v[0]; t->v[1] = v[i]; t->v[2] = v[i + 1];
+	}
+}
+
+// Subtract each side's silhouette from the quad's triangles. A triangle the
+// silhouette misses is kept whole; one it overlaps keeps the parts outside every
+// edge, as triangles. UVs and positions are interpolated along each cut, so the
+// remaining pieces draw exactly as the original quad would have.
+// gr_springprobe: for one view, log each spring's quad, every recorded 3D floor entry that shares its screen
+// columns and rows, every entry that cut it, and what remains. HWR_RenderViewPass sets and clears this for the
+// main view only: the skybox and portal passes share the function, and run first.
+static boolean hwr_springprobe;
+static size_t hwr_springpeakpieces; // the most pieces a spring reached in this view, against HWR_SPRINGMAXPIECES
+
+// Screen-space area of a polygon (lateral/depth by height/depth), for comparing what is left of a spring with its quad.
+static double HWR_SpringScreenArea(const FOutVector *v, INT32 n)
+{
+	double area = 0, px[HWR_SPRINGMAXCLIP], py[HWR_SPRINGMAXCLIP];
+	INT32 i;
+	if (n < 3 || n > HWR_SPRINGMAXCLIP)
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		double x = v[i].x - gl_viewx, y = v[i].z - gl_viewy, depth = fmax(HWR_SpringDepth(x, y), 1e-6);
+		px[i] = HWR_SpringLateral(x, y) / depth;
+		py[i] = (v[i].y - gl_viewz) / depth;
+	}
+	for (i = 0; i < n; i++)
+		area += px[i] * py[(i + 1) % n] - px[(i + 1) % n] * py[i];
+	return fabs(area) * 0.5;
+}
+
+// Whether a recorded entry, clipped to the near plane, shares screen columns and rows with the spring.
+static boolean HWR_SpringProbeOverlaps(const hwr_springwall_t *entry, const hwr_springview_t *view)
+{
+	FOutVector v[HWR_SPRINGMAXNEAR];
+	double left = DBL_MAX, right = -DBL_MAX, low = DBL_MAX, high = -DBL_MAX;
+	INT32 i, n = HWR_SpringClipNear(entry, v);
+	if (n < 2)
+		return false;
+	for (i = 0; i < n; i++)
+	{
+		double x = v[i].x - gl_viewx, y = v[i].z - gl_viewy, depth = fmax(HWR_SpringDepth(x, y), 1e-6);
+		double screen = HWR_SpringLateral(x, y) / depth, row = (v[i].y - gl_viewz) / depth;
+		left = fmin(left, screen); right = fmax(right, screen);
+		low = fmin(low, row); high = fmax(high, row);
+	}
+	return right >= view->left && left <= view->right
+		&& (view->bottom - gl_viewz) / view->depth <= high && (view->top - gl_viewz) / view->depth >= low;
+}
+
+static void HWR_SpringProbeEntry(size_t w, const hwr_springwall_t *entry, boolean applies, boolean subtracted, boolean cut)
+{
+	char message[1024];
+	size_t length;
+	int written;
+	INT32 i;
+	written = snprintf(message, sizeof message, "UWP spring entry: w=%u kind=%s applies=%d subtracted=%d cut=%d corners=%d",
+		(unsigned)w, entry->plane ? "plane" : entry->thick ? "fofside" : "side", (int)applies, (int)subtracted, (int)cut, (int)entry->numverts);
+	if (written < 0)
+		return;
+	length = (size_t)written < sizeof message - 2 ? (size_t)written : sizeof message - 2;
+	if (entry->plane)
+	{
+		written = snprintf(message + length, sizeof message - length, " height=%.4f*x+%.4f*y+%.2f camera=%.2f",
+			entry->a, entry->b, entry->c, entry->a * gl_viewx + entry->b * gl_viewy + entry->c);
+		if (written > 0)
+			length += (size_t)written < sizeof message - length - 2 ? (size_t)written : sizeof message - length - 2;
+	}
+	for (i = 0; i < entry->numverts && i < 8; i++)
+	{
+		written = snprintf(message + length, sizeof message - length, " v%d=(%.1f,%.1f,%.1f)", (int)i,
+			entry->v[i].x, entry->v[i].z, entry->v[i].y);
+		if (written < 0)
+			break;
+		length += (size_t)written < sizeof message - length - 2 ? (size_t)written : sizeof message - length - 2;
+	}
+	message[length++] = '\n';
+	message[length] = '\0';
+	I_OutputMsg("%s", message);
+}
+
+static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
+	FBITFIELD flags, INT32 shader, gl_vissprite_t *spr)
+{
+	hwr_springview_t view;
+	size_t w, i, count = 0, farthestthick;
+	INT32 buffer = 0;
+	boolean changed = false;
+	if (!hwr_numspringwalls || !(spr->mobj->flags & MF_SPRING) || (flags & PF_NoDepthTest)
+		|| !HWR_SpringSetView(&view, quad, spr->gx, spr->gy, spr->gz, spr->gzt))
+	{
+		if (hwr_springprobe && (spr->mobj->flags & MF_SPRING))
+			I_OutputMsg("UWP spring probe: type=%d at (%.1f,%.1f,%.1f) left alone: entries=%u flags=0x%lx\n", (int)spr->mobj->type,
+				FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z),
+				(unsigned)hwr_numspringwalls, (unsigned long)flags);
+		HWR_ProcessPolygon(surf, quad, 4, flags, shader, false);
+		return;
+	}
+	HWR_SpringAppend(buffer, &count, quad, 4);
+	// R_CreateDrawNodes inserts the sprite before the farthest 3D floor side or plane it sorts behind, so every
+	// one drawn after that (nearer in the BSP order, recorded earlier here) paints over it as well.
+	farthestthick = SIZE_MAX;
+	for (w = 0; w < hwr_numspringwalls; w++)
+		if (hwr_springwalls[w].thick && HWR_SpringWallApplies(&hwr_springwalls[w], &view))
+			farthestthick = w;
+	if (hwr_springprobe)
+		I_OutputMsg("UWP spring probe: type=%d at (%.1f,%.1f,%.1f) gz=%.1f gzt=%.1f quad=(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) depth=%.2f entries=%u farthestthick=%ld\n",
+			(int)spr->mobj->type, FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z), spr->gz, spr->gzt,
+			quad[0].x, quad[0].z, quad[0].y, quad[1].x, quad[1].z, quad[1].y, quad[2].x, quad[2].z, quad[2].y, quad[3].x, quad[3].z, quad[3].y,
+			view.depth, (unsigned)hwr_numspringwalls, farthestthick == SIZE_MAX ? -1L : (long)farthestthick);
+	for (w = 0; w < hwr_numspringwalls && count && count < HWR_SPRINGMAXPIECES; w++)
+	{
+		hwr_springplane_t planes[HWR_SPRINGMAXNEAR];
+		INT32 edges, e;
+		size_t nextcount = 0;
+		boolean subtracted = hwr_springwalls[w].thick ? (farthestthick != SIZE_MAX && w <= farthestthick)
+			: HWR_SpringWallApplies(&hwr_springwalls[w], &view), cut = false;
+		if (!subtracted || !(edges = HWR_SpringWallPlanes(&hwr_springwalls[w], planes)))
+		{
+			if (hwr_springprobe && HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view))
+				HWR_SpringProbeEntry(w, &hwr_springwalls[w], HWR_SpringWallApplies(&hwr_springwalls[w], &view), subtracted, false);
+			continue;
+		}
+		for (i = 0; i < count; i++)
+		{
+			const FOutVector *tri = hwr_springpieces[buffer][i].v;
+			FOutVector inside[HWR_SPRINGMAXCLIP], clipped[HWR_SPRINGMAXCLIP], outside[HWR_SPRINGMAXCLIP];
+			size_t mark = nextcount;
+			INT32 n = 3;
+			boolean overflow = false;
+			// A separating edge rejects this entire silhouette without splitting.
+			for (e = 0; e < edges; e++)
+				if (HWR_SpringDistance(&planes[e], &tri[0]) <= 0
+					&& HWR_SpringDistance(&planes[e], &tri[1]) <= 0
+					&& HWR_SpringDistance(&planes[e], &tri[2]) <= 0)
+					break;
+			if (e == edges)
+			{
+				cut = true;
+				memcpy(inside, tri, sizeof(FOutVector) * 3);
+				for (e = 0; e < edges && n >= 3; e++)
+				{
+					INT32 out = HWR_SpringHalfPlane(inside, n, outside, HWR_SPRINGMAXCLIP, &planes[e], false);
+					if (out < 0)
+					{
+						overflow = true;
+						break;
+					}
+					HWR_SpringAppend(1 - buffer, &nextcount, outside, out);
+					n = HWR_SpringHalfPlane(inside, n, clipped, HWR_SPRINGMAXCLIP, &planes[e], true);
+					if (n < 0)
+					{
+						overflow = true;
+						break;
+					}
+					memcpy(inside, clipped, sizeof(FOutVector) * n);
+				}
+			}
+			if (!overflow && e == edges && n >= 3)
+				changed = true; // The parts outside the silhouette were kept above.
+			else
+			{
+				nextcount = mark; // Missed the silhouette, or its cuts outgrew the buffers: keep the triangle whole.
+				HWR_SpringAppend(1 - buffer, &nextcount, tri, 3);
+			}
+		}
+		buffer = 1 - buffer;
+		count = nextcount;
+		if (count > hwr_springpeakpieces)
+			hwr_springpeakpieces = count;
+		if (hwr_springprobe && (cut || HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view)))
+			HWR_SpringProbeEntry(w, &hwr_springwalls[w], hwr_springwalls[w].thick
+				? HWR_SpringWallApplies(&hwr_springwalls[w], &view) : true, true, cut);
+	}
+	if (hwr_springprobe)
+	{
+		double left = 0;
+		if (!changed)
+			left = HWR_SpringScreenArea(quad, 4);
+		else
+			for (i = 0; i < count; i++)
+				left += HWR_SpringScreenArea(hwr_springpieces[buffer][i].v, 3);
+		I_OutputMsg("UWP spring result: pieces=%u changed=%d stopped=%d area=%.6f of %.6f\n", (unsigned)(changed ? count : 1),
+			(int)changed, (int)(count >= HWR_SPRINGMAXPIECES), left, HWR_SpringScreenArea(quad, 4));
+	}
+	if (!changed)
+		HWR_ProcessPolygon(surf, quad, 4, flags, shader, false);
+	else
+		for (i = 0; i < count; i++)
+			HWR_ProcessPolygon(surf, hwr_springpieces[buffer][i].v, 3, flags, shader, false);
+}
+// End [UWP] spring silhouette geometry.
+#ifdef _UWP
+static boolean hwr_springprobearmed; // gr_springprobe was requested; the next main view logs its springs
+#endif
+
+// Records the plane of a 3D floor that HWR_Subsector is about to draw for this subsector. A polygon with more
+// corners than a record holds is fanned into several that share its first corner.
+static void HWR_AddSpringFOFPlane(const extrasubsector_t *xsub, const ffloor_t *rover, boolean isceiling)
+{
+	FOutVector piece[HWR_SPRINGMAXVERTS];
+	INT32 numpts, first, i, n;
+	if (!xsub->planepoly || (numpts = xsub->planepoly->numpts) < 3)
+		return;
+#define SPRINGPLANEVERT(out, pt) {\
+		fixed_t px = FLOAT_TO_FIXED((pt)->x), py = FLOAT_TO_FIXED((pt)->y);\
+		(out).x = (pt)->x; (out).z = (pt)->y; (out).s = (out).t = 0;\
+		(out).y = FIXED_TO_FLOAT(isceiling ? P_GetFFloorTopZAt(rover, px, py) : P_GetFFloorBottomZAt(rover, px, py));\
+	}
+	for (first = 1; first + 1 < numpts; first += HWR_SPRINGMAXVERTS - 2)
+	{
+		n = numpts - first < HWR_SPRINGMAXVERTS - 1 ? numpts - first : HWR_SPRINGMAXVERTS - 1;
+		SPRINGPLANEVERT(piece[0], &xsub->planepoly->pts[0]);
+		for (i = 0; i < n; i++)
+			SPRINGPLANEVERT(piece[1 + i], &xsub->planepoly->pts[first + i]);
+		HWR_AddSpringPlane(piece, 1 + n, rover);
+	}
+#undef SPRINGPLANEVERT
+}
+
 // Render stats
 precise_t ps_hw_skyboxtime = 0;
 precise_t ps_hw_nodesorttime = 0;
@@ -1737,6 +2398,9 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			wallVerts[0].y = FIXED_TO_FLOAT(worldhigh);
 			wallVerts[2].y = FIXED_TO_FLOAT(worldtopslope);
 			wallVerts[1].y = FIXED_TO_FLOAT(worldhighslope);
+			// [UWP]: Software clips springs to this upper wall's silhouette (SIL_TOP), as to a solid seg's:
+			// Metropolis's yellow bumper walls are upper walls above low back sectors, with springs behind them.
+			HWR_AddSpringWall(wallVerts, NULL);
 
 			{
 				FBITFIELD polyflags = PF_Masked;
@@ -1810,6 +2474,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			wallVerts[0].y = FIXED_TO_FLOAT(worldbottom);
 			wallVerts[2].y = FIXED_TO_FLOAT(worldlowslope);
 			wallVerts[1].y = FIXED_TO_FLOAT(worldbottomslope);
+			// [UWP]: Software clips springs to this lower wall's silhouette (SIL_BOTTOM) too.
+			HWR_AddSpringWall(wallVerts, NULL);
 
 			{
 				FBITFIELD polyflags = PF_Masked;
@@ -2087,6 +2753,15 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 	}
 	else
 	{
+		// [UWP]: Software clips springs to this solid seg's silhouette.
+		if (gl_linedef->special != 41)
+		{
+			wallVerts[3].y = FIXED_TO_FLOAT(worldtop);
+			wallVerts[2].y = FIXED_TO_FLOAT(worldtopslope);
+			wallVerts[0].y = FIXED_TO_FLOAT(worldbottom);
+			wallVerts[1].y = FIXED_TO_FLOAT(worldbottomslope);
+			HWR_AddSpringWall(wallVerts, NULL);
+		}
 		// Single sided line... Deal only with the middletexture (if one exists)
 		gl_midtexture = R_GetTextureNum(gl_sidedef->midtexture);
 		if (gl_midtexture && gl_linedef->special != 41) // (Ignore horizon line for OGL)
@@ -2351,6 +3026,11 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 						}
 					}
 
+					// [UWP]: Opaque solid FOF silhouette before lighting splits.
+					// Masked holes retain ordinary depth-tested behavior.
+					if (!(grTex->mipmap.flags & TF_TRANSPARENT))
+						HWR_AddSpringWall(wallVerts, rover);
+
 					if (gl_frontsector->numlights)
 						HWR_SplitWall(gl_frontsector, wallVerts, texnum, basetexnum, &Surf, rover->fofflags, rover, blendmode);
 					else
@@ -2481,6 +3161,11 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 							Surf.PolyColor.s.alpha = max(0, min(rover->alpha, 255));
 						}
 					}
+
+					// [UWP]: Opaque solid FOF silhouette before lighting splits.
+					// Masked holes retain ordinary depth-tested behavior.
+					if (!(grTex->mipmap.flags & TF_TRANSPARENT))
+						HWR_AddSpringWall(wallVerts, rover);
 
 					if (gl_backsector->numlights)
 						HWR_SplitWall(gl_backsector, wallVerts, texnum, basetexnum, &Surf, rover->fofflags, rover, blendmode);
@@ -3306,6 +3991,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
+					HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, false); // [UWP]
 					HWR_GetLevelFlat(&levelflats[*rover->bottompic], R_NoEncore(gl_frontsector, &levelflats[*rover->bottompic], false));
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, dup_viewz < cullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], false, *rover->bottomheight, HWR_RippleBlend(gl_frontsector, rover, false) | PF_Occlude, *gl_frontsector->lightlist[light].lightlevel, &levelflats[*rover->bottompic],
@@ -3355,6 +4041,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
+					HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, true); // [UWP]
 					HWR_GetLevelFlat(&levelflats[*rover->toppic], R_NoEncore(gl_frontsector, &levelflats[*rover->toppic], true));
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, dup_viewz < cullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], true, *rover->topheight, HWR_RippleBlend(gl_frontsector, rover, true) | PF_Occlude, *gl_frontsector->lightlist[light].lightlevel, &levelflats[*rover->toppic],
@@ -3715,7 +4402,7 @@ static void HWR_LinkDrawHackFinish(void)
 		HWR_GetPatch(linkdrawlist[i].spr->gpatch);
 		if (linkdrawlist[i].spr->gbright)
 			HWR_GetSpriteBrightmap(linkdrawlist[i].spr->gbright);
-		HWR_ProcessPolygon(&surf, linkdrawlist[i].verts, 4, PF_Translucent|PF_Occlude|PF_Invisible, 0, false);
+		HWR_DrawSpringPolygon(&surf, linkdrawlist[i].verts, PF_Translucent|PF_Occlude|PF_Invisible, 0, linkdrawlist[i].spr);
 	}
 	// reset list
 	linkdrawcount = 0;
@@ -4226,7 +4913,7 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 
 		Surf.PolyColor.s.alpha = alpha;
 
-		HWR_ProcessPolygon(&Surf, wallVerts, 4, blend|PF_Modulated, shader, false);
+		HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);
 
 		if (use_linkdraw_hack)
 			HWR_LinkDrawHackAdd(wallVerts, spr);
@@ -4255,7 +4942,7 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 
 	Surf.PolyColor.s.alpha = alpha;
 
-	HWR_ProcessPolygon(&Surf, wallVerts, 4, blend|PF_Modulated, shader, false);
+	HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);
 
 	if (use_linkdraw_hack)
 		HWR_LinkDrawHackAdd(wallVerts, spr);
@@ -4625,7 +5312,7 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 			blend |= PF_ColorMapped;
 		}
 
-		HWR_ProcessPolygon(&Surf, wallVerts, 4, blend|PF_Modulated, shader, false);
+		HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);
 
 		if (use_linkdraw_hack)
 			HWR_LinkDrawHackAdd(wallVerts, spr);
@@ -6133,6 +6820,8 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->z1 = z1;
 	vis->z2 = z2;
 
+	vis->gx = FIXED_TO_FLOAT(interp.x);
+	vis->gy = FIXED_TO_FLOAT(interp.y);
 	vis->tz = tz; // Keep tz for the simple sprite sorting that happens
 	vis->tracertz = tracertz;
 
@@ -6950,6 +7639,21 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 #endif
 
 	HWR_ClearSprites();
+	hwr_numspringwalls = 0; // [UWP]: Separate skybox, portal and split-screen views.
+#ifdef _UWP
+	// The skybox pass and any portal passes come through here before the main view, and must not use up the probe.
+	hwr_springprobe = hwr_springprobearmed && viewssnum == 0 && !con_destlines && !gl_skyboxview && hwr_portallevel == 0;
+	if (hwr_springprobe)
+	{
+		hwr_springprobearmed = false;
+		hwr_springpeakpieces = 0;
+		I_OutputMsg("UWP spring probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f billboarding=%d\n",
+			gamemap, (unsigned)leveltime, FIXED_TO_FLOAT(viewx), FIXED_TO_FLOAT(viewy), FIXED_TO_FLOAT(viewz),
+			(double)viewangle*(360.0/4294967296.0), (double)(INT32)aimingangle*(360.0/4294967296.0),
+			(double)(INT32)viewroll*(360.0/4294967296.0), FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd),
+			cv_glspritebillboarding.value);
+	}
+#endif
 
 	drawcount = 0;
 
@@ -7027,6 +7731,14 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	{
 		ps_hw_spritedrawtime = I_GetPreciseTime() - ps_hw_spritedrawtime;
 	}
+#ifdef _UWP
+	if (hwr_springprobe)
+	{
+		I_OutputMsg("UWP spring probe end: map=%d lt=%u entries=%u peak pieces=%u of %d\n", gamemap, (unsigned)leveltime,
+			(unsigned)hwr_numspringwalls, (unsigned)hwr_springpeakpieces, HWR_SPRINGMAXPIECES);
+		hwr_springprobe = false;
+	}
+#endif
 
 #ifdef NEWCORONAS
 	//Hurdler: they must be drawn before translucent planes, what about gl fog?
@@ -7413,6 +8125,21 @@ static void HWR_SurfaceProbe_f(void)
 }
 #endif
 
+#ifdef _UWP
+// [UWP]: gr_springprobe logs, for the next world frame, how Software's rules clip each spring: its quad, the 3D floor
+// entries sharing its screen area with whether each applies and was subtracted, every entry that cut it, and the area left.
+static void HWR_SpringProbe_f(void)
+{
+	if (rendermode != render_opengl || gamestate != GS_LEVEL)
+	{
+		CONS_Printf("The spring probe requires hardware rendering in a level.\n");
+		return;
+	}
+	hwr_springprobearmed = true;
+	CONS_Printf("Spring probe armed. Close the console to log the next world frame's springs as 'UWP spring' lines.\n");
+}
+#endif
+
 //added by Hurdler: console varibale that are saved
 void HWR_AddCommands(void)
 {
@@ -7428,6 +8155,9 @@ void HWR_AddSessionCommands(void)
 		return;
 #ifdef HAVE_D3D12
 	COM_AddCommand("gr_surfaceprobe", HWR_SurfaceProbe_f);
+#endif
+#ifdef _UWP
+	COM_AddCommand("gr_springprobe", HWR_SpringProbe_f);
 #endif
 	// Kept in case we ever need this again.
 	gl_sessioncommandsadded = true;

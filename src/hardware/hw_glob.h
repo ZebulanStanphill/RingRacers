@@ -72,6 +72,7 @@ typedef struct gl_vissprite_s
 	float x1, x2;
 	float z1, z2;
 	float gz, gzt;
+	float gx, gy; // [UWP]: Interpolated origin for spring wall clipping.
 
 	float tz;
 	float tracertz; // for MF2_LINKDRAW sprites, this contains tracer's tz for use in sorting
