@@ -41,9 +41,16 @@ typedef enum
 {
 	LOADED_ZINIT = 1,
 	LOADED_ISTARTUPTIMER,
+#ifdef _UWP
+	// [UWP]: Start graphics and fonts before reading the map data, so the loading screen shows text sooner
+	LOADED_ISTARTUPGRAPHICS,
+	LOADED_HUINIT,
+	LOADED_IWAD,
+#else
 	LOADED_IWAD,
 	LOADED_ISTARTUPGRAPHICS,
 	LOADED_HUINIT,
+#endif
 	LOADED_PWAD,
 	LOADED_CONFIG,
 	LOADED_INITTEXTUREDATA,
@@ -58,6 +65,10 @@ typedef enum
 } con_loadprogress_t;
 
 extern con_loadprogress_t con_startup_loadprogress;
+
+#ifdef _UWP
+void CON_UWPLoadingKeepAlive(void);
+#endif
 
 // top clip value for view render: do not draw part of view hidden by console
 extern INT32 con_clipviewtop;

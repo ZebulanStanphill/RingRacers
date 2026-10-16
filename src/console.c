@@ -1919,9 +1919,15 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
 {
 	"Init zone memory...", //LOADED_ZINIT
 	"Init game timing...", //LOADED_ISTARTUPTIMER
+#ifdef _UWP
+	"Loading main assets...", //LOADED_ISTARTUPGRAPHICS
+	"Cache fonts...", //LOADED_HUINIT
+	"Loading maps...", //LOADED_IWAD
+#else
 	"Loading main assets...", //LOADED_IWAD
 	"Init graphics subsystem...", //LOADED_ISTARTUPGRAPHICS
 	"Cache fonts...", //LOADED_HUINIT
+#endif
 	"Loading add-ons...", //LOADED_PWAD
 	"Load settings...", //LOADED_CONFIG
 	"Cache textures...", //LOADED_INITTEXTUREDATA
@@ -1981,6 +1987,29 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
 	I_UpdateNoBlit();
 	I_FinishUpdate(); // page flip or blit buffer
 }
+
+#ifdef _UWP
+// [UWP]: Redraw the loading screen during long startup steps (reading the map data takes 7-22 s on Xbox),
+// so the screen and the file check's skip text stay live between progress updates
+void CON_UWPLoadingKeepAlive(void)
+{
+	static precise_t lastdraw = 0;
+
+	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS || con_startup_loadprogress >= LOADED_ALLDONE)
+		return;
+
+	const precise_t now = I_GetPreciseTime();
+	if (now - lastdraw < I_GetPrecisePrecision() / 10)
+		return;
+	lastdraw = now;
+
+	W_UWPPollAssetCheck();
+	CON_DrawLoadBar();
+	I_OsPolling();
+	I_UpdateNoBlit();
+	I_FinishUpdate();
+}
+#endif
 
 //
 // Draws a simple white fill at the bottom of startup for load progress

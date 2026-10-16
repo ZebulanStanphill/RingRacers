@@ -9339,6 +9339,9 @@ UINT8 P_InitMapData(void)
 
 	for (i = 0; i < nummapheaders; ++i)
 	{
+#ifdef _UWP
+		CON_UWPLoadingKeepAlive();
+#endif
 		name = mapheaderinfo[i]->lumpname;
 		maplump = W_CheckNumForMap(name, (mapheaderinfo[i]->lumpnum == LUMPERROR));
 

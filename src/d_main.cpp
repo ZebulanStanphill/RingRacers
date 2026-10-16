@@ -2088,6 +2088,7 @@ void D_SRB2Main(void)
 	// conversion sometimes needs the palette
 	V_ReloadPalette();
 
+#ifndef _UWP // [UWP]: Done after HU_Init and CON_Init below, so the loading screen shows text sooner
 	//
 	// search for mainwad maps
 	//
@@ -2096,6 +2097,7 @@ void D_SRB2Main(void)
 	basenumkartcupheaders = numkartcupheaders;
 
 	CON_SetLoadingProgress(LOADED_IWAD);
+#endif
 
 	M_PasswordInit();
 
@@ -2131,6 +2133,27 @@ void D_SRB2Main(void)
 
 	CON_Init();
 
+#ifdef _UWP
+	CON_SetLoadingProgress(LOADED_HUINIT);
+
+	//
+	// search for mainwad maps
+	//
+	{
+		const precise_t mapdatastart = I_GetPreciseTime();
+		const precise_t logstart = i_uwplogtime;
+
+		P_InitMapData();
+		I_OutputMsg("UWP: P_InitMapData took %.1f s (%.1f s of it logging)\n",
+			(double)(I_GetPreciseTime() - mapdatastart) / I_GetPrecisePrecision(),
+			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
+	}
+	basenummapheaders = nummapheaders;
+	basenumkartcupheaders = numkartcupheaders;
+
+	CON_SetLoadingProgress(LOADED_IWAD);
+#endif
+
 	D_RegisterServerCommands();
 	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
 	R_RegisterEngineStuff();
@@ -2138,7 +2161,9 @@ void D_SRB2Main(void)
 
 	I_RegisterSysCommands();
 
+#ifndef _UWP
 	CON_SetLoadingProgress(LOADED_HUINIT);
+#endif
 
 	CONS_Printf("W_InitMultipleFiles(): Adding external PWADs.\n");
 
