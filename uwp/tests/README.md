@@ -223,6 +223,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and must split it into three pieces. Plane cases put a slab over a camera-above spring and
   under a camera-below one (hidden), hide it when only the quad's corners reach past the plane
   (the sprite's own heights decide, as in Software), and leave the spring whole when it pokes through,
+  and a replay of a bumper from an Xbox capture must leave no sliver along the edge its face and top share;
   the plane is edge-on, behind the origin, beside it, off its rows, fog or see-through,
   and for a sloped plane find the height per point. `--metropolis` replays the nine wedge-shaped
   3D floors of the yellow bumpers in Metropolis (map geometry copied into the test, the

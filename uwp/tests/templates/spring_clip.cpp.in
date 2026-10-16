@@ -503,9 +503,25 @@ static int Metropolis(bool verbose){
     }
     return worst;
 }
+// One of Metropolis's bumpers as an Xbox gr_springprobe capture logged it: the wedge's +x face and its sloped
+// top share an edge, and cutting the spring by both left six slivers along it, a hundredth of a pixel wide and
+// tens of pixels long, which the GPU drew as dashes. Nothing may remain.
+static void Slivers(){
+    Begin();
+    double ang=221.39*M_PI/180;gl_viewx=-3278.40f;gl_viewy=3732.29f;gl_viewz=377.75f;gl_viewcos=(float)std::cos(ang);gl_viewsin=(float)std::sin(ang);
+    ffloor_t f=Solid();
+    Quad side={{{-3344,268,3456,0,0},{-3350,276,3488,0,0},{-3350,280,3488,0,0},{-3344,352,3456,0,0}}};
+    Quad top={{{-3344,352,3456,0,0},{-3368,352,3456,0,0},{-3362,280,3488,0,0},{-3350,280,3488,0,0}}};
+    HWR_AddSpringWall(side.data(),&f);HWR_AddSpringPlane(top.data(),4,&f);assert(hwr_numspringwalls==2);
+    fixture={{{-3350.7f,280,3466.0f,0,1},{-3361.3f,280,3478.0f,1,1},{-3364.9f,295.3f,3474.9f,1,0},{-3354.3f,295.3f,3462.8f,0,0}}};
+    thing.x=FLOAT_TO_FIXED(-3356);thing.y=FLOAT_TO_FIXED(3472);spr.gx=-3356;spr.gy=3472;stubGz=280;stubGzt=296;
+    HWR_DrawSprite(&spr);
+    assert(draws.empty());
+    stubGz=stubGzt=NAN;gl_viewx=gl_viewy=gl_viewz=gl_viewsin=0;gl_viewcos=1;
+}
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return Negative(argv[1]);
-    RunCases();ObliqueCamera();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();PurgeLevel();
+    RunCases();ObliqueCamera();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }
