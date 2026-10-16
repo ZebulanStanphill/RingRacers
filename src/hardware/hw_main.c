@@ -68,6 +68,78 @@
 // ==========================================================================
 struct hwdriver_s hwdriver;
 
+#ifdef _UWP
+// Use renderer cache entry points: they include brightmaps, texture translation,
+// terrain/sector no-Encore flags, and the active level's Encore colormap. For
+// textures whose existing cache has only one remap variant, first sidedef/sector
+// use is the common case; view-dependent FOF variants and animation remain lazy.
+void HWR_UWPPrecacheLevel(boolean players_only)
+{
+	precise_t start;
+	INT32 walls = 0, flats = 0, models = 0, modeltextures = 0;
+	size_t i;
+	if (dedicated || rendermode != render_opengl)
+		return;
+	start = I_GetPreciseTime();
+	// Match the first view's palette mode before generating textures, otherwise
+	// its mode transition would immediately flush this warm-up.
+	HWR_UpdatePaletteRendering();
+	if (!players_only)
+	{
+		UINT8 *wallseen = Z_Calloc(numtextures, PU_STATIC, NULL);
+		UINT8 *flatseen = Z_Calloc(numlevelflats, PU_STATIC, NULL);
+		for (i = 0; i < numsides; i++)
+		{
+			const INT32 base[3] = {sides[i].toptexture, sides[i].midtexture, sides[i].bottomtexture};
+			INT32 j;
+			for (j = 0; j < 3; j++)
+			{
+				INT32 tex;
+				if (base[j] <= 0 || base[j] >= numtextures)
+					continue;
+				tex = texturetranslation[base[j]];
+				if (tex <= 0 || tex >= numtextures || wallseen[tex])
+					continue;
+				wallseen[tex] = 1;
+				HWR_GetTexture(tex, base[j]);
+				walls++;
+			}
+		}
+		// Control sectors are part of sectors[], so FOF floor/ceiling assets are
+		// included. The owning view sector can choose another remap at draw time.
+		for (i = 0; i < numsectors; i++)
+		{
+			const INT32 pic[2] = {sectors[i].floorpic, sectors[i].ceilingpic};
+			INT32 ceiling;
+			for (ceiling = 0; ceiling < 2; ceiling++)
+			{
+				boolean noencore;
+				UINT8 key;
+				if (pic[ceiling] == skyflatnum || pic[ceiling] < 0 || pic[ceiling] >= numlevelflats)
+					continue;
+				noencore = R_NoEncore(&sectors[i], &levelflats[pic[ceiling]], ceiling);
+				key = noencore ? 2 : 1;
+				if (flatseen[pic[ceiling]] & key)
+					continue;
+				flatseen[pic[ceiling]] |= key;
+				HWR_GetLevelFlat(&levelflats[pic[ceiling]], noencore);
+				flats++;
+			}
+		}
+		Z_Free(flatseen);
+		Z_Free(wallseen);
+	}
+	HWR_UWPPrecacheModels(players_only, &models, &modeltextures);
+	// No batch is in progress during loading. Don't leave a warm-up texture
+	// selected for title-card drawing; subsequent draws select their own textures.
+	HWR_SetCurrentTexture(NULL);
+	HWD.pfnSetTexture(NULL);
+	I_OutputMsg("UWP D3D12: precache (%s): %d wall textures, %d flats, %d models (%d model textures) in %.2f ms\n",
+		players_only ? "players" : "level", walls, flats, models, modeltextures,
+		(I_GetPreciseTime() - start) * 1000.0 / I_GetPrecisePrecision());
+}
+#endif
+
 // ==========================================================================
 //                                                                     PROTOS
 // ==========================================================================

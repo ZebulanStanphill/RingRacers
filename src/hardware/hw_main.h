@@ -27,6 +27,9 @@ extern "C" {
 
 // Startup & Shutdown the hardware mode renderer
 void HWR_Startup(void);
+#ifdef _UWP
+void HWR_UWPPrecacheLevel(boolean players_only);
+#endif
 void HWR_Switch(void);
 void HWR_Shutdown(void);
 

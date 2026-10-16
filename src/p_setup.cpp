@@ -134,6 +134,9 @@
 
 extern "C" consvar_t cv_continuousmusic;
 boolean g_reloadinggamestate = false;
+#if defined(_UWP) && defined(HWRENDER)
+static boolean uwp_precache_players = false;
+#endif
 
 //
 // Map MD5, calculated on level load.
@@ -8529,6 +8532,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 #endif
 	levelloading = true;
 	g_reloadinggamestate = reloadinggamestate;
+#if defined(_UWP) && defined(HWRENDER)
+	uwp_precache_players = false;
+#endif
 
 	// This is needed. Don't touch.
 	maptol = mapheaderinfo[gamemap-1]->typeoflevel;
@@ -9024,6 +9030,17 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		levelloading = false;
 	}
 
+#if defined(_UWP) && defined(HWRENDER)
+	// Snapshot/reload/rewind state is restored later, with unusual cache lifetime
+	// and player fields. Leave those paths lazy. Ordinary netgames and Encore
+	// starts have completed geometry, HWR setup and active remap state here.
+	if (!dedicated && rendermode == render_opengl && !fromnetsave
+		&& !reloadinggamestate && !demo.simplerewind)
+	{
+		HWR_UWPPrecacheLevel(false);
+		uwp_precache_players = true;
+	}
+#endif
 #ifdef _UWP
 	UWPTraceLevelLoad(true);
 #endif
@@ -9139,6 +9156,16 @@ void P_PostLoadLevel(void)
 	}
 
 	P_MapEnd();
+
+#if defined(_UWP) && defined(HWRENDER)
+	// Bots and P_InitPlayers have finalized skins/colors and spawned mobjs;
+	// level-start hooks have also run. This is before the first gameplay draw.
+	if (uwp_precache_players)
+	{
+		uwp_precache_players = false;
+		HWR_UWPPrecacheLevel(true);
+	}
+#endif
 
 	// We're now done loading the level.
 	levelloading = false;

@@ -40,6 +40,9 @@
 #include "../r_things.h"
 #include "../r_draw.h"
 #include "../p_tick.h"
+#ifdef _UWP
+#include "../p_mobj.h"
+#endif
 
 #include "hw_model.h"
 
@@ -82,6 +85,18 @@
 
 md2_t md2_models[NUMSPRITES];
 md2_t md2_playermodels[MAXSKINS];
+#ifdef _UWP
+static UINT32 uwp_models_loaded;
+static UINT32 uwp_model_textures_loaded;
+static UINT32 uwp_models_loaded_lazily;
+
+UINT32 HWR_UWPTakeLazyModelLoads(void)
+{
+	UINT32 count = uwp_models_loaded_lazily;
+	uwp_models_loaded_lazily = 0;
+	return count;
+}
+#endif
 
 
 /*
@@ -428,7 +443,14 @@ static void md2_loadTexture(md2_t *model)
 		}
 	}
 
+#ifdef _UWP
+	const boolean uploading = !grPatch->mipmap->downloaded;
+#endif
 	HWD.pfnSetTexture(grPatch->mipmap);
+#ifdef _UWP
+	if (uploading && grPatch->mipmap->downloaded)
+		uwp_model_textures_loaded++;
+#endif
 }
 
 // -----------------+
@@ -483,7 +505,14 @@ static void md2_loadBlendTexture(md2_t *model)
 		grPatch->mipmap->height = (UINT16)h;
 	}
 
+#ifdef _UWP
+	const boolean uploading = !grPatch->mipmap->downloaded;
+#endif
 	HWD.pfnSetTexture(grPatch->mipmap); // We do need to do this so that it can be cleared and knows to recreate it when necessary
+#ifdef _UWP
+	if (uploading && grPatch->mipmap->downloaded)
+		uwp_model_textures_loaded++;
+#endif
 
 	Z_Free(filename);
 }
@@ -1192,6 +1221,10 @@ static void HWR_GetBlendedTexture(patch_t *patch, patch_t *blendpatch, INT32 ski
 	HWR_CreateBlendedTexture(patch, blendpatch, newMipmap, skinnum, color);
 
 	HWD.pfnSetTexture(newMipmap);
+#ifdef _UWP
+	if (newMipmap->downloaded)
+		uwp_model_textures_loaded++;
+#endif
 	Z_ChangeTag(newMipmap->data, PU_HWRMODELTEXTURE_UNLOCKED);
 }
 
@@ -1316,6 +1349,168 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
 }
 
 //
+// Both drawing and UWP precaching use exactly the same resource initialization.
+// A NULL sprite patch permits external-textured models only: sprite textures need
+// the view-selected (possibly rotated) patch to adjust UVs before creating VBOs.
+static boolean HWR_LoadModelResources(md2_t *md2, patch_t *spritepatch)
+{
+	char filename[64];
+	patch_t *gpatch, *blendgpatch;
+	GLPatch_t *hwrPatch = NULL, *hwrBlendPatch = NULL;
+	// texture loading before model init, so it knows if sprite graphics are used, which
+	// means that texture coordinates have to be adjusted
+	gpatch = md2->grpatch;
+	if (gpatch)
+		hwrPatch = ((GLPatch_t *)gpatch->hardware);
+
+	if (!gpatch || !hwrPatch
+	|| ((!hwrPatch->mipmap->format || !hwrPatch->mipmap->downloaded) && !md2->notexturefile))
+		md2_loadTexture(md2);
+
+	// Load it again, because it isn't being loaded into gpatch after md2_loadtexture...
+	gpatch = md2->grpatch;
+	if (gpatch)
+		hwrPatch = ((GLPatch_t *)gpatch->hardware);
+
+	// Load blend texture
+	blendgpatch = md2->blendgrpatch;
+	if (blendgpatch)
+		hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
+
+	if ((gpatch && hwrPatch && hwrPatch->mipmap->format) // don't load the blend texture if the base texture isn't available
+		&& (!blendgpatch || !hwrBlendPatch
+		|| ((!hwrBlendPatch->mipmap->format || !hwrBlendPatch->mipmap->downloaded) && !md2->noblendfile)))
+		md2_loadBlendTexture(md2);
+
+	// Load it again, because it isn't being loaded into blendgpatch after md2_loadblendtexture...
+	blendgpatch = md2->blendgrpatch;
+	if (blendgpatch)
+		hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
+
+	if (md2->error)
+		return false; // we already failed loading this before :(
+	if (!md2->model)
+	{
+		if ((!gpatch || !hwrPatch->mipmap->format) && !spritepatch)
+			return false; // Cannot choose sprite UVs without a projected sprite.
+		sprintf(filename, "models/%s", md2->filename);
+		md2->model = md2_readModel(filename);
+
+		if (md2->model)
+		{
+#ifdef _UWP
+			uwp_models_loaded++;
+#endif
+			md2_printModelInfo(md2->model);
+			// If model uses sprite patch as texture, then
+			// adjust texture coordinates to take power of two textures into account
+			if (!gpatch || !hwrPatch->mipmap->format)
+				adjustTextureCoords(md2->model, spritepatch);
+			// note down the max_s and max_t that end up in the VBO
+			md2->model->vbo_max_s = md2->model->max_s;
+			md2->model->vbo_max_t = md2->model->max_t;
+			HWD.pfnCreateModelVBOs(md2->model);
+		}
+		else
+		{
+			//CONS_Debug(DBG_RENDER, " FAILED\n");
+			md2->error = true; // prevent endless fail
+			return false;
+		}
+	}
+
+	return true;
+}
+
+#ifdef _UWP
+static void HWR_UWPPrecacheModel(md2_t *md2)
+{
+	if (md2->notfound || md2->error || md2->scale < 0.0f)
+		return;
+	HWR_LoadModelResources(md2, NULL);
+}
+
+void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures_loaded)
+{
+	const UINT32 oldmodels = uwp_models_loaded;
+	const UINT32 oldtextures = uwp_model_textures_loaded;
+	INT32 i;
+	if (!cv_glmodels.value)
+		return;
+
+	if (!players_only)
+	{
+		thinker_t *th;
+		// Inspect the list; never execute thinkers, project sprites or change mobjs.
+		for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+		{
+			mobj_t *mo = (mobj_t *)th;
+			if (P_MobjWasRemoved(mo) || !HWR_AllowModel(mo))
+				continue;
+			if (mo->skin && mo->sprite == SPR_PLAY)
+				HWR_UWPPrecacheModel(&md2_playermodels[((skin_t *)mo->skin)->skinnum]);
+			else if ((unsigned)mo->sprite < NUMSPRITES)
+				HWR_UWPPrecacheModel(&md2_models[mo->sprite]);
+		}
+	}
+
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		INT32 skin, translation;
+		skincolornum_t color;
+		const UINT8 *colormap;
+		md2_t *md2;
+		patch_t *patch;
+		mobj_t *mo;
+		if (!playeringame[i])
+			continue;
+		// Before P_InitPlayers, use the current player fields, not an old mobj.
+		// Afterwards use the spawned mobj, matching HWR_ProjectSprite/DrawModel.
+		mo = players_only ? players[i].mo : NULL;
+		if (mo && (P_MobjWasRemoved(mo) || mo->sprite != SPR_PLAY || !mo->skin || !HWR_AllowModel(mo)))
+			continue;
+		skin = mo ? ((skin_t *)mo->skin)->skinnum : players[i].skin;
+		color = (skincolornum_t)(mo ? mo->color : players[i].skincolor);
+		if (skin < 0 || skin >= numskins)
+			continue;
+		md2 = &md2_playermodels[skin];
+		HWR_UWPPrecacheModel(md2);
+		patch = md2->grpatch;
+		if (md2->notfound || md2->error || md2->scale < 0.0f || !md2->model
+			|| !patch || !patch->hardware || !((GLPatch_t *)patch->hardware)->mipmap->format)
+			continue;
+
+		// Same translation number and cached pointer as sprite projection and drawing.
+		translation = skin;
+		if (!R_CanShowSkinInDemo(skin))
+		{
+			translation = TC_BLINK;
+			colormap = R_GetTranslationColormap(TC_BLINK, color, GTC_CACHE);
+		}
+		else if (mo && R_ThingIsFlashing(mo))
+		{
+			translation = TC_HITLAG;
+			colormap = R_GetTranslationColormap(TC_HITLAG, 0, GTC_CACHE);
+		}
+		else if (color)
+		{
+			if (mo && mo->colorized)
+				translation = TC_RAINBOW;
+			colormap = R_GetTranslationColormap(translation, color, GTC_CACHE);
+		}
+		else
+		{
+			colormap = colormaps;
+			if (encoremap && (!mo || !(mo->flags & MF_DONTENCOREMAP)))
+				colormap += COLORMAP_REMAPOFFSET;
+		}
+		HWR_GetBlendedTexture(patch, md2->blendgrpatch, translation, colormap, color);
+	}
+	*models = (INT32)(uwp_models_loaded - oldmodels);
+	*textures_loaded = (INT32)(uwp_model_textures_loaded - oldtextures);
+}
+#endif
+
 // HWR_DrawModel
 //
 
@@ -1323,7 +1518,6 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 {
 	md2_t *md2;
 
-	char filename[64];
 	INT32 frame = 0;
 	INT32 nextFrame = -1;
 	UINT8 spr2 = 0;
@@ -1382,7 +1576,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 	// Look at HWR_ProjectSprite for more
 	{
 		patch_t *gpatch, *blendgpatch;
-		GLPatch_t *hwrPatch = NULL, *hwrBlendPatch = NULL;
+		GLPatch_t *hwrPatch = NULL;
 		float durs = (float)spr->mobj->state->tics;
 		float tics = (float)spr->mobj->tics;
 		const boolean papersprite = (R_ThingIsPaperSprite(spr->mobj) && !R_ThingIsFloorSprite(spr->mobj));
@@ -1464,64 +1658,19 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			md2 = &md2_models[spr->mobj->sprite];
 		}
 
-		// texture loading before model init, so it knows if sprite graphics are used, which
-		// means that texture coordinates have to be adjusted
+#ifdef _UWP
+		const boolean lazy = !md2->model;
+#endif
+		if (!HWR_LoadModelResources(md2, spr->gpatch))
+			return false;
+#ifdef _UWP
+		if (lazy)
+			uwp_models_loaded_lazily++;
+#endif
 		gpatch = md2->grpatch;
-		if (gpatch)
-			hwrPatch = ((GLPatch_t *)gpatch->hardware);
-
-		if (!gpatch || !hwrPatch
-		|| ((!hwrPatch->mipmap->format || !hwrPatch->mipmap->downloaded) && !md2->notexturefile))
-			md2_loadTexture(md2);
-
-		// Load it again, because it isn't being loaded into gpatch after md2_loadtexture...
-		gpatch = md2->grpatch;
-		if (gpatch)
-			hwrPatch = ((GLPatch_t *)gpatch->hardware);
-
-		// Load blend texture
 		blendgpatch = md2->blendgrpatch;
-		if (blendgpatch)
-			hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
-
-		if ((gpatch && hwrPatch && hwrPatch->mipmap->format) // don't load the blend texture if the base texture isn't available
-			&& (!blendgpatch || !hwrBlendPatch
-			|| ((!hwrBlendPatch->mipmap->format || !hwrBlendPatch->mipmap->downloaded) && !md2->noblendfile)))
-			md2_loadBlendTexture(md2);
-
-		// Load it again, because it isn't being loaded into blendgpatch after md2_loadblendtexture...
-		blendgpatch = md2->blendgrpatch;
-		if (blendgpatch)
-			hwrBlendPatch = ((GLPatch_t *)blendgpatch->hardware);
-
-		if (md2->error)
-			return false; // we already failed loading this before :(
-		if (!md2->model)
-		{
-			//CONS_Debug(DBG_RENDER, "Loading model... (%s)", sprnames[spr->mobj->sprite]);
-			sprintf(filename, "models/%s", md2->filename);
-			md2->model = md2_readModel(filename);
-
-			if (md2->model)
-			{
-				md2_printModelInfo(md2->model);
-				// If model uses sprite patch as texture, then
-				// adjust texture coordinates to take power of two textures into account
-				if (!gpatch || !hwrPatch->mipmap->format)
-					adjustTextureCoords(md2->model, spr->gpatch);
-				// note down the max_s and max_t that end up in the VBO
-				md2->model->vbo_max_s = md2->model->max_s;
-				md2->model->vbo_max_t = md2->model->max_t;
-				HWD.pfnCreateModelVBOs(md2->model);
-			}
-			else
-			{
-				//CONS_Debug(DBG_RENDER, " FAILED\n");
-				md2->error = true; // prevent endless fail
-				return false;
-			}
-		}
-
+		if (gpatch)
+			hwrPatch = gpatch->hardware;
 		//HWD.pfnSetBlend(blend); // This seems to actually break translucency?
 		//Hurdler: arf, I don't like that implementation at all... too much crappy
 

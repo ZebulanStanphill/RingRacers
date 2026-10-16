@@ -48,6 +48,10 @@ void HWR_InitModels(void);
 void HWR_AddPlayerModel(INT32 skin);
 void HWR_AddSpriteModel(size_t spritenum);
 boolean HWR_DrawModel(gl_vissprite_t *spr);
+#ifdef _UWP
+void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures);
+UINT32 HWR_UWPTakeLazyModelLoads(void);
+#endif
 
 #define PLAYERMODELPREFIX "PLAYER"
 
