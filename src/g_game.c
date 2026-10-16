@@ -1292,6 +1292,10 @@ void G_StartTitleCard(void)
 void G_PreLevelTitleCard(void)
 {
 #ifndef NOWIPE
+#ifdef _UWP
+	// Level loading leaves I_GetTime's cached clock stale.
+	I_UpdateTime();
+#endif
 	tic_t strtime = I_GetTime();
 	tic_t endtime = strtime + (PRELEVELTIME*NEWTICRATERATIO);
 	tic_t nowtime = strtime;
