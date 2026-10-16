@@ -1,4 +1,4 @@
-From 7fe0b98a4198981fda66569a20018a1f696e487b Mon Sep 17 00:00:00 2001
+From 356cc51a3acd0dda3c6ca1ccc04233e8dcdce276 Mon Sep 17 00:00:00 2001
 From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
 Date: Sat, 3 Oct 2026 21:14:14 -0500
 Subject: [PATCH] UWP: Build Ring Racers as a static library for the UWP
@@ -725,6 +725,9 @@ Model: claude-fable-5-1
   two silhouettes share leave slivers a hundredth of a pixel wide, their
   corners apart only by float rounding, and the GPU drew them as one-pixel
   dashes on Metropolis's bumpers.
+- [UWP]: Slide the console by the time since it last moved: a game loop that
+  took over a tic skips drawing the next frame, so renderdeltatics lost that
+  frame's time and the console crept at low frame rates.
 
 Agent: Claude Code (Fable 5.1, spring probe)
 Model: claude-fable-5-1
@@ -734,7 +737,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  CMakeLists.txt                            |   19 +-
  CMakePresets.json                         |   17 +
  src/CMakeLists.txt                        |   44 +-
- src/console.c                             |   57 +
+ src/console.c                             |   78 +-
  src/console.h                             |   11 +
  src/core/thread_pool.cpp                  |   19 +
  src/cvars.cpp                             |   21 +
@@ -849,7 +852,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  src/w_wad.cpp                             |  312 +
  src/w_wad.h                               |   11 +
  src/z_zone.cpp                            |    5 +
- 118 files changed, 25026 insertions(+), 1162 deletions(-)
+ 118 files changed, 25046 insertions(+), 1163 deletions(-)
  create mode 100644 src/hardware/hw_glsl.h
  create mode 100644 src/hardware/r_d3d11/custom_shader.cpp
  create mode 100644 src/hardware/r_d3d11/custom_shader.h
@@ -1069,7 +1072,7 @@ index 9eb0bcb..46543dc 100644
  
  # Setup clang-tidy
 diff --git a/src/console.c b/src/console.c
-index 1e7585f..361e382 100644
+index 1e7585f..dc88714 100644
 --- a/src/console.c
 +++ b/src/console.c
 @@ -34,6 +34,9 @@
@@ -1082,7 +1085,52 @@ index 1e7585f..361e382 100644
  #include "m_misc.h"
  
  #ifdef HWRENDER
-@@ -1916,9 +1919,15 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
+@@ -598,9 +601,14 @@ static void CON_ChangeHeight(void)
+ 
+ // Handles Console moves in/out of screen (per frame)
+ //
++// [UWP]: When the console last moved, for sliding it by real time; the drawer clears this while it's still.
++static precise_t con_movetime;
++
+ static void CON_MoveConsole(void)
+ {
+ 	static fixed_t fracmovement = 0;
++	precise_t now;
++	fixed_t deltatics;
+ 
+ 	Lock_state();
+ 
+@@ -613,7 +621,19 @@ static void CON_MoveConsole(void)
+ 	}
+ 
+ 	// Not instant - Increment fracmovement fractionally
+-	fracmovement += FixedMul(cons_speed.value*vid.fdupy, renderdeltatics);
++	// [UWP]: by the time since the console last moved. renderdeltatics is one game loop's time, but a loop
++	// that took over a tic skips drawing the next frame, and that frame's time was lost here, so at low
++	// frame rates the console slid slower than its speed. The first frame of a move still uses the loop's time.
++	now = I_GetPreciseTime();
++	if (con_movetime && now > con_movetime)
++	{
++		double tics = (double)(now - con_movetime) * TICRATE / (double)I_GetPrecisePrecision();
++		deltatics = FLOAT_TO_FIXED(tics < 64.0 ? tics : 64.0); // A long stall completes the move; the clamp below stops it there.
++	}
++	else
++		deltatics = renderdeltatics;
++	con_movetime = now;
++	fracmovement += FixedMul(cons_speed.value*vid.fdupy, deltatics);
+ 
+ 	if (con_curlines < con_destlines) // Move the console downwards
+ 	{
+@@ -1903,6 +1923,8 @@ void CON_Drawer(void)
+ 	// console movement
+ 	if (con_curlines != con_destlines)
+ 		CON_MoveConsole();
++	else
++		con_movetime = 0; // [UWP]: Still: the next move starts from the loop's time, not from now.
+ 
+ 	if (con_curlines > 0)
+ 		CON_DrawConsole();
+@@ -1916,9 +1938,15 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
  {
  	"Init zone memory...", //LOADED_ZINIT
  	"Init game timing...", //LOADED_ISTARTUPTIMER
@@ -1098,7 +1146,7 @@ index 1e7585f..361e382 100644
  	"Loading add-ons...", //LOADED_PWAD
  	"Load settings...", //LOADED_CONFIG
  	"Cache textures...", //LOADED_INITTEXTUREDATA
-@@ -1938,6 +1947,9 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
+@@ -1938,6 +1966,9 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
  void CON_SetLoadingProgress(con_loadprogress_t newStep)
  {
  	const con_loadprogress_t expectedStep = con_startup_loadprogress + 1;
@@ -1108,7 +1156,7 @@ index 1e7585f..361e382 100644
  
  	if (newStep != expectedStep)
  	{
-@@ -1948,7 +1960,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+@@ -1948,7 +1979,25 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
  	con_startup_loadprogress = newStep;
  
  	if (con_startup_loadprogress <= LOADED_ALLDONE)
@@ -1134,7 +1182,7 @@ index 1e7585f..361e382 100644
  
  	if (con_startup_loadprogress < LOADED_ISTARTUPGRAPHICS) // rendering not possible?
  		return;
-@@ -1958,6 +1988,29 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
+@@ -1958,6 +2007,29 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
  	I_FinishUpdate(); // page flip or blit buffer
  }
  
@@ -1164,7 +1212,7 @@ index 1e7585f..361e382 100644
  //
  // Draws a simple white fill at the bottom of startup for load progress
  //
-@@ -1981,6 +2034,10 @@ void CON_DrawLoadBar(void)
+@@ -1981,6 +2053,10 @@ void CON_DrawLoadBar(void)
  
  	if (con_startup_loadprogress <= LOADED_ALLDONE)
  	{
