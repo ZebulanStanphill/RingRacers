@@ -6543,15 +6543,23 @@ void HWR_DoPostProcessor(player_t *player)
 	if(gamestate != GS_INTERMISSION)
 		HWD.pfnMakeScreenTexture();
 
-	if (r_splitscreen) // Not supported in splitscreen - someone want to add support?
+#ifdef _UWP
+	if (cv_reducevfx.value) // Match Software's accessibility gating for water and heat.
 		return;
+#else
+	if (r_splitscreen) // The OpenGL driver still only supports a whole-screen grid.
+		return;
+#endif
 
 	// Drunken vision! WooOOooo~
 	if (*type == postimg_water || *type == postimg_heat)
 	{
 		// 10 by 10 grid. 2 coordinates (xy)
 		float v[SCREENVERTS][SCREENVERTS][2];
-		static double disStart = 0;
+#ifndef _UWP
+		// Each view advances independently; drawing four views must not quadruple speed.
+		static double disStart[MAXSPLITSCREENPLAYERS] = {0};
+		const INT32 view = R_GetViewNumber();
 
 		UINT8 x, y;
 		INT32 WAVELENGTH;
@@ -6577,13 +6585,26 @@ void HWR_DoPostProcessor(player_t *player)
 			for (y = 0; y < SCREENVERTS; y++)
 			{
 				// Change X position based on its Y position.
-				v[x][y][0] = (x/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f + (float)sin((disStart+(y*WAVELENGTH))/FREQUENCY)/AMPLITUDE;
+				v[x][y][0] = (x/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f + (float)sin((disStart[view]+(y*WAVELENGTH))/FREQUENCY)/AMPLITUDE;
 				v[x][y][1] = (y/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f;
 			}
 		}
+#else
+		// D3D samples in its pixel shader; the driver ignores the legacy grid.
+		memset(v, 0, sizeof v);
+#endif
+#ifdef _UWP
+		HWD.pfnGClipRect((INT32)gl_viewwindowx, (INT32)gl_viewwindowy,
+			(INT32)(gl_viewwindowx + gl_viewwidth), (INT32)(gl_viewwindowy + gl_viewheight), NZCLIP_PLANE);
+#endif
 		HWD.pfnPostImgRedraw(v);
+#ifdef _UWP
+		HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
+#endif
+#ifndef _UWP
 		if (!(paused || P_AutoPause()))
-			disStart += FIXED_TO_FLOAT(renderdeltatics);
+			disStart[view] += FIXED_TO_FLOAT(renderdeltatics);
+#endif
 
 		// Capture the screen again for screen waving on the intermission
 		if(gamestate != GS_INTERMISSION)
