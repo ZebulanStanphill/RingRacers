@@ -171,6 +171,17 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FloatToFixed(float f)
 	// Microsoft Visual C++ (no asm inline)
 	fixed_t __cdecl FixedMul(fixed_t a, fixed_t b);
 	fixed_t __cdecl FixedDiv2(fixed_t a, fixed_t b);
+#elif defined (_UWP)
+	// [UWP]: The C version from m_fixed.c, inline, since calling it cost more than the multiply. It was about 3% of
+	// rendering and game logic on Xbox.
+	FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedMul(fixed_t a, fixed_t b)
+	{
+		// Need to cast to unsigned before shifting to avoid undefined behaviour
+		// for negative integers
+		return (fixed_t)(((UINT64)((INT64)a * b)) >> FRACBITS);
+	}
+
+	#define __USE_C_FIXEDDIV__
 #else
 	#define __USE_C_FIXEDMUL__
 	#define __USE_C_FIXEDDIV__
