@@ -246,7 +246,7 @@ enum EPolyFlags
 	PF_RemoveYWrap      = 0x00010000,   // Forces clamp texture on Y
 	PF_ForceWrapX       = 0x00020000,   // Forces repeat texture on X
 	PF_ForceWrapY       = 0x00040000,   // Forces repeat texture on Y
-	PF_Ripple           = 0x00100000,   // Water ripple effect. The current backend doesn't use it for anything.
+	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
 	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles
 };
 

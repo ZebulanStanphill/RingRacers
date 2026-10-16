@@ -2574,7 +2574,10 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling, 
 
 	if (HWR_UseShader())
 	{
-		shader = SHADER_FLOOR;
+		const sector_t *rippleSector = FOFsector ? FOFsector : gl_frontsector;
+		if (!cv_reducevfx.value && rippleSector && R_IsRipplePlane((sector_t *)rippleSector, NULL, isceiling))
+			blendmode |= PF_Ripple;
+		shader = (blendmode & PF_Ripple) ? SHADER_WATER : SHADER_FLOOR;
 		blendmode |= PF_ColorMapped;
 	}
 
@@ -2650,7 +2653,7 @@ static void HWR_AddPolyObjectPlanes(void)
 
 static FBITFIELD HWR_RippleBlend(sector_t *sector, ffloor_t *rover, boolean ceiling)
 {
-	return R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
+	return !cv_reducevfx.value && R_IsRipplePlane(sector, rover, ceiling) ? PF_Ripple : 0;
 }
 
 // -----------------+
