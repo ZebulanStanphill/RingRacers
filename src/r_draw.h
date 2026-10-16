@@ -71,7 +71,7 @@ extern lumpnum_t viewborderlump[8];
 
 #define BASEDRAWFUNC 0
 
-typedef void (coldrawfunc_t)(drawcolumndata_t*);
+typedef void (coldrawfunc_t)(const drawcolumndata_t*);
 typedef void (spandrawfunc_t)(drawspandata_t*);
 
 enum
@@ -199,23 +199,23 @@ void R_DrawViewBorder(void);
 // 8bpp DRAWING CODE
 // -----------------
 
-void R_DrawColumn(drawcolumndata_t* dc);
-void R_DrawTranslucentColumn(drawcolumndata_t* dc);
-void R_DrawDropShadowColumn(drawcolumndata_t* dc);
-void R_DrawTranslatedColumn(drawcolumndata_t* dc);
-void R_DrawTranslatedTranslucentColumn(drawcolumndata_t* dc);
-void R_Draw2sMultiPatchColumn(drawcolumndata_t* dc);
-void R_Draw2sMultiPatchTranslucentColumn(drawcolumndata_t* dc);
-void R_DrawFogColumn(drawcolumndata_t* dc);
-void R_DrawColumnShadowed(drawcolumndata_t* dc);
+void R_DrawColumn(const drawcolumndata_t* dc);
+void R_DrawTranslucentColumn(const drawcolumndata_t* dc);
+void R_DrawDropShadowColumn(const drawcolumndata_t* dc);
+void R_DrawTranslatedColumn(const drawcolumndata_t* dc);
+void R_DrawTranslatedTranslucentColumn(const drawcolumndata_t* dc);
+void R_Draw2sMultiPatchColumn(const drawcolumndata_t* dc);
+void R_Draw2sMultiPatchTranslucentColumn(const drawcolumndata_t* dc);
+void R_DrawFogColumn(const drawcolumndata_t* dc);
+void R_DrawColumnShadowed(const drawcolumndata_t* dc);
 
-void R_DrawColumn_Brightmap(drawcolumndata_t* dc);
-void R_DrawTranslucentColumn_Brightmap(drawcolumndata_t* dc);
-void R_DrawTranslatedColumn_Brightmap(drawcolumndata_t* dc);
-void R_DrawTranslatedTranslucentColumn_Brightmap(drawcolumndata_t* dc);
-void R_Draw2sMultiPatchColumn_Brightmap(drawcolumndata_t* dc);
-void R_Draw2sMultiPatchTranslucentColumn_Brightmap(drawcolumndata_t* dc);
-void R_DrawColumnShadowed_Brightmap(drawcolumndata_t* dc);
+void R_DrawColumn_Brightmap(const drawcolumndata_t* dc);
+void R_DrawTranslucentColumn_Brightmap(const drawcolumndata_t* dc);
+void R_DrawTranslatedColumn_Brightmap(const drawcolumndata_t* dc);
+void R_DrawTranslatedTranslucentColumn_Brightmap(const drawcolumndata_t* dc);
+void R_Draw2sMultiPatchColumn_Brightmap(const drawcolumndata_t* dc);
+void R_Draw2sMultiPatchTranslucentColumn_Brightmap(const drawcolumndata_t* dc);
+void R_DrawColumnShadowed_Brightmap(const drawcolumndata_t* dc);
 
 void R_DrawSpan(drawspandata_t* ds);
 void R_DrawTranslucentSpan(drawspandata_t* ds);
@@ -284,7 +284,7 @@ void R_DrawTranslucentFloorSprite_Tilted_Brightmap_NPO2(drawspandata_t* ds);
 void R_DrawTranslucentWaterSpan_Tilted_Brightmap_NPO2(drawspandata_t* ds);
 
 // Debugging - highlight surfaces in flat colors
-void R_DrawColumn_Flat(drawcolumndata_t* dc);
+void R_DrawColumn_Flat(const drawcolumndata_t* dc);
 void R_DrawSpan_Flat(drawspandata_t* ds);
 void R_DrawTiltedSpan_Flat(drawspandata_t* ds);
 

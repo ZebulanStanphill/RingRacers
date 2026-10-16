@@ -695,7 +695,7 @@ void R_DrawPlanes(void)
 // Draws the sky within the plane's top/bottom bounds
 // Note: this uses column drawers instead of span drawers, since the sky is always a texture
 //
-static void R_DrawSkyPlane(visplane_t *pl, void(*colfunc)(drawcolumndata_t*), boolean allow_parallel)
+static void R_DrawSkyPlane(visplane_t *pl, void(*colfunc)(const drawcolumndata_t*), boolean allow_parallel)
 {
 	INT32 x;
 	drawcolumndata_t dc {0};

@@ -89,7 +89,17 @@ void R_FlushTextureCache(void);
 UINT8 *R_GenerateTexture(size_t texnum);
 UINT8 *R_GenerateTextureAsFlat(size_t texnum);
 UINT8 *R_GenerateTextureBrightmap(size_t texnum);
+#ifdef _UWP
+extern INT32 numtextures;
+FUNCINLINE static ATTRINLINE INT32 R_GetTextureNum(INT32 texnum)
+{
+	if (texnum < 0 || texnum >= numtextures)
+		return 0;
+	return texturetranslation[texnum];
+}
+#else
 INT32 R_GetTextureNum(INT32 texnum);
+#endif
 INT32 R_GetTextureBrightmap(INT32 texnum);
 boolean R_TextureHasBrightmap(INT32 texnum);
 boolean R_TextureCanRemap(INT32 texnum);

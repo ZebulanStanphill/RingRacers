@@ -32,7 +32,7 @@ enum DrawColumnType
 };
 
 template<DrawColumnType Type>
-static constexpr UINT8 R_GetColumnTranslated(drawcolumndata_t* dc, UINT8 col)
+static constexpr UINT8 R_GetColumnTranslated(const drawcolumndata_t* dc, UINT8 col)
 {
 	if constexpr (Type & DrawColumnType::DC_COLORMAP)
 	{
@@ -45,7 +45,7 @@ static constexpr UINT8 R_GetColumnTranslated(drawcolumndata_t* dc, UINT8 col)
 }
 
 template<DrawColumnType Type>
-static constexpr UINT8 R_GetColumnBrightmapped(drawcolumndata_t* dc, UINT32 bit, UINT8 col)
+static constexpr UINT8 R_GetColumnBrightmapped(const drawcolumndata_t* dc, UINT32 bit, UINT8 col)
 {
 	col = R_GetColumnTranslated<Type>(dc, col);
 
@@ -61,7 +61,7 @@ static constexpr UINT8 R_GetColumnBrightmapped(drawcolumndata_t* dc, UINT32 bit,
 }
 
 template<DrawColumnType Type>
-static constexpr UINT8 R_GetColumnTranslucent(drawcolumndata_t* dc, UINT8 *dest, UINT32 bit, UINT8 col)
+static constexpr UINT8 R_GetColumnTranslucent(const drawcolumndata_t* dc, UINT8 *dest, UINT32 bit, UINT8 col)
 {
 	col = R_GetColumnBrightmapped<Type>(dc, bit, col);
 
@@ -76,7 +76,7 @@ static constexpr UINT8 R_GetColumnTranslucent(drawcolumndata_t* dc, UINT8 *dest,
 }
 
 template<DrawColumnType Type>
-static constexpr UINT8 R_DrawColumnPixel(drawcolumndata_t* dc, UINT8 *dest, UINT32 bit)
+static constexpr UINT8 R_DrawColumnPixel(const drawcolumndata_t* dc, UINT8 *dest, UINT32 bit)
 {
 	UINT8 col = dc->source[bit];
 
@@ -95,7 +95,7 @@ static constexpr UINT8 R_DrawColumnPixel(drawcolumndata_t* dc, UINT8 *dest, UINT
 	Experiment to make software go faster. Taken from the Boom source
 */
 template<DrawColumnType Type>
-static void R_DrawColumnTemplate(drawcolumndata_t *dc)
+static void R_DrawColumnTemplate(const drawcolumndata_t *dc)
 {
 	INT32 count;
 	UINT8 *dest;
@@ -309,7 +309,7 @@ static void R_DrawColumnTemplate(drawcolumndata_t *dc)
 }
 
 #define DEFINE_COLUMN_FUNC(name, flags) \
-	void name(drawcolumndata_t *dc) \
+	void name(const drawcolumndata_t *dc) \
 	{ \
 		ZoneScoped; \
 		constexpr DrawColumnType opt = static_cast<DrawColumnType>(flags); \
@@ -328,7 +328,7 @@ DEFINE_COLUMN_COMBO(R_DrawTranslatedTranslucentColumn, DC_COLORMAP|DC_TRANSMAP)
 DEFINE_COLUMN_COMBO(R_Draw2sMultiPatchColumn, DC_HOLES)
 DEFINE_COLUMN_COMBO(R_Draw2sMultiPatchTranslucentColumn, DC_HOLES|DC_TRANSMAP)
 
-void R_DrawFogColumn(drawcolumndata_t *dc)
+void R_DrawFogColumn(const drawcolumndata_t *dc)
 {
 	ZoneScoped;
 
@@ -360,7 +360,7 @@ void R_DrawFogColumn(drawcolumndata_t *dc)
 	while (count--);
 }
 
-void R_DrawDropShadowColumn(drawcolumndata_t *dc)
+void R_DrawDropShadowColumn(const drawcolumndata_t *dc)
 {
 	ZoneScoped;
 
@@ -393,7 +393,7 @@ void R_DrawDropShadowColumn(drawcolumndata_t *dc)
 		*dest = *(transmap_offset + (*dest));
 }
 
-void R_DrawColumn_Flat(drawcolumndata_t *dc)
+void R_DrawColumn_Flat(const drawcolumndata_t *dc)
 {
 	ZoneScoped;
 

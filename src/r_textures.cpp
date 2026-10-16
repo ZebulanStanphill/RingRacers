@@ -817,12 +817,14 @@ UINT8 *R_GenerateTextureBrightmap(size_t texnum)
 // This can either be texnum, the current frame for texnum's anim (if animated),
 // or 0 if not valid.
 //
+#ifndef _UWP
 INT32 R_GetTextureNum(INT32 texnum)
 {
 	if (texnum < 0 || texnum >= numtextures)
 		return 0;
 	return texturetranslation[texnum];
 }
+#endif
 
 //
 // R_GetTextureBrightmap

@@ -1389,13 +1389,15 @@ static void R_DrawWallColumn(drawcolumndata_t* dc, INT32 yl, INT32 yh, fixed_t m
 	dc->sourcelength = dc->texheight;
 	R_SetColumnFunc(colfunctype, dc->brightmap != NULL);
 	coldrawfunc_t* colfunccopy = colfunc;
-	drawcolumndata_t dc_copy = *dc;
-	if (remap)
+	if (!remap)
 	{
-		dc_copy.colormap += COLORMAP_REMAPOFFSET;
-		dc_copy.fullbright += COLORMAP_REMAPOFFSET;
+		colfunccopy(dc);
+		return;
 	}
-	colfunccopy(const_cast<drawcolumndata_t*>(&dc_copy));
+	drawcolumndata_t dc_copy = *dc;
+	dc_copy.colormap += COLORMAP_REMAPOFFSET;
+	dc_copy.fullbright += COLORMAP_REMAPOFFSET;
+	colfunccopy(&dc_copy);
 }
 
 static void R_RenderSegLoop (drawcolumndata_t* dc)
@@ -2034,8 +2036,7 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 
 	numbackffloors = 0;
 
-	for (i = 0; i < MAXFFLOORS; i++)
-		ds_p->thicksides[i] = NULL;
+	// Only [0, numthicksides) is read; those entries are assigned below.
 
 	if (numffloors)
 	{

@@ -650,6 +650,18 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
 
 	R_SetColumnFunc(colfunctype, brightmap != NULL);
 	dc->brightmap = NULL;
+	if (column->topdelta == 0xff)
+		return;
+
+	// The clipping limits and drawer are shared by every post in this column.
+	const INT32 cliptop = std::max<INT32>(mceilingclip[dc->x] + 1, 0);
+	const INT32 clipbottom = std::min<INT32>(
+		std::min<INT32>(mfloorclip[dc->x] - 1, vid.height - 1),
+		baseclip == -1 ? INT32_MAX : baseclip);
+	const bool clipwindow = windowtop != INT32_MAX && windowbottom != INT32_MAX;
+	const INT32 windowyl = clipwindow ? (windowtop + FRACUNIT - 1) >> FRACBITS : 0;
+	const INT32 windowyh = clipwindow ? (windowbottom - 1) >> FRACBITS : 0;
+	coldrawfunc_t *const drawer = colfunc;
 
 	for (; column->topdelta != 0xff ;)
 	{
@@ -665,26 +677,16 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
 		dc->yl = (topscreen+FRACUNIT-1)>>FRACBITS;
 		dc->yh = (bottomscreen-1)>>FRACBITS;
 
-		if (windowtop != INT32_MAX && windowbottom != INT32_MAX)
+		if (clipwindow)
 		{
 			if (windowtop > topscreen)
-				dc->yl = (windowtop + FRACUNIT - 1)>>FRACBITS;
+				dc->yl = windowyl;
 			if (windowbottom < bottomscreen)
-				dc->yh = (windowbottom - 1)>>FRACBITS;
+				dc->yh = windowyh;
 		}
 
-		if (dc->yh >= mfloorclip[dc->x])
-			dc->yh = mfloorclip[dc->x]-1;
-		if (dc->yl <= mceilingclip[dc->x])
-			dc->yl = mceilingclip[dc->x]+1;
-
-		if (dc->yl < 0)
-			dc->yl = 0;
-		if (dc->yh >= vid.height) // dc_yl must be < vid.height, so reduces number of checks in tight loop
-			dc->yh = vid.height - 1;
-
-		if (dc->yh >= baseclip && baseclip != -1)
-			dc->yh = baseclip;
+		dc->yl = std::max(dc->yl, cliptop);
+		dc->yh = std::min(dc->yh, clipbottom);
 
 		if (dc->yl <= dc->yh && dc->yh > 0 && column->length != 0)
 		{
@@ -697,15 +699,10 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
 
 			dc->texturemid = basetexturemid - (topdelta<<FRACBITS);
 
-			// Drawn by R_DrawColumn.
-			// This stuff is a likely cause of the splitscreen water crash bug.
-			// FIXTHIS: Figure out what "something more proper" is and do it.
-			// quick fix... something more proper should be done!!!
+			// Column drawers read the bundle; shadowed drawers copy it internally.
 			if (ylookup[dc->yl])
 			{
-				drawcolumndata_t dc_copy = *dc;
-				coldrawfunc_t* colfunccopy = colfunc;
-				colfunccopy(const_cast<drawcolumndata_t*>(&dc_copy));
+				drawer(dc);
 			}
 #ifdef PARANOIA
 			else
@@ -734,6 +731,18 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 
 	R_SetColumnFunc(colfunctype, brightmap != NULL);
 	dc->brightmap = NULL;
+	if (column->topdelta == 0xff)
+		return;
+
+	// The clipping limits and drawer are shared by every post in this column.
+	const INT32 cliptop = std::max<INT32>(mceilingclip[dc->x] + 1, 0);
+	const INT32 clipbottom = std::min<INT32>(
+		std::min<INT32>(mfloorclip[dc->x] - 1, vid.height - 1),
+		baseclip == -1 ? INT32_MAX : baseclip);
+	const bool clipwindow = windowtop != INT32_MAX && windowbottom != INT32_MAX;
+	const INT32 windowyl = clipwindow ? (windowtop + FRACUNIT - 1) >> FRACBITS : 0;
+	const INT32 windowyh = clipwindow ? (windowbottom - 1) >> FRACBITS : 0;
+	coldrawfunc_t *const drawer = colfunc;
 
 	for (; column->topdelta != 0xff ;)
 	{
@@ -751,26 +760,16 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 		dc->yl = (topscreen+FRACUNIT-1)>>FRACBITS;
 		dc->yh = (bottomscreen-1)>>FRACBITS;
 
-		if (windowtop != INT32_MAX && windowbottom != INT32_MAX)
+		if (clipwindow)
 		{
 			if (windowtop > topscreen)
-				dc->yl = (windowtop + FRACUNIT - 1)>>FRACBITS;
+				dc->yl = windowyl;
 			if (windowbottom < bottomscreen)
-				dc->yh = (windowbottom - 1)>>FRACBITS;
+				dc->yh = windowyh;
 		}
 
-		if (dc->yh >= mfloorclip[dc->x])
-			dc->yh = mfloorclip[dc->x]-1;
-		if (dc->yl <= mceilingclip[dc->x])
-			dc->yl = mceilingclip[dc->x]+1;
-
-		if (dc->yh >= baseclip && baseclip != -1)
-			dc->yh = baseclip;
-
-		if (dc->yl < 0)
-			dc->yl = 0;
-		if (dc->yh >= vid.height) // dc_yl must be < vid.height, so reduces number of checks in tight loop
-			dc->yh = vid.height - 1;
+		dc->yl = std::max(dc->yl, cliptop);
+		dc->yh = std::min(dc->yh, clipbottom);
 
 		if (dc->yl <= dc->yh && dc->yh > 0 && column->length != 0)
 		{
@@ -791,9 +790,7 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 			// Still drawn by R_DrawColumn.
 			if (ylookup[dc->yl])
 			{
-				drawcolumndata_t dc_copy = *dc;
-				coldrawfunc_t* colfunccopy = colfunc;
-				colfunccopy(const_cast<drawcolumndata_t*>(&dc_copy));
+				drawer(dc);
 			}
 #ifdef PARANOIA
 			else
