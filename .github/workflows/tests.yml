@@ -1,0 +1,151 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regressions:
+    name: Native regression tests (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        run: >-
+          cmake -S tests -B build/regression
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DRR_SANITIZERS=ON
+
+      - name: Build tests
+        run: cmake --build build/regression --parallel 4
+
+      - name: Run tests
+        run: ctest --test-dir build/regression --output-on-failure --output-junit results.xml
+
+      - name: Upload installable shader test
+        uses: actions/upload-artifact@v7
+        with:
+          name: shader-smoke-test
+          path: |
+            tests/addons/shader-smoke/D_ShaderSmoke_v1.pk3
+            tests/addons/shader-smoke/README.md
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-results
+          path: |
+            build/regression/translated-shaders/*.hlsl
+            build/regression/results.xml
+            build/regression/Testing/Temporary/LastTest.log
+            build/regression/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+
+  warp:
+    name: Direct3D 12 driver on WARP (debug layer + GPU-based validation)
+    needs: regressions
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up x64 MSVC environment
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or !$vs) { throw "Visual Studio C++ tools were not found" }
+          $before = [Environment]::GetEnvironmentVariables('Process')
+          & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          Get-Command cl.exe, fxc.exe -ErrorAction Stop | Select-Object Name, Source
+          # Each step starts a new shell; preserve the developer environment.
+          foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+            if ($before[$entry.Key] -cne $entry.Value) {
+              "$($entry.Key)=$($entry.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: regression-results
+          path: regression-results
+
+      - name: Compile translated add-on shader fixtures
+        shell: pwsh
+        run: |
+          $fxc = (Get-Command fxc -ErrorAction Stop).Source
+          $fixtures = @(Get-ChildItem regression-results -Recurse -Filter *.hlsl | Where-Object { $_.Directory.Name -eq 'translated-shaders' })
+          if ($fixtures.Count -ne 97) { throw "Expected 97 SM5.1 translated shader stages; found $($fixtures.Count)" }
+          foreach ($fixture in $fixtures) {
+            $profile = if ($fixture.Name.EndsWith('.vert.hlsl')) { 'vs_5_1' } else { 'ps_5_1' }
+            & $fxc /nologo /O3 /T $profile /E main /Fo "$env:TEMP/rr-shader-test.cso" $fixture.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Direct3D 12 renderer regressions
+        shell: pwsh
+        run: ./tests/run-d3d12.ps1
+
+  linux:
+    name: Linux build (no Direct3D 12)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libsdl2-dev libpng-dev libcurl4-openssl-dev libopus-dev zlib1g-dev
+
+      - name: Configure
+        run: >-
+          cmake --preset ninja-release
+          -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
+          -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Check that the Direct3D 12 driver is left out
+        run: |
+          if grep -q HAVE_D3D12 build/ninja-release/compile_commands.json; then
+            echo "A Linux build must not include the Direct3D 12 driver"; exit 1
+          fi
+
+      - name: Build
+        run: cmake --build build/ninja-release --parallel 4
+
+  macos:
+    name: macOS build (no Direct3D 12)
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: brew install ninja sdl2 libpng opus pkgconf
+
+      - name: Configure
+        run: >-
+          cmake --preset ninja-release
+          -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
+          -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Check that the Direct3D 12 driver is left out
+        run: |
+          if grep -q HAVE_D3D12 build/ninja-release/compile_commands.json; then
+            echo "A macOS build must not include the Direct3D 12 driver"; exit 1
+          fi
+
+      - name: Build
+        run: cmake --build build/ninja-release --parallel 4
