@@ -71,12 +71,14 @@ namespace rr_d3d12 {
 ID3D11Device *Present_AngleDevice() { return nullptr; }
 void Present_SelectPath() {}
 static int presentedFrames=0;
-void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT) {
+void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool) {
     presentedFrames++;
     // No transition is necessary: submission leaves the source in its supplied state.
     UINT64 fence = Core_Submit("present");
     if (!fence || !Core_Wait(fence, 30000, "headless present")) throw std::runtime_error("present failed");
 }
+bool Present_OwnsWindow() { return false; }
+void Present_ReleaseWindow() {}
 void Present_Immediately() {}
 void Present_Shutdown(bool) {}
 void Present_GetTrace(INT32 *c,INT32 *s,UINT32 *cf,UINT32 *sf) { if(c)*c=-1; if(s)*s=-1; if(cf)*cf=0; if(sf)*sf=0; }

@@ -7,15 +7,21 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  d3d12_present.cpp
-/// \brief [UWP]: Shows VibeRant D3D12's frames through ANGLE, which owns the window
+/// \brief [UWP]: Shows VibeRant D3D12's frames on the window: with a swap chain of its own, or through ANGLE
 ///
-/// Presentation ported from the former Direct3D 11 driver, with D3D12 resources: each frame is copied to one of four
-/// textures shared with ANGLE's device, which draws it to the window through OpenGL ES a frame later. Two shared
-/// fences order the devices on the GPU: ANGLE waits for the copy's before reading the texture, and D3D12's queue for
-/// ANGLE's last read of a texture before the submission that copies the next frame into it. Without them (or with
-/// gr_d3d12_present CpuSync) the copy's fence is waited for on the CPU, and ANGLE's event query for its read. How
-/// the texture is shared was probed on Xbox by d3d12_interop.cpp; the same paths are tried here in order, with the
-/// same content check.
+/// By default, the first frame takes the window from ANGLE, whose window surface goes since a CoreWindow takes one
+/// swap chain at a time, and each frame is copied into the next buffer of a swap chain of Direct3D 12's own and
+/// presented from there. The window goes back to ANGLE when the Software renderer is chosen, and the next frame
+/// drawn takes it again.
+///
+/// The interop with ANGLE is the fallback if the window can't be taken, and what gr_d3d12_present Readback and
+/// CpuSync use. Presentation ported from the former Direct3D 11 driver, with D3D12 resources: each frame is copied
+/// to one of four textures shared with ANGLE's device, which draws it to the window through OpenGL ES a frame later.
+/// Two shared fences order the devices on the GPU: ANGLE waits for the copy's before reading the texture, and
+/// D3D12's queue for ANGLE's last read of a texture before the submission that copies the next frame into it.
+/// Without them (or with gr_d3d12_present CpuSync) the copy's fence is waited for on the CPU, and ANGLE's event
+/// query for its read. How the texture is shared was probed on Xbox by d3d12_interop.cpp; the same paths are tried
+/// here in order, with the same content check.
 
 #include "d3d12_present.h"
 
@@ -31,6 +37,9 @@
 #include <vector>
 
 #include "SDL.h"
+#ifdef _UWP
+#include "SDL_syswm.h"
+#endif
 
 #include "../../doomdef.h"
 #include "../../i_system.h"
@@ -44,6 +53,13 @@
 #undef clamp
 
 extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
+
+#ifdef _UWP
+// ringracers-uwp's patches/sdl-egl-surface-handoff.patch to SDL: destroys and recreates the window's EGL surface,
+// ANGLE's swap chain on the CoreWindow, which the SDL headers this is built with don't declare
+extern "C" __declspec(dllimport) int SDLCALL SDL_WinRTReleaseGLSurface(SDL_Window *window);
+extern "C" __declspec(dllimport) int SDLCALL SDL_WinRTRestoreGLSurface(SDL_Window *window);
+#endif
 
 namespace rr_d3d12
 {
@@ -65,6 +81,7 @@ double PreciseToMs(precise_t t)
 // Loaded at runtime from ANGLE
 typedef void *EGLDisplay;
 typedef void *EGLConfig;
+typedef void *EGLContext;
 typedef void *EGLSurface;
 typedef void *EGLClientBuffer;
 typedef void *EGLDeviceEXT;
@@ -107,6 +124,9 @@ constexpr EGLenum EGL_D3D_TEXTURE_ANGLE = 0x33A3;
 using PFNEGLGETCURRENTDISPLAY = EGLDisplay (EGLAPIENTRY *)(void);
 using PFNEGLQUERYSTRING = const char *(EGLAPIENTRY *)(EGLDisplay, EGLint);
 using PFNEGLCHOOSECONFIG = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, const EGLint *, EGLConfig *, EGLint, EGLint *);
+using PFNEGLCREATEPBUFFERSURFACE = EGLSurface (EGLAPIENTRY *)(EGLDisplay, EGLConfig, const EGLint *);
+using PFNEGLMAKECURRENT = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
+using PFNEGLQUERYCONTEXT = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLContext, EGLint, EGLint *);
 using PFNEGLGETCONFIGATTRIB = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLConfig, EGLint, EGLint *);
 using PFNEGLCREATEPBUFFERFROMCLIENTBUFFER = EGLSurface (EGLAPIENTRY *)(EGLDisplay, EGLenum, EGLClientBuffer, EGLConfig, const EGLint *);
 using PFNEGLDESTROYSURFACE = EGLBoolean (EGLAPIENTRY *)(EGLDisplay, EGLSurface);
@@ -122,6 +142,9 @@ struct Egl
 	PFNEGLGETCURRENTDISPLAY GetCurrentDisplay = nullptr;
 	PFNEGLQUERYSTRING QueryString = nullptr;
 	PFNEGLCHOOSECONFIG ChooseConfig = nullptr;
+	PFNEGLCREATEPBUFFERSURFACE CreatePbufferSurface = nullptr;
+	PFNEGLMAKECURRENT MakeCurrent = nullptr;
+	PFNEGLQUERYCONTEXT QueryContext = nullptr;
 	PFNEGLGETCONFIGATTRIB GetConfigAttrib = nullptr;
 	PFNEGLCREATEPBUFFERFROMCLIENTBUFFER CreatePbufferFromClientBuffer = nullptr;
 	PFNEGLDESTROYSURFACE DestroySurface = nullptr;
@@ -165,6 +188,9 @@ bool LoadEgl()
 	LOADEGL(GetCurrentDisplay, "eglGetCurrentDisplay");
 	LOADEGL(QueryString, "eglQueryString");
 	LOADEGL(ChooseConfig, "eglChooseConfig");
+	LOADEGL(CreatePbufferSurface, "eglCreatePbufferSurface");
+	LOADEGL(MakeCurrent, "eglMakeCurrent");
+	LOADEGL(QueryContext, "eglQueryContext");
 	LOADEGL(GetConfigAttrib, "eglGetConfigAttrib");
 	LOADEGL(CreatePbufferFromClientBuffer, "eglCreatePbufferFromClientBuffer");
 	LOADEGL(DestroySurface, "eglDestroySurface");
@@ -259,6 +285,7 @@ struct Gles
 	void (GLAPIENTRY *Enable)(GLenum);
 	void (GLAPIENTRY *EnableVertexAttribArray)(GLuint);
 	void (GLAPIENTRY *Finish)(void);
+	void (GLAPIENTRY *Flush)(void);
 	void (GLAPIENTRY *GenBuffers)(GLsizei, GLuint *);
 	void (GLAPIENTRY *GenTextures)(GLsizei, GLuint *);
 	void (GLAPIENTRY *GetBooleanv)(GLenum, GLboolean *);
@@ -318,6 +345,7 @@ bool LoadGles()
 	LOADGL(Enable)
 	LOADGL(EnableVertexAttribArray)
 	LOADGL(Finish)
+	LOADGL(Flush)
 	LOADGL(GenBuffers)
 	LOADGL(GenTextures)
 	LOADGL(GetBooleanv)
@@ -352,10 +380,13 @@ bool LoadGles()
 // ==========================================================================
 
 constexpr int kPresentSlots = 4;
+constexpr UINT kDirectBuffers = 3; // direct: the swap chain's buffers
+constexpr UINT kDirectLatency = 2; // and the frames the CPU can be ahead of it
 constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // what the Xbox probe shared; the render target's too
 constexpr UINT kProbeSize = 64;
 
-enum Path { PATH_NONE, PATH_A, PATH_B, PATH_C, PATH_D };
+// PATH_DIRECT: Direct3D 12's own swap chain on the window. Every other path is interop with ANGLE.
+enum Path { PATH_NONE, PATH_A, PATH_B, PATH_C, PATH_D, PATH_DIRECT };
 
 char PathName(Path path)
 {
@@ -428,6 +459,11 @@ struct PresentStats
 	precise_t angleReadWaitTime;
 	double gpuMs, worstGpuMs;
 	int gpuFrames;
+	double latencyWaitMs, worstLatencyWaitMs; // the swap chain: waiting for it to take another frame
+	int latencyTimeouts;
+	precise_t presentTime;
+	double worstPresentMs;
+	int presentFailures;
 };
 PresentStats g_stats;
 
@@ -1424,50 +1460,10 @@ void SubmitWithoutPresenting()
 	Core_Submit("present");
 }
 
-} // namespace
-
-ID3D11Device *Present_AngleDevice()
+// Probes interop paths A, B and C, and settles for D if they all fail; or goes straight to D when gr_d3d12_present
+// Readback asks. Call with ANGLE's context current, once the display, ANGLE's device and OpenGL ES are set up.
+void SelectInteropPath()
 {
-	InitAngleDevice();
-	return g_present.angleDevice.Get();
-}
-
-void Present_SelectPath()
-{
-	if (g_present.probed)
-		return;
-
-	if (!LoadEgl() || !egl.ChooseConfig || !egl.CreatePbufferFromClientBuffer || !egl.BindTexImage || !egl.ReleaseTexImage
-		|| !egl.DestroySurface)
-	{
-		g_present.probed = true;
-		g_present.path = PATH_D;
-		Log("interop path D: EGL functions are missing");
-		return;
-	}
-
-	g_present.display = egl.GetCurrentDisplay();
-	if (!g_present.display)
-	{
-		// Try again when presenting
-		LOG_ONCE("no current EGL display yet");
-		return;
-	}
-	g_present.probed = true;
-
-	const char *extensions = egl.QueryString ? egl.QueryString(g_present.display, EGL_EXTENSIONS) : nullptr;
-	Log("EGL vendor %s, version %s", egl.QueryString ? egl.QueryString(g_present.display, EGL_VENDOR) : "?",
-		egl.QueryString ? egl.QueryString(g_present.display, EGL_VERSION) : "?");
-	Log("EGL extensions: %s", extensions ? extensions : "(none)");
-
-	InitAngleDevice();
-	if (!LoadGles() || !g_present.angleDevice || !g_present.angleContext || !Core_Device())
-	{
-		g_present.path = PATH_D;
-		Log("interop path D: %s", !gl.loaded ? "OpenGL ES functions are missing" : "no ANGLE device to share with");
-		return;
-	}
-
 	// gr_d3d12_present Readback: skip the A, B and C probes, to test path D where the others would be chosen
 	if (cv_gld3d12present.string && cv_gld3d12present.value == 1)
 	{
@@ -1517,7 +1513,432 @@ void Present_SelectPath()
 	Log("interop path D: reading frames back, since A, B and C failed (%.1f ms)", PreciseToMs(I_GetPreciseTime() - start));
 }
 
-void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height)
+#ifdef _UWP
+
+// ==========================================================================
+//                                                         DIRECT SWAP CHAIN
+// ==========================================================================
+
+constexpr UINT kDirectFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+constexpr int kRestoreRetries = 3;
+
+struct Direct
+{
+	bool failed = false; // couldn't take the window or present with it: interop for the rest of the run
+	bool owned = false; // the swap chain has the window, so ANGLE has no surface on it and no context current
+	SDL_GLContext context = nullptr; // ANGLE's, which is made current again when the window goes back
+	ComPtr<IDXGISwapChain3> swapChain;
+	ComPtr<ID3D12Resource> buffers[kDirectBuffers];
+	HANDLE latency = nullptr; // signaled when the swap chain can take another frame
+	UINT width = 0, height = 0;
+};
+Direct g_direct;
+
+bool GetDirectBuffers()
+{
+	for (UINT i = 0; i < kDirectBuffers; i++)
+	{
+		wchar_t name[32];
+		swprintf(name, sizeof name / sizeof *name, L"swap chain buffer %u", i);
+		if (Core_Failed(g_direct.swapChain->GetBuffer(i, IID_PPV_ARGS(&g_direct.buffers[i])), "GetBuffer (swap chain)"))
+			return false;
+		g_direct.buffers[i]->SetName(name);
+	}
+	return true;
+}
+
+// idle: the GPU has finished with the buffers, so they can go now rather than being retired
+void ReleaseSwapChain(bool idle)
+{
+	for (ComPtr<ID3D12Resource> &buffer : g_direct.buffers)
+	{
+		if (idle)
+			buffer.Reset();
+		else
+			Core_Retire(buffer);
+	}
+	if (idle)
+		g_direct.swapChain.Reset();
+	else
+		Core_Retire(g_direct.swapChain);
+	if (g_direct.latency)
+	{
+		CloseHandle(g_direct.latency);
+		g_direct.latency = nullptr;
+	}
+	g_direct.width = g_direct.height = 0;
+}
+
+// ANGLE's window surface again, once the CoreWindow lets go of the swap chain, which DXGI can take a moment to do
+bool RestoreAngleSurface()
+{
+	for (int attempt = 0; attempt <= kRestoreRetries; attempt++)
+	{
+		if (attempt)
+			Sleep(50);
+		if (SDL_WinRTRestoreGLSurface(window) == 0)
+			return true;
+		Log("ANGLE couldn't have the window back (attempt %d of %d): %s", attempt + 1, kRestoreRetries + 1, SDL_GetError());
+	}
+	return false;
+}
+
+// With no window ANGLE can't show anything, so there's nothing else to do
+void RestoreAngleSurfaceOrDie()
+{
+	if (!RestoreAngleSurface())
+		I_Error("Direct3D 12 couldn't give the game window back to ANGLE (%s).\nRestart the game. If it keeps happening, set gr_d3d12_present to CpuSync.",
+			SDL_GetError());
+}
+
+enum TakeResult { TAKE_OK, TAKE_LATER, TAKE_FAILED };
+
+// Takes the window from ANGLE, which has to let go of it first: a CoreWindow takes one swap chain at a time. ANGLE's
+// D3D11 context keeps the window's back buffer bound, so before its surface goes, ANGLE draws to a pbuffer instead
+// (a clear makes it bind the pbuffer) and flushes, without touching the rest of its state. Destroying the window
+// surface then releases the swap chain, and once D3D11 has run its deferred destruction, the CoreWindow is free.
+// TAKE_FAILED: ANGLE has the window and its context back, for the interop paths. TAKE_LATER: no context is current
+// to take it from yet.
+TakeResult TakeWindow(UINT width, UINT height)
+{
+	const precise_t start = I_GetPreciseTime();
+	const bool trace = Present_Tracing();
+	const SDL_GLContext context = SDL_GL_GetCurrentContext();
+	const EGLDisplay display = egl.GetCurrentDisplay();
+	if (!context || !display)
+	{
+		LOG_ONCE("direct: no ANGLE context is current, so the window can't be taken from it yet");
+		return TAKE_LATER;
+	}
+
+	EGLSurface pbuffer = nullptr;
+	auto fail = [&](const char *step, unsigned code)
+	{
+		Log("direct: couldn't take the window from ANGLE (%s failed: 0x%X); using the interop paths instead", step, code);
+		ReleaseSwapChain(true); // nothing has used it
+		if (pbuffer)
+		{
+			SDL_GL_MakeCurrent(window, nullptr); // so SDL doesn't think the context is current, and EGL lets go of the pbuffer
+			egl.DestroySurface(display, pbuffer);
+		}
+		RestoreAngleSurfaceOrDie(); // nothing to do if the window surface was never destroyed
+		SDL_GL_MakeCurrent(window, context);
+		return TAKE_FAILED;
+	};
+
+	// What can fail without changing anything comes first
+	SDL_SysWMinfo info;
+	SDL_VERSION(&info.version);
+	// SDL's WinRT driver puts the CoreWindow first in the union (info.winrt.window), which these headers may not declare
+	IUnknown *coreWindow = nullptr;
+	if (!SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_WINRT)
+	{
+		Log("direct: no CoreWindow: %s", SDL_GetError());
+		return fail("SDL_GetWindowWMInfo", 0);
+	}
+	memcpy(&coreWindow, &info.info, sizeof coreWindow);
+	if (!coreWindow)
+		return fail("SDL_GetWindowWMInfo (no CoreWindow)", 0);
+
+	ComPtr<IDXGIFactory2> factory;
+	HRESULT hr = CreateDXGIFactory2(0, IID_PPV_ARGS(&factory));
+	if (Core_Failed(hr, "CreateDXGIFactory2 (swap chain)"))
+		return fail("CreateDXGIFactory2", (unsigned)hr);
+
+	// A pbuffer with the config of ANGLE's context, so that the context can be made current on it
+	EGLint configId = 0, surfaceType = 0, count = 0;
+	EGLConfig config = nullptr;
+	if (!egl.QueryContext(display, context, EGL_CONFIG_ID, &configId))
+		return fail("eglQueryContext", EglError());
+	const EGLint wanted[] = {EGL_CONFIG_ID, configId, EGL_NONE};
+	if (!egl.ChooseConfig(display, wanted, &config, 1, &count) || count < 1)
+		return fail("eglChooseConfig", EglError());
+	if (!egl.GetConfigAttrib(display, config, EGL_SURFACE_TYPE, &surfaceType) || !(surfaceType & EGL_PBUFFER_BIT))
+	{
+		Log("direct: ANGLE's context config %d has no pbuffers (surface type 0x%X)", (int)configId, (unsigned)surfaceType);
+		return fail("EGL_PBUFFER_BIT", 0);
+	}
+	const EGLint pbufferSize[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+	pbuffer = egl.CreatePbufferSurface(display, config, pbufferSize);
+	if (!pbuffer)
+		return fail("eglCreatePbufferSurface", EglError());
+
+	// From here on, the window is ANGLE's no longer. Clear the pbuffer so that ANGLE binds it, in place of the window's
+	// back buffer, and flush; the GL state the clear needs is put back as it was.
+	if (!egl.MakeCurrent(display, pbuffer, pbuffer, context))
+		return fail("eglMakeCurrent (pbuffer)", EglError());
+	{
+		SavedGlState saved;
+		SaveGlState(saved);
+		gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+		gl.Disable(GL_SCISSOR_TEST);
+		gl.ColorMask(1, 1, 1, 1);
+		gl.Clear(GL_COLOR_BUFFER_BIT);
+		gl.Flush();
+		RestoreGlState(saved);
+	}
+	if (trace)
+		Log("  direct: ANGLE draws to a pbuffer (config %d, GL error 0x%X)", (int)configId, gl.GetError());
+
+	// Makes nothing current (not the pbuffer either) and destroys the window surface and its swap chain
+	if (SDL_WinRTReleaseGLSurface(window) != 0)
+	{
+		Log("direct: %s", SDL_GetError());
+		return fail("SDL_WinRTReleaseGLSurface", 0);
+	}
+	egl.DestroySurface(display, pbuffer);
+	pbuffer = nullptr;
+	// D3D11 destroys what's no longer bound when it runs the commands before, which Flush makes it do
+	g_present.angleContext->Flush();
+
+	DXGI_SWAP_CHAIN_DESC1 desc = {};
+	desc.Width = width;
+	desc.Height = height;
+	desc.Format = kFormat;
+	desc.SampleDesc.Count = 1;
+	desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	desc.BufferCount = kDirectBuffers;
+	desc.Scaling = DXGI_SCALING_STRETCH;
+	desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+	desc.Flags = kDirectFlags;
+
+	// The CoreWindow can still be letting go of ANGLE's swap chain
+	ComPtr<IDXGISwapChain1> swapChain;
+	for (int attempt = 0; attempt <= kRestoreRetries; attempt++)
+	{
+		if (attempt)
+			Sleep(50);
+		hr = factory->CreateSwapChainForCoreWindow(Core_Queue(), coreWindow, &desc, nullptr, &swapChain);
+		if (SUCCEEDED(hr))
+			break;
+		Log("direct: CreateSwapChainForCoreWindow failed (0x%08X, attempt %d of %d)", (unsigned)hr, attempt + 1, kRestoreRetries + 1);
+	}
+	if (Core_Failed(hr, "CreateSwapChainForCoreWindow"))
+		return fail("CreateSwapChainForCoreWindow", (unsigned)hr);
+	hr = swapChain.As(&g_direct.swapChain);
+	if (Core_Failed(hr, "QueryInterface IDXGISwapChain3"))
+		return fail("QueryInterface IDXGISwapChain3", (unsigned)hr);
+	hr = g_direct.swapChain->SetMaximumFrameLatency(kDirectLatency);
+	if (Core_Failed(hr, "SetMaximumFrameLatency"))
+		return fail("SetMaximumFrameLatency", (unsigned)hr);
+	g_direct.latency = g_direct.swapChain->GetFrameLatencyWaitableObject();
+	if (!g_direct.latency)
+		return fail("GetFrameLatencyWaitableObject", 0);
+	if (!GetDirectBuffers())
+		return fail("GetBuffer", 0);
+
+	g_direct.owned = true;
+	g_direct.context = context;
+	g_direct.width = width;
+	g_direct.height = height;
+	CreateTimestamps();
+	Log("took the window from ANGLE: %ux%u swap chain, %u buffers, frame latency %u (%.1f ms)", width, height, kDirectBuffers,
+		kDirectLatency, PreciseToMs(I_GetPreciseTime() - start));
+	return TAKE_OK;
+}
+
+// Gives the window back to ANGLE, with no context current
+void GiveBackWindow()
+{
+	const precise_t start = I_GetPreciseTime();
+	ReleaseSwapChain(Core_WaitIdle(2000, "giving the window back to ANGLE"));
+	g_direct.owned = false;
+	RestoreAngleSurfaceOrDie();
+	Log("gave the window back to ANGLE (%.1f ms)", PreciseToMs(I_GetPreciseTime() - start));
+}
+
+// The window is ANGLE's again, with its context current: probe the interop paths and use one for the rest of the run
+void FallBackToInterop()
+{
+	g_direct.failed = true;
+	g_present.path = PATH_NONE;
+	SelectInteropPath();
+}
+
+// The buffers can't be resized while the GPU or anything else holds them
+bool ResizeSwapChain(UINT width, UINT height)
+{
+	const UINT oldWidth = g_direct.width, oldHeight = g_direct.height;
+	if (!Core_WaitIdle(2000, "resizing the swap chain"))
+		return false;
+	for (ComPtr<ID3D12Resource> &buffer : g_direct.buffers)
+		buffer.Reset();
+	if (Core_Failed(g_direct.swapChain->ResizeBuffers(kDirectBuffers, width, height, kFormat, kDirectFlags), "ResizeBuffers (swap chain)")
+		|| !GetDirectBuffers())
+		return false;
+	g_direct.width = width;
+	g_direct.height = height;
+	Log("resized the swap chain from %ux%u to %ux%u", oldWidth, oldHeight, width, height);
+	return true;
+}
+
+// Copies the frame to the swap chain's next buffer and presents it. false: direct presenting has failed, ANGLE has the
+// window back and an interop path is selected, which has to present this frame.
+bool PresentDirect(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync)
+{
+	const bool trace = Present_Tracing();
+
+	if (!g_direct.owned)
+	{
+		const TakeResult taken = TakeWindow(width, height);
+		if (taken == TAKE_LATER)
+		{
+			SubmitWithoutPresenting();
+			return true;
+		}
+		if (taken == TAKE_FAILED)
+		{
+			FallBackToInterop();
+			return false;
+		}
+	}
+	else if (g_direct.width != width || g_direct.height != height)
+	{
+		if (!ResizeSwapChain(width, height))
+		{
+			Log("direct: couldn't resize the swap chain to %ux%u; using the interop paths instead", width, height);
+			GiveBackWindow();
+			SDL_GL_MakeCurrent(window, g_direct.context);
+			FallBackToInterop();
+			return false;
+		}
+	}
+
+	// The swap chain takes another frame once it has presented one of the last kDirectLatency
+	precise_t t = I_GetPreciseTime();
+	const DWORD waited = WaitForSingleObjectEx(g_direct.latency, 500, FALSE);
+	precise_t now = I_GetPreciseTime();
+	const double waitMs = PreciseToMs(now - t);
+	g_stats.latencyWaitMs += waitMs;
+	g_stats.worstLatencyWaitMs = std::max(g_stats.worstLatencyWaitMs, waitMs);
+	if (waited != WAIT_OBJECT_0)
+	{
+		g_stats.latencyTimeouts++;
+		LOG_ONCE("gave up waiting for the swap chain's frame latency object after %.0f ms (%s)", waitMs,
+			waited == WAIT_TIMEOUT ? "timed out" : "wait failed");
+	}
+
+	const UINT index = g_direct.swapChain->GetCurrentBackBufferIndex();
+	ID3D12Resource *back = g_direct.buffers[index].Get();
+	PresentSlot &slot = g_present.slots[g_present.frame % kPresentSlots]; // only times the frame
+	ID3D12GraphicsCommandList *list = Core_List();
+	bool timed = false;
+	t = now;
+	if (list)
+	{
+		timed = EndGpuTime(slot);
+		Core_Transition(source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		Core_Transition(back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
+		Core_FlushBarriers();
+		list->CopyResource(back, source);
+		Core_Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
+		Core_Transition(back, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+	}
+	g_traceCopied = g_traceShown = (INT32)index;
+	g_traceCopyFrame = g_traceShowFrame = UWPTraceFrameId();
+	const UINT64 fence = list ? Core_Submit("present") : 0;
+	if (!list)
+		SubmitWithoutPresenting(); // reopens the list
+	if (timed && fence)
+		slot.timingFence = fence;
+	now = I_GetPreciseTime();
+	g_stats.copyTime += now - t;
+	if (!fence)
+	{
+		NextFrame(); // nothing was submitted, so there is nothing to show
+		return true;
+	}
+
+	// Queued behind the copy on the same queue
+	t = now;
+	const HRESULT hr = g_direct.swapChain->Present(vsync ? 1 : 0, 0);
+	now = I_GetPreciseTime();
+	const double presentMs = PreciseToMs(now - t);
+	g_stats.presentTime += now - t;
+	g_stats.worstPresentMs = std::max(g_stats.worstPresentMs, presentMs);
+	// A removed or reset device ends the run in D3D12_FinishUpdate
+	if (FAILED(hr) && hr != DXGI_ERROR_DEVICE_REMOVED && hr != DXGI_ERROR_DEVICE_RESET)
+	{
+		g_stats.presentFailures++;
+		LOG_ONCE("IDXGISwapChain::Present failed (0x%08X)", (unsigned)hr);
+	}
+	if (trace)
+		Log("  copied the screen to back buffer %u, submitted as fence %llu; waited %.2f ms for the frame latency object%s; presented with sync interval %d (0x%08X, %.2f ms)",
+			index, (unsigned long long)fence, waitMs, waited == WAIT_OBJECT_0 ? "" : " (gave up)", vsync ? 1 : 0, (unsigned)hr, presentMs);
+
+	NextFrame();
+	return true;
+}
+
+#endif // _UWP
+
+} // namespace
+
+ID3D11Device *Present_AngleDevice()
+{
+	InitAngleDevice();
+	return g_present.angleDevice.Get();
+}
+
+void Present_SelectPath()
+{
+	if (g_present.probed)
+		return;
+
+	if (!LoadEgl() || !egl.ChooseConfig || !egl.CreatePbufferFromClientBuffer || !egl.BindTexImage || !egl.ReleaseTexImage
+		|| !egl.DestroySurface)
+	{
+		g_present.probed = true;
+		g_present.path = PATH_D;
+		Log("interop path D: EGL functions are missing");
+		return;
+	}
+
+	g_present.display = egl.GetCurrentDisplay();
+	if (!g_present.display)
+	{
+		// Try again when presenting
+		LOG_ONCE("no current EGL display yet");
+		return;
+	}
+	g_present.probed = true;
+
+	const char *extensions = egl.QueryString ? egl.QueryString(g_present.display, EGL_EXTENSIONS) : nullptr;
+	Log("EGL vendor %s, version %s", egl.QueryString ? egl.QueryString(g_present.display, EGL_VENDOR) : "?",
+		egl.QueryString ? egl.QueryString(g_present.display, EGL_VERSION) : "?");
+	Log("EGL extensions: %s", extensions ? extensions : "(none)");
+
+	InitAngleDevice();
+	if (!LoadGles() || !g_present.angleDevice || !g_present.angleContext || !Core_Device())
+	{
+		g_present.path = PATH_D;
+		Log("interop path D: %s", !gl.loaded ? "OpenGL ES functions are missing" : "no ANGLE device to share with");
+		return;
+	}
+
+#ifdef _UWP
+	// By default, frames are presented with Direct3D 12's own swap chain, taking the window from ANGLE with the first
+	// one. The interop paths are for when that fails, so they're only probed then.
+	if (cv_gld3d12present.value == 0)
+	{
+		if (egl.MakeCurrent && egl.QueryContext && egl.CreatePbufferSurface)
+		{
+			g_present.path = PATH_DIRECT;
+			Log("present: direct swap chain (%u buffers, frame latency %u), taking the window from ANGLE with the first frame",
+				kDirectBuffers, kDirectLatency);
+			return;
+		}
+		Log("direct swap chain unavailable: EGL functions are missing");
+	}
+	else if (cv_gld3d12present.value != 0)
+		Log("direct swap chain not used (gr_d3d12_present %s)", cv_gld3d12present.value == 1 ? "Readback" : "CpuSync");
+#endif
+
+	SelectInteropPath();
+}
+
+void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync)
 {
 	g_traceCopied = g_traceShown = -1;
 	g_traceCopyFrame = g_traceShowFrame = 0;
@@ -1531,14 +1952,6 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		return;
 	}
 
-	if (!LoadGles() || (!g_present.program && !CreatePresentProgram()))
-	{
-		Log("can't present frames, so the screen will stay black");
-		g_present.failed = true;
-		SubmitWithoutPresenting();
-		return;
-	}
-
 	if (!g_present.probed)
 	{
 		Present_SelectPath();
@@ -1547,6 +1960,21 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			SubmitWithoutPresenting(); // no EGL display yet
 			return;
 		}
+	}
+
+#ifdef _UWP
+	// No OpenGL ES here: ANGLE has no context current while the swap chain has the window. If direct presenting just
+	// failed, ANGLE has the window and the interop path selected presents this frame below.
+	if (g_present.path == PATH_DIRECT && PresentDirect(source, sourceState, width, height, vsync))
+		return;
+#endif
+
+	if (!LoadGles() || (!g_present.program && !CreatePresentProgram()))
+	{
+		Log("can't present frames, so the screen will stay black");
+		g_present.failed = true;
+		SubmitWithoutPresenting();
+		return;
 	}
 
 	if (g_present.width != width || g_present.height != height)
@@ -1763,14 +2191,37 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 	NextFrame();
 }
 
+bool Present_OwnsWindow()
+{
+#ifdef _UWP
+	return g_direct.owned;
+#else
+	return false;
+#endif
+}
+
+void Present_ReleaseWindow()
+{
+#ifdef _UWP
+	if (g_direct.owned)
+		GiveBackWindow();
+#endif
+}
+
 void Present_Immediately()
 {
-	g_presentImmediately = true;
+	if (g_present.path != PATH_DIRECT) // the swap chain shows the current frame
+		g_presentImmediately = true;
 }
 
 void Present_Shutdown(bool idle)
 {
 	DestroySlots(idle); // waits for ANGLE's reads on the CPU
+#ifdef _UWP
+	// The window stays without ANGLE's surface: SDL_DestroyWindow doesn't need one
+	ReleaseSwapChain(idle);
+	g_direct.owned = false;
+#endif
 	if (idle)
 	{
 		// The queue has reached every copy Signal, so ANGLE's waits for them can finish: none may be left on its
@@ -1814,12 +2265,21 @@ void Present_LogPerf(double frames)
 {
 	const PresentStats &s = g_stats;
 	const double n = frames > 0 ? frames : 1;
-	I_OutputMsg("UWP perf:   D3D12: present: interop path %c, sync %s; per frame copy %.2f ms, copy-fence wait %.2f ms (worst %.2f, %d of %d not shown), GL %.2f, swap %.2f ms; ANGLE read waits %d, %.2f ms total; %d timeouts; fallback finishes %d; GPU waits: copy %d, read %d\n",
-		PathName(g_present.path), g_present.syncMode == SYNC_SHARED_FENCES ? "shared fences"
-			: g_present.angleQueries ? "cpu fence + ANGLE queries" : "cpu fence + glFinish",
-		PreciseToMs(s.copyTime) / n, s.copyWaitMs / n, s.worstCopyWaitMs, s.copyWaitFailures, s.copyWaits,
-		PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
-		s.angleReadWaits, PreciseToMs(s.angleReadWaitTime), s.angleReadTimeouts, s.fallbackFinishes, s.gpuCopyWaits, s.gpuReadWaits);
+	if (g_present.path == PATH_DIRECT)
+	{
+		I_OutputMsg("UWP perf:   D3D12: present: direct swap chain (%u buffers, latency %u); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures\n",
+			kDirectBuffers, kDirectLatency, PreciseToMs(s.copyTime) / n, s.latencyWaitMs / n, s.worstLatencyWaitMs,
+			s.latencyTimeouts, PreciseToMs(s.presentTime) / n, s.worstPresentMs, s.presentFailures);
+	}
+	else
+	{
+		I_OutputMsg("UWP perf:   D3D12: present: interop path %c, sync %s; per frame copy %.2f ms, copy-fence wait %.2f ms (worst %.2f, %d of %d not shown), GL %.2f, swap %.2f ms; ANGLE read waits %d, %.2f ms total; %d timeouts; fallback finishes %d; GPU waits: copy %d, read %d\n",
+			PathName(g_present.path), g_present.syncMode == SYNC_SHARED_FENCES ? "shared fences"
+				: g_present.angleQueries ? "cpu fence + ANGLE queries" : "cpu fence + glFinish",
+			PreciseToMs(s.copyTime) / n, s.copyWaitMs / n, s.worstCopyWaitMs, s.copyWaitFailures, s.copyWaits,
+			PreciseToMs(s.glTime) / n, PreciseToMs(s.swapTime) / n,
+			s.angleReadWaits, PreciseToMs(s.angleReadWaitTime), s.angleReadTimeouts, s.fallbackFinishes, s.gpuCopyWaits, s.gpuReadWaits);
+	}
 	I_OutputMsg("UWP perf:   D3D12: GPU %.2f ms per frame (worst %.2f, %d timed)\n",
 		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames);
 	g_stats = PresentStats();
@@ -1838,6 +2298,10 @@ void Present_FrameDone()
 
 UINT64 Present_SlotBytes()
 {
+#ifdef _UWP
+	if (g_direct.swapChain)
+		return (UINT64)kDirectBuffers * g_direct.width * g_direct.height * 4;
+#endif
 	UINT64 bytes = 0;
 	for (const PresentSlot &slot : g_present.slots)
 		if (slot.resource)

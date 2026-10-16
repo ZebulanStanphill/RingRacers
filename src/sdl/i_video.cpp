@@ -1468,6 +1468,13 @@ boolean VID_CheckRenderer(void)
 		rendermode = static_cast<rendermode_t>(setrenderneeded);
 		rendererchanged = true;
 
+#if defined(HAVE_D3D12) && defined(_UWP)
+		// [UWP]: Legacy GL presents with a swap chain of Direct3D 12's own on the window, which ANGLE needs back to draw
+		// Software's frames
+		if (rendermode != render_opengl)
+			D3D12_ReleaseWindow();
+#endif
+
 		if (rendererchanged)
 		{
 			Impl_CreateContext();

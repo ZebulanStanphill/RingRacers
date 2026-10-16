@@ -7,7 +7,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file r_d3d12.h
-/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented through ANGLE
+/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented with its own swap chain or through ANGLE
 
 #ifndef __R_D3D12_H__
 #define __R_D3D12_H__
@@ -54,7 +54,11 @@ boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT
 void D3D12_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
 void D3D12_LogPerf(double seconds);
 
-// Waits for the GPU, then releases the presentation textures (their EGL surfaces first) and the device
+// Gives the window back to ANGLE if the driver's swap chain has it, for the Software renderer; no context is made
+// current. The driver takes the window again with the next frame it presents.
+void D3D12_ReleaseWindow(void);
+
+// Waits for the GPU, then releases the swap chain or the presentation textures (their EGL surfaces first) and the device
 void D3D12_Shutdown(void);
 
 #ifdef __cplusplus

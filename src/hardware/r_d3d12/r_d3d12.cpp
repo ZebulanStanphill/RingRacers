@@ -8,7 +8,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file r_d3d12.cpp
-/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented through ANGLE
+/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented with its own swap chain or through ANGLE
 ///
 /// GL-state emulation and textured polygon/line draws ported from the former Direct3D 11 driver, using fence-retired
 /// upload rings, persistent texture descriptors and cached pipeline states. Advanced passes arrive in later steps.
@@ -2146,7 +2146,7 @@ boolean D3D_Init(void)
 
 	Log("starting Legacy GL's Direct3D 12 driver (drawing with textures)");
 	Core_SetListBegin(BindRenderTarget);
-	// On the same adapter as ANGLE, which the window's frames go through
+	// On the same adapter as ANGLE, which the interop paths share textures with to show the window's frames
 	if (!Core_Init(Present_AngleDevice()))
 	{
 		return false;
@@ -2989,7 +2989,8 @@ boolean D3D12_Surface(INT32 w, INT32 h)
 	}
 
 	glanisotropicmode_cons_t[1].value = 16; // the former Direct3D 11 driver's kMaximumAnisotropy
-	SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
+	if (!Present_OwnsWindow()) // otherwise no GL context is current, and the swap chain's sync interval is the vsync
+		SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
 	g_vsync = cv_vidwait.value != 0;
 	g_vsyncSet = true;
 
@@ -3008,7 +3009,8 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 
 	if (!g_vsyncSet || g_vsync != vsync)
 	{
-		SDL_GL_SetSwapInterval(vsync ? 1 : 0);
+		if (!Present_OwnsWindow()) // otherwise no GL context is current, and Present_Frame takes the vsync
+			SDL_GL_SetSwapInterval(vsync ? 1 : 0);
 		g_vsync = vsync;
 		g_vsyncSet = true;
 	}
@@ -3029,7 +3031,7 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 	// With palette rendering, the screen shown is the finished frame turned into the screen's palette
 	const bool palette = PalettePostprocess();
 	const precise_t start = I_GetPreciseTime();
-	Present_Frame(palette ? g_postTexture.res.Get() : g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight);
+	Present_Frame(palette ? g_postTexture.res.Get() : g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync);
 	g_stats.presentTime += I_GetPreciseTime() - start;
 	g_stats.frames++;
 	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
@@ -3242,6 +3244,11 @@ boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT
 void D3D12_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
 {
 	Present_GetTrace(copied, shown, copyframe, showframe);
+}
+
+void D3D12_ReleaseWindow(void)
+{
+	Present_ReleaseWindow();
 }
 
 void D3D12_LogPerf(double seconds)
