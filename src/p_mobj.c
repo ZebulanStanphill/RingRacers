@@ -216,6 +216,40 @@ static void P_CyclePlayerMobjState(mobj_t *mobj)
 	}
 }
 
+// [UWP]: P_SetMobjState and P_SetPlayerMobjState remember the states each call goes through, to detect cycles of
+// states that last no time, in a table for each depth of nested calls. Before returning, each call erases what it
+// wrote by following the chain of states it recorded, so a table never needs clearing in full.
+//
+// Upstream instead clears a whole table (about 40 KB) for each nested call, and returns without counting its call
+// as finished when a state removes its mobj. Mobjs remove themselves that way all the time, so soon every call
+// counted as nested, and every state change cleared 40 KB, about 5% of game logic on Xbox.
+#define SEENSTATEDEPTHS 4
+
+static statenum_t seenstate_tabs[SEENSTATEDEPTHS][NUMSTATES];
+static INT32 seenstate_depth; // calls in progress
+
+static statenum_t *P_StartSeenStates(INT32 depth)
+{
+	if (depth < SEENSTATEDEPTHS)
+		return seenstate_tabs[depth];
+
+	return Z_Calloc(NUMSTATES * sizeof (statenum_t), PU_STATIC, NULL);
+}
+
+static void P_EndSeenStates(statenum_t *seenstate, statenum_t i, INT32 depth)
+{
+	statenum_t state;
+
+	if (depth >= SEENSTATEDEPTHS)
+	{
+		Z_Free(seenstate);
+		return;
+	}
+
+	for (;(state = seenstate[i]) > S_NULL; i = state - 1)
+		seenstate[i] = S_NULL; // erase memory of states
+}
+
 //
 // P_SetPlayerMobjState
 // Returns true if the mobj is still present.
@@ -228,11 +262,10 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 	player_t *player = mobj->player;
 
 	// remember states seen, to detect cycles:
-	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
-	statenum_t *seenstate = seenstate_tab; // pointer to table
-	static INT32 recursion; // detects recursion
+	INT32 depth;
+	statenum_t *seenstate;
 	statenum_t i; // initial state
-	statenum_t tempstate[NUMSTATES]; // for use with recursion
+	boolean ret = true;
 
 #ifdef PARANOIA
 	if (player == NULL)
@@ -287,8 +320,8 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 			break;
 	}
 
-	if (recursion++) // if recursion detected,
-		memset(seenstate = tempstate, 0, sizeof tempstate); // clear state table
+	depth = seenstate_depth++;
+	seenstate = P_StartSeenStates(depth);
 
 	i = state;
 
@@ -298,7 +331,8 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 		{ // Bad SOC!
 			CONS_Alert(CONS_ERROR, "Cannot remove player mobj by setting its state to S_NULL.\n");
 			//P_RemoveMobj(mobj);
-			return false;
+			ret = false;
+			goto done;
 		}
 
 		st = &states[state];
@@ -347,7 +381,8 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 					{
 						if (mobj->frame & FF_FRAMEMASK)
 							mobj->frame--;
-						return P_SetPlayerMobjState(mobj, st->var1);
+						ret = P_SetPlayerMobjState(mobj, st->var1);
+						goto done;
 					}
 				}
 				else
@@ -381,7 +416,10 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 			// woah. a player was removed by an action.
 			// this sounds like a VERY BAD THING, but there's nothing we can do now...
 			if (P_MobjWasRemoved(mobj))
-				return false;
+			{
+				ret = false;
+				goto done;
+			}
 		}
 
 		seenstate[state] = 1 + st->nextstate;
@@ -392,11 +430,11 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 	if (!mobj->tics)
 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
 
-	if (!--recursion)
-		for (;(state = seenstate[i]) > S_NULL; i = state - 1)
-			seenstate[i] = S_NULL; // erase memory of states
+done:
+	P_EndSeenStates(seenstate, i, depth);
+	seenstate_depth--;
 
-	return true;
+	return ret;
 }
 
 
@@ -405,26 +443,26 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 	state_t *st;
 
 	// remember states seen, to detect cycles:
-	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
-	statenum_t *seenstate = seenstate_tab; // pointer to table
-	static INT32 recursion; // detects recursion
+	INT32 depth;
+	statenum_t *seenstate;
 	statenum_t i = state; // initial state
-	statenum_t tempstate[NUMSTATES]; // for use with recursion
+	boolean ret = true;
 
 #ifdef PARANOIA
 	if (mobj->player != NULL)
 		I_Error("P_SetMobjState used for player mobj. Use P_SetPlayerMobjState instead!\n(State called: %d)", state);
 #endif
 
-	if (recursion++) // if recursion detected,
-		memset(seenstate = tempstate, 0, sizeof tempstate); // clear state table
+	depth = seenstate_depth++;
+	seenstate = P_StartSeenStates(depth);
 
 	do
 	{
 		if (state == S_NULL)
 		{
 			P_RemoveMobj(mobj);
-			return false;
+			ret = false;
+			goto done;
 		}
 
 		st = &states[state];
@@ -473,7 +511,8 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 					{
 						if (mobj->frame & FF_FRAMEMASK)
 							mobj->frame--;
-						return P_SetMobjState(mobj, st->var1);
+						ret = P_SetMobjState(mobj, st->var1);
+						goto done;
 					}
 				}
 				else
@@ -502,7 +541,10 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 			astate = st;
 			st->action.acp1(mobj);
 			if (P_MobjWasRemoved(mobj))
-				return false;
+			{
+				ret = false;
+				goto done;
+			}
 		}
 
 		seenstate[state] = 1 + st->nextstate;
@@ -513,16 +555,16 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 	if (!mobj->tics)
 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
 
-	if (!--recursion)
-		for (;(state = seenstate[i]) > S_NULL; i = state - 1)
-			seenstate[i] = S_NULL; // erase memory of states
-
 	// Shadow automatically turns white on fullbright frames.
 	// For now, only applies to Follower Audience.
 	if (mobj->type == MT_RANDOMAUDIENCE)
 		mobj->whiteshadow = (mobj->frame & FF_FULLBRIGHT) != 0;
 
-	return true;
+done:
+	P_EndSeenStates(seenstate, i, depth);
+	seenstate_depth--;
+
+	return ret;
 }
 
 //----------------------------------------------------------------------------
