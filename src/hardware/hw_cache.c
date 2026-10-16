@@ -1324,6 +1324,28 @@ void HWR_GetPatch(patch_t *patch)
 	HWR_LoadPatchMipmap(patch, ((GLPatch_t *)patch->hardware)->mipmap);
 }
 
+// Sprite brightmaps use the base mipmap, without color translation.
+void HWR_GetSpriteBrightmap(patch_t *patch)
+{
+	GLPatch_t *grPatch;
+	GLMipmap_t *grMipmap;
+
+	if (!patch->hardware)
+		Patch_CreateGL(patch);
+	grPatch = patch->hardware;
+	grMipmap = grPatch->mipmap;
+	if (!grMipmap->downloaded && !grMipmap->data)
+		HWR_MakePatch(patch, grPatch, grMipmap, true);
+
+	// HWR_MakePatch clears flags on initial allocation. Set this after it,
+	// on every path, so both the first upload and later binds select unit 1.
+	grMipmap->flags |= TF_BRIGHTMAP;
+	if (!grMipmap->downloaded)
+		HWD.pfnSetTexture(grMipmap);
+	HWR_SetCurrentTexture(grMipmap);
+	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+}
+
 // -------------------+
 // HWR_GetMappedPatch : Same as HWR_GetPatch for sprite color
 // -------------------+

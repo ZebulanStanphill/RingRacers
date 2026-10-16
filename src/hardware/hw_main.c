@@ -3445,6 +3445,8 @@ static void HWR_LinkDrawHackFinish(void)
 	{
 		// draw sprite shape, only to z-buffer
 		HWR_GetPatch(linkdrawlist[i].spr->gpatch);
+		if (linkdrawlist[i].spr->gbright)
+			HWR_GetSpriteBrightmap(linkdrawlist[i].spr->gbright);
 		HWR_ProcessPolygon(&surf, linkdrawlist[i].verts, 4, PF_Translucent|PF_Occlude|PF_Invisible, 0, false);
 	}
 	// reset list
@@ -3733,6 +3735,8 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 	//12/12/99: Hurdler: same comment as above (for md2)
 	//Hurdler: 25/04/2000: now support colormap in hardware mode
 	HWR_GetMappedPatch(gpatch, spr->colormap);
+	if (spr->gbright)
+		HWR_GetSpriteBrightmap(spr->gbright);
 
 	baseWallVerts[0].x = baseWallVerts[3].x = spr->x1;
 	baseWallVerts[2].x = baseWallVerts[1].x = spr->x2;
@@ -4229,6 +4233,8 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 	//12/12/99: Hurdler: same comment as above (for md2)
 	//Hurdler: 25/04/2000: now support colormap in hardware mode
 	HWR_GetMappedPatch(gpatch, spr->colormap);
+	if (spr->gbright)
+		HWR_GetSpriteBrightmap(spr->gbright);
 
 	if (spr->flip)
 	{
@@ -4406,6 +4412,8 @@ static inline void HWR_DrawPrecipitationSprite(gl_vissprite_t *spr)
 	//12/12/99: Hurdler: same comment as above (for md2)
 	//Hurdler: 25/04/2000: now support colormap in hardware mode
 	HWR_GetMappedPatch(gpatch, spr->colormap);
+	if (spr->gbright)
+		HWR_GetSpriteBrightmap(spr->gbright);
 
 	// colormap test
 	{
@@ -5420,9 +5428,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	float gz, gzt;
 	spritedef_t *sprdef;
 	spriteframe_t *sprframe;
-#ifdef ROTSPRITE
 	spriteinfo_t *sprinfo;
-#endif
 	md2_t *md2;
 	size_t lumpoff;
 	unsigned rot;
@@ -5536,16 +5542,12 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	if (thing->skin && thing->sprite == SPR_PLAY)
 	{
 		sprdef = &((skin_t *)thing->skin)->sprites[thing->sprite2];
-#ifdef ROTSPRITE
 		sprinfo = &((skin_t *)thing->skin)->sprinfo[thing->sprite2];
-#endif
 	}
 	else
 	{
 		sprdef = &sprites[thing->sprite];
-#ifdef ROTSPRITE
 		sprinfo = &spriteinfo[thing->sprite];
-#endif
 	}
 
 	if (rot >= sprdef->numframes)
@@ -5555,9 +5557,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		thing->sprite = states[S_UNKNOWN].sprite;
 		thing->frame = states[S_UNKNOWN].frame;
 		sprdef = &sprites[thing->sprite];
-#ifdef ROTSPRITE
 		sprinfo = &spriteinfo[thing->sprite];
-#endif
 		rot = thing->frame&FF_FRAMEMASK;
 		thing->state->sprite = thing->sprite;
 		thing->state->frame = thing->frame;
@@ -5887,11 +5887,21 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	if (rotsprite)
 	{
 		vis->gpatch = (patch_t *)rotsprite;
+		vis->gbright = Patch_GetRotatedBrightmap(rotsprite,
+			R_CacheSpriteBrightMap(sprinfo, thing->frame & FF_FRAMEMASK));
 		vis->rotated = true;
 	}
 	else
 #endif
+	{
 		vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
+		vis->gbright = R_CacheSpriteBrightMap(sprinfo, thing->frame & FF_FRAMEMASK);
+		// Software skips the entire sprite on a size mismatch. Legacy GL
+		// keeps the sprite visible, falling back to ordinary lighting.
+		if (vis->gbright && (vis->gbright->width != vis->gpatch->width
+			|| vis->gbright->height != vis->gpatch->height))
+			vis->gbright = NULL;
+	}
 
 	vis->mobj = thing;
 
@@ -6049,6 +6059,11 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	vis->tz = tz;
 	vis->dispoffset = 0; // Monster Iestyn: 23/11/15: HARDWARE SUPPORT AT LAST
 	vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
+	vis->gbright = R_CacheSpriteBrightMap(&spriteinfo[thing->sprite], thing->frame & FF_FRAMEMASK);
+	// As above, keep mismatched sprites visible without their brightmap.
+	if (vis->gbright && (vis->gbright->width != vis->gpatch->width
+		|| vis->gbright->height != vis->gpatch->height))
+		vis->gbright = NULL;
 	vis->flip = flip;
 	vis->mobj = (mobj_t *)thing;
 

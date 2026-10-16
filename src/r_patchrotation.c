@@ -308,6 +308,119 @@ static void RotatedPatch_CalculateDimensions(
 	*newheight = max(height, max(h1, h2));
 }
 
+// Both rasters use this exact inverse mapping; the brightmap's own header
+// offsets and opaque bounds must never influence its sampling or output crop.
+static void *RotatedPatch_Sample(patch_t *patch, INT32 dx, INT32 dy,
+	INT32 canvaswidth, INT32 canvasheight, fixed_t ca, fixed_t sa,
+	fixed_t xcenter, fixed_t ycenter, pictureflags_t flip)
+{
+	fixed_t x = (dx - canvaswidth / 2) * FRACUNIT;
+	fixed_t y = (dy - canvasheight / 2) * FRACUNIT;
+	INT32 sx = (FixedMul(x, ca) + FixedMul(y, sa) + xcenter) >> FRACBITS;
+	INT32 sy = (-FixedMul(x, sa) + FixedMul(y, ca) + ycenter) >> FRACBITS;
+	if (sx < 0 || sy < 0 || sx >= patch->width || sy >= patch->height)
+		return NULL;
+	return Picture_GetPatchPixel(patch, PICFMT_PATCH, sx, sy, flip);
+}
+
+#ifdef HWRENDER
+static patch_t *rotatedbrightmaps;
+static patch_t *invalidatedbrightmaps;
+static boolean freeingbrightmaps;
+
+void Patch_FreeInvalidatedBrightmaps(void)
+{
+	if (freeingbrightmaps)
+		return;
+	freeingbrightmaps = true;
+	while (invalidatedbrightmaps)
+	{
+		patch_t *entry = invalidatedbrightmaps;
+		invalidatedbrightmaps = entry->brightnext;
+		entry->brightnext = NULL;
+		Patch_Free(entry);
+	}
+	freeingbrightmaps = false;
+}
+
+void Patch_InvalidateRotatedBrightmaps(patch_t *patch)
+{
+	patch_t **link = &invalidatedbrightmaps;
+	// A queued companion may itself be visited by the ongoing tag purge.
+	while (*link)
+	{
+		if (*link == patch)
+		{
+			*link = patch->brightnext;
+			patch->brightnext = NULL;
+			break;
+		}
+		link = &(*link)->brightnext;
+	}
+	link = &rotatedbrightmaps;
+	while (*link)
+	{
+		patch_t *entry = *link;
+		if (entry == patch || entry->brightowner == patch || entry->brightsource == patch)
+		{
+			patch_t **ownerlink = &entry->brightowner->brightmaps;
+			while (*ownerlink != entry)
+				ownerlink = &(*ownerlink)->brightownernext;
+			*ownerlink = entry->brightownernext;
+			*link = entry->brightnext;
+			entry->brightownernext = entry->brightowner = entry->brightsource = NULL;
+			entry->brightnext = NULL;
+			if (entry != patch)
+			{
+				// Reclaim after the outer free/tag walk, never under its iterator.
+				entry->brightnext = invalidatedbrightmaps;
+				invalidatedbrightmaps = entry;
+			}
+		}
+		else
+			link = &entry->brightnext;
+	}
+}
+
+patch_t *Patch_GetRotatedBrightmap(patch_t *rotated, patch_t *brightmap)
+{
+	patch_t *entry;
+	patchrotation_t *transform = &rotated->rotation;
+	UINT16 *pixels;
+	INT32 x, y;
+	if (!brightmap || !transform->valid || brightmap->width != transform->width
+		|| brightmap->height != transform->height)
+		return NULL;
+	for (entry = rotated->brightmaps; entry; entry = entry->brightownernext)
+		if (entry->brightsource == brightmap)
+			return entry;
+
+	pixels = Z_Calloc(rotated->width * rotated->height * sizeof(UINT16), PU_STATIC, NULL);
+	for (y = 0; y < rotated->height; ++y)
+		for (x = 0; x < rotated->width; ++x)
+		{
+			UINT8 *pixel = (UINT8 *)RotatedPatch_Sample(brightmap, x + transform->cropx, y + transform->cropy,
+				transform->canvaswidth, transform->canvasheight, transform->ca, transform->sa,
+				transform->xcenter, transform->ycenter, transform->flip ? PICFLAGS_XFLIP : 0);
+			if (pixel)
+				pixels[y * rotated->width + x] = 0xFF00 | *pixel;
+		}
+	entry = (patch_t *)Picture_Convert(PICFMT_FLAT16, pixels, PICFMT_PATCH, 0, NULL,
+		rotated->width, rotated->height, 0, 0, 0);
+	Z_Free(pixels);
+	Z_ChangeTag(entry, PU_PATCH_ROTATED);
+	entry->leftoffset = rotated->leftoffset;
+	entry->topoffset = rotated->topoffset;
+	entry->brightownernext = rotated->brightmaps;
+	rotated->brightmaps = entry;
+	entry->brightowner = rotated;
+	entry->brightsource = brightmap;
+	entry->brightnext = rotatedbrightmaps;
+	rotatedbrightmaps = entry;
+	return entry;
+}
+#endif
+
 void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle, INT32 xpivot, INT32 ypivot, boolean flip)
 {
 	patch_t *rotated;
@@ -324,11 +437,10 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 	fixed_t sa = rollsinang[angle];
 	fixed_t xcenter, ycenter;
 	INT32 idx = angle;
-	INT32 x, y;
-	INT32 sx, sy;
 	INT32 dx, dy;
 	INT32 ox, oy;
 	INT32 minx, miny, maxx, maxy;
+	INT32 cropx = 0, cropy = 0;
 
 	// Don't cache angle = 0
 	if (angle < 1 || angle >= ROTANGLES)
@@ -371,29 +483,15 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 	{
 		for (dx = 0; dx < newwidth; dx++)
 		{
-			x = (dx - (newwidth / 2)) * FRACUNIT;
-			y = (dy - (newheight / 2)) * FRACUNIT;
-			sx = FixedMul(x, ca) + FixedMul(y, sa) + xcenter;
-			sy = -FixedMul(x, sa) + FixedMul(y, ca) + ycenter;
-
-			sx >>= FRACBITS;
-			sy >>= FRACBITS;
-
-			if (sx >= 0 && sy >= 0 && sx < width && sy < height)
+			UINT8 *input = (UINT8 *)RotatedPatch_Sample(patch, dx, dy, newwidth, newheight,
+				ca, sa, xcenter, ycenter, bflip);
+			if (input != NULL)
 			{
-				void *input = Picture_GetPatchPixel(patch, PICFMT_PATCH, sx, sy, bflip);
-				if (input != NULL)
-				{
-					rawdst[(dy * newwidth) + dx] = (0xFF00 | (*(UINT8 *)input));
-					if (dx < minx)
-						minx = dx;
-					if (dy < miny)
-						miny = dy;
-					if (dx > maxx)
-						maxx = dx;
-					if (dy > maxy)
-						maxy = dy;
-				}
+				rawdst[(dy * newwidth) + dx] = (0xFF00 | *input);
+				if (dx < minx) minx = dx;
+				if (dy < miny) miny = dy;
+				if (dx > maxx) maxx = dx;
+				if (dy > maxy) maxy = dy;
 			}
 		}
 	}
@@ -421,6 +519,8 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 			src += newwidth;
 		}
 
+		cropx = minx;
+		cropy = miny;
 		ox -= minx;
 		oy -= miny;
 
@@ -442,5 +542,22 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 
 	rotated->leftoffset = ox;
 	rotated->topoffset = oy;
+#ifdef HWRENDER
+	rotated->rotation.ca = ca;
+	rotated->rotation.sa = sa;
+	rotated->rotation.xcenter = xcenter;
+	rotated->rotation.ycenter = ycenter;
+	rotated->rotation.width = patch->width;
+	rotated->rotation.height = patch->height;
+	rotated->rotation.canvaswidth = newwidth;
+	rotated->rotation.canvasheight = newheight;
+	rotated->rotation.cropx = cropx;
+	rotated->rotation.cropy = cropy;
+	rotated->rotation.flip = flip;
+	rotated->rotation.valid = true;
+#else
+	(void)cropx;
+	(void)cropy;
+#endif
 }
 #endif

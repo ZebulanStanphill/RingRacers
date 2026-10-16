@@ -64,6 +64,8 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 extern INT16 negonearray[MAXVIDWIDTH];
 extern INT16 screenheightarray[MAXVIDWIDTH];
 
+patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame);
+
 fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope);
 fixed_t R_GetSpriteDirectionalLighting(angle_t angle);
 

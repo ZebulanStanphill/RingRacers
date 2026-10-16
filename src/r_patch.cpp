@@ -64,6 +64,9 @@ patch_t *Patch_Create(softwarepatch_t *source, size_t srcsize, void *dest)
 }
 
 static boolean g_patch_was_freed_this_frame = false;
+#if defined(ROTSPRITE) && defined(HWRENDER)
+static INT32 patch_free_depth;
+#endif
 
 //
 // Frees a patch from memory.
@@ -72,6 +75,9 @@ static boolean g_patch_was_freed_this_frame = false;
 static void Patch_FreeData(patch_t *patch)
 {
 	INT32 i;
+#if defined(ROTSPRITE) && defined(HWRENDER)
+	Patch_InvalidateRotatedBrightmaps(patch);
+#endif
 
 #ifdef HWRENDER
 	if (patch->hardware)
@@ -110,8 +116,15 @@ void Patch_Free(patch_t *patch)
 	if (!patch || patch == missingpat)
 		return;
 
+#if defined(ROTSPRITE) && defined(HWRENDER)
+	++patch_free_depth;
+#endif
 	Patch_FreeData(patch);
 	Z_Free(patch);
+#if defined(ROTSPRITE) && defined(HWRENDER)
+	if (--patch_free_depth == 0)
+		Patch_FreeInvalidatedBrightmaps();
+#endif
 }
 
 boolean Patch_WasFreedThisFrame(void)
@@ -137,7 +150,14 @@ static boolean Patch_FreeTagsCallback(void *mem)
 
 void Patch_FreeTags(INT32 lowtag, INT32 hightag)
 {
+#if defined(ROTSPRITE) && defined(HWRENDER)
+	++patch_free_depth;
+#endif
 	Z_IterateTags(lowtag, hightag, Patch_FreeTagsCallback);
+#if defined(ROTSPRITE) && defined(HWRENDER)
+	if (--patch_free_depth == 0)
+		Patch_FreeInvalidatedBrightmaps();
+#endif
 }
 
 void Patch_GenerateFlat(patch_t *patch, pictureflags_t flags)

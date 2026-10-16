@@ -40,6 +40,11 @@ void *Patch_CreateGL(patch_t *patch);
 #endif
 
 #ifdef ROTSPRITE
+#ifdef HWRENDER
+patch_t *Patch_GetRotatedBrightmap(patch_t *rotated, patch_t *brightmap);
+void Patch_InvalidateRotatedBrightmaps(patch_t *patch);
+void Patch_FreeInvalidatedBrightmaps(void);
+#endif
 void Patch_Rotate(patch_t *patch, INT32 angle, INT32 xpivot, INT32 ypivot, boolean flip);
 patch_t *Patch_GetRotated(patch_t *patch, INT32 angle, boolean flip);
 patch_t *Patch_GetRotatedSprite(

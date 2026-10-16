@@ -880,6 +880,16 @@ struct rotsprite_t
 // Patches are used for sprites and all masked pictures, and we compose
 // textures from the TEXTURES list of patches.
 //
+#if defined(ROTSPRITE) && defined(HWRENDER)
+// Sampling coordinates of a rotated base patch, including its final crop.
+typedef struct
+{
+	fixed_t ca, sa, xcenter, ycenter;
+	INT32 width, height, canvaswidth, canvasheight, cropx, cropy;
+	boolean flip, valid;
+} patchrotation_t;
+#endif
+
 struct patch_t
 {
 	INT16 width, height;
@@ -893,6 +903,12 @@ struct patch_t
 
 #ifdef ROTSPRITE
 	rotsprite_t *rotated; // Rotated patches
+#ifdef HWRENDER
+	patchrotation_t rotation;
+	// Companion cache links live in the generated patch itself. Dependencies
+	// are detached before freeing either source, even if its address is reused.
+	patch_t *brightnext, *brightownernext, *brightmaps, *brightowner, *brightsource;
+#endif
 #endif
 };
 

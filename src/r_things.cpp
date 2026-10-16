@@ -1287,7 +1287,7 @@ static void R_SplitSprite(vissprite_t *sprite)
 	}
 }
 
-static patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame)
+patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame)
 {
 	const char *name = sprinfo->bright[frame];
 

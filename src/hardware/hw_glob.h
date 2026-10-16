@@ -98,6 +98,7 @@ typedef struct gl_vissprite_s
 	INT32 dispoffset; // copy of info->dispoffset, affects ordering but not drawing
 
 	patch_t *gpatch;
+	patch_t *gbright; // NULL without a compatible sprite brightmap
 	mobj_t *mobj; // NOTE: This is a precipmobj_t if precip is true !!! Watch out.
 } gl_vissprite_t;
 
@@ -125,6 +126,7 @@ patch_t *HWR_GetCachedGLPatchPwad(UINT16 wad, UINT16 lump);
 patch_t *HWR_GetCachedGLPatch(lumpnum_t lumpnum);
 
 void HWR_GetPatch(patch_t *patch);
+void HWR_GetSpriteBrightmap(patch_t *patch);
 void HWR_GetMappedPatch(patch_t *patch, const UINT8 *colormap);
 void HWR_GetFadeMask(lumpnum_t fademasklumpnum);
 patch_t *HWR_GetPic(lumpnum_t lumpnum);
