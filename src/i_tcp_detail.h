@@ -81,6 +81,14 @@ extern "C" {
 	#undef ECONNREFUSED
 	#endif
 	#define ECONNREFUSED WSAECONNREFUSED
+	#ifdef EHOSTUNREACH
+	#undef EHOSTUNREACH
+	#endif
+	#define EHOSTUNREACH WSAEHOSTUNREACH
+	#ifdef ENETUNREACH
+	#undef ENETUNREACH
+	#endif
+	#define ENETUNREACH WSAENETUNREACH
 	#ifdef ETIMEDOUT
 	#undef ETIMEDOUT
 	#endif
