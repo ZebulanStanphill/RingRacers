@@ -4882,6 +4882,15 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 		if (endbot < endrealbot)
 			endbot = endrealbot;
 
+		// [UWP]: A sloped light boundary can cross the sprite diagonally: above its top at one end, inside it at
+		// the other. That end's slice would otherwise have its bottom over its top, a bow-tie whose inverted
+		// half pokes out, with texture coordinates past the patch (one-pixel dashes of its edge color on
+		// Metropolis's bumpers, over the 3D floor planes that hide the springs). The slice ends there instead.
+		if (bot > top)
+			bot = top;
+		if (endbot > endtop)
+			endbot = endtop;
+
 		wallVerts[3].t = ttop + ((realtop - top) * tmult);
 		wallVerts[2].t = ttop + ((endrealtop - endtop) * tmult);
 		wallVerts[0].t = ttop + ((realtop - bot) * tmult);
