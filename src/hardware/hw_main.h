@@ -130,6 +130,9 @@ extern consvar_t cv_glspritebillboarding;
 extern consvar_t cv_glskydome;
 
 extern consvar_t cv_glbatching, cv_glbettertransparency;
+#ifdef HAVE_D3D12
+extern consvar_t cv_gld3d12present; // [UWP]: Readback forces the Direct3D 12 driver's readback present path; CpuSync, its CPU present sync
+#endif
 
 extern float gl_viewwidth, gl_viewheight, gl_baseviewwindowy;
 

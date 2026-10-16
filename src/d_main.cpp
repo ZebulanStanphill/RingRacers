@@ -102,6 +102,10 @@
 
 #ifdef HWRENDER
 #include "hardware/hw_main.h" // 3D View Rendering
+#ifdef HAVE_D3D12
+#include "hardware/hw_glob.h"
+#include "hardware/r_d3d12/r_d3d12.h"
+#endif
 #endif
 
 #include "lua_script.h"
@@ -568,6 +572,10 @@ static void UWPTraceFinishFrame(bool wipe, bool presented)
 	{
 		INT32 copied = -1, shown = -1;
 		UINT32 copyframe = 0, showframe = 0;
+#ifdef HAVE_D3D12
+		if (presented && rendermode == render_opengl)
+			D3D12_GetPresentTrace(&copied, &shown, &copyframe, &showframe);
+#endif
 		char line[640];
 		snprintf(line, sizeof line, "UWP frame: f=%u load=%u t=%.1f lt=%u tics=%u frac=%.3f mo=%d p=(%.1f,%.1f,%.1f) raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.1f,%.1f) title=%u/%u slot=%d/shown=%d copyf=%u/showf=%u present=%s\n",
 			uwp_frame.frame, uwp_traceLoad, UWPTraceMs(uwp_frame.time - uwp_levelStart),

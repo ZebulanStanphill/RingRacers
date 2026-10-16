@@ -195,7 +195,7 @@ static void M_ChangeCvar(INT32 choice)
 {
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
 
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(HAVE_D3D12) // VibeRant D3D has close to Software's features, so switching to it doesn't ask
 	if (cvar == &cv_renderer &&
 		// Switching from Software [to Legacy GL]
 		cv_renderer.value == 1 &&

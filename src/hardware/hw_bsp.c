@@ -632,9 +632,11 @@ static void loading_status(void)
 	V_DrawRightAlignedString(x+50, y, V_YELLOWMAP, s);
 
 	// Is this really necessary at this point..?
+#ifndef HAVE_D3D12 // No warning; VibeRant D3D has close to Software's features
 	V_DrawCenteredString(BASEVIDWIDTH/2, 40, V_YELLOWMAP, "LEGACY GL IS INCOMPLETE AND MANY");
 	V_DrawCenteredString(BASEVIDWIDTH/2, 50, V_YELLOWMAP, "VISUAL FEATURES ARE MISSING/BROKEN.");
 	V_DrawCenteredString(BASEVIDWIDTH/2, 70, V_YELLOWMAP, "USE AT ROBOTNIK'S RISK.");
+#endif
 
 	I_UpdateNoVsync();
 #ifdef _UWP

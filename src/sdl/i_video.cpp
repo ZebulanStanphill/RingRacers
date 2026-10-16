@@ -93,6 +93,9 @@ extern "C" __declspec(dllimport) void  uwp_SetScreenSize(int, int);
 // For dynamic referencing of HW rendering functions
 #include "hwsym_sdl.h"
 #include "ogl_sdl.h"
+#ifdef HAVE_D3D12
+#include "../hardware/r_d3d12/r_d3d12.h"
+#endif
 #endif
 
 #ifdef HAVE_DISCORDRPC
@@ -253,7 +256,11 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
+#ifdef HAVE_D3D12
+		D3D12_Surface(vid.width, vid.height);
+#else
 		OglSdlSurface(vid.width, vid.height);
+#endif
 	}
 	else
 #endif
@@ -1114,7 +1121,11 @@ void I_UpdateNoBlit(void)
 #ifdef HWRENDER
 		if (rendermode == render_opengl)
 		{
+#ifdef HAVE_D3D12
+			D3D12_FinishUpdate(cv_vidwait.value);
+#else
 			OglSdlFinishUpdate(cv_vidwait.value);
+#endif
 		}
 #endif
 	}
@@ -1379,7 +1390,9 @@ static void UWPUseSurfaceSize(void)
 
 static SDL_bool Impl_CreateContext(void)
 {
-#ifdef HWRENDER
+	// [UWP]: Legacy GL draws with Direct3D 12 and presents through the RHI's OpenGL ES context, so it needs no context
+	// of its own
+#if defined(HWRENDER) && !defined(HAVE_D3D12)
 	if (rendermode == render_opengl)
 	{
 		if (!g_legacy_gl_context)
@@ -1787,6 +1800,10 @@ void I_ShutdownGraphics(void)
 	graphics_started = false;
 
 #ifdef HWRENDER
+#ifdef HAVE_D3D12
+	// [UWP]: The Direct3D 12 driver's EGL surfaces must go while ANGLE's context exists
+	D3D12_Shutdown();
+#endif
 	if (GLUhandle)
 		hwClose(GLUhandle);
 	if (sdlglcontext)

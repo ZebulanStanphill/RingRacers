@@ -58,7 +58,9 @@ UINT8 setrenderneeded = 0;
 
 CV_PossibleValue_t cv_renderer_t[] = {
 	{1, "Software"},
-#ifdef HWRENDER
+#ifdef HAVE_D3D12 // Legacy GL draws with Direct3D 12 (hardware/r_d3d12), not OpenGL
+	{2, "VibeRant D3D"},
+#elif defined(HWRENDER)
 	{2, "Legacy GL"},
 #endif
 	{0, NULL}

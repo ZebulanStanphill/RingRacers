@@ -420,6 +420,11 @@ typedef enum
 	vaopt_spacer7,
 	vaopt_spacer8,
 	vaopt_spacer9,
+#ifdef HAVE_D3D12
+	// VibeRant D3D's description has two more lines
+	vaopt_spacer9a,
+	vaopt_spacer9b,
+#endif
 	vaopt_renderer,
 	vaopt_legacygl_begin,
 	vaopt_spacer10 = vaopt_legacygl_begin,

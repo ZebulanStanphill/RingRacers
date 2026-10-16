@@ -28,6 +28,9 @@
 #ifdef _UWP
 #include "r_fps.h"
 #include "screen.h"
+#ifdef HAVE_D3D12
+#include "hardware/r_d3d12/r_d3d12.h"
+#endif
 #endif
 
 struct perfstatcol;
@@ -881,6 +884,12 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 			(double)uwp_perf.hwpolys / n, (double)uwp_perf.hwverts / n, (double)uwp_perf.hwcalls / n,
 			(double)uwp_perf.hwshaders / n, (double)uwp_perf.hwtextures / n);
 	}
+
+#ifdef HAVE_D3D12
+	if (rendermode == render_opengl)
+		D3D12_LogPerf(seconds);
+#endif
+
 	if (uwp_perf.frames)
 	{
 		const int n = uwp_perf.frames;

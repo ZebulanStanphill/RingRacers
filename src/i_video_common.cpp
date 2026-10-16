@@ -33,6 +33,10 @@
 #include "s_sound.h"  // kill
 #include "sdl/ogl_sdl.h"
 #include "st_stuff.h" // kill
+#ifdef HAVE_D3D12
+#include "hardware/r_d3d12/r_d3d12.h"
+#include "hardware/hw_main.h"
+#endif
 
 // Legacy FinishUpdate Draws
 #include "d_netcmd.h"
@@ -174,7 +178,13 @@ static void temp_legacy_finishupdate_draws()
 static void finish_legacy_ogl_update()
 {
 	temp_legacy_finishupdate_draws();
+#ifdef HAVE_D3D12
+	// [UWP]: Follows the palette rendering setting, which the driver applies as it presents
+	HWR_UpdatePaletteRendering();
+	D3D12_FinishUpdate(cv_vidwait.value);
+#else
 	OglSdlFinishUpdate(cv_vidwait.value);
+#endif
 }
 #endif
 

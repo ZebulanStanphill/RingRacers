@@ -41,6 +41,22 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_HEADER, "Rendering Backend...", "Watch people get confused anyway!!",
 		NULL, {NULL}, 0, 0},
 
+#ifdef HAVE_D3D12
+	{IT_STRING | IT_SPACE, "VibeRant D3D is an enhanced port of", "",
+		NULL, {NULL}, 0, 0},
+
+	{IT_STRING | IT_SPACE, "the Legacy GL renderer to Direct3D 12,", "",
+		NULL, {NULL}, 0, 0},
+
+	{IT_STRING | IT_SPACE, "featuring 3D models, true perspective,", "",
+		NULL, {NULL}, 0, 0},
+
+	{IT_STRING | IT_SPACE, "& more parity with Software. Some", "",
+		NULL, {NULL}, 0, 0},
+
+	{IT_STRING | IT_SPACE, "features remain missing/degraded.", "",
+		NULL, {NULL}, 0, 0},
+#else
 	{IT_STRING | IT_SPACE, "Legacy GL supports 3D models and true", "",
 		NULL, {NULL}, 0, 0},
 
@@ -49,15 +65,24 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 	{IT_STRING | IT_SPACE, "are missing/broken.", "",
 		NULL, {NULL}, 0, 0},
+#endif
 
 	{IT_SPACE | IT_NOTHING, NULL, NULL,
 		NULL, {NULL}, 0, 0},
 
+#ifdef HAVE_D3D12
+	{IT_STRING | IT_SPACE, "\x85Report visual bugs to GitHub.com/", "",
+		NULL, {NULL}, 0, 0},
+
+	{IT_STRING | IT_SPACE, "\x85ZebulanStanphill/ringracers-uwp", "",
+		NULL, {NULL}, 0, 0},
+#else
 	{IT_STRING | IT_SPACE, "\x85Legacy GL will eventually be replaced.", "",
 		NULL, {NULL}, 0, 0},
 
 	{IT_STRING | IT_SPACE, "\x85Please don't report visual bugs!", "",
 		NULL, {NULL}, 0, 0}, // Unless you've got an MR to fix them.
+#endif
 
 	{IT_SPACE | IT_NOTHING, NULL, NULL,
 		NULL, {NULL}, 0, 0},
@@ -65,7 +90,11 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Renderer", "If you don't know why you're changing this, leave it on Software!",
 		NULL, {.cvar = &cv_renderer}, 0, 0},
 
+#ifdef HAVE_D3D12
+	{IT_HEADER, "VibeRant D3D Options...", "Watch people get confused anyway!!",
+#else
 	{IT_HEADER, "Legacy GL Options...", "Watch people get confused anyway!!",
+#endif
 		NULL, {NULL}, 0, 0},
 
 	{IT_STRING | IT_CVAR, "3D Models", "Use 3D models instead of sprites when applicable.",

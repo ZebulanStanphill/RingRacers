@@ -431,7 +431,11 @@ consvar_t cv_bgaudio = Player("bgaudio", "Nothing").onchange_noinit(BGAudio_OnCh
 consvar_t cv_pauseifunfocused = Player("pauseifunfocused", "Yes").yes_no();
 
 extern CV_PossibleValue_t cv_renderer_t[];
+#if defined(HAVE_D3D12) && defined(_UWP) // [UWP]: Default to VibeRant D3D, which runs faster than Software on Xbox
+consvar_t cv_renderer = Player("renderer", "VibeRant D3D").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
+#else
 consvar_t cv_renderer = Player("renderer", "Software").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
+#endif
 consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
 
 consvar_t cv_renderview = Player("renderview", "On").values({{0, "Off"}, {1, "On"}, {2, "Force"}}).dont_save();
@@ -1483,6 +1487,14 @@ consvar_t cv_voice_allowservervoice = NetVar("voice_allowservervoice", "Off")
 
 	// [UWP]: Palette rendering, from SRB2, which needs shaders
 	consvar_t cv_glpaletterendering = OpenGL("gr_paletterendering", "On").on_off();
+
+#ifdef HAVE_D3D12
+	// [UWP]: Readback forces the Direct3D 12 driver's CPU readback present path (D) instead of probing the ANGLE
+	// interop paths; read once when the path is selected, so it takes effect at the next start. CpuSync keeps the
+	// interop paths' CPU waits instead of the shared fences, to compare them; read when the presentation textures
+	// are made (at the first frame and on a resize). Not in the menu.
+	consvar_t cv_gld3d12present = OpenGL("gr_d3d12_present", "Auto").values({{0, "Auto"}, {1, "Readback"}, {2, "CpuSync"}});
+#endif
 
 #ifdef ALAM_LIGHTING
 		consvar_t cv_glcoronas = OpenGL("gr_coronas", "On").on_off();
