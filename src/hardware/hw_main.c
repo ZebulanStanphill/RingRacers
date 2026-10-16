@@ -5648,6 +5648,13 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
 
 static gl_sky_t gl_sky;
 
+// Software's R_SetupSkyDraw includes a single patch's header offsets.
+static void HWR_ApplySkyTextureOffsets(float *s, float *t, INT32 width, INT32 height)
+{
+	*s += FIXED_TO_FLOAT(skytextureoffset) / width;
+	*t += (FIXED_TO_FLOAT(skytexturemid) - height * 0.5f) / height;
+}
+
 static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, signed char yflip, float delta, boolean foglayer)
 {
 	const float radians = (float)(M_PIl / 180.0f);
@@ -5678,6 +5685,7 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, 
 			vbo->v = (r / (float)sky->rows) + 0.5f;
 		else
 			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
+		HWR_ApplySkyTextureOffsets(&vbo->u, &vbo->v, sky->width, sky->height);
 	}
 
 	if (r != 4)
@@ -5914,6 +5922,11 @@ static void HWR_DrawSkyBackground(player_t *player)
 			v[0].t = v[1].t -= ((float) angle / angleturn);
 		}
 
+		// Match the dome and Software for skies with patch header offsets.
+		for (INT32 i = 0; i < 4; i++)
+			HWR_ApplySkyTextureOffsets(&v[i].s, &v[i].t,
+				textures[texturetranslation[skytexture]]->width,
+				textures[texturetranslation[skytexture]]->height);
 		HWD.pfnUnSetShader();
 		HWD.pfnDrawPolygon(NULL, v, 4, 0);
 	}

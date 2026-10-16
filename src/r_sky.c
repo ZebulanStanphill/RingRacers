@@ -76,8 +76,8 @@ void R_SetupSkyDraw(void)
 		texpatch_t *const tex_patch = &textures[skytexture]->patches[0];
 		patch_t *patch = W_CachePatchNumPwad(tex_patch->wad, tex_patch->lump, PU_CACHE);
 
-		skytexturemid += (patch->topoffset << FRACBITS);
-		skytextureoffset += (patch->leftoffset << FRACBITS);
+		skytexturemid += (patch->topoffset * FRACUNIT);
+		skytextureoffset += (patch->leftoffset * FRACUNIT);
 	}
 
 	R_SetSkyScale();
