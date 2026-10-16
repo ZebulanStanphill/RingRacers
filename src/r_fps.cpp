@@ -608,6 +608,7 @@ static std::vector<mobj_t*> interpolated_mobjs;
 void R_AddMobjInterpolator(mobj_t *mobj)
 {
 	interpolated_mobjs.push_back(mobj);
+	mobj->interpolatorslot = interpolated_mobjs.size();
 
 	R_ResetMobjInterpolationState(mobj);
 	mobj->resetinterp = true;
@@ -615,15 +616,31 @@ void R_AddMobjInterpolator(mobj_t *mobj)
 
 void R_RemoveMobjInterpolator(mobj_t *mobj)
 {
-	for (size_t i = 0; i < interpolated_mobjs.size(); i++)
+	// [UWP]: Find the mobj where it recorded it is, instead of searching the whole list for every mobj removed, which
+	// was 1.5% of game logic on Xbox. Searches as before if that's out of date.
+	size_t i = mobj->interpolatorslot - 1;
+
+	if (i >= interpolated_mobjs.size() || interpolated_mobjs[i] != mobj)
 	{
-		if (interpolated_mobjs[i] == mobj)
+		for (i = 0; i < interpolated_mobjs.size(); i++)
 		{
-			interpolated_mobjs[i] = *interpolated_mobjs.rbegin();
-			interpolated_mobjs.pop_back();
+			if (interpolated_mobjs[i] == mobj)
+			{
+				break;
+			}
+		}
+
+		if (i == interpolated_mobjs.size())
+		{
 			return;
 		}
 	}
+
+	mobj_t *last = *interpolated_mobjs.rbegin();
+	interpolated_mobjs[i] = last;
+	last->interpolatorslot = i + 1;
+	interpolated_mobjs.pop_back();
+	mobj->interpolatorslot = 0;
 }
 
 void R_InitMobjInterpolators(void)
