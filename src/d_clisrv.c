@@ -6789,8 +6789,16 @@ static void SV_Maketic(void)
 		if (K_PlayerUsesBotMovement(&players[i]))
 		{
 			const precise_t t = I_GetPreciseTime();
+#ifdef _UWP
+			const INT32 uwpprofphase = i_uwpprofphase;
+
+			i_uwpprofphase = UWPPROF_LOGIC;
+#endif
 
 			K_BuildBotTiccmd(&players[i], &netcmds[maketic%BACKUPTICS][i]);
+#ifdef _UWP
+			i_uwpprofphase = uwpprofphase;
+#endif
 
 			ps_bots[i].isBot = true;
 			ps_bots[i].total = I_GetPreciseTime() - t;
@@ -6954,7 +6962,15 @@ boolean TryRunTics(tic_t realtics)
 					tickInterp = false; // do not update again in sped-up tics
 				}
 
+#ifdef _UWP
+				const INT32 uwpprofphase = i_uwpprofphase;
+
+				i_uwpprofphase = UWPPROF_LOGIC;
+#endif
 				G_Ticker(run);
+#ifdef _UWP
+				i_uwpprofphase = uwpprofphase;
+#endif
 			}
 
 			if (Playing() && netgame && (gametic % TICRATE == 0))

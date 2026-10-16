@@ -324,10 +324,59 @@ int I_UWPGetMemoryBudget(UINT64 *limit, UINT64 *usage, int *isXbox);
 // [UWP]: Logs the process budget. GlobalMemoryStatusEx reports physical memory, not this budget.
 void I_UWPLogMemoryLimit(void);
 
+// [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
+// Call from the main thread.
+void I_UWPStartProfiler(void);
+
+// [UWP]: How many samples the profiler took, and how long they paused the main thread, since the last call
+void I_UWPTakeProfilerStats(INT32 *samples, double *pausedms);
+
+// [UWP]: Logs the CPU sets Windows lists for the game, which should show which cores are the game's own when Xbox
+// runs it as a game. Call from the main thread.
+void I_UWPLogCpuSets(void);
+
+// [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
+// doesn't mark any
+unsigned int I_UWPUsableProcessors(void);
+
+// [UWP]: Logs crashes, with their call stacks, to the log, which the game's signal handler misses on Xbox.
+// Call from the main thread.
+void I_UWPInstallCrashHandler(void);
+
+// [UWP]: Counts which processor the main thread is running on, and writes which ones it was on since the last
+// call and how often, like "2 (60%), 3 (40%)"
+void I_UWPNoteProcessor(void);
+void I_UWPTakeProcessorStats(char *buffer, size_t size);
+
+// [UWP]: What the main thread is doing, for the profiler
+typedef enum
+{
+	UWPPROF_OTHER,
+	UWPPROF_LOGIC, // game tics, and building bots' ticcmds
+	UWPPROF_3D, // rendering the 3D view
+	UWPPROF_2D, // the rest of D_Display: the HUD, menus, wipes, and passing the software screen to the GPU
+	UWPPROF_DISPLAY, // I_FinishUpdate: drawing the 2D layer, scaling it to the screen, and presenting
+	NUMUWPPROFPHASES
+} uwpprofphase_t;
+extern volatile INT32 i_uwpprofphase;
+
+// [UWP]: Whether a level is being played (not paused), for the profiler, which only counts samples taken then
+extern volatile INT32 i_uwpprofinlevel;
 #endif
 
 #ifdef __cplusplus
 } // extern "C"
+#endif
+
+#if defined(_UWP) && defined(__cplusplus)
+// [UWP]: Sets what the main thread is doing, for the profiler, until the end of the scope
+struct UWPProfPhase
+{
+	INT32 previous;
+
+	explicit UWPProfPhase(INT32 phase) : previous(i_uwpprofphase) { i_uwpprofphase = phase; }
+	~UWPProfPhase() { i_uwpprofphase = previous; }
+};
 #endif
 
 #endif

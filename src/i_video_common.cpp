@@ -266,6 +266,10 @@ void I_StartDisplayUpdate(void)
 
 void I_FinishUpdate(void)
 {
+#ifdef _UWP
+	UWPProfPhase uwpprofphase(UWPPROF_DISPLAY);
+#endif
+
 	ZoneScoped;
 	if (rendermode == render_none)
 	{

@@ -783,6 +783,8 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 	if (!uwp_perf.start)
 		uwp_perf.start = now;
 
+	I_UWPNoteProcessor();
+
 	uwp_perf.loops++;
 	uwp_perf.work += worktime;
 	if (worktime > uwp_perf.worstwork)
@@ -912,6 +914,16 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 		}
 	}
 
+	{
+		INT32 samples;
+		double pausedms;
+		char processors[256];
+
+		I_UWPTakeProfilerStats(&samples, &pausedms);
+		I_UWPTakeProcessorStats(processors, sizeof processors);
+		I_OutputMsg("UWP perf:   main thread on processors %s; profiler paused it %.1f ms per second (%d samples, %.0f us each)\n",
+			processors, pausedms / seconds, samples, samples ? pausedms * 1000.0 / samples : 0.0);
+	}
 
 	memset(&uwp_perf, 0, sizeof uwp_perf);
 	uwp_perf.start = now;

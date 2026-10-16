@@ -369,6 +369,10 @@ static bool D_Display(bool world)
 
 	ZoneScoped;
 
+#ifdef _UWP
+	UWPProfPhase uwpprofphase(UWPPROF_2D);
+#endif
+
 	if (g_takemapthumbnail != TMT_NO)
 	{
 		forcerefresh = true;
@@ -554,6 +558,9 @@ static bool D_Display(bool world)
 				objectsdrawn = 0;
 
 				ps_rendercalltime = I_GetPreciseTime();
+#ifdef _UWP
+				UWPProfPhase uwpprofphase3d(UWPPROF_3D);
+#endif
 
 				if (rendermode == render_soft)
 				{
@@ -909,6 +916,10 @@ void D_SRB2Loop(void)
 	S_SetMusicVolume();
 	S_SetSfxVolume();
 
+#ifdef _UWP
+	I_UWPStartProfiler();
+#endif
+
 	for (;;)
 	{
 		// capbudget is the minimum precise_t duration of a single loop iteration
@@ -963,6 +974,9 @@ void D_SRB2Loop(void)
 		renderisnewtic = (realtics > 0 || singletics);
 
 		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
+#ifdef _UWP
+		i_uwpprofinlevel = gamestate == GS_LEVEL && timeisprogressing;
+#endif
 
 		if (renderisnewtic)
 		{
