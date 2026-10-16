@@ -15,6 +15,10 @@
 #pragma warning(disable : 4214 4244)
 #endif
 
+#ifdef _UWP
+extern __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
+#endif
+
 #ifdef HAVE_SDL
 #define _MATH_DEFINES_DEFINED
 
@@ -224,7 +228,11 @@ void OglSdlFinishUpdate(boolean waitvbl)
 
 	oldwaitvbl = waitvbl;
 
+#ifndef _UWP
 	SDL_GetWindowSize(window, &sdlw, &sdlh);
+#else
+	uwp_GetScreenSize(&sdlw, &sdlh);
+#endif
 
 	HWR_MakeScreenFinalTexture();
 	HWR_DrawScreenFinalTexture(sdlw, sdlh);

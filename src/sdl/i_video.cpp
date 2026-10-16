@@ -29,6 +29,11 @@
 #pragma warning(disable : 4214 4244)
 #endif
 
+#ifdef _UWP
+extern "C" __declspec(dllimport) float uwp_GetRefreshRate();
+extern "C" __declspec(dllimport) void  uwp_GetScreenSize(int*, int*);
+#endif
+
 #ifdef HAVE_SDL
 #define _MATH_DEFINES_DEFINED
 #include "SDL.h"
@@ -198,6 +203,10 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 	realwidth = vid.width;
 	realheight = vid.height;
 
+#ifdef _UWP
+	fullscreen = SDL_TRUE; // Fixes tiny loading screen
+#endif
+
 	if (window)
 	{
 		if (fullscreen)
@@ -251,7 +260,13 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 		SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
 	}
 
+#ifndef _UWP
 	SDL_GetWindowSize(window, &width, &height);
+#else
+	// DLW: Something is breaking mesa "bridge" mode so need to always provide full screen size
+	uwp_GetScreenSize(&width, &height);
+#endif
+
 	vid.realwidth = static_cast<uint32_t>(width);
 	vid.realheight = static_cast<uint32_t>(height);
 
@@ -1426,6 +1441,7 @@ boolean VID_CheckRenderer(void)
 static UINT32 refresh_rate;
 static UINT32 VID_GetRefreshRate(void)
 {
+#ifndef _UWP
 	int index = SDL_GetWindowDisplayIndex(window);
 	SDL_DisplayMode m;
 
@@ -1442,6 +1458,9 @@ static UINT32 VID_GetRefreshRate(void)
 	}
 
 	return m.refresh_rate;
+#else
+	return ceil(uwp_GetRefreshRate());
+#endif
 }
 
 INT32 VID_SetMode(INT32 modeNum)
