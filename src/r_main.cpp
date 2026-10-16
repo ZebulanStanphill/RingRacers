@@ -1148,17 +1148,57 @@ void R_Init(void)
 	framecount = 0;
 }
 
+#ifdef _UWP
+// [UWP]: The subsectors of points looked up recently. Which subsector a point is in depends only on the point and the
+// level's BSP, and moving one mobj looks up the same few points several times (P_CheckPosition, P_SetThingPosition,
+// P_GetThingStepUp, P_MobjFloorZ), while walking the BSP from its root every time was 10% of game logic on Xbox.
+// Cleared whenever a level's BSP is loaded or freed. Only the main thread looks up points.
+struct PointInSubsectorCacheEntry
+{
+	fixed_t x, y;
+	subsector_t *subsector; // null if unused
+};
+
+static PointInSubsectorCacheEntry g_pointinsubsector_cache[512];
+
+UINT32 r_uwppointlookups, r_uwppointhits;
+
+void R_ClearPointInSubsectorCache(void)
+{
+	memset(g_pointinsubsector_cache, 0, sizeof g_pointinsubsector_cache);
+}
+#endif
+
 //
 // R_PointInSubsector
 //
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 {
+#ifdef _UWP
+	PointInSubsectorCacheEntry& entry =
+		g_pointinsubsector_cache[(((UINT32)x * 0x9E3779B1u) ^ ((UINT32)y * 0x85EBCA77u)) >> 23];
+
+	r_uwppointlookups++;
+	if (entry.subsector && entry.x == x && entry.y == y)
+	{
+		r_uwppointhits++;
+		return entry.subsector;
+	}
+#endif
+
 	size_t nodenum = numnodes-1;
 
 	while (!(nodenum & NF_SUBSECTOR))
 		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)];
 
+#ifdef _UWP
+	entry.x = x;
+	entry.y = y;
+	entry.subsector = &subsectors[nodenum & ~NF_SUBSECTOR];
+	return entry.subsector;
+#else
 	return &subsectors[nodenum & ~NF_SUBSECTOR];
+#endif
 }
 
 //

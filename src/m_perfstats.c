@@ -914,6 +914,13 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 		}
 	}
 
+	if (r_uwppointlookups)
+	{
+		I_OutputMsg("UWP perf:   %.0f R_PointInSubsector calls per second, %.0f%% answered from its cache\n",
+			r_uwppointlookups / seconds, 100.0 * r_uwppointhits / r_uwppointlookups);
+	}
+	r_uwppointlookups = r_uwppointhits = 0;
+
 	{
 		INT32 samples;
 		double pausedms;

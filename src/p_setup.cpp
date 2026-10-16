@@ -7567,6 +7567,9 @@ static boolean P_LoadMapFromFile(void)
 	}
 
 	P_LoadMapBSP(curmapvirt);
+#ifdef _UWP
+	R_ClearPointInSubsectorCache();
+#endif
 	P_LoadMapLUT(curmapvirt);
 
 	P_LinkMapData();
@@ -8447,6 +8450,10 @@ void P_LoadLevelMusic(void)
 
 void P_FreeLevelState(void)
 {
+#ifdef _UWP
+	R_ClearPointInSubsectorCache();
+#endif
+
 	if (numsectors)
 	{
 		F_EndTextPrompt(false, true);

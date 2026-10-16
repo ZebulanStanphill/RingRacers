@@ -89,6 +89,14 @@ fixed_t R_ScaleFromGlobalAngle(angle_t visangle);
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y);
 subsector_t *R_PointInSubsectorOrNull(fixed_t x, fixed_t y);
 
+#ifdef _UWP
+// [UWP]: Forgets the subsectors R_PointInSubsector remembers, for when the level's BSP is loaded or freed
+void R_ClearPointInSubsectorCache(void);
+
+// [UWP]: Calls to R_PointInSubsector, and how many it answered from what it remembered, for the perf log
+extern UINT32 r_uwppointlookups, r_uwppointhits;
+#endif
+
 boolean R_DoCulling(line_t *cullheight, line_t *viewcullheight, fixed_t vz, fixed_t bottomh, fixed_t toph);
 
 void R_GetRenderBlockMapDimensions(fixed_t drawdist, INT32 *xl, INT32 *xh, INT32 *yl, INT32 *yh);
