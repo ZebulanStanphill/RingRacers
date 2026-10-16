@@ -3343,6 +3343,13 @@ static void HWR_AddLine(seg_t * line)
 	checkforemptylines = true;
 
 	gl_backsector = line->backsector;
+#ifdef _UWP
+	// FOF sides may sample the adjacent sector before its first BSP visit.
+	// Prepare the real sector; keep moved flags for the usual fake-flat refresh.
+	if (!hwr_portalsearch && gl_backsector && gl_backsector->ffloors
+		&& !gl_backsector->numlights)
+		R_Prep3DFloors(gl_backsector);
+#endif
 
 	if (!line->backsector)
 	{
