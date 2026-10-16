@@ -4589,6 +4589,22 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
 	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
 }
 
+#ifdef _UWP
+// Coplanar ripple polygons are pieces of one surface, not stacked water layers.
+// Keep their background immutable even when subsector polygons overlap. A wall,
+// polyobject, non-ripple plane or a different slope/height starts a new capture.
+static boolean HWR_WaterPlaneContinues(const planeinfo_t *previous, const planeinfo_t *current)
+{
+	pslope_t *a, *b;
+	if (!previous || !current || !(previous->blend & current->blend & PF_Ripple)
+		|| previous->fixedheight != current->fixedheight)
+		return false;
+	a = previous->isceiling ? previous->FOFSector->c_slope : previous->FOFSector->f_slope;
+	b = current->isceiling ? current->FOFSector->c_slope : current->FOFSector->f_slope;
+	return a == b;
+}
+#endif
+
 //
 // HWR_CreateDrawNodes
 // Creates and sorts a list of drawnodes for the scene being rendered.
@@ -4674,6 +4690,12 @@ static void HWR_CreateDrawNodes(void)
 
 	for (i = 0; i < p; i++)
 	{
+#ifdef _UWP
+		const planeinfo_t *plane = sortnode[sortindex[i]].plane;
+		const planeinfo_t *previous = i ? sortnode[sortindex[i-1]].plane : NULL;
+		HWD.pfnSetSpecialState(HWD_SET_WATER_SURFACE,
+			plane && (plane->blend & PF_Ripple) ? (HWR_WaterPlaneContinues(previous, plane) ? 2 : 1) : 0);
+#endif
 		if (sortnode[sortindex[i]].plane)
 		{
 			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
@@ -4702,6 +4724,10 @@ static void HWR_CreateDrawNodes(void)
 				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
 		}
 	}
+
+#ifdef _UWP
+	HWD.pfnSetSpecialState(HWD_SET_WATER_SURFACE, 0);
+#endif
 
 	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
 

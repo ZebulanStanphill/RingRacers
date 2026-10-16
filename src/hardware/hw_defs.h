@@ -309,6 +309,7 @@ enum hwdsetspecialstate
 	HWD_SET_TEXTUREFILTERMODE,
 	HWD_SET_TEXTUREANISOTROPICMODE,
 	HWD_SET_PALETTE_RENDERING, // [UWP]
+	HWD_SET_WATER_SURFACE, // [UWP] 0: standalone, 1: new coplanar run, 2: continue
 
 	HWD_NUMSTATE
 };
