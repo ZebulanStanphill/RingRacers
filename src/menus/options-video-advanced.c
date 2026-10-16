@@ -80,6 +80,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Better transparency ordering", "Sort transparent objects with water, fog & walls. Costs extra CPU time.",
 		NULL, {.cvar = &cv_glbettertransparency}, 0, 0},
 
+#ifdef _UWP
+	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
+		NULL, {.cvar = &cv_glbatching}, 0, 0},
+
+#endif
+
 	{IT_SPACE | IT_NOTHING, NULL,  NULL,
 		NULL, {NULL}, 0, 0},
 

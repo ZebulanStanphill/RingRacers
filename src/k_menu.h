@@ -427,6 +427,9 @@ typedef enum
 	vaopt_shaders,
 	vaopt_paletterendering, // [UWP]
 	vaopt_bettertransparency,
+#ifdef _UWP
+	vaopt_batching,
+#endif
 	vaopt_spacer11,
 	vaopt_texturequal,
 	vaopt_anisotropic,
