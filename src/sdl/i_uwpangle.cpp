@@ -15,7 +15,8 @@
 ///
 ///   T0, T1: before and after VID_DisplaySoftwareScreen (uploading the software screen)
 ///   T2:     the start of I_FinishUpdate's RHI part (flushing the 2D layer, upscaling, ImGui)
-///   T3, T4: before and after the present
+///   T3, T4: before and after the present. T4 only reaches the GPU with the next frame's commands, so T3 to T4 is the
+///           GPU's idle time until then, reported separately from the cost
 ///
 /// A timestamp is taken when the GPU reaches it, so a stage whose commands the CPU issues more slowly than the GPU runs
 /// them reads as an upper bound: it includes the GPU waiting for commands. ANGLE may also hold some work back until
@@ -231,14 +232,14 @@ void Collect(Frame &frame)
 	const bool screen = (frame.marks & (1u << UWPANGLE_SCREEN_START)) && (frame.marks & (1u << UWPANGLE_SCREEN_END));
 	const double screentime = screen ? span(UWPANGLE_SCREEN_START, UWPANGLE_SCREEN_END) : 0.0;
 	const double finishtime = span(UWPANGLE_FINISH_START, UWPANGLE_PRESENT_START);
-	const double presenttime = span(UWPANGLE_PRESENT_START, UWPANGLE_PRESENT_END);
-	const double total = screentime + finishtime + presenttime;
+	const double idletime = span(UWPANGLE_PRESENT_START, UWPANGLE_PRESENT_END);
+	const double total = screentime + finishtime;
 
 	uwpanglestats_t &stats = g_timing.stats;
 	stats.frames++;
 	stats.screen += screentime;
 	stats.finish += finishtime;
-	stats.present += presenttime;
+	stats.idle += idletime;
 	stats.total += total;
 	if (total > stats.worst)
 		stats.worst = total;

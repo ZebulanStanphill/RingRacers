@@ -382,7 +382,7 @@ typedef enum
 	UWPANGLE_SCREEN_END, // after it
 	UWPANGLE_FINISH_START, // the start of I_FinishUpdate's RHI part
 	UWPANGLE_PRESENT_START, // just before the present
-	UWPANGLE_PRESENT_END, // just after it
+	UWPANGLE_PRESENT_END, // just after it, but the GPU only reaches it with the next frame's commands
 	UWPANGLE_NUMMARKS
 } uwpanglemark_t;
 
@@ -398,9 +398,9 @@ typedef struct
 	INT32 disjoint; // dropped because the timer's frequency changed
 	double screen; // uploading the software screen
 	double finish; // flushing the 2D layer, upscaling and ImGui
-	double present;
-	double total;
-	double worst; // total, of the slowest frame
+	double idle; // from the present until the next frame's commands reach the GPU
+	double total; // screen and finish, excluding idle
+	double worst; // total, of the slowest frame, excluding idle
 } uwpanglestats_t;
 
 // [UWP]: Takes the stats since the last call. Returns whether any frames were timed.

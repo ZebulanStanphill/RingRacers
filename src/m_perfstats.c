@@ -912,9 +912,10 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 		if (angletimed)
 		{
 			// Timestamps are the GPU's own, taken as it reaches each point, so a stage the CPU feeds slowly includes waiting
-			I_OutputMsg("UWP perf:   ANGLE GPU: software screen %.2f, 2D/upscale/ImGui %.2f, present %.2f, total %.2f ms per frame (worst %.2f); %d frames timed, %d not ready, %d disjoint\n",
-				angle.screen / angle.frames, angle.finish / angle.frames, angle.present / angle.frames,
-				angle.total / angle.frames, angle.worst, angle.frames, angle.notready, angle.disjoint);
+			I_OutputMsg("UWP perf:   ANGLE GPU: software screen %.2f, 2D/upscale/ImGui %.2f, total %.2f ms per frame (worst %.2f); idle until the next frame %.2f ms; %d frames timed, %d not ready, %d disjoint\n",
+				angle.screen / angle.frames, angle.finish / angle.frames,
+				angle.total / angle.frames, angle.worst, angle.idle / angle.frames,
+				angle.frames, angle.notready, angle.disjoint);
 		}
 		I_OutputMsg("UWP perf:   %.1f draws, %.1f textures created, %.1f texture uploads, %.1f framebuffers created per frame; %d patch atlas resets\n",
 			(double)uwp_perf.draws / n, (double)uwp_perf.texturescreated / n, (double)uwp_perf.textureuploads / n,
