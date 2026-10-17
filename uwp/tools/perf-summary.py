@@ -7,7 +7,7 @@ usage: perf-summary.py latest-log.txt [-t]
 import re, sys
 
 # Keys whose captures are kept as text rather than parsed as numbers.
-STRING_KEYS = {'cpus', 'path'}
+STRING_KEYS = {'cpus'}
 
 PATTERNS = [
     (r'UWP perf:\s+([\d.]+) frames/s \(([\d.]+) with 3D\) from ([\d.]+) loops/s; work ([\d.]+) ms per loop, ([\d.]+) ms at worst',
@@ -32,10 +32,8 @@ PATTERNS = [
      ['psochanges', 'psoalive', 'psocreated', 'psoms', 'psoworst', 'rootsets', 'tablesets']),
     (r'UWP perf:\s+D3D12: textures: (\d+) created, (\d+) uploads \(([\d.]+) MB\), (\d+) deleted, (\d+) flushes, (\d+) alive',
      ['texcreated', 'texuploads', 'texmb', 'texdeleted', 'texflushes', 'texalive']),
-    (r'UWP perf:\s+D3D12: present: interop path (\w+), sync [^;]*; per frame copy ([\d.]+) ms, copy-fence wait ([\d.]+) ms \(worst ([\d.]+), \d+ of \d+ not shown\), GL ([\d.]+), swap ([\d.]+) ms; ANGLE read waits (\d+), ([\d.]+) ms total; (\d+) timeouts',
-     ['path', 'copyms', 'copywait', 'copyworst', 'glms', 'swapms', 'anglewaits', 'anglewaitms', 'angletimeouts']),
-    (r'UWP perf:\s+D3D12: present: (direct) swap chain \(\d+ buffers, latency \d+\); per frame copy ([\d.]+) ms, latency wait ([\d.]+) ms \(worst ([\d.]+), (\d+) timeouts\), present ([\d.]+) ms \(worst ([\d.]+)\); (\d+) present failures',
-     ['path', 'copyms', 'copywait', 'copyworst', 'latencytimeouts', 'directpresentms', 'directpresentworst', 'presentfailures']),
+    (r'UWP perf:\s+D3D12: present: direct swap chain \(\d+ buffers, latency \d+\); per frame copy ([\d.]+) ms, latency wait ([\d.]+) ms \(worst ([\d.]+), (\d+) timeouts\), present ([\d.]+) ms \(worst ([\d.]+)\); (\d+) present failures',
+     ['copyms', 'copywait', 'copyworst', 'latencytimeouts', 'directpresentms', 'directpresentworst', 'presentfailures']),
     (r'UWP perf:\s+D3D12: GPU ([\d.]+) ms per frame \(worst ([\d.]+), (\d+) timed\)', ['gpums', 'gpuworst', 'gputimed']),
     # The 'N dedicated,' field is missing from older logs, so its capture is None there and parses as 0.
     (r'UWP perf:\s+D3D12: texture heaps: (\d+) placed, (?:(\d+) dedicated, )?(\d+) committed created; (\d+) heaps \(([\d.]+) MB used, ([\d.]+) MB allocated, peak ([\d.]+) MB\)',
@@ -111,9 +109,7 @@ def summarize(group):
     if any('d12fps' in r for r in group):
         text += (f"; D3D12: {avg('submits'):.2f} submits/frame, {avg('barriers'):.1f} barriers, {avg('psochanges'):.0f} PSO changes "
                  f"({g(group[-1], 'psocreated') - g(group[0], 'psocreated'):.0f} created during it, worst {avg('psoworst'):.1f} ms), GPU {avg('gpums'):.2f} ms, "
-                 + (f"present copy {avg('copyms'):.2f} + latency wait {avg('copywait'):.2f} + Present {avg('directpresentms'):.2f} ms (direct swap chain), "
-                    if group[0].get('path') == 'direct' else
-                    f"present copy {avg('copyms'):.2f} + wait {avg('copywait'):.2f} ms (path {group[0].get('path', '?')}), ") +
+                 f"present copy {avg('copyms'):.2f} + latency wait {avg('copywait'):.2f} + Present {avg('directpresentms'):.2f} ms, "
                  f"{avg('d12draws'):.0f} draws/frame, textures {avg('texalive'):.0f} alive")
     return text
 
