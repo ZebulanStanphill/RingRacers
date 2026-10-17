@@ -27,6 +27,18 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 
+      - name: Build ZDBSP for the renderer test map
+        run: |
+          git clone https://github.com/ZDoom/zdbsp "$RUNNER_TEMP/zdbsp"
+          git -C "$RUNNER_TEMP/zdbsp" checkout 5d4fb9c
+          cmake -S "$RUNNER_TEMP/zdbsp" -B "$RUNNER_TEMP/zdbsp-build" \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build "$RUNNER_TEMP/zdbsp-build" --parallel 4
+
+      - name: Check the renderer test map add-on
+        run: python3 tests/addons/renderer-test/build.py --check --zdbsp "$RUNNER_TEMP/zdbsp-build/zdbsp"
+
       - name: Upload installable shader test
         uses: actions/upload-artifact@v7
         with:
@@ -34,6 +46,16 @@ jobs:
           path: |
             tests/addons/shader-smoke/D_ShaderSmoke_v1.pk3
             tests/addons/shader-smoke/README.md
+          if-no-files-found: error
+
+      - name: Upload installable renderer test map
+        uses: actions/upload-artifact@v7
+        with:
+          name: renderer-test-map
+          path: |
+            tests/addons/renderer-test/D_RenderTest_v1.pk3
+            tests/addons/renderer-test/README.md
+            tests/addons/renderer-test/models
           if-no-files-found: error
 
       - name: Upload test results

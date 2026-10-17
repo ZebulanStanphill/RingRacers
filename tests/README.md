@@ -101,6 +101,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   translated target/layout pairs and the water refraction variant. Windows CI
   compiles the pack's 19 SM5.1 stages, bringing the combined translated corpus to 97.
   The user confirmed the pack's markers on Xbox; its refracted water is untested there.
+- **Installable renderer test map:** [download and
+  instructions](addons/renderer-test/README.md). A generated UDMF race map,
+  `D_RenderTest_v1.pk3`, with a room each for fog, overlapping water and heat
+  haze, polyobject ripples, wall light slices, translucent ordering and
+  brightmaps, a rainy skybox hall and a sprite-textured 3D model (the model
+  files are installed beside the game, not in the PK3). CI builds ZDBSP,
+  rebuilds the map from `build.py`, compares every entry and validates the
+  nodes, and uploads it as `renderer-test-map`. It has not been run in the game;
+  Xbox visuals are untested.
 - **Wall light slices:** execute production UWP wall splitting and clipping with
   real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
   capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the
