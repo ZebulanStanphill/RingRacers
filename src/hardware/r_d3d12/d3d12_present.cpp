@@ -1698,7 +1698,8 @@ TakeResult TakeWindow(UINT width, UINT height)
 	desc.SampleDesc.Count = 1;
 	desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	desc.BufferCount = kDirectBuffers;
-	desc.Scaling = DXGI_SCALING_STRETCH;
+	// Letterboxed like DrawToWindow when the screen's aspect ratio isn't the window's
+	desc.Scaling = DXGI_SCALING_ASPECT_RATIO_STRETCH;
 	desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
 	desc.Flags = kDirectFlags;
@@ -1719,6 +1720,11 @@ TakeResult TakeWindow(UINT width, UINT height)
 	hr = swapChain.As(&g_direct.swapChain);
 	if (Core_Failed(hr, "QueryInterface IDXGISwapChain3"))
 		return fail("QueryInterface IDXGISwapChain3", (unsigned)hr);
+	// The bars' color
+	const DXGI_RGBA black = {0.0f, 0.0f, 0.0f, 1.0f};
+	hr = g_direct.swapChain->SetBackgroundColor(&black);
+	if (FAILED(hr))
+		Log("direct: SetBackgroundColor failed (0x%08X)", (unsigned)hr);
 	hr = g_direct.swapChain->SetMaximumFrameLatency(kDirectLatency);
 	if (Core_Failed(hr, "SetMaximumFrameLatency"))
 		return fail("SetMaximumFrameLatency", (unsigned)hr);
