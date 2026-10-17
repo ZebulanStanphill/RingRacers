@@ -16,8 +16,8 @@ PATTERNS = [
      ['r3d', 'bsp', 'spr', 'portal', 'planes', 'masked']),
     (r'UWP perf:\s+UI ([\d.]+) ms, software screen ([\d.]+) ms, finish update ([\d.]+) ms', ['ui', 'sw', 'fin']),
     (r'UWP perf:\s+([\d.]+) draws', ['draws']),
-    (r'UWP perf:\s+ANGLE GPU: software screen ([\d.]+), 2D/upscale/ImGui ([\d.]+), present ([\d.]+), total ([\d.]+) ms per frame \(worst ([\d.]+)\); (\d+) frames timed, (\d+) not ready, (\d+) disjoint',
-     ['angscreen', 'angfinish', 'angpresent', 'angtotal', 'angworst', 'angtimed', 'angnotready', 'angdisjoint']),
+    (r'UWP perf:\s+ANGLE GPU: software screen ([\d.]+), 2D/upscale/ImGui ([\d.]+), total ([\d.]+) ms per frame \(worst ([\d.]+)\); idle until the next frame ([\d.]+) ms; (\d+) frames timed, (\d+) not ready, (\d+) disjoint',
+     ['angscreen', 'angfinish', 'angtotal', 'angworst', 'angidle', 'angtimed', 'angnotready', 'angdisjoint']),
     (r'UWP perf:\s+([\d.]+) tics/s; logic ([\d.]+) ms per tic \(players ([\d.]+), thinkers ([\d.]+), Lua ([\d.]+), ACS ([\d.]+)\), bots ([\d.]+)',
      ['tics', 'logic', 'players', 'thinkers', 'lua', 'acs', 'bots']),
     (r'UWP perf:\s+mobjs now: (\d+) thinking, (\d+) scenery, (\d+) not thinking; per tic: ([\d.]+) P_CheckPosition calls, ([\d.]+) Lua mobj hooks',
@@ -112,7 +112,7 @@ def summarize(group):
     if angle:
         a = lambda k: sum(g(r, k) for r in angle) / len(angle)
         text += (f"; ANGLE GPU {a('angtotal'):.2f} ms (software screen {a('angscreen'):.2f}, 2D/upscale/ImGui {a('angfinish'):.2f}, "
-                 f"present {a('angpresent'):.2f}, worst {max(g(r, 'angworst') for r in angle):.2f}; "
+                 f"idle until the next frame {a('angidle'):.2f}, worst {max(g(r, 'angworst') for r in angle):.2f}; "
                  f"{sum(g(r, 'angnotready') for r in angle):.0f} not ready, {sum(g(r, 'angdisjoint') for r in angle):.0f} disjoint of "
                  f"{sum(g(r, 'angtimed') + g(r, 'angnotready') + g(r, 'angdisjoint') for r in angle):.0f})")
     # The PSO cache's created count is cumulative, so the stretch's own creations are its last minus its first.
