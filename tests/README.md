@@ -122,8 +122,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   preserved UVs and no outside geometry; draw stubs check opaque/queued/fog
   dispatch, texture IDs, colormaps and alpha. These tests verify submitted
   geometry, not Xbox visuals or performance. The user confirmed the Water
-  Palace wall fix and water effect on Xbox One X in build 94; all split-screen
-  visual checks and a controlled performance comparison remain untested.
+  Palace wall fix and water effect on Xbox One X in build 94, and the water,
+  distortion, Encore and portal effects in split-screen (2026-10-17); a
+  controlled performance comparison remains untested.
 - **Title background light lists:** replay the title map's actual BSP with
   production `HWR_AddLine`, seg processing, wall light slicing, clipping,
   `R_Prep3DFloors`, and all 72 authored slope constructors. All 58 cold first
@@ -178,7 +179,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   polygons must submit no draw. Replacing either changed renderer function with
   its pre-feature implementation fails the corresponding behavior assertion in
   both platform variants.
-- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 600,000 UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing, paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user reported improved single-view underwater intensity on Xbox; heat and all two-/three-/four-player visual checks remain untested.
+- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 600,000 UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing, paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user confirmed underwater and heat distortion on Xbox One X in single player and in split-screen (2026-10-17).
 - **Transparency ordering:** extract the production node builder, object pass,
   model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
   and slope helpers. Each UWP/desktop executable checks 180 scenes and cases,
