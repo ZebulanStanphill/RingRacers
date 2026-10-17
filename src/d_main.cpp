@@ -962,9 +962,11 @@ static bool D_Display(bool world)
 			{
 #ifdef _UWP
 				const precise_t screenstart = I_GetPreciseTime();
+				I_UWPAngleMark(UWPANGLE_SCREEN_START);
 #endif
 				VID_DisplaySoftwareScreen();
 #ifdef _UWP
+				I_UWPAngleMark(UWPANGLE_SCREEN_END);
 				ps_uwp_screentime += I_GetPreciseTime() - screenstart;
 #endif
 			}

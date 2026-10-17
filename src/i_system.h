@@ -374,6 +374,40 @@ extern volatile INT32 i_uwpprofphase;
 
 // [UWP]: Whether a level is being played (not paused), for the profiler, which only counts samples taken then
 extern volatile INT32 i_uwpprofinlevel;
+
+// [UWP]: The points of a Software frame ANGLE's GPU work is timed between (sdl/i_uwpangle.cpp)
+typedef enum
+{
+	UWPANGLE_SCREEN_START, // before VID_DisplaySoftwareScreen
+	UWPANGLE_SCREEN_END, // after it
+	UWPANGLE_FINISH_START, // the start of I_FinishUpdate's RHI part
+	UWPANGLE_PRESENT_START, // just before the present
+	UWPANGLE_PRESENT_END, // just after it
+	UWPANGLE_NUMMARKS
+} uwpanglemark_t;
+
+// [UWP]: Takes a GPU timestamp from ANGLE's Direct3D 11 device. Does nothing unless the Software renderer is drawing
+// with ANGLE's context current. Call from the main thread.
+void I_UWPAngleMark(uwpanglemark_t mark);
+
+// [UWP]: ANGLE's GPU time on Software's frames, in milliseconds summed over the frames timed
+typedef struct
+{
+	INT32 frames; // timed
+	INT32 notready; // dropped because the GPU hadn't finished them when they were read
+	INT32 disjoint; // dropped because the timer's frequency changed
+	double screen; // uploading the software screen
+	double finish; // flushing the 2D layer, upscaling and ImGui
+	double present;
+	double total;
+	double worst; // total, of the slowest frame
+} uwpanglestats_t;
+
+// [UWP]: Takes the stats since the last call. Returns whether any frames were timed.
+boolean I_UWPTakeAngleStats(uwpanglestats_t *stats);
+
+// [UWP]: Releases the timing queries and ANGLE's device, before the OpenGL ES context is deleted
+void I_UWPShutdownAngleTiming(void);
 #endif
 
 #ifdef __cplusplus

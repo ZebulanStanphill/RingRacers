@@ -1811,6 +1811,10 @@ void I_ShutdownGraphics(void)
 	// [UWP]: The Direct3D 12 driver releases its swap chain and ANGLE's device while ANGLE's context exists
 	D3D12_Shutdown();
 #endif
+#ifdef _UWP
+	// [UWP]: The queries timing ANGLE's GPU work belong to its device, which goes with its context
+	I_UWPShutdownAngleTiming();
+#endif
 	if (GLUhandle)
 		hwClose(GLUhandle);
 	if (sdlglcontext)

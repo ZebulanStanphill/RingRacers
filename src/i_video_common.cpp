@@ -298,6 +298,7 @@ void I_FinishUpdate(void)
 
 #ifdef _UWP
 	uwp_stagestart = I_GetPreciseTime();
+	I_UWPAngleMark(UWPANGLE_FINISH_START);
 #endif
 	temp_legacy_finishupdate_draws();
 
@@ -378,7 +379,13 @@ void I_FinishUpdate(void)
 	UWP_STAGE(ps_uwp_cleanuptime);
 
 	UWP_TRACE("present");
+#ifdef _UWP
+	I_UWPAngleMark(UWPANGLE_PRESENT_START);
+#endif
 	rhi->present();
+#ifdef _UWP
+	I_UWPAngleMark(UWPANGLE_PRESENT_END);
+#endif
 	UWP_STAGE(ps_uwp_presenttime);
 	UWP_TRACE("finish");
 	rhi->finish();

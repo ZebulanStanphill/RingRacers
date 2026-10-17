@@ -896,6 +896,10 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 		D3D12_LogPerf(seconds);
 #endif
 
+	// Taken every summary, to start the next from nothing
+	uwpanglestats_t angle;
+	const boolean angletimed = I_UWPTakeAngleStats(&angle);
+
 	if (uwp_perf.frames)
 	{
 		const int n = uwp_perf.frames;
@@ -905,6 +909,13 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 		I_OutputMsg("UWP perf:   finish update: 2D %.1f, upscale %.1f, ImGui %.1f, cleanup %.1f, present %.1f, finish %.1f, next frame %.1f ms\n",
 			uwp_perf.twodee * ms / n, uwp_perf.upscale * ms / n, uwp_perf.imgui * ms / n, uwp_perf.cleanup * ms / n,
 			uwp_perf.present * ms / n, uwp_perf.finish * ms / n, uwp_perf.nextframe * ms / n);
+		if (angletimed)
+		{
+			// Timestamps are the GPU's own, taken as it reaches each point, so a stage the CPU feeds slowly includes waiting
+			I_OutputMsg("UWP perf:   ANGLE GPU: software screen %.2f, 2D/upscale/ImGui %.2f, present %.2f, total %.2f ms per frame (worst %.2f); %d frames timed, %d not ready, %d disjoint\n",
+				angle.screen / angle.frames, angle.finish / angle.frames, angle.present / angle.frames,
+				angle.total / angle.frames, angle.worst, angle.frames, angle.notready, angle.disjoint);
+		}
 		I_OutputMsg("UWP perf:   %.1f draws, %.1f textures created, %.1f texture uploads, %.1f framebuffers created per frame; %d patch atlas resets\n",
 			(double)uwp_perf.draws / n, (double)uwp_perf.texturescreated / n, (double)uwp_perf.textureuploads / n,
 			(double)uwp_perf.framebufferscreated / n, uwp_perf.atlasresets);
