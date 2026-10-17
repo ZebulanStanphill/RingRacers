@@ -1390,8 +1390,8 @@ static void UWPUseSurfaceSize(void)
 
 static SDL_bool Impl_CreateContext(void)
 {
-	// [UWP]: Legacy GL draws with Direct3D 12 and presents through the RHI's OpenGL ES context, so it needs no context
-	// of its own
+	// [UWP]: Legacy GL draws and presents with Direct3D 12, which takes the window from the RHI's OpenGL ES context
+	// when it starts, so it needs no context of its own
 #if defined(HWRENDER) && !defined(HAVE_D3D12)
 	if (rendermode == render_opengl)
 	{
@@ -1470,7 +1470,7 @@ boolean VID_CheckRenderer(void)
 
 #if defined(HAVE_D3D12) && defined(_UWP)
 		// [UWP]: Legacy GL presents with a swap chain of Direct3D 12's own on the window, which ANGLE needs back to draw
-		// Software's frames
+		// Software's frames; starting Legacy GL again takes it again
 		if (rendermode != render_opengl)
 			D3D12_ReleaseWindow();
 #endif
@@ -1808,7 +1808,7 @@ void I_ShutdownGraphics(void)
 
 #ifdef HWRENDER
 #ifdef HAVE_D3D12
-	// [UWP]: The Direct3D 12 driver's EGL surfaces must go while ANGLE's context exists
+	// [UWP]: The Direct3D 12 driver releases its swap chain and ANGLE's device while ANGLE's context exists
 	D3D12_Shutdown();
 #endif
 	if (GLUhandle)

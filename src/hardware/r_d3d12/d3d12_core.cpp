@@ -374,7 +374,7 @@ void Core_ForceWarp(bool force)
 	g_forceWarp = force;
 }
 
-bool Core_Init(ID3D11Device *angle)
+bool Core_Init()
 {
 	if (g_device)
 		return true;
@@ -385,28 +385,15 @@ bool Core_Init(ID3D11Device *angle)
 	if (Core_Failed(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)), "CreateDXGIFactory2"))
 		return false;
 
-	// Sharing needs the adapter ANGLE draws the window with
 	ComPtr<IDXGIAdapter1> adapter;
-	if (angle)
+	if (g_forceWarp)
 	{
-		ComPtr<IDXGIDevice> dxgiDevice;
-		ComPtr<IDXGIAdapter> angleAdapter;
-		DXGI_ADAPTER_DESC angleDesc = {};
-		if (Core_Failed(angle->QueryInterface(IID_PPV_ARGS(&dxgiDevice)), "QueryInterface IDXGIDevice (ANGLE)")
-			|| Core_Failed(dxgiDevice->GetAdapter(&angleAdapter), "GetAdapter (ANGLE)")
-			|| Core_Failed(angleAdapter->GetDesc(&angleDesc), "GetDesc (ANGLE)")
-			|| Core_Failed(factory->EnumAdapterByLuid(angleDesc.AdapterLuid, IID_PPV_ARGS(&adapter)), "EnumAdapterByLuid"))
-			return false;
-	}
-	else if (g_forceWarp)
-	{
-		Core_Log("no ANGLE device: using WARP for testing");
+		Core_Log("using WARP for testing");
 		if (Core_Failed(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter)), "EnumWarpAdapter"))
 			return false;
 	}
 	else
 	{
-		Core_Log("no ANGLE device: using the first hardware adapter, so frames can only be read back");
 		for (UINT i = 0;; i++)
 		{
 			ComPtr<IDXGIAdapter1> candidate;

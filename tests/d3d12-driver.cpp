@@ -4,7 +4,7 @@
 // terms of the GNU General Public License, version 2.
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
-// Runs the production driver and GPU code; only engine services and ANGLE presentation are stubbed.
+// Runs the production driver and GPU code; only engine services and presentation on the window are stubbed.
 #include "hardware/r_d3d12/d3d12_core.h"
 #include "hardware/r_d3d12/d3d12_present.h"
 #include "hardware/r_d3d12/d3d12_prewarm.h"
@@ -54,7 +54,7 @@ enum viewcontext_e viewcontext=VIEWCONTEXT_PLAYER1;
 lumpnum_t W_CheckNumForName(const char *n) { return (!strcmp(n,"FADE0000")||!strcmp(n,"FADE0001")) ? 1 : LUMPERROR; }
 size_t W_LumpLength(lumpnum_t) { return lumpBytes.size(); }
 void W_ReadLump(lumpnum_t, void *d) { memcpy(d,lumpBytes.data(),lumpBytes.size()); }
-consvar_t cv_vidwait{}, cv_reducevfx{};
+consvar_t cv_reducevfx{};
 CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nullptr}};
 INT32 R_AdjustLightLevel(INT32 light) { return light; }
 void HWR_Startup() {}
@@ -68,8 +68,7 @@ RGBA_t *pMasterPalette = nullptr;
 void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stderr,fmt,ap); va_end(ap); exit(1); }
 }
 namespace rr_d3d12 {
-ID3D11Device *Present_AngleDevice() { return nullptr; }
-void Present_SelectPath() {}
+bool Present_TakeWindow() { return true; }
 static int presentedFrames=0;
 void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool) {
     presentedFrames++;
@@ -77,15 +76,13 @@ void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool) {
     UINT64 fence = Core_Submit("present");
     if (!fence || !Core_Wait(fence, 30000, "headless present")) throw std::runtime_error("present failed");
 }
-bool Present_OwnsWindow() { return false; }
 void Present_ReleaseWindow() {}
-void Present_Immediately() {}
 void Present_Shutdown(bool) {}
 void Present_GetTrace(INT32 *c,INT32 *s,UINT32 *cf,UINT32 *sf) { if(c)*c=-1; if(s)*s=-1; if(cf)*cf=0; if(sf)*sf=0; }
 void Present_LogPerf(double) {}
 bool Present_Tracing() { return false; }
 void Present_FrameDone() {}
-UINT64 Present_SlotBytes() { return 0; }
+UINT64 Present_SwapChainBytes() { return 0; }
 }
 template<class T> T function(const char *name) { auto p=D3D12_GetDriverFunction(name); if(!p) throw std::runtime_error(name); return reinterpret_cast<T>(p); }
 static auto clear = function<void (*)(FBOOLEAN,FBOOLEAN,FRGBAFloat *)>("ClearBuffer");

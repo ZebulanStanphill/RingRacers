@@ -400,7 +400,6 @@ bool DrawWipeFull()
 // Do screen fades!
 void D3D_DoScreenWipe(void)
 {
-	Present_Immediately(); // applies to both the full wipe and the fallback below
 	if (DrawWipeFull())
 	{
 		g_texDownloaded = g_endScreenWipe;

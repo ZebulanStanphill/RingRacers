@@ -8,7 +8,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file r_d3d12.cpp
-/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented with its own swap chain or through ANGLE
+/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented with its own swap chain
 ///
 /// GL-state emulation and textured polygon/line draws ported from the former Direct3D 11 driver, using fence-retired
 /// upload rings, persistent texture descriptors and cached pipeline states. Advanced passes arrive in later steps.
@@ -114,7 +114,6 @@ UINT64 g_hueFrame = 0;
 
 bool g_deviceLost = false;
 bool g_shutdown = false;
-bool g_vsync = false, g_vsyncSet = false;
 
 INT32 g_screenWidth = 0, g_screenHeight = 0; // r_opengl.c's screen_width and screen_height
 
@@ -776,7 +775,7 @@ void SetStates()
 //                                                               RENDER TARGET
 // ==========================================================================
 
-constexpr DXGI_FORMAT kScreenFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // what ANGLE opens (see d3d12_present.cpp)
+constexpr DXGI_FORMAT kScreenFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // the swap chain's too (see d3d12_present.cpp)
 
 ComPtr<ID3D12Resource> g_rt; // RENDER_TARGET, except while the present copy reads it
 ComPtr<ID3D12Resource> g_depth; // DEPTH_WRITE
@@ -2141,24 +2140,24 @@ void SetModelView(INT32 w, INT32 h)
 
 boolean D3D_Init(void)
 {
-	if (Core_Device())
-		return true;
-
-	Log("starting Legacy GL's Direct3D 12 driver (drawing with textures)");
-	Core_SetListBegin(BindRenderTarget);
-	// On the same adapter as ANGLE, which the interop paths share textures with to show the window's frames
-	if (!Core_Init(Present_AngleDevice()))
+	if (!Core_Device())
 	{
-		return false;
+		Log("starting Legacy GL's Direct3D 12 driver (drawing with textures)");
+		Core_SetListBegin(BindRenderTarget);
+		if (!Core_Init())
+		{
+			return false;
+		}
+		if (!InitDrawing())
+		{
+			D3D12_Shutdown();
+			return false;
+		}
+		Prewarm_Start(Core_Device(), g_root.Get());
 	}
-	if (!InitDrawing())
-	{
-		D3D12_Shutdown();
-		return false;
-	}
-	Prewarm_Start(Core_Device(), g_root.Get());
-	Present_SelectPath();
-	return true;
+	// Every time Legacy GL starts, since switching to Software gave the window back to ANGLE. If it can't be taken,
+	// Legacy GL can't present: failing here makes the game fall back to Software.
+	return Present_TakeWindow();
 }
 
 void D3D_SetPalette(RGBA_t *palette)
@@ -2989,10 +2988,6 @@ boolean D3D12_Surface(INT32 w, INT32 h)
 	}
 
 	glanisotropicmode_cons_t[1].value = 16; // the former Direct3D 11 driver's kMaximumAnisotropy
-	if (!Present_OwnsWindow()) // otherwise no GL context is current, and the swap chain's sync interval is the vsync
-		SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
-	g_vsync = cv_vidwait.value != 0;
-	g_vsyncSet = true;
 
 	SetModelView(w, h);
 	SetStates();
@@ -3005,15 +3000,7 @@ boolean D3D12_Surface(INT32 w, INT32 h)
 
 void D3D12_FinishUpdate(INT32 waitvbl)
 {
-	const bool vsync = waitvbl != 0;
-
-	if (!g_vsyncSet || g_vsync != vsync)
-	{
-		if (!Present_OwnsWindow()) // otherwise no GL context is current, and Present_Frame takes the vsync
-			SDL_GL_SetSwapInterval(vsync ? 1 : 0);
-		g_vsync = vsync;
-		g_vsyncSet = true;
-	}
+	const bool vsync = waitvbl != 0; // the swap chain's sync interval
 
 	if (!Core_Device() || !g_rt || g_deviceLost || g_shutdown)
 		return;
@@ -3310,12 +3297,12 @@ void D3D12_LogPerf(double seconds)
 	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
 	const bool localValid = adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
 	const UINT64 targets = (g_rt ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0) + (g_depth ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0)
-		+ (g_postTexture.res ? (UINT64)g_postTexture.width * g_postTexture.height * 4 : 0) + Present_SlotBytes();
+		+ (g_postTexture.res ? (UINT64)g_postTexture.width * g_postTexture.height * 4 : 0) + Present_SwapChainBytes();
 	if (localValid)
-		I_OutputMsg("UWP perf:   D3D12: memory: local budget %.1f, usage %.1f MB; render targets/present slots ~%.1f MB\n",
+		I_OutputMsg("UWP perf:   D3D12: memory: local budget %.1f, usage %.1f MB; render targets/swap chain ~%.1f MB\n",
 			local.Budget / 1048576.0, local.CurrentUsage / 1048576.0, targets / 1048576.0);
 	else
-		I_OutputMsg("UWP perf:   D3D12: memory: local unavailable; render targets/present slots ~%.1f MB\n", targets / 1048576.0);
+		I_OutputMsg("UWP perf:   D3D12: memory: local unavailable; render targets/swap chain ~%.1f MB\n", targets / 1048576.0);
 
 	memset(&g_stats, 0, sizeof g_stats);
 }
@@ -3372,7 +3359,7 @@ void D3D12_Shutdown(void)
 	// Nothing is released until the GPU has finished with it; if it doesn't finish, D3D12's objects are kept
 	const bool idle = Core_WaitIdle(2000, "shutting down");
 	Log("shutting down (GPU %s)", idle ? "idle" : "still busy");
-	Present_Shutdown(idle); // EGL surfaces, then ANGLE's textures, then D3D12's
+	Present_Shutdown(idle); // the swap chain, then ANGLE's device
 	if (idle)
 	{
 		g_rt.Reset();

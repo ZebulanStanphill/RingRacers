@@ -92,10 +92,10 @@ option(SRB2_CONFIG_PROFILEMODE "Compile for profiling (GCC only)." OFF)
 option(SRB2_CONFIG_TRACY "Compile with Tracy profiling enabled" OFF)
 option(SRB2_CONFIG_ASAN "Compile with AddressSanitizer (libasan)." OFF)
 option(SRB2_CONFIG_UWP "Compile in UWP compatibility mode (static lib for external launch)." OFF)
-# VibeRant D3D, Legacy GL's Direct3D 12 driver (src/hardware/r_d3d12). Windows only. It presents through ANGLE, which
-# only UWP builds use so far, so it defaults to on for them and off otherwise.
-cmake_dependent_option(SRB2_CONFIG_D3D12 "Draw Legacy GL with Direct3D 12 (VibeRant D3D). Windows only." "${SRB2_CONFIG_UWP}"
-	"WIN32;SRB2_CONFIG_HWRENDER" OFF)
+# VibeRant D3D, Legacy GL's Direct3D 12 driver (src/hardware/r_d3d12). It presents with a swap chain on a CoreWindow,
+# which it takes from ANGLE, so it's for UWP builds only, and on by default there.
+cmake_dependent_option(SRB2_CONFIG_D3D12 "Draw Legacy GL with Direct3D 12 (VibeRant D3D). UWP only." "${SRB2_CONFIG_UWP}"
+	"WIN32;SRB2_CONFIG_HWRENDER;SRB2_CONFIG_UWP" OFF)
 set(SRB2_CONFIG_ASSET_DIRECTORY "" CACHE PATH "Path to directory that contains all asset files for the installer. If set, assets will be part of installation and cpack.")
 
 # Enable CCache

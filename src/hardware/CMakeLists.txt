@@ -55,7 +55,7 @@ if(SRB2_CONFIG_D3D12)
 	add_dependencies(SRB2SDL2 SRB2D3D12Shaders)
 
 	include(r_d3d12/custom_shaders.cmake)
-	target_sources(SRB2SDL2 PRIVATE r_d3d12/custom_shader.cpp r_d3d12/d3d12_interop.cpp r_d3d12/d3d12_pipeline.cpp r_d3d12/d3d12_prewarm.cpp
+	target_sources(SRB2SDL2 PRIVATE r_d3d12/custom_shader.cpp r_d3d12/d3d12_pipeline.cpp r_d3d12/d3d12_prewarm.cpp
 		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_upload.cpp r_d3d12/d3d12_present.cpp r_d3d12/r_d3d12.cpp)
 	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl d3dcompiler)
 	target_include_directories(SRB2SDL2 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

@@ -40,11 +40,11 @@ int Core_Errors();
 // Logs something the first time it happens
 #define D3D12_LOG_ONCE(...) do { static bool logged_ = false; if (!logged_) { logged_ = true; rr_d3d12::Core_Log(__VA_ARGS__); } } while (0)
 
-// Makes the device on ANGLE's adapter (found by LUID; without ANGLE, the first hardware adapter), its queue, fence
-// and an open command list. Called again after a failure, it tries again.
-bool Core_Init(ID3D11Device *angle);
+// Makes the device on the first hardware adapter, its queue, fence and an open command list. Called again after a
+// failure, it tries again.
+bool Core_Init();
 
-// Test hook: selects WARP only when Core_Init has no ANGLE device. Set before initialization.
+// Test hook: makes Core_Init select WARP rather than a hardware adapter. Set before initialization.
 void Core_ForceWarp(bool force);
 
 // Releases everything if the GPU is idle (or the device was removed); otherwise keeps it all until exit, since
@@ -63,7 +63,7 @@ void Core_SetListBegin(void (*callback)(void));
 
 // Closes and executes the list, signals the fence and reopens the list. Returns the value the GPU will signal when
 // the work is done, or 0 if nothing could be submitted. reason is counted: "present" is the frame's normal
-// submission; anything else ("ring", "readback", "upload", "probe", "resize") is a mid-frame one.
+// submission; anything else ("ring", "readback", "upload", "resize") is a mid-frame one.
 UINT64 Core_Submit(const char *reason);
 
 // The value the next Core_Submit signals, which covers everything recorded so far
@@ -111,7 +111,6 @@ enum
 {
 	kRtvScreen = 0,
 	kRtvPost,
-	kRtvScratch, // the interop probe and other temporaries
 	kRtvCount = 16,
 };
 enum
