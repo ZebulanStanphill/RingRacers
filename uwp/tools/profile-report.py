@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Turns E:\\ringracers\\uwp-profile.txt into the functions the main thread spent its time in.
 
-usage: profile-report.py uwp-profile.txt ringracers-uwp.map [top N] [--dll name.dll=path ...]
+usage: profile-report.py uwp-profile.txt ringracers-uwp.map|- [top N] [--dll name.dll=path ...]
+
+Profiles from builds with the renderer split name phases "Software: 3D view" and "Legacy GL: 3D view"; older ones just
+"3D view". Each phase and each renderer shows how much of it is inside ANGLE (libGLESv2.dll or libEGL.dll, anywhere in the
+call stack), which needs stacks. A map file of "-" skips symbols, for a report that only needs that.
 
 With call stacks in the profile (builds after 9aa8798), also shows each function's time including what it called
 ("inclusive"), and which game functions the hottest code was called from. --dll maps addresses in other modules to
@@ -20,9 +24,18 @@ def undecorate(name):
     parts = name[1:].split("@@")[0].split("@")
     return "::".join(reversed([p for p in parts if p]))
 
+ANGLE_MODULES = ("libglesv2.dll", "libegl.dll")
+
+def renderer_of(phase):
+    """The renderer in a phase's name ("Software: 3D view"), or None in older profiles ("3D view")."""
+    renderer, sep, _ = phase.partition(": ")
+    return renderer if sep else None
+
 def read_map(path):
     base = None
     syms = []
+    if path == "-":
+        return syms
     insyms = False
     for line in open(path, errors="replace"):
         m = re.search(r"Preferred load address is ([0-9a-fA-F]+)", line)
@@ -126,12 +139,23 @@ def main():
             if parts and parts[0].isdigit():
                 stacks[section[1]].append((int(parts[0]), [int(p) for p in parts[1:]]))
 
+    def in_angle(fid):
+        mod, _ = frames[fid]
+        return modules.get(mod, "").replace("\\", "/").split("/")[-1].lower() in ANGLE_MODULES
+
+    # Samples with a frame in ANGLE anywhere in their call stack, and samples with stacks, by phase
+    angle = {name: sum(c for c, ids in entries if any(in_angle(f) for f in ids)) for name, entries in stacks.items()}
+    withstacks = {name: sum(c for c, _ in entries) for name, entries in stacks.items()}
+
+    def angle_text(name):
+        return f", {100.0 * angle[name] / withstacks[name]:.1f}% inside ANGLE" if withstacks.get(name) else ""
+
     print(header)
     total = sum(c for entries in phases.values() for _, _, c in entries)
     allfuncs = collections.Counter()
     for name, entries in phases.items():
         n = sum(c for _, _, c in entries)
-        print(f"\n== {name}: {n} samples, {100.0 * n / max(total, 1):.1f}% of all in levels")
+        print(f"\n== {name}: {n} samples, {100.0 * n / max(total, 1):.1f}% of all in levels{angle_text(name)}")
         funcs = collections.Counter()
         mods = collections.Counter()
         for mod, off, count in entries:
@@ -146,6 +170,25 @@ def main():
     print(f"\n== all phases: {total} samples")
     for key, count in allfuncs.most_common(top):
         print(f"   {100.0 * count / total:5.1f}%  {key}")
+
+    # Per renderer (all together in older profiles, which don't say), "inside ANGLE" meaning any frame of the call stack
+    renderers = collections.OrderedDict()
+    for name, entries in phases.items():
+        r = renderers.setdefault(renderer_of(name), [0, 0, 0])
+        r[0] += sum(c for _, _, c in entries)
+        r[1] += withstacks.get(name, 0)
+        r[2] += angle.get(name, 0)
+    print()
+    for renderer, (n, nstacks, nangle) in renderers.items():
+        label = renderer or "Renderer not recorded"
+        text = f"{label}: {n} samples in levels"
+        if nstacks:
+            text += f", {100.0 * nangle / nstacks:.1f}% inside ANGLE"
+            if nstacks < n:
+                text += f" (of {nstacks} with call stacks)"
+        else:
+            text += ", no call stacks to tell what's inside ANGLE"
+        print(text)
 
     if not stacks:
         return

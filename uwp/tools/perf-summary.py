@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Summarizes the 5-second 'UWP perf' blocks of a latest-log.txt, including the Direct3D 12 'D3D12:' lines: averages
-for each stretch of racing, and with -t, a table of every block.
+"""Summarizes the 5-second 'UWP perf' blocks of a latest-log.txt, including the Direct3D 12 'D3D12:' lines and the
+Software renderer's 'ANGLE GPU:' line: averages for each stretch of racing, and with -t, a table of every block.
 
 usage: perf-summary.py latest-log.txt [-t]
 """
@@ -16,6 +16,8 @@ PATTERNS = [
      ['r3d', 'bsp', 'spr', 'portal', 'planes', 'masked']),
     (r'UWP perf:\s+UI ([\d.]+) ms, software screen ([\d.]+) ms, finish update ([\d.]+) ms', ['ui', 'sw', 'fin']),
     (r'UWP perf:\s+([\d.]+) draws', ['draws']),
+    (r'UWP perf:\s+ANGLE GPU: software screen ([\d.]+), 2D/upscale/ImGui ([\d.]+), present ([\d.]+), total ([\d.]+) ms per frame \(worst ([\d.]+)\); (\d+) frames timed, (\d+) not ready, (\d+) disjoint',
+     ['angscreen', 'angfinish', 'angpresent', 'angtotal', 'angworst', 'angtimed', 'angnotready', 'angdisjoint']),
     (r'UWP perf:\s+([\d.]+) tics/s; logic ([\d.]+) ms per tic \(players ([\d.]+), thinkers ([\d.]+), Lua ([\d.]+), ACS ([\d.]+)\), bots ([\d.]+)',
      ['tics', 'logic', 'players', 'thinkers', 'lua', 'acs', 'bots']),
     (r'UWP perf:\s+mobjs now: (\d+) thinking, (\d+) scenery, (\d+) not thinking; per tic: ([\d.]+) P_CheckPosition calls, ([\d.]+) Lua mobj hooks',
@@ -67,14 +69,14 @@ def g(r, k):
 def show(rows):
     print(f"{'line':>5} {'resolution':>10} {'fps':>5} {'3dfps':>5} {'loops':>5} {'work':>5} {'idle%':>5} | {'3D':>5} {'bsp':>5} {'spr':>4} {'port':>4} {'pln':>4} {'msk':>4} | "
           f"{'ui':>4} {'sw':>4} {'fin':>4} | {'tics':>5} {'logic':>5} {'plyr':>4} {'thnk':>5} {'bots':>4} | {'mobjs':>5} {'chkpos':>6} {'pause':>5} | "
-          f"{'gpu':>5} {'pso':>4} {'subm':>4} {'copyw':>5}  cpus")
+          f"{'gpu':>5} {'pso':>4} {'subm':>4} {'copyw':>5} {'angle':>5}  cpus")
     for r in rows:
         idle = 100 - g(r, 'loops') * g(r, 'work') / 10
         print(f"{r['line']:>5} {r['resolution']:>10} {g(r,'fps'):5.1f} {g(r,'fps3d'):5.1f} {g(r,'loops'):5.1f} {g(r,'work'):5.1f} {idle:5.0f} | "
               f"{g(r,'r3d'):5.1f} {g(r,'bsp'):5.1f} {g(r,'spr'):4.1f} {g(r,'portal'):4.1f} {g(r,'planes'):4.1f} {g(r,'masked'):4.1f} | "
               f"{g(r,'ui'):4.1f} {g(r,'sw'):4.1f} {g(r,'fin'):4.1f} | {g(r,'tics'):5.1f} {g(r,'logic'):5.1f} {g(r,'players'):4.1f} {g(r,'thinkers'):5.1f} {g(r,'bots'):4.1f} | "
               f"{g(r,'mobjs'):5.0f} {g(r,'checkpos'):6.0f} {g(r,'paused'):5.1f} | "
-              f"{g(r,'gpums'):5.2f} {g(r,'psochanges'):4.0f} {g(r,'submits'):4.2f} {g(r,'copywait'):5.2f}  {r.get('cpus', '')}")
+              f"{g(r,'gpums'):5.2f} {g(r,'psochanges'):4.0f} {g(r,'submits'):4.2f} {g(r,'copywait'):5.2f} {g(r,'angtotal'):5.2f}  {r.get('cpus', '')}")
 
 def races(rows):
     """Groups racing blocks at the same resolution, where every frame drew 3D and tics ran at full speed."""
@@ -105,6 +107,14 @@ def summarize(group):
         text += f"; {avg('mobjs'):.0f} thinking mobjs, {avg('checkpos'):.0f} P_CheckPosition/tic, profiler pauses {avg('paused'):.1f} ms/s"
     if any('pointcached' in r for r in group):
         text += f"; R_PointInSubsector {avg('pointlookups'):.0f}/s, {avg('pointcached'):.0f}% cached"
+    # Only the blocks that timed frames have the line; the others (Legacy GL, or no ANGLE device) would pull it down.
+    angle = [r for r in group if g(r, 'angtimed') > 0]
+    if angle:
+        a = lambda k: sum(g(r, k) for r in angle) / len(angle)
+        text += (f"; ANGLE GPU {a('angtotal'):.2f} ms (software screen {a('angscreen'):.2f}, 2D/upscale/ImGui {a('angfinish'):.2f}, "
+                 f"present {a('angpresent'):.2f}, worst {max(g(r, 'angworst') for r in angle):.2f}; "
+                 f"{sum(g(r, 'angnotready') for r in angle):.0f} not ready, {sum(g(r, 'angdisjoint') for r in angle):.0f} disjoint of "
+                 f"{sum(g(r, 'angtimed') + g(r, 'angnotready') + g(r, 'angdisjoint') for r in angle):.0f})")
     # The PSO cache's created count is cumulative, so the stretch's own creations are its last minus its first.
     if any('d12fps' in r for r in group):
         text += (f"; D3D12: {avg('submits'):.2f} submits/frame, {avg('barriers'):.1f} barriers, {avg('psochanges'):.0f} PSO changes "
