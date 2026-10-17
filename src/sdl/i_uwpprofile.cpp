@@ -11,9 +11,10 @@
 /// A thread pauses the main thread about 50 times a second and records the address it was running, the calls
 /// that led there (found with the unwind data of each module), and what it was doing (uwpprofphase_t). Every 20
 /// seconds, it writes how many samples it took at each address and with each call stack while a level was being
-/// played to E:\ringracers\uwp-profile.txt. Addresses are written as offsets into their module, which for the game
-/// itself (ringracers-uwp.exe) ringracers-uwp.map from the same build maps to functions. Each sample pauses the main
-/// thread for about 0.25 ms on Xbox, so sampling more often slows the game noticeably.
+/// played, for each renderer (Software, Legacy GL), to E:\ringracers\uwp-profile.txt. Addresses are written as
+/// offsets into their module, which for the game itself (ringracers-uwp.exe) ringracers-uwp.map from the same build
+/// maps to functions. Each sample pauses the main thread for about 0.25 ms on Xbox, so sampling more often slows the
+/// game noticeably.
 
 #include <algorithm>
 #include <array>
@@ -32,6 +33,7 @@
 #include <windows.h>
 
 #include "../i_system.h"
+#include "../i_video.h"
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -47,6 +49,15 @@ constexpr const char* kProfilePath = "E:\\ringracers\\uwp-profile.txt";
 constexpr auto kWriteInterval = std::chrono::seconds(20);
 constexpr LONGLONG kSampleInterval = -200000; // 20 ms, in 100 ns units (negative for relative to now)
 constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display"};
+// What was drawing: rendermode's render_soft, render_opengl, and anything else (render_none)
+enum Renderer
+{
+	RENDERER_SOFTWARE,
+	RENDERER_LEGACYGL,
+	RENDERER_NONE,
+	NUMRENDERERS
+};
+constexpr const char* kRendererNames[NUMRENDERERS] = {"Software", "Legacy GL", "No renderer"};
 constexpr int kMaxFrames = 12; // of each call stack, innermost first
 constexpr size_t kMaxModules = 64; // to unwind through
 constexpr int kMaxProcessors = 64;
@@ -191,10 +202,24 @@ struct StackHash
 	}
 };
 
+Renderer RendererOf(INT32 mode)
+{
+	switch (mode)
+	{
+	case render_soft:
+		return RENDERER_SOFTWARE;
+	case render_opengl:
+		return RENDERER_LEGACYGL;
+	default:
+		return RENDERER_NONE;
+	}
+}
+
 struct Profile
 {
-	std::unordered_map<uintptr_t, uint32_t> counts[NUMUWPPROFPHASES]; // samples in levels by address
-	std::unordered_map<Stack, uint32_t, StackHash> stacks[NUMUWPPROFPHASES]; // samples in levels by call stack
+	// Samples in levels by renderer and phase, by address and by call stack
+	std::unordered_map<uintptr_t, uint32_t> counts[NUMRENDERERS][NUMUWPPROFPHASES];
+	std::unordered_map<Stack, uint32_t, StackHash> stacks[NUMRENDERERS][NUMUWPPROFPHASES];
 	uint64_t levelsamples = 0;
 	uint64_t othersamples = 0;
 	uint64_t failedsamples = 0;
@@ -319,30 +344,36 @@ void WriteProfile(const Profile& profile, double seconds)
 		return index;
 	};
 
-	std::vector<Entry> entries[NUMUWPPROFPHASES];
-	for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
+	std::vector<Entry> entries[NUMRENDERERS][NUMUWPPROFPHASES];
+	for (int renderer = 0; renderer < NUMRENDERERS; renderer++)
 	{
-		for (const auto& [address, count] : profile.counts[phase])
+		for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
 		{
-			const size_t module = find_module(address);
-			entries[phase].push_back({module, address - modules[module], count});
+			for (const auto& [address, count] : profile.counts[renderer][phase])
+			{
+				const size_t module = find_module(address);
+				entries[renderer][phase].push_back({module, address - modules[module], count});
+			}
+			std::sort(entries[renderer][phase].begin(), entries[renderer][phase].end(), [](const Entry& a, const Entry& b) { return a.count > b.count; });
 		}
-		std::sort(entries[phase].begin(), entries[phase].end(), [](const Entry& a, const Entry& b) { return a.count > b.count; });
 	}
 
 	// Each address in a call stack, numbered in the order first seen
 	std::unordered_map<uintptr_t, size_t> frameids;
 	std::vector<uintptr_t> frames;
-	for (const auto& stacks : profile.stacks)
+	for (const auto& renderer : profile.stacks)
 	{
-		for (const auto& [stack, count] : stacks)
+		for (const auto& stacks : renderer)
 		{
-			for (uintptr_t frame : stack)
+			for (const auto& [stack, count] : stacks)
 			{
-				if (frame && frameids.emplace(frame, frames.size()).second)
+				for (uintptr_t frame : stack)
 				{
-					frames.push_back(frame);
-					find_module(frame);
+					if (frame && frameids.emplace(frame, frames.size()).second)
+					{
+						frames.push_back(frame);
+						find_module(frame);
+					}
 				}
 			}
 		}
@@ -351,6 +382,7 @@ void WriteProfile(const Profile& profile, double seconds)
 	fprintf(file, "Ring Racers UWP profile: %llu samples while playing levels and %llu at other times over %.0f s (%.0f per second), %llu failed\n",
 		static_cast<unsigned long long>(profile.levelsamples), static_cast<unsigned long long>(profile.othersamples), seconds,
 		(profile.levelsamples + profile.othersamples) / seconds, static_cast<unsigned long long>(profile.failedsamples));
+	fprintf(file, "Phases are named by renderer, like Software: 3D view, and only listed if they have samples\n");
 	fprintf(file, "Lines after each phase: module, offset into it (hex), samples\n");
 	fprintf(file, "Lines after each phase's stacks: samples, then the frames of a call stack, innermost first; frames after the first are return addresses\n");
 
@@ -364,18 +396,26 @@ void WriteProfile(const Profile& profile, double seconds)
 		fprintf(file, "module %zu: %s\n", i, path);
 	}
 
-	for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
+	for (int renderer = 0; renderer < NUMRENDERERS; renderer++)
 	{
-		uint64_t samples = 0;
-		for (const Entry& entry : entries[phase])
+		for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
 		{
-			samples += entry.count;
-		}
+			if (entries[renderer][phase].empty())
+			{
+				continue;
+			}
 
-		fprintf(file, "phase %s: %llu samples\n", kPhaseNames[phase], static_cast<unsigned long long>(samples));
-		for (const Entry& entry : entries[phase])
-		{
-			fprintf(file, "%zu %llx %u\n", entry.module, static_cast<unsigned long long>(entry.offset), entry.count);
+			uint64_t samples = 0;
+			for (const Entry& entry : entries[renderer][phase])
+			{
+				samples += entry.count;
+			}
+
+			fprintf(file, "phase %s: %s: %llu samples\n", kRendererNames[renderer], kPhaseNames[phase], static_cast<unsigned long long>(samples));
+			for (const Entry& entry : entries[renderer][phase])
+			{
+				fprintf(file, "%zu %llx %u\n", entry.module, static_cast<unsigned long long>(entry.offset), entry.count);
+			}
 		}
 	}
 
@@ -386,21 +426,29 @@ void WriteProfile(const Profile& profile, double seconds)
 		fprintf(file, "frame %zu %zu %llx\n", i, module, static_cast<unsigned long long>(frames[i] - modules[module]));
 	}
 
-	for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
+	for (int renderer = 0; renderer < NUMRENDERERS; renderer++)
 	{
-		fprintf(file, "stacks %s: %zu\n", kPhaseNames[phase], profile.stacks[phase].size());
-		for (const auto& [stack, count] : profile.stacks[phase])
+		for (int phase = 0; phase < NUMUWPPROFPHASES; phase++)
 		{
-			fprintf(file, "%u", count);
-			for (uintptr_t frame : stack)
+			if (entries[renderer][phase].empty())
 			{
-				if (!frame)
-				{
-					break;
-				}
-				fprintf(file, " %zu", frameids[frame]);
+				continue;
 			}
-			fprintf(file, "\n");
+
+			fprintf(file, "stacks %s: %s: %zu\n", kRendererNames[renderer], kPhaseNames[phase], profile.stacks[renderer][phase].size());
+			for (const auto& [stack, count] : profile.stacks[renderer][phase])
+			{
+				fprintf(file, "%u", count);
+				for (uintptr_t frame : stack)
+				{
+					if (!frame)
+					{
+						break;
+					}
+					fprintf(file, " %zu", frameids[frame]);
+				}
+				fprintf(file, "\n");
+			}
 		}
 	}
 
@@ -446,6 +494,7 @@ void SampleMainThread(Sampler sampler)
 		BOOL gotcontext = FALSE;
 		INT32 phase = UWPPROF_OTHER;
 		INT32 inlevel = false;
+		INT32 mode = render_none;
 		Stack stack = {};
 		int frames = 0;
 		uintptr_t unknown = 0;
@@ -455,6 +504,7 @@ void SampleMainThread(Sampler sampler)
 			gotcontext = sampler.getcontext(sampler.thread, &context);
 			phase = i_uwpprofphase;
 			inlevel = i_uwpprofinlevel;
+			mode = rendermode;
 			if (gotcontext && inlevel && sampler.unwind)
 			{
 				frames = UnwindStack(sampler.unwind, modules, false, sampler.stacklow, sampler.stackhigh, &context,
@@ -471,10 +521,11 @@ void SampleMainThread(Sampler sampler)
 		}
 		else if (inlevel && phase >= 0 && phase < NUMUWPPROFPHASES)
 		{
-			profile.counts[phase][frames ? stack[0] : context.Rip]++;
+			const Renderer renderer = RendererOf(mode);
+			profile.counts[renderer][phase][frames ? stack[0] : context.Rip]++;
 			if (frames)
 			{
-				profile.stacks[phase][stack]++;
+				profile.stacks[renderer][phase][stack]++;
 			}
 			profile.levelsamples++;
 		}
