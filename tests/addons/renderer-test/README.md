@@ -1,6 +1,6 @@
 # Renderer test map
 
-[D_RenderTest_v1.pk3](D_RenderTest_v1.pk3) is a 134 KB add-on for Ring Racers
+[D_RenderTest_v1.pk3](D_RenderTest_v1.pk3) is a 135 KB add-on for Ring Racers
 2.4 with one hidden race map, **Render Test**, that puts the fork's renderer
 features side by side: fog, overlapping water, heat haze, polyobject ripples,
 wall light slices, translucent sorting, brightmaps, a skybox with rain and a
@@ -25,10 +25,15 @@ reporting.
 3. Launch the game, select **VibeRant D3D** (or **Software**, to compare), and
    load the file through the **Addons** menu. With a keyboard, the alternative
    console command is `addfile "E:\ringracers\addons\D_RenderTest_v1.pk3"`.
-4. Open the console and run `map RR_RENDERTEST`, or `map RR_RENDERTEST -e` for
-   Encore (it needs Encore unlocked, like any map). For the split-screen
+4. Open the console and run `cheats on`, then `map RR_RENDERTEST`, or
+   `map RR_RENDERTEST -e` for Encore. For the split-screen
    variants, start the game with two local players first. The map is a one-lap
    race with no music.
+
+The add-on removes AI racers when this map loads and during play, so you can
+test without bots driving around or using items. Human players, including all
+local split-screen players, stay in the map. Your bot settings and other maps
+are unaffected; restarting this map also keeps it free of bots.
 
 The hall runs west to east. You start at its west end, facing east, in light
 rain. There are three doorways on the left (north) side, west to east: **Fog**,
@@ -114,9 +119,10 @@ it.
 
 ## Build and validation
 
-`build.py` generates everything from its own source: the UDMF map, every
+`build.py` generates the UDMF map, every
 texture, flat and sprite as PNG, the SOC level header, the `BRIGHT` and
-`SPRTINFO` lumps, and the model files. Only the map's BSP, the `ZNODES` lump,
+`SPRTINFO` lumps, and the model files, and packages the map-local bot removal
+script from [`quiet.lua`](quiet.lua). Only the map's BSP, the `ZNODES` lump,
 comes from a tool, [ZDBSP](https://github.com/ZDoom/zdbsp) 1.19 (commit
 `5d4fb9c`; it builds with `cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5`):
 

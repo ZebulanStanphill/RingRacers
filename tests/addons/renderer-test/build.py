@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generate the renderer test map add-on (D_RenderTest_v1.pk3), or check the committed copy.
 
-Everything is generated deterministically from this script: the UDMF map, its
-textures, flats and sprites, the SOC level header, BRIGHT and SPRTINFO lumps,
-and the model files. Only the map's BSP (the ZNODES lump) comes from an
+The UDMF map, its textures, flats and sprites, the SOC level header, BRIGHT and
+SPRTINFO lumps, and the model files are generated deterministically here. The
+map-local bot removal script is packaged from quiet.lua. Only the map's BSP
+(the ZNODES lump) comes from an
 external tool, ZDBSP, which is why --check compares that one lump structurally.
 """
 
@@ -1042,6 +1043,7 @@ def build(zdbsp):
     lines = geometry.build()
     znodes, rewritten = run_zdbsp(zdbsp, emit_textmap(geometry, lines, zdbsp=True))
     entries = {
+        "Lua/quiet.lua": (HERE / "quiet.lua").read_bytes(),
         "SOC/rendertest.soc": SOC.encode("ascii"),
         "BRIGHT": BRIGHT.encode("ascii"),
         "SPRTINFO": SPRTINFO.encode("ascii"),
