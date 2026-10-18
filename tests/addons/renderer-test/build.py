@@ -595,7 +595,7 @@ def emit_textmap(geometry, lines, zdbsp=False):
 # --------------------------------------------------------------------------
 
 HALL = (-1280, -640, 1280, 640)
-ROOM_X = (-832, 0, 832)  # room centres; each is 768 wide and 768 deep, behind a 512-wide doorway
+ROOM_X = (-832, 0, 832)  # room centres; 768 wide behind a 512-wide doorway; water extends farther north
 NORTH, SOUTH = (704, 1472), (-1472, -704)
 
 
@@ -635,22 +635,26 @@ def build_geometry():
     control("fog_blue", 0, 128, 202, [22], wall="RTFOG", lightlevel=200, lightcolor=color(0, 0, 255),
             fadecolor=color(0, 0, 64), fadeend=24, colormapfog=True)
 
-    # 3. Water: overlapping water volumes over a sloped floor, pillars, a heat-haze ledge, a translucent wall.
+    # 3. Water: a deep pool with entrance/exit ramps, overlapping volumes, pillars and a dry heat-haze ledge.
     x0, x1 = room_x(ROOM_X[1])
-    slope = {"floorplane_a": 0, "floorplane_b": -0.2, "floorplane_c": 1, "floorplane_d": 140.8}
-    pillars = [rect(-288, 772, -192, 868), rect(-48, 832, 48, 928), rect(192, 1092, 288, 1188)]
-    corner = rect(128, 704, 384, 960)
-    g.sector("water_main", [(x0, 704), (128, 704), (128, 960), (x1, 960), (x1, 1344), (x0, 1344)], holes=pillars,
-             id=30, lightlevel=200, **slope)
-    g.sector("water_corner", corner, id=30, moreids="31", lightlevel=200, **slope)
+    entrance_slope = {"floorplane_a": 0, "floorplane_b": 0.5, "floorplane_c": 1, "floorplane_d": -352}
+    exit_slope = {"floorplane_a": 0, "floorplane_b": -0.5, "floorplane_c": 1, "floorplane_d": 2144}
+    pillars = [rect(-288, 1920, -192, 2016), rect(-48, 2112, 48, 2208), rect(192, 3072, 288, 3168)]
+    corner = rect(128, 2240, 384, 3008)
+    g.sector("water_entrance", rect(x0, 704, x1, 1728), id=30, lightlevel=200, **entrance_slope)
+    g.sector("water_main", [(x0, 1728), (x1, 1728), (x1, 2240), (128, 2240),
+                            (128, 3008), (x1, 3008), (x1, 3264), (x0, 3264)], holes=pillars,
+             heightfloor=-512, id=30, lightlevel=200)
+    g.sector("water_corner", corner, heightfloor=-512, id=30, moreids="31", lightlevel=200)
     for n, p in enumerate(pillars):
         g.sector(f"water_pillar{n}", p, heightfloor=192, lightlevel=200)
-    g.sector("water_ledge", rect(x0, 1344, x1, 1472), heightfloor=128, lightlevel=200, heatwave=True)
-    g.free_line((x0, 1016), (x1, 1016), "water_main", midtexture="RTGLASS", alpha=0.5,
+    g.sector("water_exit", rect(x0, 3264, x1, 4544), heightfloor=-512, id=30, lightlevel=200, **exit_slope)
+    g.sector("water_ledge", rect(x0, 4544, x1, 4800), heightfloor=128, lightlevel=200, heatwave=True)
+    g.free_line((x0, 2048), (x1, 2048), "water_main", midtexture="RTGLASS", alpha=0.5,
                 wrapmidtex=True, midpeg=True, sides=({}, {}))
-    control("water_big", 0, 96, 120, [30, 128, 0, 0, 0], wall="RTWATER", texturefloor="RTWATER",
+    control("water_big", -768, 96, 120, [30, 128, 0, 0, 0], wall="RTWATER", texturefloor="RTWATER",
             textureceiling="RTWATER", lightlevel=200, lightcolor=color(32, 96, 255), lightalpha=24)
-    control("water_small", 0, 48, 120, [31, 96, 0, 0, 0], wall="RTWATER", texturefloor="RTWATER",
+    control("water_small", -768, 48, 120, [31, 96, 0, 0, 0], wall="RTWATER", texturefloor="RTWATER",
             textureceiling="RTWATER", lightlevel=200, lightcolor=color(32, 255, 96), lightalpha=24)
 
     # 4. Polyobjects: the room is one convex sector, and the objects wait in a garage far to the east.

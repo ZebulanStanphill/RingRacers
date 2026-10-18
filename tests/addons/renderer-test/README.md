@@ -1,14 +1,13 @@
 # Renderer test map
 
-[D_RenderTest_v1.pk3](D_RenderTest_v1.pk3) is a 135 KB add-on for Ring Racers
+[D_RenderTest_v1.pk3](D_RenderTest_v1.pk3) is an add-on for Ring Racers
 2.4 with one hidden race map, **Render Test**, that puts the fork's renderer
 features side by side: fog, overlapping water, heat haze, polyobject ripples,
 wall light slices, translucent sorting, brightmaps, a skybox with rain and a
 sprite-textured 3D model. It ships every texture, flat and sprite it uses, so it
-needs no other assets. Everything here is **untested on Xbox**, and the map has
-not been loaded by the game at all yet: it was generated and checked offline
-(see the end), so a load error or a wrong-looking room is a result worth
-reporting.
+needs no other assets. The map has been loaded on Xbox, but its individual
+rooms and effects still need gameplay validation. Offline generation checks
+(see the end) do not establish that every test looks or behaves correctly.
 
 ## Install and open
 
@@ -60,15 +59,22 @@ through them. Look at it from the doorway, then walk in and through all three
 parts, with **Shaders** On and Off. Software is the reference; the Shaders Off
 path is the older approximation.
 
-**Water** *(Water (overlapping volumes); Underwater and heat distortion).* A
-translucent rippled pool covers the whole room (0 to 96), a smaller second
-volume of a different tint overlaps it in the east corner (0 to 48), and the
-floor slopes up from the door until it clears the surface. Three raised blocks
-stand half submerged, and a translucent wall crosses the room through the
-water. Check that the refraction shows submerged geometry, that no extra boundary
-shows where one volume lies inside the other, and the underwater distortion once
-your camera is in the water. A dry ledge at the back has **heat haze** when your camera is on
-it. **Reduce VFX** On turns both distortions and the refraction off.
+**Water** *(Water (overlapping volumes); Underwater and heat distortion).* The
+chamber is 768 units wide and 4,096 units long, with a 1,536-unit-long flat pool
+between two ramps. Drive north through the doorway and down the entrance ramp:
+the floor descends from 0 to -512 below the main water surface at 96, leaving
+608 units of water above the flat bottom so the chase camera can submerge.
+Continue along the bottom, then up the far ramp to the dry ledge at 128, which
+has **heat haze** when your camera is on it. The ramps connect continuously to
+the hall and ledge; you can drive back along the same route.
+
+The main translucent rippled water spans both ramps and the pool. A smaller
+volume of a different tint overlaps it in the east corner, with its surface at
+48 over the same flat floor at -512. Three raised blocks rise out of the pool, and a
+translucent wall crosses its deep section. Check that the refraction shows
+submerged geometry, that no extra boundary shows where one volume lies inside
+the other, and the underwater distortion once your camera is in the water.
+**Reduce VFX** On turns both distortions and the refraction off.
 
 **Polyobjects** *(Polyobject ripples).* Two 128 by 128 blocks. The translucent
 one (70% opaque) has ripple flags on its top and bottom, and the opaque one has
@@ -170,7 +176,7 @@ solid however the renderer culls, and `models.dat` assigns it to the item box's
 two sprites (`RBOX`, the ring box, and `RNDM`, the random item) at scale 2.0.
 Raise or lower that scale if the box looks too small or large.
 
-Nothing here has run in the game yet. In particular the engine's reading of the
+The offline checks do not verify the effects in gameplay. In particular the
 SOC, `BRIGHT` and `SPRTINFO` text, the polyobject rotation trigger (crossing the
-doorway line), the finish line and the waypoint loop were checked against the
-source, not by playing.
+doorway line), the finish line and the waypoint loop still need gameplay
+validation; their definitions were checked against the engine source.
