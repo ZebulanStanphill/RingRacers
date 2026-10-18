@@ -8,7 +8,7 @@ Coding agents were used heavily in the development of this port.
 
 ## Installing
 
-1. Plug an external USB storage drive into your Xbox and format it for *media* (not apps/games). This wipes its contents. It will be your `E:\` drive. Windows can read and write the drive like any other NTFS drive, though it will wrongly warn that the drive has errors; macOS and most Linux setups can't read it by default.
+1. Plug an external USB storage drive into your Xbox and format it for *media* (not apps/games). This wipes its contents. It will be your `E:\` drive. The Xbox formats it as an ordinary NTFS volume and sets permissions on it that let apps read and write it; there is nothing special about its partition layout. A Windows PC reads and writes it like any other NTFS drive (after it has been in the Xbox, Windows may warn that the drive has errors, though the files are intact); macOS reads NTFS but writes it only with third-party software, and Linux needs the `ntfs3` driver or `ntfs-3g`, which most distributions include. An NTFS drive formatted elsewhere and given the same permission (see the warning below) may also work, but we haven't tried it.
 2. Create a folder named `ringracers` at the root of the drive.
 3. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [official v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) into `E:\ringracers` (so you have e.g. `E:\ringracers\bios.pk3` and `E:\ringracers\data\`). Files from other versions won't load.
 4. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup). Builds come from [GitHub Actions](#github-actions) or a [local build](#local).
@@ -23,7 +23,7 @@ Coding agents were used heavily in the development of this port.
 > icacls E:\ringracers /grant "*S-1-15-2-1:(OI)(CI)F" /t /c
 > ```
 >
-> `S-1-15-2-1` is "ALL APPLICATION PACKAGES", which the game needs in order to write there.
+> `S-1-15-2-1` is "ALL APPLICATION PACKAGES": the Xbox grants it when it formats the drive, and the game, like any app, needs it in order to write there.
 
 ## Differences from vanilla Ring Racers
 
