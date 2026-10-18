@@ -93,6 +93,7 @@ set(BinLibs
 	d3dcompiler.lib
 	d3d12.lib
 	dxgi.lib
+	WindowsApp.lib # Game Mode's HasExpandedResources, among the rest
 	${RR_DIR}/src/ringracers.lib
 
 	${RR_DIR}/src/acs/vm/ACSVM/acsvm.lib
