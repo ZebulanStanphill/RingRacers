@@ -97,14 +97,52 @@ int main() {
     assert(HWR_ShouldExtendHorizon(&seg,&front));
     seg.glseg=true;assert(!HWR_ShouldExtendHorizon(&seg,&front));seg.glseg=false;
     ld.special=0;assert(!HWR_ShouldExtendHorizon(&seg,&front));ld.special=HORIZONSPECIAL;
-    // Fake-flat control sectors must be considered before deciding equality.
-    sector_t control=BlankSector();control.floorheight=front.floorheight;
-    control.ceilingheight=front.ceilingheight;
-    sectors=&control;back.heightsec=0;back.floorheight=-300*FRACUNIT;
-    front.ceilingpic=back.ceilingpic=skyflatnum;
+    // Fake-flat control sectors must be considered before deciding equality. R_FakeFlat
+    // only substitutes heights and textures for a chase camera (or a view beyond the split
+    // screens); with a first-person camera it returns the sector unchanged, so the control
+    // sector below would never apply. Both cases use a back sector that is identical to the
+    // front one before substitution and different after it, or the reverse.
+    sector_t control=BlankSector();
+    sectors=&control;
     mobj_t mo={};mo.subsector=&viewSub;player_t player={};player.mo=&mo;
-    viewplayer=&player;viewSub.sector=&front;viewz=0;
-    seg.backsector=&back;
-    assert((bool)HWR_ShouldExtendHorizon(&seg,&front)==SoftwareDrawsLine(&seg,&front));
+    viewplayer=&player;viewSub.sector=&front;
+    front.ceilingpic=back.ceilingpic=skyflatnum;front.floorpic=back.floorpic=2;
+    front.floorheight=back.floorheight=-214*FRACUNIT;front.ceilingheight=1500*FRACUNIT;
+    back.ceilingheight=1500*FRACUNIT;
+    seg.backsector=&back;back.heightsec=0;
+    // The control sector's floor is above the view, so R_FakeFlat's head-below-floor hack
+    // gives the back sector its floor height, flat and light level.
+    control.floorheight=10*FRACUNIT;control.ceilingheight=1500*FRACUNIT;
+    control.floorpic=3;control.ceilingpic=skyflatnum;control.lightlevel=back.lightlevel;
+    viewz=0;
+    for(bool chase : {false,true}) {
+        camera[0].chase=chase;
+        sector_t temp;
+        sector_t *flattened=R_FakeFlat(&back,&temp,nullptr,nullptr,true);
+        assert(chase==(flattened!=&back));
+        if(chase) assert(flattened->floorheight==10*FRACUNIT && flattened->floorpic==3);
+        // Identical sectors form an empty sky boundary and are skipped, unless the
+        // control sector makes the back sector differ.
+        const bool expected=chase;
+        assert(HWR_ShouldExtendHorizon(&seg,&front)==expected);
+        assert((bool)HWR_ShouldExtendHorizon(&seg,&front)==SoftwareDrawsLine(&seg,&front));
+        ++cases;
+    }
+    // The reverse: the back sector differs from the front one until the control sector
+    // makes them equal.
+    back.floorheight=-300*FRACUNIT;back.floorpic=3;
+    control.floorheight=front.floorheight;control.floorpic=front.floorpic;control.lightlevel=front.lightlevel;
+    back.lightlevel=front.lightlevel;
+    viewz=-400*FRACUNIT;
+    for(bool chase : {false,true}) {
+        camera[0].chase=chase;
+        sector_t temp;
+        sector_t *flattened=R_FakeFlat(&back,&temp,nullptr,nullptr,true);
+        assert(chase==(flattened!=&back));
+        const bool expected=!chase;
+        assert(HWR_ShouldExtendHorizon(&seg,&front)==expected);
+        assert((bool)HWR_ShouldExtendHorizon(&seg,&front)==SoftwareDrawsLine(&seg,&front));
+        ++cases;
+    }
     printf("%d horizon decisions match Software; 22 empty Water Palace sky boundaries no longer extend opaque floors\n",cases);
 }
