@@ -177,7 +177,6 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   argument parsing; a mistake there can only give a wrong message or sampling pixel.
   The former Direct3D 11 copy/readback mocks and extracted SM4 device harness were
   removed. This validates the diagnostic, not the underlying brown-wall rendering.
-- **Suspect sky-surface diagnostics:** execute the production trace and both floor/wall dispatch conditions against real engine structures. Check per-type caps, one sampled frame per five-second interval and view, 64-bit frame IDs, map/time resets, portal/skybox exclusions, regular-floor selection, original sector IDs alongside fake-flat heights, settings, unchanged vertices, eight-vertex limits and bounded rows with one log write per surface. These checks validate diagnostics; they do not reproduce or fix the reported brown walls.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native
   Clang vector arithmetic, with CPU texture sampling stubs. Compare against an
   independent scalar color oracle for crossfade, inversion, Mega Drive black/white

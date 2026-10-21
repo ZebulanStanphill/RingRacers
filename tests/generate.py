@@ -408,11 +408,6 @@ def generate(engine, output):
         "ROUTES": routes,
     }, output / "spring_clip.cpp")
 
-    render(templates / "sky_trace.cpp.in", {
-        "TRACE": hardware.function("HWR_TraceSkyGeometry"),
-        "PLANE_DISPATCH": hardware.section("\tif (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, \"~015\"))", "\n#endif"),
-        "WALL_DISPATCH": hardware.section("\tif (gl_curline && !gl_curline->polyseg)", "\n#endif"),
-    }, output / "sky_trace.cpp")
     render(templates / "distortion.cpp.in", {
         "VERTEX": Source(engine / "src/hardware/r_d3d12/d3d12_screens.inc").function("PostImageVertex"),
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),

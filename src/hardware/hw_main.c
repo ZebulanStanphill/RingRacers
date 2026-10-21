@@ -1385,76 +1385,6 @@ static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
 }
 
 
-#ifdef _UWP
-// Sample one primary-world frame per five seconds. This records submitted
-// geometry, not proven visible pixels; it must not alter rendering or traversal.
-static void HWR_TraceSkyGeometry(INT32 kind, INT32 source, const sector_t *front,
-	const sector_t *back, const char *texture,
-	const FOutVector *vertices, FUINT count, FBITFIELD flags)
-{
-	static INT16 map = -1;
-	static tic_t period = (tic_t)-1, lasttic = 0;
-	static size_t frames[MAXSPLITSCREENPLAYERS];
-	static UINT8 used[MAXSPLITSCREENPLAYERS][3];
-	static boolean selected[MAXSPLITSCREENPLAYERS];
-	const tic_t now = leveltime / (5*TICRATE);
-	const UINT8 view = viewssnum;
-	char message[1536];
-	size_t length;
-	INT32 written;
-	FUINT i;
-
-	if (gl_skyboxview || hwr_portallevel || view >= MAXSPLITSCREENPLAYERS
-		|| kind < 0 || kind > 2 || !front || !gl_frontsector || !vertices || !count)
-		return;
-	if (map != gamemap || period != now || leveltime < lasttic)
-	{
-		map = gamemap;
-		period = now;
-		memset(frames, 0, sizeof frames);
-		memset(used, 0, sizeof used);
-		memset(selected, 0, sizeof selected);
-	}
-	lasttic = leveltime;
-	if (!selected[view])
-	{
-		frames[view] = validcount;
-		selected[view] = true;
-		I_OutputMsg("UWP sky geometry: map=%d lt=%u view=%u camera=(%.1f,%.1f,%.1f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f batching=%d shaders=%d\n",
-			gamemap, (unsigned)leveltime, view, gl_viewx, gl_viewy, gl_viewz,
-			(double)viewangle * (360.0/4294967296.0),
-			(double)(INT32)gl_aimingangle * (360.0/4294967296.0),
-			(double)(INT32)viewroll * (360.0/4294967296.0),
-			FIXED_TO_FLOAT(R_FOV(viewssnum)+players[displayplayers[viewssnum]].fovadd),
-			cv_glbatching.value, HWR_UseShader());
-	}
-	if (frames[view] != validcount || used[view][kind] >= (kind == 2 ? 4 : 16))
-		return;
-	used[view][kind]++;
-	written = snprintf(message, sizeof message, "UWP sky surface: map=%d lt=%u view=%u kind=%s source=%d front=%d back=%d sky=%d heights=(%.1f,%.1f) texture=%.8s flags=0x%lx vertices=%u",
-		gamemap, (unsigned)leveltime, view,
-		kind == 0 ? "floor" : kind == 1 ? "wall" : "occluder", source,
-		(INT32)(front-sectors), back ? (INT32)(back-sectors) : -1,
-		gl_frontsector->ceilingpic == skyflatnum,
-		FIXED_TO_FLOAT(gl_frontsector->floorheight), FIXED_TO_FLOAT(gl_frontsector->ceilingheight),
-		texture, (unsigned long)flags, (unsigned)count);
-	if (written < 0)
-		return;
-	length = min((size_t)written, sizeof message - 2);
-	for (i = 0; i < count && i < 8; ++i)
-	{
-		written = snprintf(message+length, sizeof message-length, " v%u=(%.1f,%.1f,%.1f;%.4f,%.4f)", (unsigned)i,
-			vertices[i].x, vertices[i].z, vertices[i].y, vertices[i].s, vertices[i].t);
-		if (written < 0)
-			break;
-		length += min((size_t)written, sizeof message-length-2);
-	}
-	message[length++] = '\n';
-	message[length] = '\0';
-	I_OutputMsg("%s", message); // One log write per row, even for large polygons.
-}
-#endif
-
 // -----------------+
 // HWR_RenderPlane  : Render a floor or ceiling convex polygon
 // -----------------+
@@ -1661,11 +1591,6 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		PolyFlags |= PF_ColorMapped;
 	}
 
-#ifdef _UWP
-	if (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, "~015"))
-		HWR_TraceSkyGeometry(0, (INT32)(subsector-subsectors), subsector->sector, NULL, levelflat->name,
-			planeVerts, nrPlaneVerts, PolyFlags);
-#endif
 #ifdef HAVE_D3D12
 	D3D12_SurfaceProbeSource(FOFsector ? "FOF plane" : isceiling ? "ceiling" : "floor",
 		FOFsector ? (INT32)(FOFsector-sectors) : subsector ? (INT32)(subsector-subsectors) : -1);
@@ -1898,25 +1823,6 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 		blendmode |= PF_ColorMapped;
 	}
 
-#ifdef _UWP
-	if (gl_curline && !gl_curline->polyseg)
-	{
-		const INT32 walltextures[3] = {gl_sidedef->toptexture, gl_sidedef->bottomtexture, gl_sidedef->midtexture};
-		INT32 i;
-		if (blendmode & PF_Invisible)
-			HWR_TraceSkyGeometry(2, (INT32)(gl_curline->linedef-lines), gl_curline->frontsector, gl_curline->backsector, "depth",
-				wallVerts, 4, blendmode|PF_Modulated|PF_Occlude);
-		else for (i = 0; i < 3; ++i)
-			if (walltextures[i] > 0 && walltextures[i] < numtextures
-				&& !strncmp(textures[walltextures[i]]->name, "GFZROCK", 8))
-			{
-				// This labels the line's placeholder reference, not the bound GPU texture.
-				HWR_TraceSkyGeometry(1, (INT32)(gl_curline->linedef-lines), gl_curline->frontsector, gl_curline->backsector, "GFZROCK",
-					wallVerts, 4, blendmode|PF_Modulated|PF_Occlude);
-				break;
-			}
-	}
-#endif
 #ifdef HAVE_D3D12
 	D3D12_SurfaceProbeSource(blendmode & PF_Invisible ? "sky occluder" : "wall",
 		gl_curline && gl_curline->linedef ? (INT32)(gl_curline->linedef-lines) : -1);
