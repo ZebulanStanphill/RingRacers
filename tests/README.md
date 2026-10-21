@@ -135,12 +135,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
   capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the
   water light plane at -52. The pre-fix splitter draws outside the original
-  wall and fails the vertex-bound assertion. Check 144 fixtures, including
+  wall and fails the vertex-bound assertion. Check 147 fixtures, including
   100 seeded sloped walls, reversed slopes, crossing light planes, zero-height
-  endpoints, a tier that closes inside its span, the first capture's normal
-  fence, NOSHADE, solid FOF holes and matching/nonmatching CUTEXTRA kinds.
-  An independent sampled polygon oracle checks exact coverage, lighting,
-  preserved UVs and no outside geometry; draw stubs check opaque/queued/fog
+  endpoints, a tier that closes inside its span, a light boundary exactly at the
+  wall's bottom with another light below (one piece, no zero-height one), the first
+  capture's normal fence, NOSHADE, solid FOF holes and matching/nonmatching
+  CUTEXTRA kinds. An independent sampled polygon oracle checks exact coverage,
+  lighting, preserved UVs and no outside geometry, with the light plane evaluated
+  in double precision from the slope's own origin, direction and gradient rather
+  than by the engine's `P_GetLightZAt`; every submitted piece must have height; draw stubs check opaque/queued/fog
   dispatch, texture IDs, colormaps and alpha. These tests verify submitted
   geometry, not Xbox visuals or performance. The user confirmed the Water
   Palace wall fix and water effect on Xbox One X in build 94, and the water,

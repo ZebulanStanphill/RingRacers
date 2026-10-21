@@ -87,6 +87,8 @@ static void CheckVertices(const Wall &w,FBITFIELD flags) {
             assert(std::abs(v.t-t)<.00001);
         }
         assert(d.v[3].y>=d.v[0].y && d.v[2].y>=d.v[1].y);
+        // A piece with no height at either end covers nothing and must not be submitted.
+        assert(d.v[3].y>d.v[0].y || d.v[2].y>d.v[1].y);
     }
 }
 // Sample actual emitted polygons, checking exact area coverage and lighting.
@@ -137,9 +139,16 @@ static void Run(Wall w,float boundary0,float boundary1,FBITFIELD flags=PF_Masked
     const Wall original=w;
     HWR_SplitWall(&sector,w.data(),43,44,&surf,FOF_CUTLEVEL,nullptr,flags);
     CheckVertices(original,flags);
-    // Use the actual fixed-point plane heights to avoid testing rounding instead of clipping.
-    const double b0=FIXED_TO_FLOAT(P_GetLightZAt(&lights[1],FLOAT_TO_FIXED(w[0].x),FLOAT_TO_FIXED(w[0].z)));
-    const double b1=FIXED_TO_FLOAT(P_GetLightZAt(&lights[1],FLOAT_TO_FIXED(w[1].x),FLOAT_TO_FIXED(w[1].z)));
+    // Evaluate the light plane without P_GetLightZAt or P_GetSlopeZAt: in double precision, from the slope's own
+    // fixed-point origin, direction and gradient (so the oracle tests clipping, not the float-to-fixed rounding
+    // of the fixture). A flat light uses its own height. The fixture must also describe the intended boundary.
+    auto plane=[&](double x,double z) {
+        if(!lights[1].slope)return lights[1].height/65536.0;
+        const double dist=(x-slope.o.x/65536.0)*(slope.d.x/65536.0)+(z-slope.o.y/65536.0)*(slope.d.y/65536.0);
+        return slope.o.z/65536.0+dist*(slope.zdelta/65536.0);
+    };
+    const double b0=plane(original[0].x,original[0].z),b1=plane(original[1].x,original[1].z);
+    assert(std::abs(b0-boundary0)<.02 && std::abs(b1-boundary1)<.02);
     CheckCoverage(original,b0,b1,224,noShade?224:128);
     for(const Draw &d:draws)assert(d.color==(d.light==224?colorPtrs[0]:colorPtrs[1]));
     ++cases;
@@ -168,6 +177,7 @@ int main() {
         Run(MakeWall(0,0,20,0),10,10,f); // zero-height right endpoint
         Run(MakeWall(-20,50,20,40),0,0,f); // original tier closes inside the span
         Run(MakeWall(0,0,0,0),0,0,f); // no geometry, no division by zero
+        assert(draws.empty());
         Run(MakeWall(-20,-20,20,20),0,0,f,true);
     }
     // Seeded sloped walls/boundaries: independent polygon coverage oracle.
@@ -195,6 +205,20 @@ int main() {
         CheckVertices(original,PF_Masked);
         const bool cuts=cut!=INT32(FOF_EXTRA|FOF_FOG);
         CheckCoverage(original,0,0,224,224,cuts?10:-1e20,cuts?-10:-1e20);++cases;
+    }
+    // A light boundary exactly at the wall's bottom, with another light further below: nothing remains of the
+    // wall below the first boundary, which must not be submitted as a zero-height piece.
+    for(FBITFIELD f:{PF_Masked,PF_EnvironmentTrans,PF_Fog}) {
+        Wall w=MakeWall(-20,-20,20,20),original=w;draws.clear();wallLightCalls=0;
+        FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+        lightlist_t lights[3]{};sector_t sector{};sector.lightlevel=224;
+        sector.numlights=3;sector.lightlist=lights;
+        lights[0].height=3000*FRACUNIT;lights[1].height=-20*FRACUNIT;lights[2].height=-40*FRACUNIT;
+        for(int i=0;i<3;++i) { lights[i].lightlevel=&levels[i?1:0];lights[i].extra_colormap=&colorPtrs[i?1:0]; }
+        HWR_SplitWall(&sector,w.data(),43,44,&surf,FOF_CUTLEVEL,nullptr,f);
+        CheckVertices(original,f);
+        CheckCoverage(original,-20,-20,224,128);
+        assert(draws.size()==1);++cases;
     }
     printf("%d wall light fixtures: clipped geometry, texture UVs, exact coverage, lighting, solid holes and queued modes\n",cases);
 }
