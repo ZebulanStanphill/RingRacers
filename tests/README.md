@@ -358,7 +358,10 @@ From an x64 Visual Studio developer PowerShell on Windows:
 
 The harness compiles production `r_d3d12.cpp`, `d3d12_core.cpp`,
 `d3d12_upload.cpp`, `d3d12_pipeline.cpp` and `d3d12_prewarm.cpp` against
-the real engine headers. SDL, engine-symbol and headless-present functions are
+the real engine headers. It links the production add-on shader translator, built by
+`tests/d3d12-translator/` with the pinned glslang and SPIRV-Cross sources. CI caches that build per runner
+image, keyed on its two CMake files, and builds it without fetching when the cache is restored, so only the
+translator's own source is recompiled. SDL, engine-symbol and headless-present functions are
 test stubs. ANGLE is not used. Shaders compile with `fxc` at SM5.1 against the
 production root signature. Scenes run on WARP with the debug layer and GPU-based
 validation enabled. Any debug-layer warning, error or corruption message, or any

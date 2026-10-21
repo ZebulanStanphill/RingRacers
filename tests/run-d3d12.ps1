@@ -25,19 +25,12 @@ Get-ChildItem "$Engine\thirdparty" -Directory | ForEach-Object {
 }
 # Build the production runtime translator with its pinned source dependencies.
 # WARP runs before the app build, so its native archives must be prepared here.
-$LegacySource = Join-Path $Output 'legacy-source'
 $LegacyBuild = Join-Path $Output 'legacy-build'
-New-Item -ItemType Directory -Force $LegacySource | Out-Null
 $EngineCMake = $Engine.Replace('\', '/')
-@"
-cmake_minimum_required(VERSION 3.20)
-project(RRD3D12LegacyHarness LANGUAGES C CXX)
-set(CMAKE_CXX_STANDARD 17)
-include("$EngineCMake/src/hardware/r_d3d12/custom_shaders.cmake")
-add_library(rr_d3d12_legacy STATIC "$EngineCMake/src/hardware/r_d3d12/custom_shader.cpp")
-target_link_libraries(rr_d3d12_legacy PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
-"@ | Set-Content (Join-Path $LegacySource 'CMakeLists.txt')
-& cmake -S $LegacySource -B $LegacyBuild -G Ninja -DCMAKE_BUILD_TYPE=Release
+# CI restores this build from its cache, pinned sources included. Fetching or updating them again would touch every
+# source file and rebuild all of it, so a restored build stays disconnected; any other build fetches as usual.
+$Disconnected = if ($env:RR_TRANSLATOR_CACHE_HIT -eq 'true') { 'ON' } else { 'OFF' }
+& cmake -S (Join-Path $PSScriptRoot 'd3d12-translator') -B $LegacyBuild -G Ninja -DCMAKE_BUILD_TYPE=Release "-DRR_ENGINE=$EngineCMake" "-DFETCHCONTENT_FULLY_DISCONNECTED=$Disconnected"
 if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator configuration failed' }
 & cmake --build $LegacyBuild --target rr_d3d12_legacy
 if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator compilation failed' }

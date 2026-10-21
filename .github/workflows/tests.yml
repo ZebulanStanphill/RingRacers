@@ -89,6 +89,8 @@ jobs:
           $before = [Environment]::GetEnvironmentVariables('Process')
           & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
           Get-Command cl.exe, fxc.exe -ErrorAction Stop | Select-Object Name, Source
+          # The image fixes the compiler, CMake and Ninja the translator cache was built with.
+          "RR_IMAGE_VERSION=$env:ImageOS-$env:ImageVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           # Each step starts a new shell; preserve the developer environment.
           foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
             if ($before[$entry.Key] -cne $entry.Value) {
@@ -113,8 +115,19 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      # glslang and SPIRV-Cross take about a minute to build and only change with their pins, the translator's build
+      # files or the runner image; the translator itself is rebuilt by Ninja when its source is newer.
+      - name: Cache the shader translator build
+        id: translator-cache
+        uses: actions/cache@v6
+        with:
+          path: build/d3d12-regressions/legacy-build
+          key: d3d12-translator-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/d3d12-translator/CMakeLists.txt') }}
+
       - name: Direct3D 12 renderer regressions
         shell: pwsh
+        env:
+          RR_TRANSLATOR_CACHE_HIT: ${{ steps.translator-cache.outputs.cache-hit }}
         run: ./tests/run-d3d12.ps1
 
   linux:
