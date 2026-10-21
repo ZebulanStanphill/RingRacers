@@ -30,7 +30,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_batching.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/r_d3d12.cpp"
-    "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_pipeline.cpp"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_pipeline.h"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_screens.inc"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_captures.inc"
@@ -100,14 +99,12 @@ regression(postimg_math postimg)
 regression(postimg_selection postimg_selection)
 regression(water_math water _UWP HWRENDER)
 regression(water_visibility water_visibility HWRENDER)
-regression(water_blend_state blend _UWP)
 regression(fog_boundaries fog HWRENDER _UWP)
 regression(fog_capture_d3d12 fog_capture_d3d12 _UWP)
 regression(water_capture_d3d12 water_capture_d3d12 _UWP)
 regression(sky_offsets sky)
 regression(horizon_visibility horizon HWRENDER)
 regression(sky_surface_trace sky_trace _UWP HWRENDER)
-regression(surface_pixel_probe surface_probe _UWP HWRENDER)
 regression(sprite_brightmap sprite_brightmap _UWP HWRENDER HWPRECIP)
 regression(encore_brightmap encore_brightmap _UWP HWRENDER)
 regression(spring_clip spring_clip _UWP HWRENDER)

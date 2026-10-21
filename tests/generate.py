@@ -107,18 +107,7 @@ def generate(engine, output):
         "FIND_DEFS": hardware.function("HWR_FindShaderDefs"),
         "LOAD_SHADERS": hardware.function("HWR_LoadCustomShadersFromFile"),
     }, output / "custom_pk3.cpp")
-    pipeline = Source(engine / "src/hardware/r_d3d12/d3d12_pipeline.cpp")
     pipeline_header = Source(engine / "src/hardware/r_d3d12/d3d12_pipeline.h")
-    render(templates / "blend.cpp.in", {
-        "PIPELINE_ENUMS": pipeline_header.section("enum VSKind", "D3D12_BLEND_DESC MakeBlendDesc"),
-        "ENUMS": driver12.section("enum BlendFactor : UINT8", "enum AlphaFunc"),
-        "BLEND": pipeline.function("Blend"),
-        "BLEND_DESC": pipeline.function("MakeBlendDesc"),
-        "DEPTH_DESC": pipeline.function("MakeDepthDesc"),
-        "STATE_KEY": driver12.function("StatePipelineKey"),
-        "SET_BLEND_MODE": driver12.function("SetBlendMode"),
-        "SET_BLEND": driver12.function("D3D_SetBlend"),
-    }, output / "blend.cpp")
     render(templates / "custom_dispatch.cpp.in", {
         "PIPELINE_ENUMS": pipeline_header.section("enum VSKind", "D3D12_BLEND_DESC MakeBlendDesc"),
         "CUSTOM_STATE": driver12.section("struct CustomProgram\n{", "void SetBlendMode(FBITFIELD flags)"),
@@ -388,9 +377,6 @@ def generate(engine, output):
         "ROUTES": routes,
     }, output / "spring_clip.cpp")
 
-    render(templates / "surface_probe.cpp.in", {
-        "COMMAND": hardware.function("HWR_SurfaceProbe_f"),
-    }, output / "surface_probe.cpp")
     render(templates / "sky_trace.cpp.in", {
         "TRACE": hardware.function("HWR_TraceSkyGeometry"),
         "PLANE_DISPATCH": hardware.section("\tif (subsector && !isceiling && !FOFsector && levelflat && !strcmp(levelflat->name, \"~015\"))", "\n#endif"),

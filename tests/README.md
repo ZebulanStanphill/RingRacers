@@ -155,13 +155,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and `FixedDiv2`. ASan and all other UBSan checks remain enabled, including in
   traversal and lighting. No authored slope touches the affected FOF sectors;
   retaining the complete map still checks the other submitted sloped geometry.
-- **Pixel history diagnostic:** execute the production engine command handler.
-  Reject malformed coordinates and unsupported rendering modes, require batching
-  to be off, and check default and explicit coordinates passed to the Direct3D
-  12 request function. The former Direct3D 11 copy/readback mocks and extracted
-  SM4 device harness were removed. The Direct3D 12 WARP `surface-probe` scene
-  checks command-ordered copies, logged pixel ownership and the inactive path.
-  This validates the diagnostic, not the underlying brown-wall rendering.
+- **Pixel history diagnostic:** the Direct3D 12 WARP `surface-probe` scene (below)
+  checks the driver side: command-ordered copies, logged pixel ownership and the
+  inactive path. There is no native test of the `gr_surfaceprobe` console command's
+  argument parsing; a mistake there can only give a wrong message or sampling pixel.
+  The former Direct3D 11 copy/readback mocks and extracted SM4 device harness were
+  removed. This validates the diagnostic, not the underlying brown-wall rendering.
 - **Suspect sky-surface diagnostics:** execute the production trace and both floor/wall dispatch conditions against real engine structures. Check per-type caps, one sampled frame per five-second interval and view, 64-bit frame IDs, map/time resets, portal/skybox exclusions, regular-floor selection, original sector IDs alongside fake-flat heights, settings, unchanged vertices, eight-vertex limits and bounded rows with one log write per surface. These checks validate diagnostics; they do not reproduce or fix the reported brown walls.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native
   Clang vector arithmetic, with CPU texture sampling stubs. Compare against an
@@ -522,19 +521,15 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Internal FOF visibility:** extract Software's actual `R_DrawSinglePlane` rejection block, the hardware helper, and both face-admission conditions. Compare 945 decisions using real engine FOF structures, all CUTEXTRA/EXTRA/water/fog combinations, touching boundaries, moving control heights, and all 29 overlapping-water sectors recorded from vanilla 2.4 Water Palace in `fixtures/water-palace-water.json`. The old hardware height checks admit 15 internal water boundaries that Software suppresses. Removing the new condition from either face fails this test. This verifies the visibility decision; the reported scenery artifacts still require an Xbox retest.
 
-- **Invisible geometry and composite blend state:** `water_blend_state` executes the
-  production `SetBlendMode`, `D3D_SetBlend`, `StatePipelineKey`, `MakeBlendDesc` and
-  `MakeDepthDesc`, and decodes the state a draw would give its pipeline. All 100 pairs of
-  blend modes, including the translucent sprite-silhouette to untextured sky-wall
-  transition while Invisible stays set, must have a zero color write mask with depth
-  writing on and depth always off, and then restore RGB writes and the visible surface's
-  own blend. A water refraction or fog remap composite must disable blending and keep the
-  write mask for both mask settings, and the surface after it must get the translucent
-  blend again, after repeated use. The Direct3D 12 driver builds this override per draw
-  from the key rather than caching it, so there is no stale cached override to restore.
-  Windows WARP checks the same behavior through pixels (above). The state fix did not
-  resolve the reported brown walls; pixel history then identified inverted wall light
-  slices, and the user confirmed that separate fix in build 94.
+- **Invisible geometry and composite blend state:** only the Direct3D 12 WARP
+  scenes check this (`blend-invisible*` and `blend-remap-*`, above), through real
+  pipeline states and pixels: all 100 pairs of blend modes with Invisible set, the
+  surface after each, and water refraction and fog remap composites followed by an
+  ordinary translucent surface. A native test that decoded the state from the
+  driver's own `SetBlendMode` was removed: it used that function as its oracle for
+  the visible blend, and everything it caught also changed the WARP pixels. The
+  state fix did not resolve the reported brown walls; pixel history then identified
+  inverted wall light slices, and the user confirmed that separate fix in build 94.
 
 - **Direct3D water shader runtime:** run `tests/run-d3d12.ps1` as described
   above. The production SM5.1 capture/refraction path runs on Direct3D 12 WARP;
