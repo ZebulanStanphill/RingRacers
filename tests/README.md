@@ -367,7 +367,11 @@ validation enabled. Any debug-layer warning, error or corruption message, or any
 a missing or mismatched optimized render-target clear value: the runtime guarantees
 the requested clear color, which the pixel oracle checks. It only affects clear
 performance. Scenes cover clears, blends, depth, indexed
-triangles, 2D lines and a tiny-ring stress test.
+triangles, 2D lines and a tiny-ring stress test. A quad is two triangles and the screen's center
+lies in only one of them, so the blend, depth, indexed and model scenes also sample a pixel in the
+other. The ring stress draws a 32×32 grid of 2×2-pixel tiles per frame for four frames, each tile
+a color of its own, through rings of 1,024, 512 and 2,048 bytes, and checks every pixel, so a ring
+overwrite, stale constant or corrupt vertex in any draw shows, not only in the last.
 The harness checks its own oracles rather than running a negative process per scene.
 Before the scenes, a self-test hands every kind of comparison (a screen pixel, a pixel of the
 palette step, of an image read earlier or of a probed pixel, a line's rows, a plain verdict, and

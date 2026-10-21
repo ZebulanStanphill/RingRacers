@@ -129,6 +129,11 @@ static void require(const char *scene,bool ok,const char *why) {
 static void check(const char *scene,const std::vector<UINT8> &p,int x,int y,RGB want,int width=W) { same(scene,"pixel",x,y,at(p,x,y,width),want); }
 // A pixel of the screen
 static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); check(scene,p,x,y,want); }
+// A quad is two triangles split along the diagonal from its bottom left corner to its top right one. The screen's center, at NDC
+// (0.0156,-0.0156), lies in the lower right triangle by half a pixel, so a regression that drops the upper left one passes
+// every center-only check. (20,20) at NDC (-0.36,0.36) is in the upper left triangle and (44,44) at (0.39,-0.39) in the lower
+// right one, a quarter of the screen from the diagonal; the quad spans -0.8 to 0.8, so all three are inside it.
+static void expectQuad(const char *scene,RGB want) { auto p=pixels(); validate(validationQueue); check(scene,p,32,32,want); check(scene,p,20,20,want); check(scene,p,44,44,want); }
 // Palette rendering's last step, read like expect reads the screen. It leaves the buffer as filled while Palette Rendering is off.
 static std::vector<UINT8> palettePixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
 static void expectPost(const char *scene,RGB want,int x=32,int y=32) { auto p=palettePixels(); validate(validationQueue); same(scene,"palette pixel",x,y,at(p,x,y),want); }
@@ -325,10 +330,10 @@ int main(int argc,char **argv) {
         struct Mode { const char *name; FBITFIELD flags; } modes[]={{"opaque",0},{"translucent",PF_Translucent},{"additive",PF_Additive},{"subtract",PF_Subtractive},{"reverse",PF_ReverseSubtract},{"multiply",PF_Multiplicative},{"environment",PF_Environment},{"masked",PF_Masked},{"invert",PF_Invert},{"fog",PF_Fog}};
         // The color of a source with this alpha drawn over a destination in one of these modes
         auto blended=[](FBITFIELD flags,RGB source,RGB target,int alpha) { const double a=alpha/255.; RGB result={}; for(int c=0;c<3;c++) { double s=source[c],d=target[c],v=s; switch(flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } return result; };
-        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expect(m.name,blended(m.flags,src,dst,128)); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
-        reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("depth",{200,40,20});
-        draw({20,40,200},PF_NoDepthTest,1.5f); expect("nodepth",{20,40,200});
-        reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expect("noocclude",{20,200,40});
+        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expectQuad(m.name,blended(m.flags,src,dst,128)); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
+        reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expectQuad("depth",{200,40,20});
+        draw({20,40,200},PF_NoDepthTest,1.5f); expectQuad("nodepth",{20,40,200});
+        reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expectQuad("noocclude",{20,200,40});
         // Portal recursion follows hw_main: increment the aperture, reset only its depth,
         // draw the child, then restore entrance depth while decrementing its stencil.
         {
@@ -368,7 +373,7 @@ int main(int argc,char **argv) {
             { auto p=pixels(); validate(validationQueue); check("portal-plane",p,16,32,parent); check("portal-plane",p,48,32,parent); }
             D3D12_SetPortalStencil(0); D3D12_FinishUpdate(0);
         }
-        reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expect("indexed",{24,180,220});
+        reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expectQuad("indexed",{24,180,220});
         reset(); blend(PF_NoDepthTest|PF_NoTexture); F2DCoord p1={-.75f,0},p2={.75f,0}; auto ls=surface({240,160,80}); line(&p1,&p2,ls.PolyColor);
         // A one-pixel line lies on a raster boundary; inspect its known interior coverage, excluding endpoints.
         { auto p=pixels(); validate(queue.Get()); checkAny("line",p,32,30,33,{240,160,80}); }
@@ -1069,11 +1074,27 @@ int main(int argc,char **argv) {
         model.vbo_max_s=model.max_s; model.vbo_max_t=model.max_t;
         function<void (*)(model_t *)>("CreateModelVBOs")(&model);
         if(!modelFrames[0].vboID || !modelFrames[1].vboID) throw std::runtime_error("model static buffers were not created");
-        reset(); renderModel(&model,0,0,0,-1,&position,2,2,0,0,&modelSurface); expect("model-buffered",{192,96,48});
-        reset(); renderModel(&model,0,2,1,1,&position,2,2,0,0,&modelSurface); expect("model-lerped",{192,96,48},50,32); expect("model-lerped",{48,80,112},14,32);
+        reset(); renderModel(&model,0,0,0,-1,&position,2,2,0,0,&modelSurface); expectQuad("model-buffered",{192,96,48});
+        reset(); renderModel(&model,0,2,1,1,&position,2,2,0,0,&modelSurface);
+        // Halfway to the next frame, the quad has moved 0.6 right (x from -0.2 to 1.4), so its diagonal runs from (-0.2,-0.8) to
+        // (1.4,0.8). (50,32) at NDC (0.58,-0.02) is in its upper left triangle, (56,48) at (0.77,-0.52) in the lower right one and
+        // (56,15) at (0.77,0.52) in the upper left one, each well inside the quad. (14,32) is left of it.
+        { auto p=pixels(); validate(validationQueue);
+          const std::array<int,2> inside[]={{50,32},{56,48},{56,15}};
+          for(const auto &pixel:inside) check("model-lerped",p,pixel[0],pixel[1],{192,96,48});
+          check("model-lerped",p,14,32,{48,80,112}); }
         model.max_s=.5f; // UV mismatch forces the dynamic-ring fallback.
-        reset(); renderModel(&model,0,0,0,-1,&position,2,2,0,0,&modelSurface); expect("model-fallback",{192,96,48});
-        for(int frame=0;frame<4;frame++) { reset(); for(int i=0;i<1000;i++) draw({(i&1)?80:120,40,160},PF_NoDepthTest); expect("rings",{80,40,160}); D3D12_FinishUpdate(0); }
+        reset(); renderModel(&model,0,0,0,-1,&position,2,2,0,0,&modelSurface); expectQuad("model-fallback",{192,96,48});
+        // Every ring draw is a tile of 2x2 pixels in a 32x32 grid, with a color of its own: red and green count along the grid and each
+        // frame has its own blue. A ring overwrite, stale constant or corrupt vertex of any draw, not only the last, shows in its tile.
+        for(int frame=0;frame<4;frame++) {
+            const auto tileColor=[frame](int tx,int ty) { return RGB{8*tx+4,8*ty+4,32+56*frame}; };
+            reset();
+            for(int ty=0;ty<32;ty++) for(int tx=0;tx<32;tx++) fillRect(tx/16.f-1,(tx+1)/16.f-1,1-(ty+1)/16.f,1-ty/16.f,tileColor(tx,ty));
+            auto p=pixels(); validate(validationQueue);
+            for(int ty=0;ty<32;ty++) for(int tx=0;tx<32;tx++) for(int dy=0;dy<2;dy++) for(int dx=0;dx<2;dx++) check("rings",p,2*tx+dx,2*ty+dy,tileColor(tx,ty));
+            D3D12_FinishUpdate(0);
+        }
         reset(); std::vector<FOutVector> huge(400,quad()[0]); huge[0]=quad()[0]; huge[1]=quad()[1]; huge[2]=quad()[2]; huge[3]=quad()[3]; auto hs=surface({32,220,96}); polygon(&hs,huge.data(),(FUINT)huge.size(),PF_Modulated|PF_NoTexture|PF_NoDepthTest); expect("growth",{32,220,96});
         D3D12_FinishUpdate(0); D3D12_LogPerf(1);
         if(logs.find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
@@ -1091,13 +1112,13 @@ int main(int argc,char **argv) {
                 reset(dst);
                 draw(src,from.flags|PF_Invisible|PF_Occlude,.5f,128);
                 draw(src,to.flags|PF_Invisible|PF_NoTexture|PF_Occlude,.5f,128);
-                expect("blend-invisible",dst);
+                expectQuad("blend-invisible",dst);
                 // The depth it wrote hides a farther visible surface
                 draw(src,to.flags|PF_Occlude,1.5f,128);
-                expect("blend-invisible-depth",dst);
+                expectQuad("blend-invisible-depth",dst);
                 // A nearer visible surface blends over the target as its mode says
                 draw(src,to.flags|PF_Occlude,.25f,128);
-                expect("blend-invisible-restore",blended(to.flags,src,dst,128));
+                expectQuad("blend-invisible-restore",blended(to.flags,src,dst,128));
             }
             D3D12_FinishUpdate(0);
         }
