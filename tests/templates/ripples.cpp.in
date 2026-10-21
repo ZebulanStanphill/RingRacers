@@ -51,9 +51,6 @@ void HWR_ProcessPolygon(FSurfaceInfo *surf, FOutVector *verts, FUINT count,
     vertices.assign(verts, verts + count);
 }
 
-#ifdef __USE_C_FIXEDMUL__
-@@FIXED_MUL@@
-#endif
 @@RIPPLE_PLANE@@
 @@USE_SHADER@@
 @@POLYOBJECT_PLANE@@

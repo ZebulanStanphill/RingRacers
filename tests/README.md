@@ -24,6 +24,13 @@ templates change. Variants built with `_UWP` also define `HAVE_D3D12`, as UWP
 builds have the Direct3D 12 driver by default. The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
+A desktop variant (built without `_UWP`) exists only where the extracted code
+differs under `_UWP`: it is the one check that the UWP changes stay off desktop
+builds. Those are `online_desktop_hw`, `menu_desktop` and `transparency_desktop`.
+Where the preprocessed code is identical, a second executable would only repeat
+the first, so the test runs the cases for each runtime setting (for example both
+renderers) in one executable.
+
 Sanitizers are enabled by default and any reported undefined behavior fails the
 test. Use `-DRR_SANITIZERS=OFF` only for a toolchain without sanitizer support.
 Assertions remain enabled in every build configuration, including Release.
@@ -57,16 +64,20 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   it; also check clock refresh after an offline load. A delayed-loading simulation
   tests the server's delay-limit decision with
   another healthy remote player, across three load durations and two limits.
-  Compile/run UWP hardware, UWP software, and desktop hardware variants.
+  Compile/run UWP hardware and desktop hardware variants; the desktop one
+  checks that the online changes stay off desktop builds.
 - **Options slide:** production reset, tick, quit, and color-change functions with
   actual menu structures. Exercise exact and skipped completion tics, clock
   wraparound, repeat target changes, resets during a slide, and instant wipes.
-  The desktop variant preserves the upstream timing behavior.
+  The desktop variant compiles upstream's timing branch and checks that it is
+  unchanged on desktop.
 - **Bounded diagnostics:** production trace implementation and frame-window
   selection. Check fade expiry/event caps, title sample caps, both frame windows,
   load resets, tics across the unlogged gap, camera/presentation snapshots, missing
   player objects, unpresented frames, and that tracing
-  leaves the player's object unchanged. Compile/run hardware and software variants.
+  leaves the player's object unchanged. One executable runs every case with
+  Software and with Legacy GL, which differ only in the present slot the trace
+  reports.
 - **Add-on shader translation:** compile the production GLSL adapter, glslang
   parser/linker and SPIRV-Cross emitter from `r_d3d12/`. Translate 36 shader/layout
   pairs with reordered varyings, uniforms/initializers, matrices and fragment
@@ -158,7 +169,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   edges, and five resolutions including an odd size. Check mask coordinates,
   captured-image sampling bounds, and alpha.
 - **Fill transparency:** execute production `V_DrawFill`, HUD alpha resolution,
-  coordinate snapping and `HWR_DrawFill` in UWP and desktop variants. Each compares
+  coordinate snapping and `HWR_DrawFill`. The test compares
   2,968 Software/Legacy GL cases across explicit alpha levels, all three HUD alpha
   flavors, HUD settings/fades, slide overrides and split-view layouts. The actual
   fully faded Watching underline must submit no quad. Check partial alpha and
@@ -171,14 +182,13 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 - **Raw picture formats:** production conversion and cache-loading functions. Check all five source modes, palette destination widths, grayscale/RGB alpha, downscaling and upscaling, row padding, malformed headers/modes/dimensions/pixel lengths, and trailing bytes. The RGB24 case fails with the pre-feature implementation.
 - **Polyobject ripples:** run the production `HWR_RenderPolyObjectPlane`,
   `HWR_RippleBlend`, shader availability check, and shared `R_IsRipplePlane`
-  against real engine structures. Each UWP/desktop executable checks 1,600
+  against real engine structures. The test checks 1,600
   combinations of independent floor/ceiling flags, control-sector precedence,
   surrounding-sector fallback, absent sectors, Reduce VFX, shader availability,
   opaque/translucent planes, and ordinary-sector/FOF ripple flags. Inspect the
   submitted shader, blend flags, alpha, and translated polygon geometry; invalid
   polygons must submit no draw. Replacing either changed renderer function with
-  its pre-feature implementation fails the corresponding behavior assertion in
-  both platform variants.
+  its pre-feature implementation fails the corresponding behavior assertion.
 - **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 600,000 UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing, paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user confirmed underwater and heat distortion on Xbox One X in single player and in split-screen (2026-10-17).
 - **Transparency ordering:** extract the production node builder, object pass,
   model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,

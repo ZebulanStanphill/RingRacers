@@ -89,7 +89,6 @@ def generate(engine, output):
         "GL_ALPHA_TABLE": draw.section("static UINT8 softwaretranstogl[11]", "static UINT8 softwaretranstogl_hi"),
         "HUD_TRANSLUCENCY": video.function("V_GetHUDTranslucency"),
         "SNAP": video.function("V_AdjustXYWithSnap"),
-        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
         "ALPHA_LEVEL": video.function("V_GetAlphaLevel"),
         "HARDWARE_FILL": draw.function("HWR_DrawFill"),
         "FILL": video.function("V_DrawFill"),
@@ -535,7 +534,6 @@ def generate(engine, output):
         "USE_SHADER": hardware.function("HWR_UseShader"),
         "POLYOBJECT_PLANE": hardware.function("HWR_RenderPolyObjectPlane"),
         "RIPPLE_BLEND": hardware.function("HWR_RippleBlend"),
-        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
     }, output / "ripples.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")
     render(templates / "transparency.cpp.in", {

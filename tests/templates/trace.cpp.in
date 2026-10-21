@@ -70,10 +70,12 @@ size_t count(const char *prefix) {
             ++n;
     return n;
 }
-int main() {
-#ifdef HWRENDER
-    rendermode = render_opengl;
-#endif
+// The extracted trace code is identical with and without hardware rendering; only the
+// renderer the trace reports and whether it queries the present slot differ at run time.
+static void run(rendermode_t mode) {
+    rendermode = mode;
+    presentQueries = 0;
+    lt_ticker = leveltime = 0; // Start inside the title-card window, as a new load does.
     UWPTraceGamestate(GS_NULL, GS_TITLESCREEN);
     gamestate = GS_TITLESCREEN;
     logs.clear();
@@ -152,13 +154,13 @@ int main() {
         UWPTraceFinishFrame(false, true);
     }
     assert(count("UWP frame: ") == 600);
-#ifdef HWRENDER
-    assert(presentQueries == 600);
-    assert(logs.back().find("slot=2/shown=1 copyf=101/showf=100") != std::string::npos);
-#else
-    assert(presentQueries == 0);
-    assert(logs.back().find("slot=-1/shown=-1 copyf=0/showf=0") != std::string::npos);
-#endif
+    if (mode == render_opengl) {
+        assert(presentQueries == 600);
+        assert(logs.back().find("slot=2/shown=1 copyf=101/showf=100") != std::string::npos);
+    } else {
+        assert(presentQueries == 0);
+        assert(logs.back().find("slot=-1/shown=-1 copyf=0/showf=0") != std::string::npos);
+    }
     leveltime = 20 * TICRATE;
     begin();
     assert(!uwp_frameWanted);
@@ -177,6 +179,10 @@ int main() {
     assert(presentQueries == previousQueries);
     assert(logs.back().find("mo=0 p=(0.0,0.0,0.0)") != std::string::npos);
     assert(logs.back().find("slot=-1/shown=-1 copyf=0/showf=0 present=none") != std::string::npos);
-    puts("PASS: 200 events/10s; restart on transitions/loads; 20 title samples; 600 frame cap; no "
-         "gap logging; tics across gap; camera/mobj snapshot; no mobj mutation");
+}
+int main() {
+    run(render_soft);
+    run(render_opengl);
+    puts("PASS (Software and Legacy GL): 200 events/10s; restart on transitions/loads; 20 title samples; "
+         "600 frame cap; no gap logging; tics across gap; camera/mobj snapshot; no mobj mutation");
 }

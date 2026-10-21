@@ -44,9 +44,6 @@ static RGBA_t palette[256];
 RGBA_t *pLocalPalette = palette;
 #define HWR_GetColor(c) (palette[(c)&255])
 const cliprect_t *V_GetClipRect() { return nullptr; }
-#ifdef __USE_C_FIXEDMUL__
-@@FIXED_MUL@@
-#endif
 @@SNAP@@
 @@HUD_ALPHA_TABLES@@
 @@GL_ALPHA_TABLE@@
