@@ -65,113 +65,55 @@ bool EnsureWaterSine(){return !failSine;}
 @@GLOBALS@@
 @@BOUNDS@@
 @@CAPTURE@@
-// The former Direct3D 11 driver's versions are fixed independent oracles.
+// Literal expectations, worked out by hand, for a 64x48 viewport placed at (vx, vy) of the 128x96 target. The
+// viewport's top row in target pixels is 96-vy-48, i.e. 48 for vy=0 and 0 for vy=48. Boxes are
+// {left, top, front, right, bottom, back}.
+//  - centered: the unit quad (-.5..+.5 in NDC) covers viewport pixels x 16..48, y 12..36.
+//  - fractional: a quad whose corners fall on pixel x 16.5..39.5 and y 19.5..28.5 of the viewport, so floor() must
+//    round the left/top edges down and ceil() the right/bottom edges up (x 16..40, y 19..29).
+//  - whole: a face crossing the eye plane captures the whole viewport.
+// Water adds a 16 pixel ripple margin above and below (clamped to the viewport): its centered boxes are clamped
+// at both ends, its fractional ones are not (y 3..45).
+struct Placement {
+    int vx,vy; D3D12_BOX centered,fractional,whole; float waterViewport[4];
+};
 #ifdef RR_TEST_WATER_CAPTURE
-static void ReferenceBounds(const FOutVector *vertices, UINT count, const Mat4 &matrix,
-	const int viewport[4], UINT height, D3D12_BOX &box)
-{
-	const float left = (float)viewport[0], top = (float)height - viewport[1] - viewport[3];
-	float x0 = left + viewport[2], y0 = top + viewport[3], x1 = left, y1 = top;
-	UINT inFront = 0;
-	for (UINT i = 0; i < count; i++)
-		inFront += matrix.m[3]*vertices[i].x + matrix.m[7]*vertices[i].y
-			+ matrix.m[11]*vertices[i].z + matrix.m[15] > 0.0001f;
-	if (!inFront)
-	{
-		box = {0, 0, 0, 0, 0, 1};
-		return; // a fully clipped face cannot sample the scene
-	}
-	for (UINT i = 0; i < count; i++)
-	{
-		const FOutVector &v = vertices[i];
-		const float w = matrix.m[3]*v.x + matrix.m[7]*v.y + matrix.m[11]*v.z + matrix.m[15];
-		if (!(w > 0.0001f))
-		{
-			x0 = left; y0 = top; x1 = left + viewport[2]; y1 = top + viewport[3];
-			break;
-		}
-		const float x = matrix.m[0]*v.x + matrix.m[4]*v.y + matrix.m[8]*v.z + matrix.m[12];
-		const float y = matrix.m[1]*v.x + matrix.m[5]*v.y + matrix.m[9]*v.z + matrix.m[13];
-		const float px = left + (x/w + 1)*0.5f*viewport[2];
-		const float py = top + (1 - y/w)*0.5f*viewport[3];
-		x0 = std::min(x0, px); y0 = std::min(y0, py);
-		x1 = std::max(x1, px); y1 = std::max(y1, py);
-	}
-	box.left = (UINT)std::clamp(floorf(x0), left, left + viewport[2]);
-	box.top = (UINT)std::clamp(floorf(y0) - 16, top, top + viewport[3]);
-	box.right = (UINT)std::clamp(ceilf(x1), left, left + viewport[2]);
-	box.bottom = (UINT)std::clamp(ceilf(y1) + 16, top, top + viewport[3]);
-	box.front = 0; box.back = 1;
-}
-
-std::vector<unsigned char> ReferenceConstants(FSurfaceInfo *surface, FBITFIELD flags){
-(void)surface;
-	struct WaterConstants { float viewport[4]; INT32 blend; INT32 pad[3]; };
-	const FBITFIELD blend = flags & (PF_Blending & ~(PF_Masked | PF_Occlude));
-	INT32 mode = 0;
-	if (blend == PF_Additive) mode = 1;
-	else if (blend == PF_Subtractive) mode = 2;
-	else if (blend == PF_ReverseSubtract) mode = 3;
-	else if (blend == PF_Multiplicative) mode = 4;
-	else if (blend == PF_Environment) mode = 5;
-	const WaterConstants constants = {{(float)g_gl.viewport[0],
-		(float)g_rtHeight - g_gl.viewport[1] - g_gl.viewport[3],
-		(float)(g_gl.viewport[0] + g_gl.viewport[2] - 1),
-		(float)(g_rtHeight - g_gl.viewport[1] - 1)}, mode, {0, 0, 0}};
-
-auto p=reinterpret_cast<const unsigned char*>(&constants);
-return {p,p+sizeof constants};
+const Placement placements[]={
+    {0, 0,{16,48,0, 48,96,1},{16,51,0, 40,93,1},{ 0,48,0, 64,96,1},{ 0,48,63,95}},
+    {64,0,{80,48,0,112,96,1},{80,51,0,104,93,1},{64,48,0,128,96,1},{64,48,127,95}},
+    {0,48,{16, 0,0, 48,48,1},{16, 3,0, 40,45,1},{ 0, 0,0, 64,48,1},{ 0, 0,63,47}},
+    {64,48,{80, 0,0,112,48,1},{80, 3,0,104,45,1},{64, 0,0,128,48,1},{64, 0,127,47}},
+};
+#else
+const Placement placements[]={
+    {0, 0,{16,60,0, 48,84,1},{16,67,0, 40,77,1},{ 0,48,0, 64,96,1},{}},
+    {64,0,{80,60,0,112,84,1},{80,67,0,104,77,1},{64,48,0,128,96,1},{}},
+    {0,48,{16,12,0, 48,36,1},{16,19,0, 40,29,1},{ 0, 0,0, 64,48,1},{}},
+    {64,48,{80,12,0,112,36,1},{80,19,0,104,29,1},{64, 0,0,128,48,1},{}},
+};
+#endif
+// Poly flags and the constants each must produce: the water blend mode (blending bits other than Masked and
+// Occlude, defaulting to 0 when none or several are set) and the fog plane flag.
+struct FlagCase { FBITFIELD flags; int waterMode; int fogPlane; };
+const FlagCase flagCases[]={
+    {PF_Translucent,0,0},{PF_Additive,1,0},{PF_Subtractive,2,0},{PF_ReverseSubtract,3,0},
+    {PF_Multiplicative,4,0},{PF_Environment,5,0},{PF_Fog,0,0},{PF_Fog|PF_FogPlane,0,1},
+    {PF_Additive|PF_Masked|PF_Occlude,1,0},{PF_Translucent|PF_Additive,0,0},{PF_Translucent|PF_FogPlane,0,1},
+};
+#ifdef RR_TEST_WATER_CAPTURE
+// WaterConstants: float viewport {left, top, right, bottom}, int blend mode, three zero ints.
+std::vector<unsigned char> WaterBytes(float l,float t,float r,float b,int mode){
+    const float f[4]={l,t,r,b};const int i[4]={mode,0,0,0};
+    std::vector<unsigned char> bytes(32);memcpy(bytes.data(),f,16);memcpy(bytes.data()+16,i,16);return bytes;
 }
 #else
-static void ReferenceBounds(const FOutVector *vertices, UINT count, const Mat4 &matrix,
-	const int viewport[4], UINT height, D3D12_BOX &box)
-{
-	const float left = (float)viewport[0], top = (float)height - viewport[1] - viewport[3];
-	float x0 = left + viewport[2], y0 = top + viewport[3], x1 = left, y1 = top;
-	UINT inFront = 0;
-	for (UINT i = 0; i < count; i++)
-		inFront += matrix.m[3]*vertices[i].x + matrix.m[7]*vertices[i].y
-			+ matrix.m[11]*vertices[i].z + matrix.m[15] > 0.0001f;
-	if (!inFront)
-	{
-		box = {0, 0, 0, 0, 0, 1};
-		return;
-	}
-	for (UINT i = 0; i < count; i++)
-	{
-		const FOutVector &v = vertices[i];
-		const float w = matrix.m[3]*v.x + matrix.m[7]*v.y + matrix.m[11]*v.z + matrix.m[15];
-		if (!(w > 0.0001f))
-		{
-			x0 = left; y0 = top; x1 = left + viewport[2]; y1 = top + viewport[3];
-			break;
-		}
-		const float x = matrix.m[0]*v.x + matrix.m[4]*v.y + matrix.m[8]*v.z + matrix.m[12];
-		const float y = matrix.m[1]*v.x + matrix.m[5]*v.y + matrix.m[9]*v.z + matrix.m[13];
-		const float px = left + (x/w + 1)*0.5f*viewport[2];
-		const float py = top + (1 - y/w)*0.5f*viewport[3];
-		x0 = std::min(x0, px); y0 = std::min(y0, py);
-		x1 = std::max(x1, px); y1 = std::max(y1, py);
-	}
-	box.left = (UINT)std::clamp(floorf(x0), left, left + viewport[2]);
-	box.top = (UINT)std::clamp(floorf(y0), top, top + viewport[3]);
-	box.right = (UINT)std::clamp(ceilf(x1), left, left + viewport[2]);
-	box.bottom = (UINT)std::clamp(ceilf(y1), top, top + viewport[3]);
-	box.front = 0; box.back = 1;
-}
-
-std::vector<unsigned char> ReferenceConstants(FSurfaceInfo *surface, FBITFIELD flags){
-(void)surface;
-	struct FogConstants { INT32 plane, lightnum; float viewRatio; INT32 pad; };
-	const FogConstants constants = {(flags & PF_FogPlane) ? 1 : 0,
-		R_AdjustLightLevel(std::clamp((INT32)surface->LightInfo.light_level >> 3, 0, 31)),
-		(float)g_gl.viewport[2] / g_screenWidth, 0};
-
-auto p=reinterpret_cast<const unsigned char*>(&constants);
-return {p,p+sizeof constants};
+// FogConstants: int plane flag, int light number, float view ratio, one zero int.
+std::vector<unsigned char> FogBytes(int plane,int lightnum,float ratio){
+    const int i[2]={plane,lightnum};const float f=ratio;const int pad=0;
+    std::vector<unsigned char> bytes(16);memcpy(bytes.data(),i,8);memcpy(bytes.data()+8,&f,4);memcpy(bytes.data()+12,&pad,4);
+    return bytes;
 }
 #endif
-
 
 #ifdef RR_TEST_WATER_CAPTURE
 struct planeinfo_t { boolean isceiling; fixed_t fixedheight; sector_t *FOFSector; FBITFIELD blend; };
@@ -191,8 +133,11 @@ void InitTarget(UINT w=128,UINT h=96,DXGI_FORMAT f=1){
     for(UINT i=0;i<w*h;++i)g_rt.pixels[i]=i+1;
     g_rtWidth=w;g_rtHeight=h;kScreenFormat=f;
 }
+// The whole-pixel box [x0,x1) x [y0,y1) of the 128x96 target, with every edge nudged 1/512 pixel inward so
+// that float rounding in the projection can't move a floor() or ceil() to the neighboring pixel.
 std::vector<FOutVector> Rectangle(int x0,int y0,int x1,int y1){
-    float a=x0/64.f-1,b=x1/64.f-1,c=1-y1/48.f,d=1-y0/48.f;
+    const float e=1/512.f;
+    float a=(x0+e)/64.f-1,b=(x1-e)/64.f-1,c=1-(y1-e)/48.f,d=1-(y0+e)/48.f;
     return {{a,c,0,0,0},{b,c,0,0,0},{b,d,0,0,0},{a,d,0,0,0}};
 }
 void SameBox(const D3D12_BOX &a,const D3D12_BOX &b){
@@ -202,15 +147,17 @@ void SameBox(const D3D12_BOX &a,const D3D12_BOX &b){
 int main(){
     InitTarget();FSurfaceInfo surface{};surface.LightInfo.light_level=240;
     FOutVector poly[]={{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
-    // Compare production bounds to the former Direct3D 11 driver's fixed oracle.
-    for(int vx:{0,64})for(int vy:{0,48}){
+    FOutVector fractional[]={{-31/64.f,-3/16.f,0,0,0},{15/64.f,-3/16.f,0,0,0},{15/64.f,3/16.f,0,0,0},{-31/64.f,3/16.f,0,0,0}};
+    for(const Placement &p:placements){
+        const int vx=p.vx,vy=p.vy;
         g_gl.viewport[0]=vx;g_gl.viewport[1]=vy;g_gl.viewport[2]=64;g_gl.viewport[3]=48;
-        for(int matrixCase:{0,1,2}){
-            Mat4 matrix=identity;if(matrixCase==1)matrix.m[15]=-1;
-            if(matrixCase==2){matrix.m[3]=1;matrix.m[15]=0;}
-            D3D12_BOX a{},b{};CaptureBounds(poly,4,matrix,g_gl.viewport,g_rtHeight,a);
-            ReferenceBounds(poly,4,matrix,g_gl.viewport,g_rtHeight,b);SameBox(a,b);
-        }
+        D3D12_BOX box{};
+        CaptureBounds(poly,4,identity,g_gl.viewport,g_rtHeight,box);SameBox(box,p.centered);
+        CaptureBounds(fractional,4,identity,g_gl.viewport,g_rtHeight,box);SameBox(box,p.fractional);
+        Mat4 behind=identity;behind.m[15]=-1; // every vertex behind the eye: nothing to capture
+        CaptureBounds(poly,4,behind,g_gl.viewport,g_rtHeight,box);SameBox(box,D3D12_BOX{0,0,0,0,0,1});
+        Mat4 crossing=identity;crossing.m[3]=1;crossing.m[15]=0; // w = x: half the face is behind the eye
+        CaptureBounds(poly,4,crossing,g_gl.viewport,g_rtHeight,box);SameBox(box,p.whole);
 @@SPLIT_TEST@@
     }
     std::copy(std::begin(identity.m),std::end(identity.m),g_projection.m);

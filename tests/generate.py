@@ -136,39 +136,64 @@ def generate(engine, output):
 
     for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
         name = "Capture" + kind + "Scene"
+        # Expected constants and boxes are literal (see the tables in capture_d3d12.cpp.in), not recomputed.
+        expected_constants = ("WaterBytes(p.waterViewport[0],p.waterViewport[1],p.waterViewport[2],"
+            "p.waterViewport[3],c.waterMode)" if kind == "Water" else "FogBytes(c.fogPlane,28,.5f)")
+        bind_checks = (f"assert(bound[{srv}]==&Scene&&bound[13]==&g_waterSine);" if kind == "Water"
+            else f"assert(bound[{srv}]==&Scene);")
+        clear_binds = (f"bound[{srv}]=bound[13]=nullptr;" if kind == "Water" else f"bound[{srv}]=nullptr;")
         split = f"""
-        for(auto flags:{{FBITFIELD(PF_Translucent),FBITFIELD(PF_Additive),FBITFIELD(PF_Subtractive),
-                FBITFIELD(PF_ReverseSubtract),FBITFIELD(PF_Multiplicative),FBITFIELD(PF_Environment),
-                FBITFIELD(PF_Fog),FBITFIELD(PF_Fog|PF_FogPlane)}}){{
+        for(const FlagCase &c:flagCases){{
             {'SetWaterSurface(1);' if kind == 'Water' else ''}
             size_t before=copies.size();int rounds=begins;
-            assert(Capture(&surface,flags,poly,4));
+            {clear_binds}constants[{param}].clear();
+            assert(Capture(&surface,c.flags,poly,4));
             assert(copies.size()==before+1&&begins==rounds+1&&ends==begins);
-            D3D12_BOX expected{{}};ReferenceBounds(poly,4,identity,g_gl.viewport,g_rtHeight,expected);
-            SameBox(copies.back(),expected);
-            assert(constants[{param}]==ReferenceConstants(&surface,flags));
-            assert(bound[{srv}]==&Scene);
+            SameBox(copies.back(),p.centered);
+            assert(constants[{param}]=={expected_constants});
+            {bind_checks}
         }}
 """
         specific = """
-    // Each face gets current scenery; allocation is reused for identical targets.
-    int allocated=allocations;size_t count=copies.size();
+    // Each face gets current scenery: captures of an identical target copy again.
+    size_t count=copies.size();
     for(int i=0;i<2;++i)assert(Capture(&surface,PF_Fog,poly,4));
-    assert(copies.size()==count+2&&allocations==allocated);
+    assert(copies.size()==count+2);
+    // The light number is the light level >> 3, clamped to 0..31, less the engine's two-step adjustment
+    // (R_AdjustLightLevel, stubbed here as max(0, n-2)); the view ratio is the viewport width over the 128 pixel screen.
+    struct LightCase { int light, lightnum; };
+    struct WidthCase { int width; float ratio; };
+    for(const LightCase &c:std::vector<LightCase>{{0,0},{8,0},{16,0},{24,1},{240,28},{255,29},{400,29}})
+        for(const WidthCase &w:std::vector<WidthCase>{{128,1.f},{64,.5f},{32,.25f}}){
+            g_gl.viewport[2]=w.width;surface.LightInfo.light_level=c.light;constants[16].clear();
+            assert(Capture(&surface,PF_Fog,poly,4));
+            assert(constants[16]==FogBytes(0,c.lightnum,w.ratio));
+        }
+    g_gl.viewport[2]=128;surface.LightInfo.light_level=240;
 """
         if kind == "Water":
             specific = """
+    // The viewport rectangle in the constants is {left, top, right, bottom}, inclusive of the last row and column.
+    SetWaterSurface(1);constants[18].clear();
+    assert(Capture(&surface,PF_Translucent,poly,4));assert(constants[18]==WaterBytes(0,0,127,95,0));
+    g_gl.viewport[0]=32;g_gl.viewport[1]=16;g_gl.viewport[2]=96;g_gl.viewport[3]=64;
+    SetWaterSurface(1);constants[18].clear();
+    assert(Capture(&surface,PF_Environment,poly,4));assert(constants[18]==WaterBytes(32,16,127,79,5));
+    g_gl.viewport[0]=g_gl.viewport[1]=0;g_gl.viewport[2]=128;g_gl.viewport[3]=96;
     // Four-sided growth issues up to four strips in one transition round trip.
     const std::vector<std::vector<int>> rectangles={{52,40,60,48},{48,38,58,46},
         {57,43,66,53},{50,25,62,42},{44,48,64,61},{40,20,70,67}};
     for(int reverse:{0,1}){
         InitTarget();const auto original=g_rt.pixels;std::vector<bool> copied(128*96,false);
         SetWaterSurface(1);UINT64 pixelsBefore=g_stats.waterPixels;bool sawFour=false;
+        int ux0=128,uy0=96,ux1=0,uy1=0;
         for(size_t i=0;i<rectangles.size();++i){
             const auto &r=rectangles[reverse?rectangles.size()-1-i:i];
             auto piece=Rectangle(r[0],r[1],r[2],r[3]);if(i)SetWaterSurface(2);
             size_t before=copies.size();int rounds=begins;
+            bound[12]=bound[13]=nullptr;
             assert(Capture(&surface,PF_Translucent,piece.data(),4));
+            assert(bound[12]==&Scene&&bound[13]==&g_waterSine);
             size_t strips=copies.size()-before;assert(strips<=4);sawFour|=strips==4;
             assert(begins-rounds==int(strips!=0)&&ends==begins);
             for(size_t n=before;n<copies.size();++n){
@@ -177,6 +202,12 @@ def generate(engine, output):
                 }
             }
             for(size_t n=0;n<copied.size();++n)if(copied[n])assert(Scene.pixels[n]==original[n]);
+            // The strips together cover exactly the bounding box of every piece so far: each rectangle
+            // plus a 16 row ripple margin above and below (clamped to the 96 row target).
+            ux0=std::min(ux0,r[0]);ux1=std::max(ux1,r[2]);
+            uy0=std::min(uy0,std::max(r[1]-16,0));uy1=std::max(uy1,std::min(r[3]+16,96));
+            for(int y=0;y<96;++y)for(int x=0;x<128;++x)
+                assert(copied[y*128+x]==(x>=ux0&&x<ux1&&y>=uy0&&y<uy1));
             before=copies.size();rounds=begins;
             assert(Capture(&surface,PF_Translucent,piece.data(),4));
             assert(copies.size()==before&&begins==rounds);

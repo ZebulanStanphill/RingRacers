@@ -219,10 +219,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   selections with the actual Software zlight/scalelight tables and 16,384
   palette-remap samples. Extract bounds from `r_d3d12/d3d12_captures.inc` and
   exercise full/split viewports, eye-plane crossings and behind-camera/offscreen
-  faces. `fog_capture_d3d12` checks capture reuse, failure, resizing, resource
-  accounting, bindings and constants against fixed independent bounds and byte
-  initializer oracles from the former Direct3D 11 driver. Its obsolete native
-  capture harness was removed. Wall-slice tests reject directional light
+  faces. `fog_capture_d3d12` checks capture copies, failure, resizing, bindings and
+  constants against literal expected boxes (including fractional vertices, which
+  pin the floor/ceil edge rounding) and literal constant bytes for each viewport,
+  poly flag, light level and view width. Wall-slice tests reject directional light
   adjustment on fog. Windows WARP executes the shipped SM5.1 path and rejects
   a reciprocal-depth fog shader with the `fog-palette` oracle. Complete fog
   volumes, overlapping visuals and Xbox performance still need device testing.
@@ -446,8 +446,8 @@ refraction against the fixed-point sine and independent blend math; grouped surf
 original captured background while later pieces draw. The `fog-remap`, `fog-palette`, `water-
 surface`, `water-refraction`, `water-group` and `water-group-counts` negative controls must each
 fail their oracle, and capture counters check the grouping under GPU-based validation. Native D3D12
-capture tests mock the texture, copy, binding and constant helpers, checking the former Direct3D 11 driver's fixed bounds and
-constant initializer oracles, split views, clipping, failures, resizing and disjoint water growth. A growing water
+capture tests mock the texture, copy, binding and constant helpers, checking literal expected bounds (including fractional vertices) and
+constant bytes, split views, clipping, failures, resizing and disjoint water growth. A growing water
 capture uses one batched transition round trip around up to four strips; an unchanged grouped
 rectangle uses none. `capture-mixed` requires fog and water in the same command list;
 `capture-recreate` checks capture replacement after flushing resources still referenced by
@@ -518,9 +518,10 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   composites across blend modes, alpha values, distances, times and split-view
   edges. Extract projected bounds from `r_d3d12/d3d12_captures.inc`.
   `water_capture_d3d12` checks bounded copies, disjoint rectangle growth, grouping,
-  allocation failures, resize and clipped faces. Its independent bounds and
-  constant byte initializer oracles are frozen versions from the former Direct3D
-  11 driver. Engine-side water-plane continuation and transparent-node dispatch
+  allocation failures, resize and clipped faces. Its expected bounds
+  (including fractional vertices), constant bytes, scene and sine texture bindings
+  are literal values, and the growth strips must cover exactly the union of the
+  pieces' bounds. Engine-side water-plane continuation and transparent-node dispatch
   checks moved from the removed `water_capture` harness to this Direct3D 12
   harness, retaining slope/layer changes and wall/non-ripple interruptions.
   Direct3D 11 blend-state and capture harnesses were removed; Direct3D 12 WARP
