@@ -154,7 +154,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `R_Prep3DFloors`, and all 72 authored slope constructors. All 58 cold first
   wall submissions must equal an explicitly prepared reference and the second
   traversal in order, vertices/UVs, light, colormap, flags, alpha, and queued/fog
-  choice. Focused cases cover NULL back sectors, absent FOFs, a valid list left
+  choice. Because that replay is differential, `R_Prep3DFloors` itself is also
+  checked against light lists worked out by hand from the title map for two
+  sectors (heights, light levels, colormaps, casters and flags of the fog,
+  solid and colormap-only FOFs). Focused cases cover NULL back sectors, absent FOFs, a valid list left
   untouched, portal-search exclusion, real-sector preparation before the fake-flat
   copy, preserved target/control moved flags, and the normal subsector refresh.
   The first traversal must also prepare at least one cold back sector from

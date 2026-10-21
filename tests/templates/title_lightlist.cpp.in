@@ -166,6 +166,33 @@ static void CheckPreparationCases(){
  assert(prepCalls.size()==n+2 && !real->moved);
  printf("CASES valid/null-back/no-fofs/portal-search/cold-real-before-fake/moved-controls-preserved/subsector-refresh asserted\n");
 }
+// What R_Prep3DFloors builds for two of the title map's sectors, worked out by hand from the authored map
+// (fixtures/title-map.json) instead of read back from the code, so a wrong list can't be hidden by the replay
+// being differential. A list's first entry is the sector's own light, one fixed-point unit (1/65536) above its ceiling; each lit FOF
+// then adds an entry at its top. A fog FOF (control sector 61: floor 96, ceiling 528, light 0, black colormap) is
+// double-shadowed, so it also adds one at its bottom that restores the sector's light. A FOF with NOSHADE that
+// does not cut (the colormap-only controls 59, 16, 2, 29) adds nothing, while a solid FOF with NOSHADE (controls
+// 19 and 10, which cut) adds an entry that keeps the light and colormap of the entry above it.
+struct LightExpect{fixed_t height;INT32 light;extracolormap_t *colormap;int control;};
+static void CheckPreparedList(int sector,std::initializer_list<LightExpect> expected){
+ auto &s=mapSectors[sector];assert(!s.c_slope);
+ assert(s.numlights==(INT32)expected.size());
+ int i=0;
+ for(auto &e:expected){
+  auto &l=s.lightlist[i++];
+  assert(l.height==e.height && !l.slope);
+  assert(*l.lightlevel==e.light && *l.extra_colormap==e.colormap);
+  if(e.control<0)assert(!l.caster && !l.flags);
+  else assert(l.caster && l.caster->secnum==size_t(e.control) && l.flags==l.caster->fofflags);
+ }
+}
+static void CheckPreparedLists(){
+ // Sector 31: ceiling 312, light 104, with colormap-only FOFs (59, 16) and the fog (61).
+ CheckPreparedList(31,{{312*FRACUNIT+1,104,nullptr,-1},{528*FRACUNIT,0,&fog,61},{96*FRACUNIT,104,nullptr,61}});
+ // Sector 23: ceiling 360, light 199, with solid FOFs 10 (top 336) and 19 (top 240) between the fog's top and bottom.
+ CheckPreparedList(23,{{360*FRACUNIT+1,199,nullptr,-1},{528*FRACUNIT,0,&fog,61},{336*FRACUNIT,0,&fog,10},
+  {240*FRACUNIT,0,&fog,19},{96*FRACUNIT,199,nullptr,61}});
+}
 static std::vector<Draw> Traverse(){
  draws.clear();visitedSky.clear();drawsky=false;gld_clipper_Clear();
  const angle_t a1=gld_FrustumAngle(0);
@@ -192,6 +219,7 @@ int main(){
  // Explicitly prepare every list to obtain a warm reference, including sectors
  // outside the visited subsectors. Then restore the real cold map-load state.
  for(int i=0;i<fixtureSectors;++i)if(mapSectors[i].ffloors)R_Prep3DFloors(mapSectors+i);
+ CheckPreparedLists();
  for(int i=0;i<fixtureSectors;++i)mapSectors[i].moved=false;
  auto reference=Traverse();
  for(int i=0;i<fixtureSectors;++i){free(mapSectors[i].lightlist);mapSectors[i].lightlist=nullptr;mapSectors[i].numlights=0;mapSectors[i].moved=true;}
