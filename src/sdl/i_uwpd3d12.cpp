@@ -99,33 +99,13 @@ bool HasD3D12Hardware()
 
 } // namespace
 
-// Game Mode's own answer (expandedresources.h, in WindowsApp.lib): declared here because mingw's headers lack it
-extern "C" HRESULT WINAPI HasExpandedResources(BOOL *hasExpandedResources);
-extern "C" HRESULT WINAPI GetExpandedResourceExclusiveCpuCount(ULONG *exclusiveCpuCount);
-
-boolean I_UWPHasGameModeResources(int *exclusivecpus)
-{
-	BOOL expanded = FALSE;
-	ULONG exclusive = 0;
-	if (FAILED(HasExpandedResources(&expanded)))
-		return -1;
-	if (exclusivecpus)
-		*exclusivecpus = SUCCEEDED(GetExpandedResourceExclusiveCpuCount(&exclusive)) ? (int)exclusive : -1;
-	return expanded ? true : false;
-}
-
 void I_UWPRequireGameMode(void)
 {
 	// On an Xbox One X, the App type offered hardware Direct3D 12 at feature level 12_0 and the same 5120 MB budget
 	// as Game, and Game launches have been seen with no processors marked as the game's, like App launches. None of
-	// these tells the app types apart, so they're only logged, and only missing Direct3D 12 shows the pop-up. Game
-	// Mode's own answer is logged too, here and in each perf summary: the expandedResources capability is meant to
-	// grant its resources whatever App type Dev Home shows, and exclusive resources only arrive once the app has focus.
+	// these tells the app types apart, so they're only logged, and only missing Direct3D 12 shows the pop-up.
 	const int cpusetmode = I_UWPCpuSetMode();
-	int exclusive = -1;
-	const boolean gamemode = I_UWPHasGameModeResources(&exclusive);
-	I_OutputMsg("UWP: app type signals: Game Mode resources %s (%d exclusive CPU sets); processors %s\n",
-		gamemode == (boolean)-1 ? "unknown" : gamemode ? "yes" : "not yet", exclusive,
+	I_OutputMsg("UWP: app type signals: processors %s\n",
 		cpusetmode == 1 ? "some are the game's" : cpusetmode == 0 ? "none are the game's" : "not reported");
 
 	if (HasD3D12Hardware())

@@ -859,14 +859,9 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 	if (seconds < UWP_PERF_INTERVAL)
 		return;
 
-	{
-		int exclusive = -1;
-		const boolean gamemode = I_UWPHasGameModeResources(&exclusive);
-		I_OutputMsg("UWP perf: %.1f s at %dx%d (FPS cap %s, V-Sync %s, draw distance %s, skyboxes %s, parallel software %s, Game Mode resources %s, %d exclusive CPU sets)\n",
-			seconds, vid.width, vid.height,
-			cv_fpscap.string, cv_vidwait.string, cv_drawdist.string, cv_skybox.string, cv_parallelsoftware.string,
-			gamemode == (boolean)-1 ? "unknown" : gamemode ? "yes" : "no", exclusive);
-	}
+	I_OutputMsg("UWP perf: %.1f s at %dx%d (FPS cap %s, V-Sync %s, draw distance %s, skyboxes %s, parallel software %s)\n",
+		seconds, vid.width, vid.height,
+		cv_fpscap.string, cv_vidwait.string, cv_drawdist.string, cv_skybox.string, cv_parallelsoftware.string);
 	I_OutputMsg("UWP perf:   %.1f frames/s (%.1f with 3D) from %.1f loops/s; work %.1f ms per loop, %.1f ms at worst\n",
 		uwp_perf.frames / seconds, uwp_perf.worldframes / seconds, uwp_perf.loops / seconds,
 		uwp_perf.work * ms / uwp_perf.loops, uwp_perf.worstwork * ms);

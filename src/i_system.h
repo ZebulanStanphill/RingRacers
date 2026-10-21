@@ -331,10 +331,6 @@ void I_UWPLogMemoryLimit(void);
 // (sdl/i_uwpd3d12.cpp). Logs signals that might tell the App and Game app types apart.
 void I_UWPRequireGameMode(void);
 
-// [UWP]: Whether Game Mode (the expandedResources capability's reserved CPU cores and memory) is in effect, from
-// HasExpandedResources: true, false, or -1 if the query failed. exclusivecpus gets the exclusive CPU set count or -1.
-boolean I_UWPHasGameModeResources(int *exclusivecpus);
-
 // [UWP]: Starts sampling what the main thread is doing, for E:\ringracers\uwp-profile.txt (sdl/i_uwpprofile.cpp).
 // Call from the main thread.
 void I_UWPStartProfiler(void);
