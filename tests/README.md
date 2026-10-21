@@ -43,8 +43,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   Winsock aliases (including raw 10065/10051). Check successful sends, would-block,
   refusal, host/network-unreachable drops, recovery on the next send, disconnected
   peers, broadcast/socket selection, address lengths, and fatal unexpected errors.
-  Pre-fix sender controls fail specifically on unreachable errors with a clean
-  nonzero exit. These checks run under ASan/UBSan; live netcode retries/timeouts
+  Against the pre-fix sender both executables abort on the first unreachable
+  error. These checks run under ASan/UBSan; live netcode retries/timeouts
   and Xbox behavior remain untested. Run with `ctest -R '^udp_send_'`.
 
 - **Encore post-image selection:** execute full production `P_CalcChasePostImg`
@@ -144,8 +144,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   choice. Focused cases cover NULL back sectors, absent FOFs, a valid list left
   untouched, portal-search exclusion, real-sector preparation before the fake-flat
   copy, preserved target/control moved flags, and the normal subsector refresh.
-  A generated negative control removes only the added preparation and must fail
-  equality with exactly 22 lighting/colormap differences. Compact title-map JSON
+  The first traversal must also prepare at least one cold back sector from
+  `HWR_AddLine` itself, so the replay cannot stop exercising the fix; without it the
+  cold walls differ from the reference. Compact title-map JSON
   and uncompressed ZNODES are expanded at configure time; generated initialization
   headers are never committed. Texture/GPU calls and non-wall subsector work are
   stubs, so this checks wall submissions rather than rendered pixels or the wipe.
@@ -216,13 +217,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   adjustment on fog. Windows WARP executes the shipped SM5.1 path and rejects
   a reciprocal-depth fog shader with the `fog-palette` oracle. Complete fog
   volumes, overlapping visuals and Xbox performance still need device testing.
-- **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary, light-split and linkdraw paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. Separate negative executables must reject the previous dropped-map behavior and a one-pixel transform error. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
+- **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary, light-split and linkdraw paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. For every rotated case the coordinate oracle must also reject a missing map, a blank map of the right size and the right map moved one pixel in each direction (the previous dropped-map behavior and a one-pixel transform error), so it cannot go blind unnoticed. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
 - **Encore brightmap colors:** run production sprite colormap selection, Software
   full-bright selection, mapped-cache lookup/update, column conversion and light-table
   conversion. Check 12,288 combinations covering all 256 indices, 1/2/3/4-byte
   output, both palette settings, ordinary/Encore/exempt sprites, cache reuse and
-  in-place remap changes. Generated production mutants that omit or repeat the
-  column remap must fail with a color mismatch. Direct3D 12 WARP checks normal,
+  in-place remap changes. Omitting or repeating the production column remap
+  fails the pixel comparison; for every remapped combination the test also checks
+  that the full-bright color of the unremapped or double-remapped index differs
+  from the right one, so neither error can hide. Direct3D 12 WARP checks normal,
   Encore and exempt texels with Palette Rendering on and off. Separate controls
   omit or repeat the remap on bright pixels for each palette setting. The native
   test verifies production pretranslation; WARP supplies pretranslated textures
@@ -240,12 +243,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   the origin, and an ordinary sprite or always-on-top spring left untouched. FOF
   sides are admitted when opaque, whether solid or intangible; fog and translucent
   sides are not. Zone allocation and GPU submission are stubs that collect the
-  submitted triangles. CTest requires five negative controls to fail:
-  `--negative-full` and `--negative-edge` restore the old per-pixel depth behavior,
-  while `--negative-front` and `--negative-nonspring` inject the clipping errors the
-  preservation cases guard against (ordering lost, or the `MF_SPRING` gate lost),
-  since old depth testing already preserves those two cases, and `--negative-bound`
-  (below) tells the clip it has more room than its buffer. Software draws every 3D floor
+  submitted triangles. The default run also checks, in process, that the independent
+  sampling oracle rejects four injected errors: restoring the old per-pixel depth
+  behavior (a full wall and an edge), and the clipping errors the preservation cases
+  guard against (ordering lost, or the `MF_SPRING` gate lost), since old depth testing
+  already preserves those two cases. Software draws every 3D floor
   side and plane nearer than the farthest one a sprite sorts behind over it, so those
   entries are subtracted together: the test records two sides whose nearer one fails its own
   test and checks that it is still subtracted (and not when recorded after the farther one),
@@ -268,8 +270,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   out of line, which once overran the stack on Metropolis. The half-plane clip is called on a
   zigzag whose every edge crosses the plane, with too little room (it must return -1 and leave
   guard slots holding sentinels untouched) and with exactly enough (12 corners), and the near-plane clip on a
-  32-corner silhouette that needs 48 (it must report none); `--negative-bound` passes a capacity
-  larger than the real output, so the guards change and the program fails. The smallest
+  32-corner silhouette that needs 48 (it must report none); telling the clip it has room
+  for 12 corners in an output of 5 must change the guards, so a zero count can be trusted. The smallest
   fuzzed scene that overflowed (two sloped 3D floor planes of 29 and 32 corners, a 3D floor side, a full-size
   spring; hex-float literals copied into the test) must submit only triangles or the quad and still draw something, and
   3000 random views from a SplitMix64 generator (not `std::uniform_*_distribution`, which differs between
@@ -490,8 +492,11 @@ detailed run log are uploaded as `regression-results`, including when a test fai
 When fixing a bug, add the smallest reproducible input and an assertion about its
 observable result. Test the relevant platform variants and important boundaries.
 Check that the new case fails against the pre-fix implementation, then passes
-with the fix. Avoid tests that only assert a source spelling or duplicate the
-implementation. Keep randomized cases seeded and retain failing seeds as cases.
+with the fix. When an oracle needs a proof that it can fail, feed it a deliberately
+wrong input in the same executable and assert the specific mismatch; do not add a
+second executable or a `WILL_FAIL` test, which passes on any failure (a sanitizer
+abort, a stale source anchor, a crash). Avoid tests that only assert a source
+spelling or duplicate the implementation. Keep randomized cases seeded and retain failing seeds as cases.
 To add a group, add its stubs/cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`. Register extracted production and reference source files as configure dependencies too, so editing Software's ripple calculation regenerates its water-refraction oracle.
 

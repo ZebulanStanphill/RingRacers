@@ -68,7 +68,8 @@ void *Z_Calloc2(size_t n,INT32,void **user,size_t,const char *,int){void *p=call
 
 @@WALL_LIGHTING@@
 
-static std::vector<sector_t*> prepCalls;void R_Prep3DFloors(sector_t *s){boolean moved=s->moved;prepCalls.push_back(s);R_Prep3DFloors_Impl(s);assert(s->moved==moved); }
+static std::vector<sector_t*> prepCalls,addLinePreps;static bool inAddLine=false;
+void R_Prep3DFloors(sector_t *s){boolean moved=s->moved;prepCalls.push_back(s);if(inAddLine)addLinePreps.push_back(s);R_Prep3DFloors_Impl(s);assert(s->moved==moved); }
 @@POINT_ANGLE@@
 
 #include "t_fsin.c"
@@ -128,7 +129,7 @@ static void HWR_Subsector(size_t idx){
  for(int k=sub->firstline;k<sub->firstline+sub->numlines;k++){
   auto *seg=mapSegs+k;if(seg->glseg)continue;
   currentLine=int(seg->linedef-mapLines);currentSide=seg->side;
-  HWR_AddLine(seg);
+  inAddLine=true;HWR_AddLine(seg);inAddLine=false;
  }
 }
 static bool Same(const Draw&a,const Draw&b){
@@ -145,7 +146,6 @@ static void Dump(const Draw&d,size_t i){
  printf("\n");
 }
 static void CheckPreparationCases(){
-#ifndef TITLE_NEGATIVE
  seg_t *seg=nullptr;
  for(auto&s:mapSegs)if(!s.glseg && s.linedef==mapLines+22 && s.side==1 && s.backsector){seg=&s;break;}
  assert(seg);auto *real=seg->backsector;assert(real->ffloors && real->numlights);
@@ -165,7 +165,6 @@ static void CheckPreparationCases(){
  subsector_t sub{};sub.sector=real;PrepareSubsector(&sub);
  assert(prepCalls.size()==n+2 && !real->moved);
  printf("CASES valid/null-back/no-fofs/portal-search/cold-real-before-fake/moved-controls-preserved/subsector-refresh asserted\n");
-#endif
 }
 static std::vector<Draw> Traverse(){
  draws.clear();visitedSky.clear();drawsky=false;gld_clipper_Clear();
@@ -196,24 +195,21 @@ int main(){
  for(int i=0;i<fixtureSectors;++i)mapSectors[i].moved=false;
  auto reference=Traverse();
  for(int i=0;i<fixtureSectors;++i){free(mapSectors[i].lightlist);mapSectors[i].lightlist=nullptr;mapSectors[i].numlights=0;mapSectors[i].moved=true;}
- auto first=Traverse(),second=Traverse();
+ addLinePreps.clear();
+ auto first=Traverse();
+ // The replay must exercise the fix: walls whose back sector has FOFs but a cold light list are first
+ // seen through HWR_AddLine, before any subsector visit prepares that sector. Without the preparation
+ // there, nothing is prepared from HWR_AddLine and the cold walls differ from the reference.
+ assert(!addLinePreps.empty());
+ for(auto *s:addLinePreps)assert(s->ffloors && s->numlights>0);
+ auto second=Traverse();
  size_t differences=Differences(first,reference),secondDifferences=Differences(first,second);
  assert(Differences(second,reference)==0);
  printf("58 title walls: cold/warm differences=%zu; first/second differences=%zu; slopes=%u\n",differences,secondDifferences,slopecount);
-#ifdef TITLE_NEGATIVE
- assert(differences==22 && secondDifferences==22);
- for(size_t i=0;i<first.size();++i)if(!Same(first[i],reference[i])){
-  assert(!first[i].fog && !reference[i].fog);
-  assert(first[i].light==104 || first[i].light==199);
-  assert(first[i].colormap==nullptr && reference[i].light==0 && reference[i].colormap==&fog);
- }
-#else
  if(!differences && !secondDifferences)CheckPreparationCases();
-#endif
  gld_clipper_Clear();while(freelist){auto*n=freelist->next;free(freelist);freelist=n;}
  for(int i=0;i<fixtureSectors;i++)free(mapSectors[i].lightlist);
  while(slopelist){auto*n=slopelist->next;free(slopelist);slopelist=n;}
- // An ordinary failure exit lets CTest's WILL_FAIL validate the old behavior;
- // a sanitizer crash or assertion cannot accidentally pass the negative control.
+ // A mismatch was printed above; fail with an ordinary exit status.
  return differences || secondDifferences ? 1 : 0;
 }

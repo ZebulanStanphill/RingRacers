@@ -252,10 +252,13 @@ static void RunCases(){
     Begin();thing.x=FLOAT_TO_FIXED(8);spr.gx=8;HWR_AddSpringWall(crossing.data(),&fof);DrawEntry();assert(Samples(fixture,{})==0);
     Begin();thing.x=FLOAT_TO_FIXED(9);spr.gx=9;HWR_AddSpringWall(crossing.data(),&fof);DrawEntry();assert(Samples(fixture,{crossing})==0);
 }
-static int Negative(const std::string &mode){
-    bool full=mode=="--negative-full",edgeCase=mode=="--negative-edge";
-    if(!full&&!edgeCase&&mode!="--negative-front"&&mode!="--negative-nonspring")return 2;
-    Begin();auto wall=mode=="--negative-front"?Wall(14,-8,14,8):Wall(8,-8,8,edgeCase?0:8);
+// Injects one clipping error the cases above guard against and returns how many independent samples disagree
+// with what that case expects. full/edge draw the old per-pixel depth behavior; front/nonspring clip when
+// nothing may be clipped.
+static int InjectedError(const std::string &mode){
+    bool full=mode=="full",edgeCase=mode=="edge";
+    assert(full||edgeCase||mode=="front"||mode=="nonspring");
+    Begin();auto wall=mode=="front"?Wall(14,-8,14,8):Wall(8,-8,8,edgeCase?0:8);
     HWR_AddSpringWall(wall.data(),nullptr);
     if(full||edgeCase)HWR_ProcessPolygon(&surface,fixture.data(),4,flags,SHADER_SPRITECLIPHACK,false);
     else {
@@ -263,12 +266,17 @@ static int Negative(const std::string &mode){
         // is measured past the wall, as if the ordering test were lost. nonspring: the
         // sprite is admitted as a spring (Begin sets MF_SPRING) though the case expects
         // an ordinary sprite, as if the MF_SPRING gate were lost.
-        if(mode=="--negative-front"){thing.x=FLOAT_TO_FIXED(20);spr.gx=20;}
+        if(mode=="front"){thing.x=FLOAT_TO_FIXED(20);spr.gx=20;}
         HWR_DrawSpringPolygon(&surface,fixture.data(),flags,SHADER_SPRITECLIPHACK,&spr);
     }
     int failures=Samples(fixture,(full||edgeCase)?std::vector<Quad>{wall}:std::vector<Quad>{},full||edgeCase);
-    std::printf("negative control %s: %d mismatched independent samples\n",mode.c_str(),failures);
-    PurgeLevel();return failures?1:0;
+    PurgeLevel();return failures;
+}
+// The oracle must be able to fail: every injected error has to be reported as mismatched samples. The first
+// two restore the old per-pixel depth behavior, which the spring cases are written to reject; the others clip
+// where the preservation cases expect the exact quad (ordering lost, or the MF_SPRING gate lost).
+static void OracleRejectsInjectedErrors(){
+    for(const char *mode:{"full","edge","front","nonspring"})assert(InjectedError(mode)>0);
 }
 static void Routes(){
     auto wall=Wall(8,-8,8,8);auto f=Solid();
@@ -545,6 +553,9 @@ static int ZigzagGuards(INT32 real,INT32 told,boolean inside,INT32 &result){
 }
 static void Bounds(){
     ResetView();
+    // The guard slots must be able to catch an overwrite: told it has room for 12 corners in an output of 5,
+    // the clip writes past the real output and must change them. Without this the zero counts below prove nothing.
+    {INT32 result;assert(ZigzagGuards(5,12,true,result)>0);}
     for(boolean inside:{false,true}){
         INT32 result;
         // An output too small for the result is refused, with nothing written past it.
@@ -563,12 +574,6 @@ static void Bounds(){
     // The same zigzag of four corners fits: two corners kept and four crossings.
     wall.numverts=4;
     assert(HWR_SpringClipNear(&wall,buffer.data())==6);
-}
-// The control: the clip is told it has room for 12 corners in an output of 5, so it overwrites the guard slots.
-static int NegativeBound(){
-    INT32 result;int touched=ZigzagGuards(5,12,true,result);
-    std::printf("negative control --negative-bound: result %d, %d guard slots overwritten\n",(int)result,touched);
-    PurgeLevel();return touched?1:0;
 }
 
 static void SetView(float vx,float vy,float vz,float c,float s,float ox,float oy,float oz,float half){
@@ -732,8 +737,7 @@ static void Sweep(int views){
 }
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
-    if(argc>1&&std::string(argv[1])=="--negative-bound")return NegativeBound();
-    if(argc>1)return Negative(argv[1]);
-    RunCases();ObliqueCamera();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
+    if(argc>1)return 2;
+    RunCases();ObliqueCamera();OracleRejectsInjectedErrors();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }

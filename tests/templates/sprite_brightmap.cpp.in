@@ -119,9 +119,6 @@ static gl_vissprite_t project(mobj_t *thing, patch_t *rotsprite = nullptr) {
     spriteframe_t *sprframe = &sprdef->spriteframes[rot];
     rot = 0; // Viewing-angle selection uses the common first patch in this fixture.
 @@PROJECT@@
-#ifdef TEST_BRIGHT_DROP
-    if (rotsprite && rotsprite->rotation.valid) result.gbright = nullptr;
-#endif
     return result;
 }
 static gl_vissprite_t projectPrecip(precipmobj_t *thing) {
@@ -398,6 +395,38 @@ static bool verifyBright(patch_t *output, patch_t *owner, patch_t *source, patch
     }
     return true;
 }
+// The same map with its pixels moved by (dx, dy) inside an unchanged header, as a transform that is
+// off by one pixel would produce.
+static patch_t *shiftedCopy(patch_t *map, int dx, int dy) {
+    std::vector<UINT16> pixels(map->width*map->height);
+    for (int y = 0; y < map->height; ++y) for (int x = 0; x < map->width; ++x) {
+        int value = pixelAt(map,x-dx,y-dy);
+        if (value >= 0) pixels[y*map->width+x] = 0xFF00 | value;
+    }
+    return static_cast<patch_t *>(Picture_Convert(PICFMT_FLAT16,pixels.data(),PICFMT_PATCH,
+        0,nullptr,map->width,map->height,map->leftoffset,map->topoffset,PICFLAGS_NONE));
+}
+static unsigned rejectedWrongMaps;
+// The oracle has to be able to fail for the case it just accepted: a dropped map (the old behavior
+// for rotated sprites), a blank map of the right size, and the right map moved one pixel each way.
+// Every wrong map keeps the real header, so only the pixel comparison can reject the moved ones.
+static void oracleRejectsWrongMaps(patch_t *good, patch_t *owner, patch_t *source, patch_t *bright,
+    int angle, int xpivot, int ypivot, bool flip) {
+    const unsigned pixelsChecked = rotationPixels; // Count only pixels of the maps that must match.
+    assert(!verifyBright(nullptr,owner,source,bright,angle,xpivot,ypivot,flip));
+    auto *blank = makePatch(good->width,good->height,good->leftoffset,good->topoffset,3);
+    assert(!verifyBright(blank,owner,source,bright,angle,xpivot,ypivot,flip));
+    Patch_Free(blank);
+    for (auto move : {std::pair<int,int>{1,0},{-1,0},{0,1},{0,-1}}) {
+        auto *wrong = shiftedCopy(good,move.first,move.second);
+        assert(wrong->width == good->width && wrong->height == good->height
+            && wrong->leftoffset == good->leftoffset && wrong->topoffset == good->topoffset);
+        assert(!verifyBright(wrong,owner,source,bright,angle,xpivot,ypivot,flip));
+        Patch_Free(wrong);
+    }
+    rotationPixels = pixelsChecked;
+    rejectedWrongMaps += 6;
+}
 static int rotationCases() {
     for (int angle=1; angle<ROTANGLES; ++angle) {
         double a = angle*ROTANGDIFF*3.14159265358979323846/180;
@@ -441,6 +470,7 @@ static int rotationCases() {
                     vis.gbright ? "misaligned transform" : "dropped map",geometry,pivot,angle,flip);
                 return 1;
             }
+            oracleRejectsWrongMaps(vis.gbright,rot,source,bright,angle,xpivot,ypivot,flip);
             Patch_CreateGL(rot); Patch_CreateGL(vis.gbright);
             for (bool vertical : {false,true}) for (bool horizontal : {false,true}) {
                 vis.vflip = vertical; vis.flip = horizontal;
@@ -519,6 +549,6 @@ static int rotationCases() {
         Patch_Free(empty); Patch_Free(source);
     }
     assert(!rotatedbrightmaps && !invalidatedbrightmaps && gpu.empty());
-    printf("rotated brightmaps: %u transforms, %u oracle pixels (both vertical orientations), %u UV orientations, %u draw/batch bindings, 144 source reloads passed\n",rotationCount,rotationPixels,orientations,bindings);
+    printf("rotated brightmaps: %u transforms, %u oracle pixels (both vertical orientations), %u wrong maps rejected, %u UV orientations, %u draw/batch bindings, 144 source reloads passed\n",rotationCount,rotationPixels,rejectedWrongMaps,orientations,bindings);
     return 0;
 }

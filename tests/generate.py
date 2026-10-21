@@ -47,15 +47,11 @@ def generate(engine, output):
     generate_title(engine, output, templates, render, function_section)
     tcp = Source(engine / "src/i_tcp.c")
     errors = Source(engine / "src/i_tcp_detail.h")
-    for suffix, negative in (("", False), ("_negative", True)):
-        sender = tcp.function("SOCK_Send")
-        if negative:
-            sender = sender.replace(" && e != EHOSTUNREACH && e != ENETUNREACH", "")
-        render(templates / "udp_send.cpp.in", {
-            "WINSOCK_ERRORS": errors.section("\t#undef errno", "\t#ifndef IOC_VENDOR"),
-            "SEND_TO_ADDR": tcp.function("SOCK_SendToAddr"),
-            "SEND": sender,
-        }, output / ("udp_send" + suffix + ".cpp"))
+    render(templates / "udp_send.cpp.in", {
+        "WINSOCK_ERRORS": errors.section("\t#undef errno", "\t#ifndef IOC_VENDOR"),
+        "SEND_TO_ADDR": tcp.function("SOCK_SendToAddr"),
+        "SEND": tcp.function("SOCK_Send"),
+    }, output / "udp_send.cpp")
 
     network = Source(engine / "src/d_clisrv.c")
     game = Source(engine / "src/g_game.c")
@@ -254,15 +250,7 @@ def generate(engine, output):
             "grPatch = patch->hardware;", "grPatch = (GLPatch_t *)patch->hardware;").replace(
             "newMipmap = calloc(", "newMipmap = (GLMipmap_t *)calloc(").replace(
             "newMipmap->colormap = Z_Calloc(", "newMipmap->colormap = (GLColormap_t *)Z_Calloc(")
-    for suffix in ("", "_negative_missing", "_negative_double"):
-        parts = dict(encore_parts)
-        statement = "texel = mipmap->colormap->data[texel];"
-        if suffix:
-            assert parts["DRAW_COLUMN"].count(statement) == 1
-            parts["DRAW_COLUMN"] = parts["DRAW_COLUMN"].replace(statement,
-                "(void)texel;" if suffix == "_negative_missing" else
-                "texel = mipmap->colormap->data[mipmap->colormap->data[texel]];")
-        render(templates / "encore_brightmap.cpp.in", parts, output / ("encore_brightmap" + suffix + ".cpp"))
+    render(templates / "encore_brightmap.cpp.in", encore_parts, output / "encore_brightmap.cpp")
 
     rotation = Source(engine / "src/r_patchrotation.c")
     patch_source = Source(engine / "src/r_patch.cpp")
@@ -282,8 +270,6 @@ def generate(engine, output):
         "RotatedPatch_Create", "RotatedPatch_CalculateDimensions", "RotatedPatch_Sample",
         "Patch_FreeInvalidatedBrightmaps", "Patch_InvalidateRotatedBrightmaps",
         "Patch_GetRotatedBrightmap", "RotatedPatch_DoRotation", "Patch_GetRotatedSprite"])
-    rotation_parts = rotation_parts.replace("x + transform->cropx, y + transform->cropy,",
-        "x + transform->cropx\n#ifdef TEST_BRIGHT_TRANSFORM\n + 1\n#endif\n, y + transform->cropy,")
     picture_parts = "\n".join(cpp_alloc(pictures.function(name)) for name in [
         "Picture_FormatBPP", "Picture_IsInternalPatchFormat", "Picture_IsDoomPatchFormat",
         "Picture_IsPatchFormat", "Picture_IsFlatFormat", "Picture_GetPatchPixel",

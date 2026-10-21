@@ -72,11 +72,6 @@ static bool dropped(int error)
 }
 int main()
 {
-#ifdef TEST_NEGATIVE
-    // Only unreachable behavior should fail with the pre-fix sender.
-    if (!dropped(EHOSTUNREACH)) { puts("pre-fix sender fatally rejected unreachable UDP packet"); return 1; }
-    return 0;
-#else
 #ifdef TEST_WINSOCK
     static_assert(EHOSTUNREACH == 10065 && ENETUNREACH == 10051);
 #endif
@@ -97,5 +92,4 @@ int main()
     try { SOCK_Send(); assert(false && "unexpected errors must remain fatal"); }
     catch (const Fatal &fatal) { assert(fatal.error == EMSGSIZE); }
     puts("UDP send error handling passed");
-#endif
 }
