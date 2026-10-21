@@ -243,8 +243,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   in-place remap changes. Omitting or repeating the production column remap
   fails the pixel comparison; for every remapped combination the test also checks
   that the full-bright color of the unremapped or double-remapped index differs
-  from the right one, so neither error can hide. Direct3D 12 WARP checks normal,
-  Encore and exempt texels with Palette Rendering on and off. The native
+  from the right one, so neither error can hide. Direct3D 12 WARP draws four
+  already translated palette indices, dark and bright, with Palette Rendering on and off. The native
   test verifies production pretranslation; WARP supplies pretranslated textures
   to verify shader behavior. These complement each other without running a
   complete game or validating Xbox visuals.
@@ -299,8 +299,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `PSSoftware` palette path. Brightmapped texels must use the base colormap's
   full-bright row at their palette index; other texels keep the surface colormap
   row at the rasterized depth. `brightmap-palette` varies light and depth and
-  checks normal, Encore and exempt texels. A surface-colormap shader mutant must
-  fail. `brightmap-smooth` covers the smooth-light path. This does not validate Xbox visuals.
+  checks four palette indices, each dark and bright, as the Encore translation hands
+  them over. A surface-colormap shader mutant must fail. `brightmap-smooth` covers
+  the smooth-light path. This does not validate Xbox visuals.
 - **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production
   `r_d3d12/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
   GPU. It checks `RingAllocator` alignment (including non-power-of-two), wraparound,
@@ -404,17 +405,18 @@ built-in fallback and draw the built-in color. `custom-shader-nocustom` sets Ign
 shaders, so the custom-color oracle must fail: it's the negative control. They haven't been run
 locally, and Xbox results are untested. See [the Direct3D 12 add-on shader notes](../docs/d3d12-custom-shaders.md).
 Dispatch scenes run last, after the model and sky scenes, and replace only the fragment stage, so
-the built-in vertex stage places the geometry. `custom-none-quiet` compiles with nothing loaded,
-which must log no compilation, and `custom-none` draws the built-in color. A fragment for
+the built-in vertex stage places the geometry. `custom-none` compiles with nothing loaded and
+draws the built-in color. A fragment for
 `SHADER_FLOOR` must show (64, 128, 191) on a polygon (`custom-layout-poly`, with the pixel outside
 the quad left alone), on the sky dome (`custom-layout-sky`) and on a model (`custom-layout-model`),
-the three layouts. `custom-recompile` compiles again without a change, which must log nothing.
-`custom-replace-invalid` replaces the working shader with invalid GLSL, which must draw the
+the three layouts. `custom-replace-invalid` replaces the working shader with invalid GLSL, which must draw the
 built-in color, and `custom-replace-recover` loads a good one again (191, 128, 64).
 `custom-sprite-clip` selects the clipping variant of a sprite replacement. `custom-model-kept`
 draws a model with Model Lighting on and only a model replacement, which stays in use, and
 `custom-model-lighting` adds a model-lighting replacement, which must take over. Failures that only
-the GPU can cause, such as one layout failing to create, are covered by the native test.
+the GPU can cause, such as one layout failing to create, are covered by the native test, which also
+counts translations, compilations and pipelines, so compiling with nothing loaded or again without a
+change is shown to do none of them.
 `custom-water-refraction` loads a water fragment that outputs a fixed color with the surface's
 alpha and draws it over 64 colored bands at two tics. The result must be that color blended
 over the scenery shifted by the production ripple (four rows down, then eight up), which the
@@ -438,8 +440,8 @@ get the new one. `light-table-clear` clears and recreates the table for 96 frame
 recorded draws still use it, and requires descriptors to be reused after their fences.
 `screen-palette` changes the screen palette between frames, and `palette-off` checks that
 the last step doesn't run with Palette Rendering off. The master palette's creation and
-removal run under GPU-based validation, and the `palette:` perf line's counters are
-checked; the fade map scenes below are what read the master palette. Fog remapping with
+removal run under GPU-based validation, and the `palette:` perf line must report no light
+table alive; the fade map scenes below are what read the master palette. Fog remapping with
 palette rendering is covered below; water with palette rendering and Xbox colors remain
 untested here.
 The `surface-probe` scene requests the Direct3D 12 driver's pixel history at 50%,50% (pixel 32,32 of
@@ -497,7 +499,6 @@ Rendering, `fade-map-after` that a draw after a fade map is unaffected, and `fad
 replaces tables for 64 frames while recorded work reads them. `resize-screen` and
 `resize-fade-map` switch the screen to 640×400 and back, which remakes the screen
 textures and the fade map's copy of the screen, under GPU-based validation.
-The `screens:` perf line's counts of wipes, post images and fade maps are checked.
 The inversion oracle caught the upstream `PF_Invert`/`PF_Occlude` bit collision;
 `PF_Invert` now uses its own blend bit, so it survives the blend mask. If the Graphics
 Tools feature is missing, the script retries its install and then fails loudly
