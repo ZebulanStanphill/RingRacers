@@ -117,6 +117,13 @@ static LegacyShaderHLSL Refraction(const std::filesystem::path &dir, const std::
     if(!dir.empty()) std::ofstream(dir/(name+".frag.hlsl")) << result.fragment;
     return result;
 }
+// A valid shader padded with a comment inside main() to exactly `size` bytes, so only its length can matter.
+static std::string PaddedTo(const std::string &shader,size_t size) {
+    const std::string mainStart="void main() {";
+    const size_t at=shader.find(mainStart)+mainStart.size(),fixed=shader.size()+4; // "/*" and "*/"
+    assert(at>=mainStart.size() && size>=fixed);
+    return shader.substr(0,at)+"/*"+std::string(size-fixed,' ')+"*/"+shader.substr(at);
+}
 int main(int argc,char **argv) {
     const std::filesystem::path output=argc>1?argv[1]:"";
     if(!output.empty()) std::filesystem::create_directories(output);
@@ -180,7 +187,16 @@ void main() {
         assert(!Translate(vertex,fragment,3,result,error,false,1));
         assert(!Translate(vertex,"void main() { this is invalid; }",layout,result,error,false,1));
         assert(!Translate("/* unterminated",fragment,layout,result,error,false,1));
-        assert(!Translate(std::string(1024*1024+1,' '),fragment,layout,result,error,false,1));
+        // The 1 MB limit applies to each stage. A valid shader padded with a comment translates at exactly
+        // 1 MB and is refused, for its size, one byte over; an all-blank source would fail for want of main().
+        constexpr size_t limit=1024*1024;
+        assert(Translate(PaddedTo(vertex,limit),fragment,layout,result,error,false,1));
+        assert(Translate(vertex,PaddedTo(fragment,limit),layout,result,error,false,1));
+        for(bool vertexStage:{true,false}) {
+            assert(!Translate(vertexStage?PaddedTo(vertex,limit+1):vertex,vertexStage?fragment:PaddedTo(fragment,limit+1),
+                layout,result,error,false,1));
+            assert(error.find("exceeds 1 MB")!=std::string::npos && result.vertex.empty() && result.fragment.empty());
+        }
         // An error cannot poison the compiler used for the next add-on.
         assert(Translate(vertex,fragment,layout,result,error,false,1));
         // A broken shader has no refraction variant either.

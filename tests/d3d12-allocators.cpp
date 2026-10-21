@@ -9,11 +9,13 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <unordered_set>
 
 using rr_d3d12::RingAllocator;
 using rr_d3d12::PipelineKey;
 using rr_d3d12::PipelineKeyHash;
+using rr_d3d12::IndexFreeList;
 
 static void allocate(RingAllocator &ring, size_t bytes, size_t alignment,
                      uint64_t fence, size_t offset, bool wrapped = false)
@@ -147,6 +149,78 @@ static void keyTests()
         assert(hashes.insert(hash(key)).second);
     }
     assert(keys.size() == 65536 && hashes.size() == 65536);
+}
+
+// Draws every index the list will hand out right now.
+static std::set<uint32_t> drain(IndexFreeList &list)
+{
+    std::set<uint32_t> indices;
+    for (uint32_t i = list.Allocate(); i != IndexFreeList::Exhausted; i = list.Allocate())
+        assert(indices.insert(i).second); // Never hands out a live index twice.
+    return indices;
+}
+
+static void indexListTests()
+{
+    using Indices = std::set<uint32_t>;
+    IndexFreeList list;
+    assert(list.Allocate() == IndexFreeList::Exhausted && list.Used() == 0); // Unconfigured: no room.
+    list.Reset(0, 0);
+    assert(list.Allocate() == IndexFreeList::Exhausted);
+
+    // Indices come from [first, first + count) and run out, rather than wrap or overrun.
+    list.Reset(10, 3);
+    assert(list.Allocate() == 10 && list.Allocate() == 11 && list.Allocate() == 12);
+    assert(list.Allocate() == IndexFreeList::Exhausted && list.Used() == 3);
+    assert(list.Allocate() == IndexFreeList::Exhausted);
+
+    // A freed index waits for its fence: not before it completes, but at it (completed fences are inclusive).
+    list.Free(11, 5);
+    assert(list.Used() == 3); // Waiting indices still count as used.
+    list.Collect(4);
+    assert(list.Allocate() == IndexFreeList::Exhausted && list.Used() == 3);
+    list.Collect(5);
+    assert(list.Used() == 2 && list.Allocate() == 11 && list.Used() == 3);
+    assert(list.Allocate() == IndexFreeList::Exhausted);
+    list.Collect(4); // A stale completed value releases nothing and takes nothing back.
+    list.Collect(100);
+    assert(list.Allocate() == IndexFreeList::Exhausted && list.Used() == 3);
+
+    // Indices outside the range are ignored, whatever their fence, including just past either end.
+    for (uint32_t outside : {9u, 13u, 14u, 0u, UINT32_MAX - 1, IndexFreeList::Exhausted}) list.Free(outside, 1);
+    list.Collect(UINT64_MAX);
+    assert(list.Allocate() == IndexFreeList::Exhausted && list.Used() == 3);
+
+    // Frees may come in any fence order; each index becomes available with its own fence, and with several
+    // frees on one fence they all do.
+    list.Free(12, 7); list.Free(10, 3); list.Free(11, 7);
+    list.Collect(2);
+    assert(drain(list).empty());
+    list.Collect(3);
+    assert(drain(list) == Indices{10} && list.Used() == 3);
+    list.Collect(6);
+    assert(drain(list).empty());
+    list.Collect(7);
+    assert(drain(list) == (Indices{11, 12}) && list.Used() == 3);
+
+    // Reset drops live, waiting and free indices alike and starts over in the new range.
+    list.Free(10, 50); list.Free(11, 1); list.Collect(1);
+    list.Reset(100, 2);
+    assert(list.Used() == 0);
+    list.Collect(UINT64_MAX);
+    assert(drain(list) == (Indices{100, 101}));
+    list.Free(100, 9);
+    list.Reset(100, 2);
+    list.Collect(UINT64_MAX);
+    assert(drain(list) == (Indices{100, 101}));
+
+    // The last index is below the Exhausted marker, so a range ending at the top of the space still works.
+    list.Reset(UINT32_MAX - 2, 2);
+    assert(list.Allocate() == UINT32_MAX - 2 && list.Allocate() == UINT32_MAX - 1);
+    assert(list.Allocate() == IndexFreeList::Exhausted && list.Used() == 2);
+    list.Free(UINT32_MAX - 1, 1);
+    list.Collect(1);
+    assert(list.Allocate() == UINT32_MAX - 1 && list.Allocate() == IndexFreeList::Exhausted);
 }
 
 static void arenaTests()
@@ -414,6 +488,7 @@ int main()
 {
     ringTests();
     keyTests();
+    indexListTests();
     arenaTests();
     fineArenaTests();
     mipTests();

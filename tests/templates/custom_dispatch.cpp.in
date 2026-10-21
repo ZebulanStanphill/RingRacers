@@ -238,5 +238,41 @@ int main() {
     for(const auto &entry:g_pipelines) assert(!entry.first.custom);
     for(int type=1;type<NUMBASESHADERS;++type) for(Layout layout:layouts) assert(!Draw(type,layout));
     assert(!g_customViewConstants.cpu&&g_customViewFrame==UINT64_MAX);
+    // Load refuses a slot that is not an add-on target (the default shader, anything below it, and everything from
+    // NUMBASESHADERS up), missing code and a source over 1 MB. It logs the refusal and changes nothing, including
+    // the replacement already loaded.
+    Load(SHADER_WALL,"fragment");assert(D3D_CompileShaders()&&g_customShaders[SHADER_WALL].valid);
+    const size_t loaded=calls.size();
+    auto refused=[&](int number,char *code,size_t size) {
+        logLines.clear();
+        D3D_LoadCustomShader(number,code,size,true);
+        assert(LogHas("invalid custom shader")&&LogHas("keeping the built-in shader"));
+        for(int type=0;type<NUMBASESHADERS;++type) {
+            const CustomShader &shader=g_customShaders[type];
+            assert(!shader.dirty&&shader.fragment==(type==SHADER_WALL?"fragment":""));
+        }
+        assert(D3D_CompileShaders()&&calls.size()==loaded&&g_customShaders[SHADER_WALL].valid);
+    };
+    char text[]="refused";
+    for(int number:{(int)SHADER_DEFAULT,-1,(int)NUMBASESHADERS,(int)NUMBASESHADERS+1}) refused(number,text,sizeof text-1);
+    refused(SHADER_WALL,nullptr,7);
+    std::string big(1024*1024+1,'x');
+    refused(SHADER_WALL,big.data(),big.size());
+    refused(SHADER_FLOOR,big.data(),big.size());
+    // Exactly 1 MB is a source; a stage's trailing NUL padding is dropped and NULs inside it are kept.
+    logLines.clear();
+    D3D_LoadCustomShader(SHADER_WALL,big.data(),big.size()-1,true);
+    assert(!LogHas("invalid custom shader")&&g_customShaders[SHADER_WALL].fragment.size()==1024*1024);
+    assert(g_customShaders[SHADER_WALL].dirty&&g_customShaders[SHADER_FLOOR].fragment.empty());
+    char padded[]="fragment\0\0\0";
+    D3D_LoadCustomShader(SHADER_WALL,padded,sizeof padded,true);
+    assert(g_customShaders[SHADER_WALL].fragment=="fragment");
+    char inner[]="one\0two\0\0";
+    D3D_LoadCustomShader(SHADER_WALL,inner,sizeof inner-1,true);
+    assert(g_customShaders[SHADER_WALL].fragment==std::string("one\0two",7));
+    D3D_LoadCustomShader(SHADER_WALL,padded,sizeof padded,true);
+    calls.clear();assert(D3D_CompileShaders());
+    assert(calls.size()==3&&calls[0].fragment=="fragment"&&g_customShaders[SHADER_WALL].valid);
+    D3D_CleanShaders();
     puts("Production custom dispatch: built-in selection, vertex defaults, atomic discard on translation, compile and pipeline failures, recompile caching, sprite clipping, model lighting and water refraction passed");
 }

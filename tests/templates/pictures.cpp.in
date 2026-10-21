@@ -85,9 +85,10 @@ int main() {
                 ++cases;
             }
         }
-        for (int fmt : {GL_TEXFMT_P_8,GL_TEXFMT_AP_88,GL_TEXFMT_RGBA}) {
-            reset(); textureformat = fmt; lump = picture(mode,7,3,true);
-            HWR_GetPic(0);
+        // A valid lump is exactly header plus pixels (the normal case) or has trailing bytes after them.
+        for (int fmt : {GL_TEXFMT_P_8,GL_TEXFMT_AP_88,GL_TEXFMT_RGBA}) for (bool trailing : {false,true}) {
+            reset(); textureformat = fmt; lump = picture(mode,7,3,trailing);
+            try { HWR_GetPic(0); } catch (const std::runtime_error &) { assert(false && "a valid lump was rejected"); }
             assert(mip.width == 7 && mip.height == 3 && uploads > 0);
             int bpp = format2bpp(mip.format);
             auto *p = reinterpret_cast<pic_t *>(lump.data());

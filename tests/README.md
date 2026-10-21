@@ -81,8 +81,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 - **Add-on shader translation:** compile the production GLSL adapter, glslang
   parser/linker and SPIRV-Cross emitter from `r_d3d12/`. Translate 36 shader/layout
   pairs with reordered varyings, uniforms/initializers, matrices and fragment
-  coordinates; reject invalid interfaces, malformed/oversized sources and invalid
-  layouts, then verify compiler recovery. Check the expected constant-buffer
+  coordinates; reject invalid interfaces, malformed sources and invalid
+  layouts, then verify compiler recovery. The 1 MB source limit is checked with a
+  valid shader padded by a comment: either stage translates at exactly 1 MB and is
+  refused, for its size, one byte over. Check the expected constant-buffer
   declarations, std140 pack offsets and resource slots directly, with every
   register in space 0. Native translation emits 78 general Shader Model 5.1
   stages to `translated-shaders`; Windows CI compiles these and the smoke-test
@@ -101,7 +103,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   models unless a model-lighting replacement is supplied, Ignore custom shaders,
   Shaders Off and postprocessing bypass add-ons, and custom water gets a
   polygon-only refraction variant that, if it fails to translate, compile or
-  validate, leaves valid unrefracted water. Cleaning discards everything. The
+  validate, leaves valid unrefracted water. Cleaning discards everything. Loading
+  refuses the default shader slot, slots below it or past the last base shader, null
+  code and a source over 1 MB, logs that, and leaves the replacement already loaded
+  alone; exactly 1 MB is accepted, trailing NUL padding is dropped and NULs inside the
+  source are kept. The
   Direct3D 12 WARP harness checks the same loader through pixels (below). Add-on
   visuals and load cost on Xbox remain untested.
 - **Installable shader smoke test:** [download and instructions](addons/shader-smoke/README.md).
@@ -179,7 +185,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   return safely. Replacing either fill implementation with the pre-fix version
   fails the parity checks. Recording stubs stop at the Software quad and hardware
   polygon/clear boundaries; Xbox visuals and GPU blending remain untested.
-- **Raw picture formats:** production conversion and cache-loading functions. Check all five source modes, palette destination widths, grayscale/RGB alpha, downscaling and upscaling, row padding, malformed headers/modes/dimensions/pixel lengths, and trailing bytes. The RGB24 case fails with the pre-feature implementation.
+- **Raw picture formats:** production conversion and cache-loading functions. Check all five source modes, palette destination widths, grayscale/RGB alpha, downscaling and upscaling, row padding, malformed headers/modes/dimensions/pixel lengths, and lumps that are exactly header plus pixels or have trailing bytes. The RGB24 case fails with the pre-feature implementation.
 - **Polyobject ripples:** run the production `HWR_RenderPolyObjectPlane`,
   `HWR_RippleBlend`, shader availability check, and shared `R_IsRipplePlane`
   against real engine structures. The test checks 1,600
@@ -290,7 +296,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fence blocking with the highest overlapping fence, `Collect` and `Touch`
   retirement, same-submission wrap into retired space, zero, exact-capacity and
   SIZE_MAX limits. `PipelineKey` equality and hashing are checked for each field and
-  across a deterministic 65,536-key sample. `SizeClassArena` checks fenced reuse
+  across a deterministic 65,536-key sample. `IndexFreeList` (shader-resource view
+  indices) checks exhaustion, a freed index waiting for its fence (inclusive of the
+  completed value), out-of-order and shared fences, ignored out-of-range frees,
+  `Reset`, and a range ending at the top of the index space. `SizeClassArena` checks fenced reuse
   through `Free` and `Collect`, chunk growth with `AddChunk`, dedicated allocations
   above `MaxClass`, and exhaustion once no chunk can be added. The texture arena's
   opt-in quarter-octave classes are checked on both sides of every threshold,
