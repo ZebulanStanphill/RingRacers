@@ -176,9 +176,9 @@ static void sprite(float depth, UINT32 frame = FF_TRANS50, float lateral = 0) {
     spr.gz = -2; spr.gzt = 2;
     gl_vsprorder[i] = &spr; colors.push_back({1,0,0});
 }
-static void wall(float depth, int id = 1, float lateral = 0) {
-    FOutVector v[4] = {{depth,-4,lateral-4,0,0},{depth,-4,lateral+4,0,0},
-                      {depth,4,lateral+4,0,0},{depth,4,lateral-4,0,0}};
+static void wall(float depth, int id = 1, float lateral = 0, float height = 0) {
+    FOutVector v[4] = {{depth,height-4,lateral-4,0,0},{depth,height-4,lateral+4,0,0},
+                      {depth,height+4,lateral+4,0,0},{depth,height+4,lateral-4,0,0}};
     FSurfaceInfo surf{}; surf.PolyColor.s.green = 255;
     HWR_AddTransparentWall(v, &surf, PF_NoTexture, PF_NoTexture, PF_Translucent|PF_NoTexture, false, id, nullptr);
 }
@@ -250,6 +250,14 @@ int main() {
     reset(); precipmobj_t rain{}; rain.frame=FF_TRANS50; sprite(96);
     testSprites[0].mobj=reinterpret_cast<mobj_t *>(&rain); testSprites[0].precip=true;
     wall(64); finish(); order({0,-1}); ++cases;
+    // Precipitation nearer than the wall must be drawn after it, so it is sorted into the list too: unsorted
+    // precipitation is drawn with the ordinary sprites, before every transparent face.
+    reset(); precipmobj_t nearRain{}; nearRain.frame=FF_TRANS50; sprite(32);
+    testSprites[0].mobj=reinterpret_cast<mobj_t *>(&nearRain); testSprites[0].precip=true;
+    wall(64); finish(); order({-1,0}); ++cases;
+    reset(); precipmobj_t opaqueRain{}; sprite(32);
+    testSprites[0].mobj=reinterpret_cast<mobj_t *>(&opaqueRain); testSprites[0].precip=true;
+    wall(64); finish(); order({0,-1}); ++cases; // opaque precipitation is not sorted at all
     // No surface overlap: retain ordinary object depth ordering.
     reset(); sprite(32); sprite(96); wall(64,1,1000); finish(); order({-1,1,0}); ++cases;
     // A slanted wall's centroid is far away, but its near edge is in front of the
@@ -314,7 +322,7 @@ int main() {
         assert(fabsf(v[0].x-(96-pitch*1.2f))<0.00001f);
         precipmobj_t precipitation{}; precipitation.frame=FF_TRANS50;
         testSprites[0].mobj=reinterpret_cast<mobj_t *>(&precipitation); testSprites[0].precip=true;
-        wall(64); finish(); order({0,-1}); ++cases;
+        wall(130); finish(); order({-1,0}); ++cases; // nearer than the wall, so drawn after it
     }
     // Pitched billboards at equal yaw depth lie on different camera-depth planes.
     // They overlap on screen, and must not retain their original insertion order.
@@ -332,6 +340,15 @@ int main() {
     mobjs[2].z=-24*FRACUNIT; testSprites[2].gz=-44; testSprites[2].gzt=-4;
     mobjs[2].flags2=MF2_LINKDRAW; mobjs[2].tracer=&mobjs[0]; testSprites[2].dispoffset=-1;
     finish(); order({1,2,0}); ++cases;
+    // Depth is measured from the parent billboard's center, not from one of its corners. A yawed view
+    // makes the lateral extent of the parent contribute to depth: the parent (lateral -2..2 at x=64) is at depth
+    // 0.8*64 = 51.2 at its center but 50.0 at its first corner, and an unrelated sprite sits between them at
+    // 0.8*63.25 = 50.6. The piece (which would be nearest by its own origin) follows its parent, ahead of it
+    // by display offset, so both are farther than the unrelated sprite.
+    reset(); gl_viewsin=0.6f; gl_viewcos=0.8f;
+    sprite(64); sprite(63.25f); sprite(10);
+    mobjs[2].flags2=MF2_LINKDRAW; mobjs[2].tracer=&mobjs[0]; testSprites[2].dispoffset=-1;
+    finish(); order({2,0,1}); ++cases;
     for (UINT32 flag : {UINT32(FF_ADD),UINT32(FF_SUBTRACT),UINT32(FF_REVERSESUBTRACT),UINT32(FF_MODULATE)}) {
         reset(); sprite(32,flag); wall(64); finish(); order({-1,0}); ++cases;
     }
@@ -342,10 +359,19 @@ int main() {
         md2_playermodels[3].notfound=missing; wall(64); finish(); order({-1,0});
         assert(modelAttempts==(missing ? 0 : 1)); ++cases;
     }
-    // Repeat with translated cameras, like separate split-screen/portal views.
-    for (int camera : {-100,0,100}) for (int depth : {16,32,96,128}) {
-        reset(); gl_viewx=float(camera); sprite(float(camera+depth)); wall(float(camera+64));
-        finish(); if (depth<64) order({-1,0}); else order({0,-1}); ++cases;
+    // Translated viewpoints, like separate split-screen/portal views. The sprite is 96 deep and the wall 64
+    // deep, both measured from the camera, and the wall's lateral extent (1..9) overlaps the sprite's (-2..2)
+    // only in perspective: its screen footprint is [.0156,.1406] against the sprite's [-.0208,.0208]. Only
+    // transform's translation by the camera position on each axis puts the footprints there, so a camera that
+    // ignored one axis would separate them and sort the sprite after the wall. The sprite is behind the wall.
+    for (int cx : {-50,0,100}) for (int cy : {-50,0,50}) for (int cz : {-50,0,50}) {
+        reset(); gl_viewx=float(cx); gl_viewy=float(cy); gl_viewz=float(cz);
+        sprite(float(cx+96),FF_TRANS50,float(cy)); testSprites[0].gz=cz-2; testSprites[0].gzt=cz+2;
+        wall(float(cx+64),1,float(cy+5),float(cz)); finish(); order({0,-1}); ++cases;
+        // A sprite nearer than the wall is drawn after it wherever the camera is.
+        reset(); gl_viewx=float(cx); gl_viewy=float(cy); gl_viewz=float(cz);
+        sprite(float(cx+32),FF_TRANS50,float(cy)); testSprites[0].gz=cz-2; testSprites[0].gzt=cz+2;
+        wall(float(cx+64),1,float(cy+5),float(cz)); finish(); order({-1,0}); ++cases;
     }
     // Seeded shared-pixel scenes have an independent exact depth-order oracle.
     // This checks the whole merge, not merely a comparator's return value.

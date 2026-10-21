@@ -202,13 +202,16 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 - **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 14 million UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing (heat is swept every 7 tics to tic 2100 so both of its waves are active on some rows), paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user confirmed underwater and heat distortion on Xbox One X in single player and in split-screen (2026-10-17).
 - **Transparency ordering:** extract the production node builder, object pass,
   model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
-  and slope helpers. Each UWP/desktop executable checks 180 scenes and cases,
+  and slope helpers. Each UWP/desktop executable checks 225 scenes and cases,
   including 128 seeded scenes with an independent depth-order and pixel-composite
   oracle. Cover front/behind objects, mixed alpha flags, model load fallback and
   player skins, empty/objects-only/faces-only frames, opaque objects, always-on-top,
-  linkdraw display offsets, actual precipitation-sized storage, disjoint bounds,
+  linkdraw display offsets (including a yawed view where a corner and the center of the
+  parent give different depths), actual precipitation-sized storage with the
+  precipitation both behind and in front of a wall, disjoint bounds,
   slanted walls, sloped floors, moved polyobject planes, near-plane crossings,
-  pitched billboards, translated viewpoints, and the toggle's Off path. Six integration
+  pitched billboards, viewpoints translated along each axis (the wall and sprite
+  footprints overlap on screen only for the correct translation), and the toggle's Off path. Six integration
   cases execute the merged dispatcher with adjacent water pieces and inserted
   sprites/models, checking capture continuation, interruption and end-of-view reset
   with both toggle settings; desktop builds retain their existing capture behavior. Replacing
