@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 using std::max;
 using std::sin;
 using float2=float __attribute__((ext_vector_type(2)));
@@ -20,7 +21,12 @@ float2 SoftwareUV(float2 v_texcoord0) {
     return texcoord0;
 }
 int main() {
-    int cases=0;
+    int cases=0,secondWaveRows=0;
+    // Heat's second wave (sin(...) - 0.990) is non-zero only on a few rows at a few tics, so sample the tic
+    // axis densely for heat. Water's single wave is checked at a handful of tics, including a large one.
+    const std::vector<int> waterTics={0,1,6,35,128,2047,12000};
+    std::vector<int> heatTics=waterTics;
+    for(int tic=7;tic<=2100;tic+=7) heatTics.push_back(tic);
     for(int count : {1,2,3,4}) for(int w : {640,1280,1920}) for(int h : {400,720,1200}) {
         float size=w<=1024 && h<=1024 ? 1024.f : 2048.f;
         float2 fix={(float)w/size,(float)h/size};
@@ -30,11 +36,13 @@ int main() {
             float2 hi=lo+float2{vw,vh};
             u_texcoord0_min=lo;u_texcoord0_max=hi;
             u_postimg_rect={lo.x*fix.x,lo.y*fix.y,hi.x*fix.x,hi.y*fix.y};
-            for(int type : {1,4}) for(int tic : {0,1,6,35,128,2047,12000}) {
+            for(int type : {1,4}) for(int tic : type==1?waterTics:heatTics) {
                 u_time=(float)tic;u_postimg_water=type==1;u_postimg_heat=type==4;
                 u_postimg_info={(float)tic,(float)type,fix.x,fix.y};
                 for(int x : {0,1,50,99,100}) for(int y=0;y<=100;++y) {
                     float2 uv=lo+float2{x/100.f*vw,y/100.f*vh};
+                    // Guard against the sweep missing the second wave (vanilla's constants).
+                    if(type==4 && x==0 && sinf(((tic+24.f)/35.f)*.2f-(y/100.f)*1.5f)>.990f) ++secondWaveRows;
                     float2 expected=SoftwareUV(uv),got=PostImageUV(uv*fix)/fix;
                     assert(fabsf(got.x-expected.x)<.000003f && fabsf(got.y-expected.y)<.000003f);
                     assert(got.x>=lo.x-.000001f && got.x<hi.x && got.y>=lo.y-.000001f && got.y<hi.y);
@@ -45,9 +53,10 @@ int main() {
             }
         }
     }
+    assert(secondWaveRows>100000);
     // At the wave peak, displacement is exactly one percent of the full frame.
     u_postimg_rect={0,0,1,1};u_postimg_info={0,1,1,1};
     float2 uv={.5f,3.14159265358979323846f/40.f};
     assert(fabsf(PostImageUV(uv).x-.51f)<.000001f);
-    printf("%d water/heat samples match vanilla v2.4 Software GLSL, including edges, pause and all view layouts\n",cases);
+    printf("%d water/heat samples match vanilla v2.4 Software GLSL, including edges, pause and all view layouts; %d sampled rows exercise heat's second wave\n",cases,secondWaveRows);
 }

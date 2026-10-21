@@ -50,8 +50,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 - **Encore post-image selection:** execute full production `P_CalcChasePostImg`
   and `P_CalcPostImg` with real engine headers, plus chase water/heat helpers.
   Check heat, water, no distortion and water priority with and without Encore,
-  independent mirroring, first-person gravity flip, FOF bounds/eligibility,
-  awayview selection, matching split views and untouched unrelated views.
+  independent mirroring, first-person gravity flip, FOF bounds/eligibility
+  (including views below, at and above a heat FOF), awayview selection (with the
+  awayview object and the player's own eyes on opposite sides of the water, so the
+  awayview height is checked in first person and chase), matching split views and
+  untouched unrelated views.
   Flat FOF heights, heat-tag lookup and removed-object detection are dependency
   stubs; these checks validate selection, not rendered pixels.
 
@@ -196,7 +199,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   submitted shader, blend flags, alpha, and translated polygon geometry; invalid
   polygons must submit no draw. Replacing either changed renderer function with
   its pre-feature implementation fails the corresponding behavior assertion.
-- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 600,000 UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing, paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user confirmed underwater and heat distortion on Xbox One X in single player and in split-screen (2026-10-17).
+- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 14 million UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing (heat is swept every 7 tics to tic 2100 so both of its waves are active on some rows), paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user confirmed underwater and heat distortion on Xbox One X in single player and in split-screen (2026-10-17).
 - **Transparency ordering:** extract the production node builder, object pass,
   model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
   and slope helpers. Each UWP/desktop executable checks 180 scenes and cases,
@@ -510,7 +513,8 @@ To add a group, add its stubs/cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`. Register extracted production and reference source files as configure dependencies too, so editing Software's ripple calculation regenerates its water-refraction oracle.
 
 - **Water refraction:** extract Software's production fixed-point ripple
-  calculation and sine table, compare 131,072 offsets, and exercise 5,184 shader
+  calculation and sine table, compare 262,144 offsets (distances both on and off
+  multiples of 1/8, so the shader's `floor` calls matter), and exercise 8,640 shader
   composites across blend modes, alpha values, distances, times and split-view
   edges. Extract projected bounds from `r_d3d12/d3d12_captures.inc`.
   `water_capture_d3d12` checks bounded copies, disjoint rectangle growth, grouping,

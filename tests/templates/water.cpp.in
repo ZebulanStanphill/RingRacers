@@ -64,8 +64,10 @@ int main() {
     drawspandata_t ds={}; int offsets=0;
     // Compare against Software's actual fixed-point function/table, across the
     // complete ripple period and near/far distances (not an equivalent formula).
-    for(int tick=0;tick<2048;++tick) for(int step=0;step<64;++step) {
-        float distance=step*32.f + .125f;
+    // The second distance family is not a multiple of 1/8, so distance*32 and distance*128 have
+    // fractional parts and both floor() calls in the shader's offset formula matter.
+    for(int tick=0;tick<2048;++tick) for(int step=0;step<64;++step)
+    for(float distance : {step*32.f + .125f, step*29.37f + 3.0117f}) {
         ds.planeheight=(fixed_t)(distance*FRACUNIT);
         ds.planeripple.offset=tick*140;
         int expected=R_CalculateRippleOffset(&ds,0)>>FRACBITS;
@@ -89,7 +91,7 @@ int main() {
         assert(box.top==(unsigned)top && box.bottom==(unsigned)top+360);
         u_water_viewport={(float)vx,(float)top,(float)vx+639,(float)top+359};
         for(int mode=0;mode<6;++mode) for(float alpha : {0.f,.1f,.5f,1.f})
-        for(int tick : {0,1,6,41,128,2047}) for(float d : {0.125f,64.125f,512.125f})
+        for(int tick : {0,1,6,41,128,2047}) for(float d : {0.125f,64.125f,512.125f,100.0234f,7.3f})
         for(int y : {top,top+179,top+359}) {
             u_water_blend=mode; u_leveltime=tick/35.f;
             waterColor={.6f,.2f,.8f,alpha};
