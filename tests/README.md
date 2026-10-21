@@ -72,8 +72,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   The desktop variant compiles upstream's timing branch and checks that it is
   unchanged on desktop.
 - **Bounded diagnostics:** production trace implementation and frame-window
-  selection. Check fade expiry/event caps, title sample caps, both frame windows,
-  load resets, tics across the unlogged gap, camera/presentation snapshots, missing
+  selection. Check fade expiry/event caps, title sample caps, both frame windows
+  (with their line caps empty, so the edges of the title window and of the 10-20 s
+  race window are decided by the clocks alone), load resets, tics across the unlogged gap, camera/presentation snapshots, missing
   player objects, unpresented frames, and that tracing
   leaves the player's object unchanged. One executable runs every case with
   Software and with Legacy GL, which differ only in the present slot the trace
