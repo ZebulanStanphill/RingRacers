@@ -28,6 +28,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -37,8 +38,10 @@
 #undef clamp
 using namespace rr_d3d12;
 static_assert((PF_Invert & PF_Occlude) == 0, "Inversion must not alias depth writes");
+// negative names the one negative control this process runs, if any: a regression is injected and the oracle that should
+// catch it must then reject it. Every other oracle is checked by selfTest and the hit registry below.
 static std::string logs, negative;
-static bool negativeRejected=false, shaderNegative=false;
+static bool negativeRejected=false;
 static std::vector<UINT8> lumpBytes; // what the stubbed wipe mask lump holds
 extern "C" {
 UINT8 g_wipemode=0, g_wipetype=0, g_wipeframe=0;
@@ -100,11 +103,46 @@ static FSurfaceInfo surface(RGB c,int alpha=255) { FSurfaceInfo s={}; s.PolyColo
 static std::vector<FOutVector> quad(float z=1) { return {{-.8f*z,-.8f*z,z,0,0},{.8f*z,-.8f*z,z,0,0},{.8f*z,.8f*z,z,0,0},{-.8f*z,.8f*z,z,0,0}}; }
 static void draw(RGB c,FBITFIELD flags=0,float z=1,int alpha=255) { auto v=quad(z); auto s=surface(c,alpha); flags |= PF_Modulated|PF_NoTexture; blend(flags); polygon(&s,v.data(),(FUINT)v.size(),flags); }
 static std::vector<UINT8> pixels() { std::vector<UINT8> p(W*H*3,0xcd); readrect(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
-static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); if(!shaderNegative && negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d (got %d,%d,%d)\n",scene,x,y,c,p[(y*W+x)*3+c],want[c],p[(y*W+x)*3],p[(y*W+x)*3+1],p[(y*W+x)*3+2]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
-// Palette rendering's last step, read like expect reads the screen. scene names its own negative control.
-static void expectPost(const char *scene,RGB want,int x=32,int y=32) { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); validate(validationQueue); if(!shaderNegative && negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*W+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: palette pixel %d,%d channel %d got %d expected %d\n",scene,x,y,c,p[(y*W+x)*3+c],want[c]); negativeRejected = negative==scene; throw std::runtime_error("palette pixel oracle failed"); } }
-// Compares a pixel of an already read image; scene names its own negative control.
-static void check(const char *scene,const std::vector<UINT8> &p,int x,int y,RGB want,int width=W) { if(!shaderNegative && negative==scene) want[0]=(want[0]+67)%256; for(int c=0;c<3;c++) if(abs(p[(y*width+x)*3+c]-want[c])>1) { fprintf(stderr,"%s: pixel %d,%d channel %d got %d expected %d (got %d,%d,%d expected %d,%d,%d)\n",scene,x,y,c,p[(y*width+x)*3+c],want[c],p[(y*width+x)*3],p[(y*width+x)*3+1],p[(y*width+x)*3+2],want[0],want[1],want[2]); negativeRejected = negative==scene; throw std::runtime_error("pixel oracle failed"); } }
+// Every oracle ends in one of the comparisons below. A rejection throws OracleRejected, which nothing else throws, so a
+// negative control or the self-test can tell an oracle catching something from a crash or a validation error.
+struct OracleRejected : std::runtime_error { using std::runtime_error::runtime_error; };
+static std::map<std::string,unsigned> oracleHits; // how often each scene's oracle ran
+static bool quietOracles=false; // the self-test rejects on purpose
+[[noreturn]] static void reject(const char *scene,const char *why) { negativeRejected=negative==scene; throw OracleRejected(why); }
+static bool within(RGB got,RGB want) { for(int c=0;c<3;c++) if(abs(got[c]-want[c])>1) return false; return true; }
+static RGB at(const std::vector<UINT8> &p,int x,int y,int width=W) { const UINT8 *q=&p[(y*width+x)*3]; return {q[0],q[1],q[2]}; }
+// The one pixel comparison: each channel may be one level off
+static void same(const char *scene,const char *what,int x,int y,RGB got,RGB want) {
+    oracleHits[scene]++;
+    if(within(got,want)) return;
+    if(!quietOracles) fprintf(stderr,"%s: %s %d,%d got %d,%d,%d expected %d,%d,%d\n",scene,what,x,y,got[0],got[1],got[2],want[0],want[1],want[2]);
+    reject(scene,"pixel oracle failed");
+}
+// Every verdict that isn't a pixel
+static void require(const char *scene,bool ok,const char *why) {
+    oracleHits[scene]++;
+    if(ok) return;
+    if(!quietOracles) fprintf(stderr,"%s: %s\n",scene,why);
+    reject(scene,why);
+}
+// A pixel of an image read earlier
+static void check(const char *scene,const std::vector<UINT8> &p,int x,int y,RGB want,int width=W) { same(scene,"pixel",x,y,at(p,x,y,width),want); }
+// A pixel of the screen
+static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels(); validate(validationQueue); check(scene,p,x,y,want); }
+// Palette rendering's last step, read like expect reads the screen. It leaves the buffer as filled while Palette Rendering is off.
+static std::vector<UINT8> palettePixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
+static void expectPost(const char *scene,RGB want,int x=32,int y=32) { auto p=palettePixels(); validate(validationQueue); same(scene,"palette pixel",x,y,at(p,x,y),want); }
+// Some pixel of rows y0 to y1 in a column: a one-pixel line lies on a raster boundary, so which row holds it isn't pinned
+static void checkAny(const char *scene,const std::vector<UINT8> &p,int x,int y0,int y1,RGB want,int width=W) {
+    bool found=false; for(int y=y0;y<=y1;y++) found=found || within(at(p,x,y,width),want);
+    require(scene,found,"no pixel of the rows matched");
+}
+static std::array<UINT64,3> captureCounts() { std::array<UINT64,3> result={}; D3D12_GetCaptureCountsForTest(&result[0],&result[1],&result[2]); return result; }
+// Fog and water captures (fog, water copies, water round trips) since before
+static void countDelta(const char *scene,std::array<UINT64,3> before,UINT64 fogCount,UINT64 waterCount) {
+    const auto after=captureCounts();
+    require(scene,after[0]-before[0]==fogCount && after[1]-before[1]==waterCount && after[2]-before[2]==waterCount,"capture copy/roundtrip delta failed");
+}
 static void fillRect(float x0,float x1,float y0,float y1,RGB c) { std::vector<FOutVector> v={{x0,y0,1,0,0},{x1,y0,1,0,0},{x1,y1,1,0,0},{x0,y1,1,0,0}}; auto s=surface(c); const FBITFIELD f=PF_Modulated|PF_NoTexture|PF_NoDepthTest; blend(f); polygon(&s,v.data(),4,f); }
 static void quadrants(RGB tl,RGB tr,RGB bl,RGB br) { reset({0,0,0}); fillRect(-1,0,0,1,tl); fillRect(0,1,0,1,tr); fillRect(-1,0,-1,0,bl); fillRect(0,1,-1,0,br); }
 // The screen's color at (x, y from the top) at the current size
@@ -140,14 +178,101 @@ static void validate(ID3D12InfoQueue *queue)
     if (failed) throw std::runtime_error("debug warning/error");
     if (Core_Errors()) throw std::runtime_error("production Core_Errors nonzero");
 }
+// Every scene whose oracle the full run must reach. A scene never reached, or reached but missing here, fails the run, so a
+// renamed, skipped or unlisted oracle can't go unnoticed.
+static const char *const kOracles[]={
+    "startup-present", "clear", "readrect", "surface-probe", "surface-probe-pixel", "surface-probe-quiet",
+    "opaque", "translucent", "additive", "subtract", "reverse", "multiply", "environment", "masked", "invert", "fog",
+    "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane", "indexed", "line",
+    "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
+    "texture", "texture-update", "texture-reuse", "mips",
+    "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "light-table-clear", "screen-palette", "palette-off",
+    "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
+    "screen-copy", "final-screen", "screen-flush", "wipe-blend", "wipe-mode", "wipe-wiggle", "wipe-fallback", "wipe-after", "postimg-identity", "postimg-shift",
+    "fade-map-off", "fade-map", "fade-map-row", "fade-map-clamp", "fade-map-remake", "fade-map-after", "fade-map-reuse", "resize-fade-map", "resize-screen",
+    "sky", "model-buffered", "model-lerped", "model-fallback", "rings", "growth",
+    "blend-invisible", "blend-invisible-depth", "blend-invisible-restore", "blend-remap-mask", "blend-remap-restore",
+    "custom-none-quiet", "custom-none", "custom-layout-poly", "custom-layout-sky", "custom-layout-model", "custom-recompile", "custom-replace-invalid", "custom-replace-recover", "custom-sprite-clip", "custom-model-kept", "custom-model-lighting", "custom-water-refraction",
+    "shutdown",
+};
+static std::string oracleProblems() {
+    std::string problems;
+    for(const char *name:kOracles) if(!oracleHits.count(name)) problems+=std::string(" unreached:")+name;
+    for(const auto &entry:oracleHits)
+        if(std::find_if(std::begin(kOracles),std::end(kOracles),[&](const char *name) { return entry.first==name; })==std::end(kOracles)) problems+=" unlisted:"+entry.first;
+    return problems;
+}
+// Run once before the scenes. These oracles are all that stands between a regression and a green run, so each kind must accept
+// what is right and reject, with its own message, what is wrong by more than its tolerance of one level.
+template<class F> static void rejects(const char *what,const char *message,F run) {
+    try { run(); }
+    catch(const OracleRejected &e) {
+        if(strcmp(e.what(),message)) throw std::runtime_error(std::string("oracle self-test: ")+what+" was rejected as \""+e.what()+"\", not \""+message+"\"");
+        return;
+    }
+    throw std::runtime_error(std::string("oracle self-test: ")+what+" accepted a wrong expectation");
+}
+static void selfTest() {
+    const auto savedHits=oracleHits;
+    quietOracles=true;
+    const char *const pixel="pixel oracle failed";
+    const RGB c={40,100,200}, red={200,40,20};
+    // expect and probe read the screen, which reset has just filled
+    reset(c);
+    expect("self-test",c); expect("self-test",{41,99,201});
+    same("self-test","probe",32,32,probe(32,32,H),c);
+    for(int channel=0;channel<3;channel++) {
+        RGB wrong=c; wrong[channel]+=2;
+        rejects("expect",pixel,[&] { expect("self-test",wrong); });
+        rejects("probe",pixel,[&] { same("self-test","probe",32,32,probe(32,32,H),wrong); });
+    }
+    // The pixel asked for is the one compared: a quad leaves the corner as it was
+    draw(red,PF_NoDepthTest);
+    expect("self-test",red); expect("self-test",c,2,2);
+    rejects("expect at a pixel the draw covers",pixel,[&] { expect("self-test",c); });
+    rejects("expect at a pixel the draw missed",pixel,[&] { expect("self-test",red,2,2); });
+    // The palette step's buffer is untouched while Palette Rendering is off (the palette-off scene pins that), so it reads 0xcd
+    expectPost("self-test",{205,205,205}); expectPost("self-test",{204,206,205});
+    rejects("expectPost",pixel,[&] { expectPost("self-test",{205,205,207}); });
+    rejects("expectPost against the screen",pixel,[&] { expectPost("self-test",red); });
+    // check, on a 2x2 image read earlier
+    const std::vector<UINT8> image={10,20,30, 100,110,120, 50,60,70, 150,160,170};
+    check("self-test",image,1,1,{150,160,170},2); check("self-test",image,0,1,{51,60,69},2);
+    for(int channel=0;channel<3;channel++) {
+        RGB wrong={150,160,170}; wrong[channel]-=2;
+        rejects("check",pixel,[&] { check("self-test",image,1,1,wrong,2); });
+    }
+    rejects("check of another pixel",pixel,[&] { check("self-test",image,1,1,{50,60,70},2); });
+    // checkAny, on a column of four pixels of which only the third matches
+    const std::vector<UINT8> column={0,0,0, 0,0,0, 240,160,80, 0,0,0};
+    checkAny("self-test",column,0,0,3,{240,160,80},1); checkAny("self-test",column,0,2,2,{241,160,80},1);
+    rejects("checkAny outside the rows","no pixel of the rows matched",[&] { checkAny("self-test",column,0,0,1,{240,160,80},1); });
+    rejects("checkAny of another color","no pixel of the rows matched",[&] { checkAny("self-test",column,0,0,3,{240,160,83},1); });
+    // require, which carries every verdict that isn't a pixel
+    require("self-test",true,"never thrown");
+    rejects("require","a wrong verdict",[&] { require("self-test",false,"a wrong verdict"); });
+    // countDelta: nothing is captured here, so no fog copy, water copy or round trip may be counted
+    const auto before=captureCounts();
+    countDelta("self-test",before,0,0);
+    rejects("countDelta of a fog capture","capture copy/roundtrip delta failed",[&] { countDelta("self-test",before,1,0); });
+    rejects("countDelta of a water capture","capture copy/roundtrip delta failed",[&] { countDelta("self-test",before,0,1); });
+    // The hit registry lists every oracle that never ran, and one that isn't listed
+    oracleHits.clear();
+    if(oracleProblems().find(" unreached:startup-present")==std::string::npos) throw std::runtime_error("oracle self-test: the hit registry missed an unreached oracle");
+    for(const char *name:kOracles) oracleHits[name]++;
+    if(!oracleProblems().empty()) throw std::runtime_error("oracle self-test: the hit registry rejected a complete run");
+    oracleHits["no-such-scene"]++;
+    if(oracleProblems().find(" unlisted:no-such-scene")==std::string::npos) throw std::runtime_error("oracle self-test: the hit registry missed an unlisted oracle");
+    oracleHits=savedHits; quietOracles=false;
+}
 int main(int argc,char **argv) {
-    if(argc==3 && (!strcmp(argv[1],"--negative-control") || !strcmp(argv[1],"--shader-negative-control"))) { negative=argv[2]; shaderNegative=!strcmp(argv[1],"--shader-negative-control"); }
+    if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
     else if(argc!=1) return 2;
     ComPtr<ID3D12Debug> debug; ComPtr<ID3D12Debug1> gbv;
     if(FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))) || FAILED(debug.As(&gbv))) { fputs("D3D12 debug layer/GBV unavailable; install Windows Graphics Tools\n",stderr); return 77; }
-    // Ordinary controls change the expected pixel; shader/input controls retain the correct oracle
-    // and inject a known regression. The production run validates GPU state for all these scenes.
-    // Skip GPU-based validation in controls because it makes WARP several times slower.
+    // A negative control injects a known regression (a shader mutant built by run-d3d12.ps1, or add-on shaders turned off) and
+    // keeps the correct oracle, which must then reject it. The full run validates GPU state for all these scenes, so controls
+    // skip GPU-based validation, which makes WARP several times slower.
     debug->EnableDebugLayer(); if(negative.empty()) gbv->SetEnableGPUBasedValidation(TRUE);
     puts(negative.empty() ? "D3D12 debug layer and GPU-based validation enabled" : "D3D12 debug layer enabled (negative control: GPU-based validation skipped)");
     try {
@@ -156,19 +281,21 @@ int main(int argc,char **argv) {
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
         // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
-        { reset(); D3D12_FinishUpdate(0); const bool held=(negative=="startup-present" ? presentedFrames+1 : presentedFrames)==0;
-          if(!held) { negativeRejected=negative=="startup-present"; throw std::runtime_error("clear-only startup frame was presented"); } }
+        { reset(); D3D12_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
+        selfTest();
         reset(); expect("clear",{48,80,112});
         reset({0,0,0});
         { auto upper=quad(); upper[0].y=upper[1].y=.1f; auto red=surface({248,32,16}); polygon(&red,upper.data(),4,PF_Modulated|PF_NoTexture|PF_NoDepthTest);
           auto lower=quad(); lower[2].y=lower[3].y=-.1f; auto blue=surface({16,64,248}); polygon(&blue,lower.data(),4,PF_Modulated|PF_NoTexture|PF_NoDepthTest);
           expect("readrect",{248,32,16},32,12); expect("readrect",{16,64,248},32,52);
           std::vector<UINT8> odd(7*5*3,0xcd); readrect(29,49,7,5,21,reinterpret_cast<UINT16 *>(odd.data()));
-          for(size_t i=0;i<odd.size();i++) { const int wanted=RGB{248,32,16}[i%3]; if(abs(odd[i]-wanted)>1) throw std::runtime_error("odd-width/subrect RGB24 oracle failed"); }
-          UINT16 packed[35]={}; readrect(29,49,7,5,14,packed); const UINT16 wanted565=(UINT16)((248>>3)<<11 | (32>>2)<<5 | (16>>3)); for(auto c:packed) if(c!=wanted565) throw std::runtime_error("RGB565 oracle failed"); }
+          bool oddRight=true; for(size_t i=0;i<odd.size();i++) oddRight=oddRight && abs(odd[i]-RGB{248,32,16}[i%3])<=1;
+          require("readrect",oddRight,"odd-width/subrect RGB24 oracle failed");
+          UINT16 packed[35]={}; readrect(29,49,7,5,14,packed); const UINT16 wanted565=(UINT16)((248>>3)<<11 | (32>>2)<<5 | (16>>3));
+          bool packedRight=true; for(auto c:packed) packedRight=packedRight && c==wanted565;
+          require("readrect",packedRight,"RGB565 oracle failed"); }
         // The surface probe copies the pixel under 50%,50% after each draw and logs the draws' colors at the end of the frame.
         { const RGB colors[3]={{200,40,20},{20,200,40},{40,20,200}};
-          const auto reject=[](const char *why) { negativeRejected=negative=="surface-probe"; throw std::runtime_error(why); };
           reset({0,0,0});
           if(D3D12_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began without a request");
           if(!D3D12_RequestSurfaceProbe(50,50) || D3D12_RequestSurfaceProbe(50,50)) throw std::runtime_error("surface probe requests weren't accepted once");
@@ -177,17 +304,16 @@ int main(int argc,char **argv) {
           for(int i=0;i<3;i++) { if(i==1) D3D12_SurfaceProbeSource("wall",7); draw(colors[i],PF_NoDepthTest); }
           D3D12_EndSurfaceProbe(); validate(validationQueue);
           const std::string probeLog=logs.substr(start);
-          if(probeLog.find("surface probe: begin pixel=(32,32) screen=64x64")==std::string::npos) reject("surface probe begin line");
+          require("surface-probe",probeLog.find("surface probe: begin pixel=(32,32) screen=64x64")!=std::string::npos,"surface probe begin line");
           for(int i=0;i<3;i++)
           { char key[48]; snprintf(key,sizeof key,"surface probe: sample=%d raw=0x",i);
-            const size_t at=probeLog.find(key); unsigned raw=0; char kind[16]={}; int source=0;
-            if(at==std::string::npos || sscanf(probeLog.c_str()+at+strlen(key),"%x kind=%15s source=%d",&raw,kind,&source)!=3) reject("surface probe sample line");
+            const size_t entry=probeLog.find(key); unsigned raw=0; char kind[16]={}; int source=0;
+            require("surface-probe",entry!=std::string::npos && sscanf(probeLog.c_str()+entry+strlen(key),"%x kind=%15s source=%d",&raw,kind,&source)==3,"surface probe sample line");
             // RGBA8 as a little-endian DWORD; like the other scenes, each color channel may be one off
-            RGB want=colors[i]; if(negative=="surface-probe") want[0]=(want[0]+67)%256;
-            for(int c=0;c<3;c++) if(abs((int)((raw>>(8*c))&255)-want[c])>1) { fprintf(stderr,"surface-probe: sample %d raw 0x%08X channel %d expected %d\n",i,raw,c,want[c]); reject("surface probe color"); }
-            if((raw>>24)!=0xFF) reject("surface probe alpha");
-            if(strcmp(kind,i==1?"wall":"polygon") || source!=(i==1?7:-1)) reject("surface probe kind and source"); }
-          if(probeLog.find("surface probe: end draws=3 color_changes=3 rows_omitted=0 overflow=0")==std::string::npos) reject("surface probe end line");
+            same("surface-probe","raw",32,32,{(int)(raw&255),(int)((raw>>8)&255),(int)((raw>>16)&255)},colors[i]);
+            require("surface-probe",(raw>>24)==0xFF,"surface probe alpha");
+            require("surface-probe",!strcmp(kind,i==1?"wall":"polygon") && source==(i==1?7:-1),"surface probe kind and source"); }
+          require("surface-probe",probeLog.find("surface probe: end draws=3 color_changes=3 rows_omitted=0 overflow=0")!=std::string::npos,"surface probe end line");
           // The copies leave the screen as they found it
           expect("surface-probe-pixel",colors[2]);
           // Without a request, the next frame copies and logs nothing
@@ -215,9 +341,7 @@ int main(int argc,char **argv) {
                 if(!D3D12_DrawPortalAperture(v.data(),level,restore)) throw std::runtime_error("portal aperture failed");
             };
             reset();
-            bool supported=D3D12_PortalsSupported()!=0;
-            if(negative=="portal-supported") supported=false;
-            if(!supported) { negativeRejected=negative=="portal-supported"; throw std::runtime_error("portal PSO preflight failed"); }
+            require("portal-supported",D3D12_PortalsSupported()!=0,"portal PSO preflight failed");
             // Preflight and mask creation must preserve color; stencil == 1 confines the child.
             auto outer=aperture(.6f,.25f), inner=aperture(.25f,.2f);
             open(outer,0);
@@ -247,7 +371,7 @@ int main(int argc,char **argv) {
         reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expect("indexed",{24,180,220});
         reset(); blend(PF_NoDepthTest|PF_NoTexture); F2DCoord p1={-.75f,0},p2={.75f,0}; auto ls=surface({240,160,80}); line(&p1,&p2,ls.PolyColor);
         // A one-pixel line lies on a raster boundary; inspect its known interior coverage, excluding endpoints.
-        { auto p=pixels(); validate(queue.Get()); bool found=false; for(int y=30;y<=33;y++) { int o=(y*W+32)*3; if(abs(p[o]-240)<=1 && abs(p[o+1]-160)<=1 && abs(p[o+2]-80)<=1) found=true; } if(negative=="line") found=false; if(!found) { negativeRejected=negative=="line"; throw std::runtime_error("line oracle failed"); } }
+        { auto p=pixels(); validate(queue.Get()); checkAny("line",p,32,30,33,{240,160,80}); }
         auto texture = function<void (*)(GLMipmap_t *)>("SetTexture");
         auto updateTexture = function<void (*)(GLMipmap_t *)>("UpdateTexture");
         auto deleteTexture = function<void (*)(GLMipmap_t *)>("DeleteTexture");
@@ -357,7 +481,7 @@ int main(int argc,char **argv) {
             if(negative=="custom-shader-nocustom") special(HWD_SET_SHADERS,HWD_SHADEROPTION_NOCUSTOM);
             customDraw();
             try { expect("custom-shader",{64,128,191}); }
-            catch(...) { if(negative=="custom-shader-nocustom") negativeRejected=true; throw; }
+            catch(const OracleRejected &) { if(negative=="custom-shader-nocustom") negativeRejected=true; throw; }
             clean(); shader(SHADER_FLOOR); customDraw(); expect("custom-shader-clean",{200,40,16});
             const size_t logStart=logs.size();
             char invalid[]="void main() { gl_FragColor = vec4(; }";
@@ -474,11 +598,7 @@ int main(int argc,char **argv) {
                 for(int mode=0;mode<3;mode++) for(int original=0;original<4;original++) for(bool bright:{false,true})
                 for(int lighting:{64,160}) for(float distance:{32.125f,128.125f,256.125f}) {
                     const int index=(original+(mode==1?1:0))&3; // normal, Encore, and exempt
-                    int uploadedIndex=index;
-                    const bool encoreControl=shaderNegative && bright && mode==1 &&
-                        (negative=="brightmap-encore-missing" || negative=="brightmap-encore-double");
-                    if(encoreControl) uploadedIndex=(original+(negative=="brightmap-encore-double"?2:0))&3;
-                    for(int c=0;c<3;c++) paletteTexel[c]=(UINT8)texelColors[uploadedIndex][c];
+                    for(int c=0;c<3;c++) paletteTexel[c]=(UINT8)texelColors[index][c];
                     brightTexel[0]=brightTexel[1]=brightTexel[2]=bright?255:0;
                     updateTexture(&paletteTexture); updateTexture(&brightTexture);
                     reset(); texture(&paletteTexture); texture(&brightTexture);
@@ -486,19 +606,14 @@ int main(int argc,char **argv) {
                     bs.LightInfo.light_level=lighting; bs.LightInfo.fade_end=31;
                     auto q=quad(distance);
                     polygon(&bs,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
-                    const char *scene=encoreControl?negative.c_str():"brightmap-palette";
-                    expect(scene,bright?brightColors[index]:darkColors[index]);
+                    expect("brightmap-palette",bright?brightColors[index]:darkColors[index]);
                     D3D12_FinishUpdate(0);
                 }
                 // The smooth path must retain the same pretranslated colors at full light.
                 special(HWD_SET_PALETTE_RENDERING,0);
                 for(int mode=0;mode<3;mode++) for(int original=0;original<4;original++) for(bool bright:{false,true}) {
                     const int index=(original+(mode==1?1:0))&3;
-                    int uploadedIndex=index;
-                    const bool encoreControl=shaderNegative && bright && mode==1 &&
-                        (negative=="brightmap-encore-missing-smooth" || negative=="brightmap-encore-double-smooth");
-                    if(encoreControl) uploadedIndex=(original+(negative=="brightmap-encore-double-smooth"?2:0))&3;
-                    for(int c=0;c<3;c++) paletteTexel[c]=(UINT8)texelColors[uploadedIndex][c];
+                    for(int c=0;c<3;c++) paletteTexel[c]=(UINT8)texelColors[index][c];
                     brightTexel[0]=brightTexel[1]=brightTexel[2]=bright?255:0;
                     updateTexture(&paletteTexture); updateTexture(&brightTexture);
                     reset(); texture(&paletteTexture); texture(&brightTexture);
@@ -506,7 +621,7 @@ int main(int argc,char **argv) {
                     bs.LightInfo.light_level=255; bs.LightInfo.fade_end=31;
                     auto q=quad(128.125f);
                     polygon(&bs,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
-                    expect(encoreControl?negative.c_str():"brightmap-smooth",texelColors[index]);
+                    expect("brightmap-smooth",texelColors[index]);
                     D3D12_FinishUpdate(0);
                 }
                 special(HWD_SET_PALETTE_RENDERING,1);
@@ -558,9 +673,8 @@ int main(int argc,char **argv) {
             }
             // With palette rendering off, there is no last step to read
             special(HWD_SET_PALETTE_RENDERING,0);
-            { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data()));
-              bool untouched=true; for(auto c:p) untouched=untouched && c==0xcd; if(negative=="palette-off") untouched=false;
-              if(!untouched) { negativeRejected=negative=="palette-off"; throw std::runtime_error("palette step ran with palette rendering off"); } }
+            { auto p=palettePixels(); bool untouched=true; for(auto c:p) untouched=untouched && c==0xcd;
+              require("palette-off",untouched,"palette step ran with palette rendering off"); }
             D3D12_FinishUpdate(0);
             pMasterPalette=nullptr; setLookup(lut.data()); // without a master palette, it goes
             clearLightTables(); deleteTexture(&paletteTexture);
@@ -640,9 +754,7 @@ int main(int argc,char **argv) {
             special(HWD_SET_WATER_SURFACE,0);
             UINT64 fogAfter=0,copiesAfter=0,tripsAfter=0;
             D3D12_GetCaptureCountsForTest(&fogAfter,&copiesAfter,&tripsAfter);
-            bool grouped=copiesAfter-copiesBefore==2 && tripsAfter-tripsBefore==2;
-            if(negative=="water-group-counts") grouped=false;
-            if(!grouped) { negativeRejected=negative=="water-group-counts"; throw std::runtime_error("grouped water copy/roundtrip oracle failed"); }
+            require("water-group-counts",copiesAfter-copiesBefore==2 && tripsAfter-tripsBefore==2,"grouped water copy/roundtrip oracle failed");
             expect("water-group",{80,120,158}); D3D12_FinishUpdate(0);
             auto fog=surface({248,4,252}); fog.LightInfo.light_level=255; fog.LightInfo.fade_end=31;
             auto captureQuad=quad(128.125f);
@@ -650,15 +762,9 @@ int main(int argc,char **argv) {
             const FBITFIELD fogFlags=PF_Modulated|PF_ColorMapped|PF_Fog|PF_NoTexture|PF_NoDepthTest;
             auto waterDraw=[&](UINT count=4) { texture(&water); shader(SHADER_WATER); polygon(&ws,captureQuad.data(),count,waterFlags); };
             auto fogDraw=[&](UINT count=4) { shader(SHADER_FOG); polygon(&fog,captureQuad.data(),count,fogFlags); };
-            auto counts=[&]() { std::array<UINT64,3> result={}; D3D12_GetCaptureCountsForTest(&result[0],&result[1],&result[2]); return result; };
-            auto countDelta=[&](const char *scene,std::array<UINT64,3> before,UINT64 fogCount,UINT64 waterCount) {
-                auto after=counts(); bool correct=after[0]-before[0]==fogCount && after[1]-before[1]==waterCount && after[2]-before[2]==waterCount;
-                if(negative==scene) correct=false;
-                if(!correct) { negativeRejected=negative==scene; throw std::runtime_error("capture copy/roundtrip delta failed"); }
-            };
             bool mixedSameList=false;
             for(int attempt=0;attempt<4 && !mixedSameList;attempt++) {
-                reset({80,120,160}); auto mixedBefore=counts();
+                reset({80,120,160}); auto mixedBefore=captureCounts();
                 waterDraw(); UINT64 pending=Core_PendingFence(); fogDraw();
                 mixedSameList=Core_PendingFence()==pending;
                 countDelta("capture-mixed",mixedBefore,1,1); expect("capture-mixed",{80,120,159});
@@ -673,7 +779,7 @@ int main(int argc,char **argv) {
             // grouped run must capture afresh, rather than retaining its retired snapshot or ready flag.
             reset({80,120,160}); special(HWD_SET_WATER_SURFACE,1); waterDraw(); fogDraw();
             function<void (*)()>("FlushScreenTextures")();
-            auto recreateBefore=counts(); reset({40,80,120}); special(HWD_SET_WATER_SURFACE,2);
+            auto recreateBefore=captureCounts(); reset({40,80,120}); special(HWD_SET_WATER_SURFACE,2);
             waterDraw(); fogDraw(); countDelta("capture-recreate",recreateBefore,1,1);
             expect("capture-recreate",{40,80,120}); D3D12_FinishUpdate(0);
             // Actual size changes replace both capture allocations. Keep a grouped run ready across
@@ -683,26 +789,22 @@ int main(int argc,char **argv) {
                 special(HWD_SET_WATER_SURFACE,1); waterDraw(); fogDraw();
                 if(!D3D12_Surface(size,size)) throw std::runtime_error("capture resize failed");
                 clip(0,0,size,size,.1f); reset({40,80,120}); special(HWD_SET_WATER_SURFACE,2);
-                recreateBefore=counts(); waterDraw(); fogDraw(); countDelta("capture-recreate",recreateBefore,1,1);
-                RGB actual=probe(size/2,size/2,size),want={40,80,120};
-                if(negative=="capture-recreate") want[0]+=67;
-                for(int c=0;c<3;c++) if(abs(actual[c]-want[c])>1) { negativeRejected=negative=="capture-recreate"; throw std::runtime_error("capture pixel after resize failed"); }
+                recreateBefore=captureCounts(); waterDraw(); fogDraw(); countDelta("capture-recreate",recreateBefore,1,1);
+                same("capture-recreate","pixel after resize",size/2,size/2,probe(size/2,size/2,size),{40,80,120});
                 validate(validationQueue); D3D12_FinishUpdate(0);
             }
             special(HWD_SET_WATER_SURFACE,0);
 
             // PreparePolygon captures these two diagonal vertices, but a two-vertex fan never
             // draws. Repeated water/fog pairs exercise coalescing of still-pending transitions.
-            reset({80,120,160}); auto skippedBefore=counts(); bool sameList=false;
+            reset({80,120,160}); auto skippedBefore=captureCounts(); bool sameList=false;
             auto fullQuad=captureQuad; captureQuad[1]=captureQuad[2];
             for(int pair=0;pair<8;pair++) {
                 UINT64 pending=Core_PendingFence(); waterDraw(2); fogDraw(2);
                 if(Core_PendingFence()==pending) sameList=true;
             }
             captureQuad=fullQuad; waterDraw(); fogDraw();
-            bool skippedCorrect=sameList;
-            if(negative=="capture-skipped") skippedCorrect=false;
-            if(!skippedCorrect) { negativeRejected=negative=="capture-skipped"; throw std::runtime_error("skipped captures did not share a pending command list"); }
+            require("capture-skipped",sameList,"skipped captures did not share a pending command list");
             countDelta("capture-skipped",skippedBefore,9,9); expect("capture-skipped",{80,120,159}); D3D12_FinishUpdate(0);
             deleteTexture(&water); function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
         }
@@ -930,10 +1032,10 @@ int main(int argc,char **argv) {
                 if(!D3D12_Surface(w,h)) throw std::runtime_error("resizing failed");
                 clip(0,0,w,h,.1f);
                 reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,1);
-                { RGB c=probe(w/2,h/2,h); if(negative=="resize-fade-map") c[0]=(c[0]+67)%256; if(abs(c[0]-m40[0])>1||abs(c[1]-m40[1])>1||abs(c[2]-m40[2])>1) { negativeRejected=negative=="resize-fade-map"; throw std::runtime_error("fade map after a resize"); } }
+                same("resize-fade-map","fade map after a resize",w/2,h/2,probe(w/2,h/2,h),m40);
                 quadrants(tl,tr,bl,br); makeScreen(); reset({96,96,96}); blend(PF_NoDepthTest); drawIntermission();
                 const struct { int x, y; RGB want; } samples[]={{w/4,h/4,tl},{w*3/4,h/4,tr},{w/4,h*3/4,bl},{w*3/4,h*3/4,br}};
-                for(auto &sample:samples) { RGB c=probe(sample.x,sample.y,h); RGB want=sample.want; if(negative=="resize-screen") want[0]=(want[0]+67)%256; if(abs(c[0]-want[0])>1||abs(c[1]-want[1])>1||abs(c[2]-want[2])>1) { negativeRejected=negative=="resize-screen"; throw std::runtime_error("screen texture after a resize"); } }
+                for(auto &sample:samples) same("resize-screen","screen texture after a resize",sample.x,sample.y,probe(sample.x,sample.y,h),sample.want);
                 validate(validationQueue); D3D12_FinishUpdate(0);
             }
             special(HWD_SET_PALETTE_RENDERING,0);
@@ -1056,7 +1158,6 @@ int main(int argc,char **argv) {
             auto shaderInfo=function<void (*)(hwdshaderinfo_t,INT32)>("SetShaderInfo");
             auto skyDome=function<void (*)(gl_sky_t *)>("RenderSkyDome");
             auto setTransform=function<void (*)(FTransform *)>("SetTransform");
-            auto require=[&](const char *scene,bool ok,const char *why) { if(negative==scene) ok=false; if(!ok) { negativeRejected=negative==scene; throw std::runtime_error(why); } };
             // Each successful add-on compilation logs one line
             auto compilations=[&]() { size_t count=0; for(size_t at=0;(at=logs.find("compiled for polygon, sky and model layouts",at))!=std::string::npos;at++) count++; return count; };
             auto loadFragment=[&](int type,const char *code) { load(type,const_cast<char *>(code),strlen(code),true); };
@@ -1142,13 +1243,10 @@ int main(int argc,char **argv) {
         }
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(queue.Get());
         D3D12_Shutdown(); validate(queue.Get());
-        const bool closed = Core_Device() == nullptr;
-        const bool expectedClosed = negative != "shutdown";
-        if (closed != expectedClosed) {
-            negativeRejected = negative == "shutdown";
-            throw std::runtime_error("shutdown device lifetime oracle failed");
-        }
+        require("shutdown",Core_Device()==nullptr,"shutdown device lifetime oracle failed");
         if(!negative.empty()) throw std::runtime_error("unknown or unexercised negative control");
+        const std::string problems=oracleProblems();
+        if(!problems.empty()) throw std::runtime_error("oracles that never ran, or that aren't listed:"+problems);
         puts("Production D3D12 WARP driver scenes passed (RGB tolerance 1, GBV clean)"); return 0;
     } catch(const std::exception &e) { fprintf(stderr,"FAIL: %s\n",e.what()); D3D12_Shutdown(); if(negativeRejected) fprintf(stderr,"NEGATIVE_ORACLE_REJECTED: %s\n",negative.c_str()); return 1; }
 }

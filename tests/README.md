@@ -244,8 +244,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   fails the pixel comparison; for every remapped combination the test also checks
   that the full-bright color of the unremapped or double-remapped index differs
   from the right one, so neither error can hide. Direct3D 12 WARP checks normal,
-  Encore and exempt texels with Palette Rendering on and off. Separate controls
-  omit or repeat the remap on bright pixels for each palette setting. The native
+  Encore and exempt texels with Palette Rendering on and off. The native
   test verifies production pretranslation; WARP supplies pretranslated textures
   to verify shader behavior. These complement each other without running a
   complete game or validating Xbox visuals.
@@ -301,8 +300,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   full-bright row at their palette index; other texels keep the surface colormap
   row at the rasterized depth. `brightmap-palette` varies light and depth and
   checks normal, Encore and exempt texels. A surface-colormap shader mutant must
-  fail. `brightmap-smooth` covers the smooth-light path. Both scenes also have
-  separate expected-pixel negative controls. This does not validate Xbox visuals.
+  fail. `brightmap-smooth` covers the smooth-light path. This does not validate Xbox visuals.
 - **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production
   `r_d3d12/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
   GPU. It checks `RingAllocator` alignment (including non-power-of-two), wraparound,
@@ -368,16 +366,25 @@ validation enabled. Any debug-layer warning, error or corruption message, or any
 a missing or mismatched optimized render-target clear value: the runtime guarantees
 the requested clear color, which the pixel oracle checks. It only affects clear
 performance. Scenes cover clears, blends, depth, indexed
-triangles, 2D lines and a tiny-ring stress test, and negative controls must fail. Each
-negative control is its own process that replays the scenes before its own with the debug
-layer on but GPU-based validation off, since it runs the same GPU work as the full run and
-only changes what its oracle expects; the runner keeps one per core going at once and
-prints each one's output as it finishes.
+triangles, 2D lines and a tiny-ring stress test.
+The harness checks its own oracles rather than running a negative process per scene.
+Before the scenes, a self-test hands every kind of comparison (a screen pixel, a pixel of the
+palette step, of an image read earlier or of a probed pixel, a line's rows, a plain verdict, and
+the capture-count deltas) a wrong expectation, off by two levels in each channel in turn where that
+applies, and requires the specific rejection that kind throws; a right expectation, or one a level
+off, must pass. A hit registry then requires every listed scene's oracle to run at least once in the
+full run, and no oracle to run that isn't listed, so a skipped, renamed or misspelled scene fails the
+run. Four negative controls remain, because each changes the code under test while keeping the
+correct oracle, which must then reject it: shader mutants of `water-refraction` and `fog-palette`
+(reciprocal depth) and of `brightmap-palette` (the surface row instead of the full-bright row), which
+rebuild only the pipeline object from the edited HLSL, and `custom-shader-nocustom`, which turns
+add-on shaders off. Each is its own process that replays the scenes up to the one whose oracle
+rejects it, with the debug layer on but GPU-based validation off, since it runs the same GPU work
+as the full run; it must exit having rejected the scene it names.
 New texture, model and sky scenes cover texture creation, point sampling, reuploads,
 delete-and-recreate, mip chains, sky fan-strip rebuilds, and model buffered/lerped
-UV fallback. Their negative controls are `texture`, `texture-update`,
-`texture-reuse`, `mips`, `sky`, `model-buffered`, `model-lerped` and `model-fallback`;
-each must be rejected by its own oracle. Tiny models, lit models and textured sky
+UV fallback (`texture`, `texture-update`, `texture-reuse`, `mips`, `sky`, `model-buffered`,
+`model-lerped` and `model-fallback`). Tiny models, lit models and textured sky
 aren't exercised, so they remain untested here. WARP doesn't measure Xbox performance;
 texture creation time, heap behavior and frame rate need an Xbox run.
 Portal scenes require the production PSO preflight to succeed (`portal-supported`).
@@ -386,7 +393,7 @@ checks incrementing 1 to 2 and restoring 2 to 1. `portal-restore` checks that th
 pass writes entrance depth, and `portal-depth` checks that the fullscreen far-depth
 reset only touches the aperture, allowing farther child geometry while preserving
 outside occlusion. `portal-plane` checks world-plane clipping and disabling the plane.
-Each has its own required negative control. These pixel scenes use production driver
+These pixel scenes use production driver
 entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
 and fog/water portal interactions still require further testing.
 Custom-shader scenes load an add-on fragment shader that outputs a fixed color, compile it
@@ -442,8 +449,7 @@ the 64×64 target), draws three flat quads of different colors, labels one with
 other scenes) in order, `kind=wall source=7` on the labelled draw and `kind=polygon source=-1` on the
 others, and the `end draws=3 color_changes=3` line. The screen must still show the last color
 afterwards, a repeated request while one is pending must be refused, and a second frame without a
-request must neither begin a probe nor log `surface probe:`. Its negative control offsets the
-expected red channel and must fail the log oracle. The harness stubs presentation
+request must neither begin a probe nor log `surface probe:`. The harness stubs presentation
 and has no ANGLE or window, so nothing here covers the swap chain or its hand-offs
 with ANGLE.
 The DRED breadcrumbs logged by a timed-out GPU wait are also unexercised here.
@@ -452,17 +458,15 @@ Fog and water scenes run the production capture path with the same tiny rings, s
 submissions exercise rebinding and constant lifetimes. Fog draws over known scenery, including
 palette remapping through a light table. Water checks ordinary surface sampling and captured-scene
 refraction against the fixed-point sine and independent blend math; grouped surfaces must keep their
-original captured background while later pieces draw. The `fog-remap`, `fog-palette`, `water-
-surface`, `water-refraction`, `water-group` and `water-group-counts` negative controls must each
-fail their oracle, and capture counters check the grouping under GPU-based validation. Native D3D12
+original captured background while later pieces draw. The `fog-palette` and `water-refraction`
+shader mutants (above) must fail their oracles, and capture counters check the grouping under GPU-based validation. Native D3D12
 capture tests mock the texture, copy, binding and constant helpers, checking literal expected bounds (including fractional vertices) and
 constant bytes, split views, clipping, failures, resizing and disjoint water growth. A growing water
 capture uses one batched transition round trip around up to four strips; an unchanged grouped
 rectangle uses none. `capture-mixed` requires fog and water in the same command list;
 `capture-recreate` checks capture replacement after flushing resources still referenced by
 recorded draws and after a resize; `capture-skipped` skips two-vertex fans after capture
-and checks the next capture/draw, including pending opposite-transition merging. Each has
-a negative control. Xbox visual results, render-target decompression cost and performance
+and checks the next capture/draw, including pending opposite-transition merging. Xbox visual results, render-target decompression cost and performance
 remain untested. Water sine creation also checks small-resource alignment under GBV:
 the 8192×1 R32_SINT table exceeds sixteen 4 KB tiles despite its 32 KB raw size,
 so it uses normal 64 KB placement alignment.
