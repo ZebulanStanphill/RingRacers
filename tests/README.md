@@ -385,7 +385,9 @@ correct oracle, which must then reject it: shader mutants of `water-refraction` 
 rebuild only the pipeline object from the edited HLSL, and `custom-shader-nocustom`, which turns
 add-on shaders off. Each is its own process that replays the scenes up to the one whose oracle
 rejects it, with the debug layer on but GPU-based validation off, since it runs the same GPU work
-as the full run; it must exit having rejected the scene it names.
+as the full run; it must exit having rejected the scene it names, and a control still running
+after two minutes is killed and fails, so a GPU or WARP hang can't hold the job. The `warp` job
+itself is limited to 20 minutes (it takes about three).
 New texture, model and sky scenes cover texture creation, point sampling, reuploads,
 delete-and-recreate, mip chains, sky fan-strip rebuilds, and model buffered/lerped
 UV fallback (`texture`, `texture-update`, `texture-reuse`, `mips`, `sky`, `model-buffered`,

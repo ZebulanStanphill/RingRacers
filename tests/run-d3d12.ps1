@@ -58,13 +58,23 @@ if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (e
 # must reject the regression. Each is its own process that replays the scenes up to the one that rejects it, with the
 # debug layer but without GPU-based validation (the full run validates the same work).
 $Failures = @()
+# A control replays the scenes in a second or two; one that takes minutes is hung (a GPU or WARP stall), and would otherwise
+# hold the job until its own timeout.
+$ControlTimeoutSeconds = 120
 function Finish($Run) {
-    $Run.Process.WaitForExit()
+    $TimedOut = -not $Run.Process.WaitForExit($ControlTimeoutSeconds * 1000)
+    if ($TimedOut) {
+        $Run.Process.Kill()
+        $Run.Process.WaitForExit()
+    }
+    # The pipes close once the process is gone, so the output read completes either way.
     $Log = $Run.Output.Result + $Run.Error.Result
     $ExitCode = $Run.Process.ExitCode
     $Run.Process.Dispose()
     Write-Host $Log
-    if ($ExitCode -ne 1 -or $Log -notmatch "NEGATIVE_ORACLE_REJECTED: $($Run.Scene)") {
+    if ($TimedOut) {
+        $script:Failures += "D3D12 $($Run.Scene) negative control hung and was killed after $ControlTimeoutSeconds s"
+    } elseif ($ExitCode -ne 1 -or $Log -notmatch "NEGATIVE_ORACLE_REJECTED: $($Run.Scene)") {
         $script:Failures += "D3D12 $($Run.Scene) negative control was not rejected by its oracle (exit $ExitCode)"
     }
 }

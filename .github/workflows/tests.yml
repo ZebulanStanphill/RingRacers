@@ -74,7 +74,8 @@ jobs:
     name: Direct3D 12 driver on WARP (debug layer + GPU-based validation)
     needs: regressions
     runs-on: windows-2022
-    timeout-minutes: 60
+    # The job takes about three minutes; a WARP or GPU hang shouldn't hold a runner for an hour.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v7
