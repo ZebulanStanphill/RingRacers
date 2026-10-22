@@ -8,22 +8,34 @@ Coding agents were used heavily in the development of this port.
 
 ## Installing
 
-1. Plug an external USB storage drive into your Xbox and format it for *media* (not apps/games). This wipes its contents. It will be your `E:\` drive. The Xbox formats it as an ordinary NTFS volume and sets permissions on it that let apps read and write it; there is nothing special about its partition layout. A Windows PC reads and writes it like any other NTFS drive (after it has been in the Xbox, Windows may warn that the drive has errors, though the files are intact); macOS reads NTFS but writes it only with third-party software, and Linux needs the `ntfs3` driver or `ntfs-3g`, which most distributions include. An NTFS drive formatted elsewhere and given the same permission (see the warning below) may also work, but we haven't tried it.
-2. Create a folder named `ringracers` at the root of the drive.
-3. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [official v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) into `E:\ringracers` (so you have e.g. `E:\ringracers\bios.pk3` and `E:\ringracers\data\`). Files from other versions won't load.
-4. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup). Builds come from [GitHub Actions](#github-actions) or a [local build](#local).
-5. Changing the "App type" that Dev Home shows for the game (App or Game) isn't necessary. The package declares the `expandedResources` capability, which Microsoft documents as granting Game Mode resources on Xbox: CPU cores reserved for the app and a memory partition of at least 4 GB, where plain apps get a share of the cores, 1 GB and, on Xbox One, no Direct3D 12. On an Xbox One X with either type selected, the game got Direct3D 12, the same 5 GB memory budget and the same race speed. The setting does change some behaviour (with Game, controllers are reported twice, which the port's SDL patch handles), so if you do switch it, mention it when reporting a bug.
+You need a USB drive and, to prepare it, a Windows PC.
 
-> [!WARNING]
-> Unplug the USB drive before switching the Xbox to Retail mode. If the drive is plugged in when the console boots into Retail mode, the files on it can end up with attributes or permissions that stop the game from writing to them: `latest-log.txt` stops updating, and settings and saves may not be kept. To fix this, connect the drive to a Windows PC and reset the folder's attributes and permissions, for example (with the drive at `E:`):
->
-> ```
-> attrib -s -h -r E:\ringracers\* /s /d
-> icacls E:\ringracers /reset /t /c
-> icacls E:\ringracers /grant "*S-1-15-2-1:(OI)(CI)F" /t /c
-> ```
->
-> `S-1-15-2-1` is "ALL APPLICATION PACKAGES": the Xbox grants it when it formats the drive, and the game, like any app, needs it in order to write there.
+1. Format the drive as NTFS: on the PC, right-click it in File Explorer and choose **Format**. This erases it. A drive that is already NTFS can be used as it is. exFAT and FAT32 have no permissions to set in step 4, and haven't been tried.
+2. Create a folder named `ringracers` at the root of the drive.
+3. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [official v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) into that folder (so you have e.g. `ringracers\bios.pk3` and `ringracers\data\`). Files from other versions won't load.
+4. Give apps access to the drive. Open a Command Prompt as administrator and run these, with `X:` replaced by the drive's letter on the PC (on a large drive they take a while):
+
+   ```
+   icacls X:\ /grant "*S-1-15-2-1:(OI)(CI)F" /t /c
+   icacls X:\ /grant "*S-1-5-11:(OI)(CI)M" /t /c
+   ```
+
+   The game runs in a sandbox, like every app on the Xbox, and Windows lets a sandboxed app open a file only if the file's permissions allow both the app, through "ALL APPLICATION PACKAGES" (`S-1-15-2-1`), and the user it runs as, for example through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already allows Authenticated Users but not ALL APPLICATION PACKAGES, so the first command is the one it needs. The second is for drives prepared some other way; it follows Microsoft's documented rule but hasn't been tested on an Xbox. `(OI)(CI)` makes files created later, on Windows or by the game, get the same access.
+5. Plug the drive into the Xbox, where it is `E:\`, so the game finds its files in `E:\ringracers`. The Xbox doesn't format a drive it uses for media or change its permissions, so everything the game needs comes from the steps above. A drive of at least 128 GB on USB 3.0 or later makes the Xbox ask how to use it. Choose **Use for media**: **Format storage device** erases it for installed games, after which PCs see it as unformatted. Smaller or slower drives are used for media without asking.
+6. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup). Builds come from [GitHub Actions](#github-actions) or a [local build](#local).
+7. Changing the "App type" that Dev Home shows for the game (App or Game) isn't necessary. The package declares the `expandedResources` capability, which Microsoft documents as granting Game Mode resources on Xbox: CPU cores reserved for the app and a memory partition of at least 4 GB, where plain apps get a share of the cores, 1 GB and, on Xbox One, no Direct3D 12. On an Xbox One X with either type selected, the game got Direct3D 12, the same 5 GB memory budget and the same race speed. The setting does change some behaviour (with Game, controllers are reported twice, which the port's SDL patch handles), so if you do switch it, mention it when reporting a bug.
+
+### If the game can't use the drive
+
+Every error message the game shows ends with the drives it can see, and is also saved as `E:\ringracers\error.txt` when the drive is writable. Error 5 means access denied and error 2 or 3 means not found:
+
+- `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Run step 4 again.
+- `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at its root.
+- `E:\ringracers\bios.pk3: error 2`: the folder is there, but the game files aren't in it (step 3).
+
+Files copied onto the drive from a Mac or Linux PC through NTFS-3G, which most of their NTFS drivers use, don't inherit the drive's permissions: they get NTFS-3G's own default, which leaves out ALL APPLICATION PACKAGES. Run step 4 again after copying files that way. Files copied on Windows inherit the permissions.
+
+If Windows reports errors on the drive, copy `ringracers\ringracers` (your config and saves) off it before letting Windows repair it. A repair moves files it can't put back in place into a `found.000` folder at the root of the drive; on our test drive, that was everything the game had written.
 
 ## Differences from vanilla Ring Racers
 
