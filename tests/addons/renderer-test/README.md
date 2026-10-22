@@ -38,20 +38,37 @@ The hall runs west to east. You start at its west end, facing east, in light
 rain. There are three doorways on the left (north) side, west to east: **Fog**,
 **Water**, **Polyobjects**, and three on the right (south): **Light slices**,
 **Transparency**, **Brightmaps**. Item boxes sit near the start and far down
-the hall.
+the hall; they stay hidden until you cross the checkpoint just past the start
+line (see Hall).
 
 ## What to look at
 
 **Hall: skybox visibility and models** *(CHANGES: Skybox visibility;
 Sprite-textured models, 3D models and mipmaps).* The hall's sky ceiling lets
-**RAIN** fall around you. A skybox camera hangs 160 units above the hall's
-centre, so looking up through the sky shows the hall again. Rain should fall
-around your kart but **not** in that skybox view (Legacy GL and VibeRant D3D
-exclude precipitation from skybox views). Six item boxes (three near the start,
-three far down the hall) turn into a plain textured box when `models.dat` is
-installed: a 3D model that borrows its sprite for a texture, so it also checks
-the sprite-patch preparation and the mipmaps at near and far range. Without
-the files they stay the usual sprites. Toggle **Models**.
+**RAIN** fall around you. Above the walls, the sky shows the skybox, a
+separate enclosed room far west of the hall that nothing connects to. It is lit
+at full brightness, with magenta tiled walls, a teal checkered floor and four
+orange glowing orbs, and has a sky ceiling of its own, so it rains inside it
+too. The skybox camera hangs in the middle of that room at about kart-camera
+height. It has no centre point, so it stays there and only turns as you turn.
+Pass: the sky above the hall shows that bright room with no rain in it, while
+rain still falls around your kart (Legacy GL and VibeRant D3D exclude
+precipitation from skybox views, and Software does too). Fail: rain streaks in
+front of the room's walls in the sky picture. If the sky instead shows the
+hall, or nothing but sky, the skybox is not being drawn, and the check
+tells you nothing.
+
+The six item boxes stay hidden until you cross the checkpoint 100 units past
+the start line, a line across the whole hall with a post at each end. The engine
+hides them until a racer has crossed a first checkpoint, and the finish line
+only counts as one from the second lap, which this one-lap map never reaches.
+Two of the boxes are just west of the checkpoint and four are east of it, so most
+appear ahead of you. Crossing the checkpoint again on the way back changes
+nothing, and finishing the lap does not need it. The boxes turn into a plain
+textured box when `models.dat` is installed: a 3D model that borrows its sprite
+for a texture, so it also checks the sprite-patch preparation and the mipmaps
+at near and far range. Without the files they stay the usual sprites. Toggle
+**Models**.
 
 **Fog** *(Fog).* Two fog blocks, red then blue, each cover two thirds of the
 room and overlap in the middle third, 0 to 128 units high, with pillars to see
@@ -146,10 +163,11 @@ the TEXTMAP and checks what the engine requires: the namespace and version
 first, valid vertex, line and sidedef references, closed sector boundaries with
 no lines crossing or touching mid-line, 3D-floor specials aimed at sectors that
 exist, polyobject loops with their anchor and spawn things, waypoints that link,
-every texture shipped, and in the nodes the original vertex count, seg line
-numbers, one seg per polyobject line, and each polyobject's spawn spot inside
-one subsector. The CI's `regressions` job runs `--check` and uploads the result
-as `renderer-test-map`.
+every texture shipped, each checkpoint's two posts (same ID and angle, aimed at a
+line tag that exists), the skybox viewpoint inside a sector with a sky ceiling,
+and in the nodes the original vertex count, seg line numbers, one seg per
+polyobject line, and each polyobject's spawn spot inside one subsector. The CI's
+`regressions` job runs `--check` and uploads the result as `renderer-test-map`.
 
 How the map is built for the engine:
 
@@ -178,5 +196,5 @@ Raise or lower that scale if the box looks too small or large.
 
 The offline checks do not verify the effects in gameplay. In particular the
 SOC, `BRIGHT` and `SPRTINFO` text, the polyobject rotation trigger (crossing the
-doorway line), the finish line and the waypoint loop still need gameplay
-validation; their definitions were checked against the engine source.
+doorway line), the finish line, the checkpoint and the waypoint loop still need
+gameplay validation; their definitions were checked against the engine source.

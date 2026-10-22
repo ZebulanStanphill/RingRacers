@@ -145,6 +145,18 @@ def flat_ceiling():
     return render(64, 64, palette, pixel)
 
 
+def flat_skyfloor():
+    """RTSKYF: the skybox room's floor, teal checks."""
+    palette = [(24, 190, 170, 255), (10, 110, 104, 255), (6, 40, 44, 255)]
+
+    def pixel(x, y):
+        if x % 32 == 0 or y % 32 == 0:
+            return 2
+        return (x // 32 + y // 32) % 2
+
+    return render(64, 64, palette, pixel)
+
+
 def texture_water():
     palette = [(24, 70, 160, 255), (36, 96, 190, 255), (52, 124, 214, 255), (88, 160, 232, 255), (150, 206, 250, 255)]
     return render(64, 64, palette, lambda x, y: min(4, tri(x * 3 + tri(y * 2, 16) * 2, 24) // 3))
@@ -178,6 +190,20 @@ def texture_poly():
         if d >= 20:
             return 3
         return 1 if d < 8 else 0
+
+    return render(128, 128, palette, pixel)
+
+
+def texture_skywall():
+    """RTSKYW: the skybox room's walls, saturated magenta tiles that look like nothing in the hall."""
+    palette = [(18, 6, 24, 255), (214, 36, 176, 255), (246, 120, 220, 255), (150, 20, 130, 255)]
+
+    def pixel(x, y):
+        if x % 32 < 2 or y % 32 < 2:
+            return 0
+        if x % 32 == 2 or y % 32 == 2:
+            return 2
+        return 1 if (x // 32 + y // 32) % 2 else 3
 
     return render(128, 128, palette, pixel)
 
@@ -285,11 +311,13 @@ IMAGES = [
     ("Textures/RTPOLY.png", texture_poly),
     ("Textures/RTSIGN.png", texture_sign),
     ("Textures/RTSIGNBM.png", texture_sign_brightmap),
+    ("Textures/RTSKYW.png", texture_skywall),
     ("Textures/RTWATER.png", texture_water),
     ("Textures/RTFOG.png", texture_fog),
     ("Textures/RTGLASS.png", texture_glass),
     ("Flats/RTFLOOR.png", flat_floor),
     ("Flats/RTCEIL.png", flat_ceiling),
+    ("Flats/RTSKYF.png", flat_skyfloor),
     ("Sprites/RTTRA0.png", sprite_crystal),
     ("Sprites/RTGLA0.png", sprite_glow),
     # Not in Sprites/: that folder's lumps are all read as frames of whichever
@@ -597,6 +625,11 @@ def emit_textmap(geometry, lines, zdbsp=False):
 HALL = (-1280, -640, 1280, 640)
 ROOM_X = (-832, 0, 832)  # room centres; 768 wide behind a 512-wide doorway; water extends farther north
 NORTH, SOUTH = (704, 1472), (-1472, -704)
+# The skybox room, far west of the hall: enclosed, unreachable, with a sky ceiling so it rains in it.
+SKY_ROOM = (-3600, -512, -2576, 512)
+SKY_CENTER = ((SKY_ROOM[0] + SKY_ROOM[2]) // 2, (SKY_ROOM[1] + SKY_ROOM[3]) // 2)
+SKY_CAMERA_HEIGHT = 64
+CHECKPOINT_X, CHECKPOINT_TAG, CHECKPOINT_ID = -850, 70, 1
 
 
 def room_x(cx):
@@ -711,6 +744,11 @@ def build_geometry():
     g.sector("bright_room", rect(x0, SOUTH[0], x1, SOUTH[1]), wall="RTSIGN", lightlevel=32,
              lightcolor=color(0, 0, 255), lightalpha=20)
 
+    # 8. The skybox room: bright, saturated and unlike the hall, so the sky above the hall is easy to
+    # recognise; its sky ceiling makes it rain around the skybox camera.
+    g.sector("sky_room", rect(*SKY_ROOM), wall="RTSKYW", heightceiling=384, texturefloor="RTSKYF",
+             textureceiling="F_SKY1", lightlevel=255)
+
     # The control sectors, one 64x64 square each.
     for n, (name, bottom, top, special, args, wall, props) in enumerate(controls):
         x = 3328 + 128 * n
@@ -723,6 +761,10 @@ def build_geometry():
     # The finish line, just in front of the starts (the first waypoint is the finish line's).
     g.free_line((-950, -640), (-950, 640), "hall", special=2001, playercross=True, repeatspecial=True,
                 sides=({}, {}))
+    # The race checkpoint just past the finish line. A lap-0 player is ignored by the checkpoints, so it
+    # has to lie beyond the line; crossing it makes the item boxes appear. Crossing it again on the way
+    # back is ignored (same checkpoint), and finishing the lap does not need it.
+    g.free_line((CHECKPOINT_X, -640), (CHECKPOINT_X, 640), "hall", id=CHECKPOINT_TAG, sides=({}, {}))
 
     # Things: the hall's starts, waypoint loop, item boxes and skybox, then each room's contents.
     for n, (x, y) in enumerate([(-1150, -150), (-1150, 150), (-1050, -50), (-1050, 50)]):
@@ -732,8 +774,13 @@ def build_geometry():
         g.thing(2001, x, y, id=n, thingarg0=n % len(loop) + 1, thingarg1=256, thingarg2=8 if n == 1 else 0)
     for x, y in [(-1000, -250), (-1000, 250), (-700, 0), (1100, -300), (1100, 300), (300, 0)]:
         g.thing(2000, x, y, 24)
-    g.thing(780, 0, 0, 160, id=0, thingarg0=0)  # skybox viewpoint
-    g.thing(780, 0, 0, 0, id=0, thingarg0=1)  # skybox centre point
+    for y in (-600, 600):  # the checkpoint's two posts: same ID and angle, aimed at the tagged line
+        g.thing(2030, CHECKPOINT_X, y, 0, thingarg0=CHECKPOINT_ID, thingarg1=CHECKPOINT_TAG)
+    # The skybox viewpoint, at camera height in the middle of the skybox room. There is no centre point,
+    # so the sky camera stays here and only turns with the player.
+    g.thing(780, *SKY_CENTER, SKY_CAMERA_HEIGHT, id=0, thingarg0=0)
+    for dx, dy in [(-320, -320), (-320, 320), (320, -320), (320, 320)]:
+        g.thing(THING_GLOW, SKY_CENTER[0] + dx, SKY_CENTER[1] + dy, 24)
     for x, y in [(-300, -1000), (300, -1000)]:
         g.thing(2000, x, y, 24)
     for x, y, z in [(-100, -900, 0), (-60, -1050, 66), (60, -1120, 130), (0, -1000, 198), (-120, -1290, 0),
@@ -910,6 +957,19 @@ def check_znodes(data, tm, one_sided=(), keep_whole=()):
     return bsp
 
 
+def _in_sector(sector, x, y, lines, sides, vertices):
+    """Whether a point is inside a sector (even-odd: the holes count out): casts a ray towards +x."""
+    inside = False
+    for line in lines:
+        if not any(k in line and sides[line[k]]["sector"] == sector for k in ("sidefront", "sideback")):
+            continue
+        a, b = vertices[line["v1"]], vertices[line["v2"]]
+        if (a["y"] > y) != (b["y"] > y):
+            if a["x"] + (y - a["y"]) * (b["x"] - a["x"]) / (b["y"] - a["y"]) > x:
+                inside = not inside
+    return inside
+
+
 def validate_map(tm, image_names):
     """What the engine requires of a UDMF map, as far as it can be checked without the game.
 
@@ -993,6 +1053,26 @@ def validate_map(tm, image_names):
     assert len(ids) == len(waypoints) >= 3 and all(t["thingarg0"] in ids for t in waypoints)
     assert sum(1 for t in waypoints if t.get("thingarg2", 0) & 8) == 1
     assert {1, 2, 3, 4} <= {t["type"] for t in things}
+    # Checkpoints (item boxes stay hidden until one is crossed): the two posts of each pair share a
+    # non-zero ID and an angle, and aim at a line tag that some line has.
+    posts = {}
+    for t in things:
+        if t["type"] == 2030:
+            posts.setdefault(t["thingarg0"], []).append(t)
+    assert posts and 0 not in posts, "the map needs a checkpoint, with a non-zero ID"
+    line_tags = {l["id"] for l in lines if "id" in l}
+    for number, pair in posts.items():
+        assert len(pair) == 2, f"checkpoint {number} needs exactly two posts"
+        assert pair[0].get("angle", 0) == pair[1].get("angle", 0), f"checkpoint {number}: angles differ"
+        assert pair[0]["thingarg1"] == pair[1]["thingarg1"] in line_tags, f"checkpoint {number}: no such line tag"
+    # The skybox viewpoint (no centre point, so the sky camera stays put) lies in a sector with a sky ceiling.
+    views = [t for t in things if t["type"] == 780]
+    assert len(views) == 1 and views[0]["thingarg0"] == 0 and views[0]["id"] == 0, "one skybox viewpoint, ID 0"
+    holder = [i for i in range(len(sectors)) if _in_sector(i, views[0]["x"], views[0]["y"], lines, sides, vertices)]
+    assert len(holder) == 1, "the skybox viewpoint is not inside exactly one sector"
+    sky = sectors[holder[0]]
+    assert sky["textureceiling"] == "F_SKY1", "the skybox viewpoint needs a sky ceiling, so that it rains there"
+    assert sky["heightfloor"] < views[0]["height"] < sky["heightceiling"] - 64
     # Everything the map names ships in the PK3 (or comes with the game).
     shipped = {Path(n).stem.upper() for n in image_names}
     used = {s[k] for s in sectors for k in ("texturefloor", "textureceiling")}
