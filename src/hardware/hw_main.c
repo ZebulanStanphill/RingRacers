@@ -5641,9 +5641,16 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
 {
 	size_t n1 = *(const size_t*)p1;
 	size_t n2 = *(const size_t*)p2;
+	INT32 diff;
 	if (!sortnode[n1].plane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n1)");
 	if (!sortnode[n2].plane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n2)");
-	return ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
+	diff = ABS(sortnode[n2].plane->fixedheight - viewz) - ABS(sortnode[n1].plane->fixedheight - viewz);
+	if (diff != 0)
+		return diff;
+	// Preserve the BSP order on ties: qsort is not stable. Coincident fog
+	// planes are queued in FOF list order, so the first rover remaps last,
+	// matching the winner of Software's equal-height lightlist selection.
+	return sortnode[n2].plane->drawcount - sortnode[n1].plane->drawcount;
 }
 
 #ifdef _UWP

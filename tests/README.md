@@ -223,6 +223,19 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   both production dispatchers with their pre-feature implementations fails the
   front-object draw-order assertion in both variants. Dependency stubs record
   draws and blend a shared CPU pixel; they do not render complete game scenes.
+  Another 84 cases check coincident red/blue fog planes at both volume boundaries,
+  three eye heights (including equal floor/ceiling distances), seven surrounding
+  plane counts and both toggle settings. The first-created rover must remap last,
+  matching Software's equal-height lightlist winner; non-tied planes retain their
+  distance order, and coincident fog walls retain reverse drawcount order and
+  separate the plane runs. Run each scene with libc qsort and with equal-key
+  groups reversed, another legal qsort result, so stable host sorting cannot hide
+  the regression. The pre-fix comparator fails both executables' face-order
+  assertion. These checks record submissions, not fog pixels: Software gives both
+  coincident planes the selected lightlist colormap, whereas hardware retains each
+  rover's control colormap. Exposed coincident exit sides also retain their existing
+  order (Software's FOF list order, hardware's reverse drawcount order). Complete
+  overlapping fog visuals still need an Xbox test.
 - **Fog boundaries and captures:** compare 24,960 production shader row
   selections with the actual Software zlight/scalelight tables and 16,384
   palette-remap samples. Extract bounds from `r_d3d12/d3d12_captures.inc` and

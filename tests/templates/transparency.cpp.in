@@ -136,15 +136,38 @@ boolean HWR_DrawModel(gl_vissprite_t *spr) {
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 @@DRAW_NODES@@
 @@ADD_WALL@@
-static void HWR_RenderPlane(subsector_t *, extrasubsector_t *, boolean, fixed_t,
-    FBITFIELD, INT32 light, levelflat_t *, sector_t *, UINT8, extracolormap_t *) { draws.push_back(-light); }
+static std::vector<std::pair<sector_t *, boolean>> fogFaces;
+static void HWR_RenderPlane(subsector_t *, extrasubsector_t *, boolean ceiling, fixed_t,
+    FBITFIELD flags, INT32 light, levelflat_t *, sector_t *control, UINT8, extracolormap_t *colormap) {
+    draws.push_back(-light);
+    if (flags & PF_Fog) {
+        assert(control && colormap == control->extra_colormap);
+        fogFaces.emplace_back(control, ceiling);
+    }
+}
 static void HWR_RenderPolyObjectPlane(polyobj_t *, boolean, fixed_t, FBITFIELD,
     UINT8 light, levelflat_t *, sector_t *, UINT8, extracolormap_t *) { draws.push_back(-light); }
 void HWR_RenderWall(FOutVector *, FSurfaceInfo *surf, FBITFIELD, boolean, INT32 light, extracolormap_t *) {
     draws.push_back(-light);
     composite(pixel, {surf->PolyColor.s.red/255.f, surf->PolyColor.s.green/255.f, surf->PolyColor.s.blue/255.f}, 0.5f);
 }
+// qsort may reorder equivalent elements. Exercise a second legal ordering so
+// this regression also fails on hosts whose libc happens to keep ties stable.
+static bool reverseSortTies;
+static void NodeSort(void *base, size_t count, size_t size,
+    int (*compare)(const void *, const void *)) {
+    std::qsort(base, count, size, compare);
+    if (!reverseSortTies) return;
+    assert(size == sizeof(size_t));
+    auto *indices = static_cast<size_t *>(base);
+    for (size_t first = 0, end; first < count; first = end) {
+        for (end = first+1; end < count && compare(&indices[first], &indices[end]) == 0; ++end) {}
+        std::reverse(indices+first, indices+end);
+    }
+}
+#define qsort NodeSort
 @@CREATE_NODES@@
+#undef qsort
 @@BEGIN_SPRITES@@
 @@END_SPRITES@@
 @@SPRITE_SHADOW@@
@@ -166,6 +189,7 @@ static void reset() {
     gl_viewludsin = gl_viewcos = gl_fovlud = 1; gl_viewludcos = gl_viewsin = 0;
     draws.clear(); colors.clear(); pixel = {0,0,1}; linkdrawcount = 0;
     waterStates.clear(); waterState=0;
+    fogFaces.clear(); reverseSortTies=false;
 }
 static void sprite(float depth, UINT32 frame = FF_TRANS50, float lateral = 0) {
     auto i = gl_visspritecount++;
@@ -424,5 +448,61 @@ int main() {
 #endif
         ++cases;
     }
-    printf("%u shared draw-order, compositing, model, attachment and bounds cases passed\n", cases);
+    // Renderer-test fog_1: red's control line creates its rover before blue's.
+    // Software's equal-height lightlist picks red; both coincident boundaries
+    // survive CUTEXTRA's strict interior check. Submit blue before red, at each
+    // height, even as other visible planes change the length/content of a run.
+    unsigned fogCases = 0;
+    for (bool reverse : {false,true}) for (int enabled : {0,1})
+    for (int eye : {16,64,112}) for (int surrounding : {0,1,2,3,8,17,33}) {
+        reset(); reverseSortTies=reverse; cv_glbettertransparency.value=enabled;
+        viewz=eye*FRACUNIT;
+        sector_t red{}, blue{};
+        extracolormap_t redMap{}, blueMap{};
+        redMap.flags=blueMap.flags=CMF_FOG;
+        redMap.rgba=0x000000ff; blueMap.rgba=0x00ff0000;
+        red.extra_colormap=&redMap; blue.extra_colormap=&blueMap;
+        std::vector<int> expected;
+        // Two runs separated by coincident inward fog walls. Walls must retain
+        // their reverse drawcount order and must never join a plane-height sort.
+        for (int run=0; run<2; ++run) {
+            for (int i=0; i<surrounding; ++i)
+                HWR_AddTransparentFloor(nullptr,&sub,false,(256+i)*FRACUNIT,
+                    200+i,128,&red,PF_NoTexture,false,&redMap);
+            for (sector_t *control : {&red,&blue}) {
+                HWR_AddTransparentFloor(nullptr,&sub,false,0,101,128,
+                    control,PF_Fog|PF_NoTexture,true,control->extra_colormap);
+                HWR_AddTransparentFloor(nullptr,&sub,true,128*FRACUNIT,102,128,
+                    control,PF_Fog|PF_NoTexture,true,control->extra_colormap);
+            }
+            // A farther plane queued last must still precede the nearer planes.
+            HWR_AddTransparentFloor(nullptr,&sub,false,512*FRACUNIT,250,128,
+                &red,PF_NoTexture,false,&redMap);
+            if (!run) {
+                FOutVector vertices[4]{}; FSurfaceInfo surf{};
+                HWR_AddTransparentWall(vertices,&surf,0,0,PF_Fog|PF_NoTexture,true,301,&redMap);
+                HWR_AddTransparentWall(vertices,&surf,0,0,PF_Fog|PF_NoTexture,true,302,&blueMap);
+            }
+        }
+        for (int run=0; run<2; ++run) {
+            expected.push_back(-250);
+            for (int i=surrounding-1; i>=0; --i) expected.push_back(-200-i);
+            if (eye==16) expected.insert(expected.end(),{-102,-102,-101,-101});
+            else if (eye==64) expected.insert(expected.end(),{-102,-101,-102,-101});
+            else expected.insert(expected.end(),{-101,-101,-102,-102});
+            if (!run) expected.insert(expected.end(),{-302,-301});
+        }
+        finish(); assert(draws==expected);
+        using Face = std::pair<sector_t *,boolean>;
+        std::vector<Face> oneRun;
+        if (eye==64) oneRun={{&blue,true},{&blue,false},{&red,true},{&red,false}};
+        else {
+            boolean farCeiling=eye<64;
+            oneRun={{&blue,farCeiling},{&red,farCeiling},{&blue,!farCeiling},{&red,!farCeiling}};
+        }
+        auto expectedFaces=oneRun;
+        expectedFaces.insert(expectedFaces.end(),oneRun.begin(),oneRun.end());
+        assert(fogFaces==expectedFaces); ++fogCases;
+    }
+    printf("%u shared draw-order, compositing, model, attachment and bounds cases passed; %u coincident fog order cases passed\n", cases, fogCases);
 }
