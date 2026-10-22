@@ -74,13 +74,13 @@ volume of a different tint overlaps it in the east corner, with its surface at
 translucent wall crosses its deep section. Check that the refraction shows
 submerged geometry, that no extra boundary shows where one volume lies inside
 the other, and the underwater distortion once your camera is in the water.
-**Reduce VFX** On turns both distortions and the refraction off.
+**Reduce Effects** On turns both distortions and the refraction off.
 
 **Polyobjects** *(Polyobject ripples).* Two 128 by 128 blocks. The translucent
 one (70% opaque) has ripple flags on its top and bottom, and the opaque one has
 none. Driving across the doorway starts the translucent one spinning, so look at
 it from above: its top face should ripple, and the opaque block's should not.
-**Reduce VFX** On stops the ripple. The ripple flags are on the sector behind
+**Reduce Effects** On stops the ripple. The ripple flags are on the sector behind
 the polyobject's first line, which is where the engine reads them.
 
 **Light slices** *(Wall light slices).* A 512-unit room, taller than the others,
@@ -118,7 +118,7 @@ it.
 | --- | --- |
 | Renderer | Options, Video, Advanced: **Software** or **VibeRant D3D** |
 | Shaders | Options, Video, Advanced (`gr_shaders`): On, Off, Ignore custom shaders |
-| Reduce VFX | Options, Video, Advanced (`reducevfx`) |
+| Reduce Effects | Profile Setup, your profile, Accessibility (`reducevfx`; the Guest profile can't be edited, so use the console there) |
 | Better transparency ordering | `gr_bettertransparency` |
 | Palette Rendering | `gr_paletterendering` |
 | Models | `gr_models` |
