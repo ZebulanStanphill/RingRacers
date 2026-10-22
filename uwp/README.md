@@ -62,7 +62,7 @@ If Windows reports errors on the drive, copy `ringracers\ringracers` (your confi
 
 - fog volumes
 - sprite brightmaps
-- split-screen with VibeRant D3D, including heat distortion
+- wall light slices in split-screen
 - Better transparency ordering
 
 CHANGES.md marks every untested change.
