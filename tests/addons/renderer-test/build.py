@@ -92,6 +92,24 @@ def render(width, height, palette, pixel, offsets=None):
     return png_indexed(width, height, palette, pixels, offsets)
 
 
+def doom_patch(width, height, pixels):
+    """A Doom-format patch (the engine's softwarepatch_t) of fully opaque palette indices.
+
+    Unlike a PNG, which the engine converts for every reader but Software's texture brightmap path, this is read
+    directly by all of them."""
+    assert len(pixels) == width * height and 0 < height <= 255
+    columns = []
+    offset = 8 + 4 * width
+    table = bytearray()
+    for x in range(width):
+        table += struct.pack("<I", offset)
+        # One post covering the column: topdelta, length, padding, the pixels, padding; then the end marker.
+        column = bytes([0, height, 0]) + bytes(pixels[y * width + x] for y in range(height)) + b"\x00\xff"
+        columns.append(column)
+        offset += len(column)
+    return struct.pack("<hhhh", width, height, 0, 0) + bytes(table) + b"".join(columns)
+
+
 def tri(n, period):
     """Integer triangle wave, 0..period/2; keeps the textures free of floating point."""
     return abs(n % period - period // 2)
@@ -239,9 +257,17 @@ def texture_sign():
     return render(128, 128, palette, _sign_index)
 
 
+# A texture brightmap is shipped as a Doom patch, not a PNG: Software reads it raw, without the PNG conversion
+# every other image gets. It marks the bright pixels with palette index 0 (BRIGHTPIXEL, white in the palette,
+# which is also what Legacy GL and VibeRant D3D test for: a fully red palette color) and the rest with 31
+# (black); 255 would be transparent.
+BRIGHT_INDEX, DARK_INDEX = 0, 31
+
+
 def texture_sign_brightmap():
-    palette = [(0, 0, 0, 255), (255, 255, 255, 255)]
-    return render(128, 128, palette, lambda x, y: 1 if _sign_index(x, y) >= 3 else 0)
+    """RTSIGNBM: marks the glyphs and band edges of RTSIGN; it must be the same size."""
+    pixels = bytes(BRIGHT_INDEX if _sign_index(x, y) >= 3 else DARK_INDEX for y in range(128) for x in range(128))
+    return doom_patch(128, 128, pixels)
 
 
 def sprite_crystal():
@@ -273,6 +299,11 @@ def _orb_distance(x, y):
     return (x - 24) ** 2 + (y - 24) ** 2
 
 
+def _orb_opaque(x, y):
+    """Where RTGLA0 is not transparent. RTGLBRA0 must match it exactly (see sprite_glow_brightmap)."""
+    return _orb_distance(x, y) <= 22 * 22
+
+
 def sprite_glow():
     """RTGLA0: a dark orb with a glowing ring and core, 48x48."""
     palette = [(0, 0, 0, 0), (16, 20, 40, 255), (48, 60, 110, 255), (80, 96, 150, 255),
@@ -280,7 +311,7 @@ def sprite_glow():
 
     def pixel(x, y):
         d = _orb_distance(x, y)
-        if d > 22 * 22:
+        if not _orb_opaque(x, y):
             return 0
         if d > 20 * 20:
             return 1
@@ -294,12 +325,17 @@ def sprite_glow():
 
 
 def sprite_glow_brightmap():
-    """RTGLBRA0: marks the ring and core of RTGLA0; it must be the same size."""
-    palette = [(0, 0, 0, 255), (255, 255, 255, 255)]
+    """RTGLBRA0: marks the ring and core of RTGLA0; it must be the same size and just as transparent.
+
+    Software draws a sprite's columns together with its brightmap's, post by post, so the two must have the same
+    posts: transparent exactly where RTGLA0 is."""
+    palette = [(0, 0, 0, 0), (0, 0, 0, 255), (255, 255, 255, 255)]
 
     def pixel(x, y):
+        if not _orb_opaque(x, y):
+            return 0
         d = _orb_distance(x, y)
-        return 1 if d <= 8 * 8 or 13 * 13 <= d <= 15 * 15 else 0
+        return 2 if d <= 8 * 8 or 13 * 13 <= d <= 15 * 15 else 1
 
     return render(48, 48, palette, pixel, offsets=(24, 48))
 
@@ -310,7 +346,7 @@ IMAGES = [
     ("Textures/RTWALL.png", texture_wall),
     ("Textures/RTPOLY.png", texture_poly),
     ("Textures/RTSIGN.png", texture_sign),
-    ("Textures/RTSIGNBM.png", texture_sign_brightmap),
+    ("Textures/RTSIGNBM.lmp", texture_sign_brightmap),
     ("Textures/RTSKYW.png", texture_skywall),
     ("Textures/RTWATER.png", texture_water),
     ("Textures/RTFOG.png", texture_fog),
@@ -1109,8 +1145,60 @@ def validate_map(tm, image_names):
     return polyobject_lines
 
 
+def png_opaque_mask(data):
+    """Reads back a PNG that png_indexed wrote: (width, height, one boolean per pixel, True where not transparent)."""
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    chunks, pos = {}, 8
+    while pos < len(data):
+        (length,) = struct.unpack_from(">I", data, pos)
+        chunks[data[pos + 4:pos + 8]] = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+    width, height, depth, kind = struct.unpack(">IIBB", chunks[b"IHDR"][:10])
+    assert (depth, kind) == (8, 3), "not an 8-bit palette PNG"
+    alphas = chunks.get(b"tRNS", b"")
+    raw = zlib.decompress(chunks[b"IDAT"])
+    assert len(raw) == height * (width + 1) and all(raw[y * (width + 1)] == 0 for y in range(height))
+    return width, height, [raw[y * (width + 1) + 1 + x] >= len(alphas) or alphas[raw[y * (width + 1) + 1 + x]] != 0
+                           for y in range(height) for x in range(width)]
+
+
+def doom_patch_pixels(data):
+    """Reads back a Doom patch that doom_patch wrote: (width, height, palette indices, None where transparent)."""
+    width, height = struct.unpack_from("<hh", data)
+    pixels = [None] * (width * height)
+    for x in range(width):
+        (pos,) = struct.unpack_from("<I", data, 8 + 4 * x)
+        while data[pos] != 0xFF:
+            top, length = data[pos], data[pos + 1]
+            for i in range(length):
+                pixels[(top + i) * width + x] = data[pos + 3 + i]
+            pos += length + 4
+    return width, height, pixels
+
+
+def validate_brightmaps(entries):
+    """What Software needs of brightmaps, which Legacy GL and VibeRant D3D are more forgiving about."""
+    # Software reads a texture brightmap as a raw Doom patch (R_GenerateTextureBrightmap), with no PNG conversion.
+    lump = entries["Textures/RTSIGNBM.lmp"]
+    assert lump[:8] != b"\x89PNG\r\n\x1a\n", "RTSIGNBM must be a Doom patch, not a PNG: Software cannot read a PNG brightmap"
+    assert "Textures/RTSIGNBM.png" not in entries
+    width, height, pixels = doom_patch_pixels(lump)
+    base_width, base_height, base_opaque = png_opaque_mask(entries["Textures/RTSIGN.png"])
+    assert (width, height) == (base_width, base_height), "RTSIGNBM must be as large as RTSIGN"
+    assert all(p in (BRIGHT_INDEX, DARK_INDEX) for p in pixels), "RTSIGNBM may use only palette indices 0 and 31"
+    assert all(base_opaque), "RTSIGN is expected to be opaque"
+    assert [p == BRIGHT_INDEX for p in pixels] == [_sign_index(x, y) >= 3 for y in range(height) for x in range(width)]
+    # Software draws a sprite's posts and its brightmap's together (R_DrawMaskedColumn), one for one.
+    sprite = png_opaque_mask(entries["Sprites/RTGLA0.png"])
+    brightmap = png_opaque_mask(entries["Graphics/RTGLBRA0.png"])
+    assert sprite[:2] == brightmap[:2], "RTGLBRA0 must be as large as RTGLA0"
+    assert sprite[2] == brightmap[2], "RTGLBRA0 must be transparent exactly where RTGLA0 is"
+    assert not all(sprite[2]) and any(sprite[2]), "RTGLA0 is expected to be partly transparent"
+
+
 def validate_package(entries, models, rewritten=None):
     """The checks behind --validate. Returns a one-line summary."""
+    validate_brightmaps(entries)
     wad = read_wad(entries[MAP_WAD])
     assert [name for name, _ in wad] == [MARKER, "TEXTMAP", "ZNODES", "ENDMAP"]
     lumps = dict(wad)
@@ -1119,7 +1207,7 @@ def validate_package(entries, models, rewritten=None):
     text = lumps["TEXTMAP"].decode("ascii")
     assert text == emit_textmap(geometry, lines), "the TEXTMAP is not what this script generates"
     tm = parse_textmap(text)
-    one_sided = validate_map(tm, [n for n in entries if n.endswith(".png")])
+    one_sided = validate_map(tm, [n for n in entries if n.endswith((".png", ".lmp"))])
     sent = parse_textmap(emit_textmap(geometry, lines, zdbsp=True))
     if rewritten is not None:
         # The node builder numbered everything the way we did, so its nodes fit the TEXTMAP we ship.

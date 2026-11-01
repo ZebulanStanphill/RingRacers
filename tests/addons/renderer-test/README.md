@@ -160,7 +160,8 @@ it.
 ## Build and validation
 
 `build.py` generates the UDMF map, every
-texture, flat and sprite as PNG, the SOC level header, the `BRIGHT` and
+texture, flat and sprite as PNG (except the sign's brightmap, a Doom patch; see
+below), the SOC level header, the `BRIGHT` and
 `SPRTINFO` lumps, and the model files, and packages the map-local bot removal
 script from [`quiet.lua`](quiet.lua). Only the map's BSP, the `ZNODES` lump,
 comes from a tool, [ZDBSP](https://github.com/ZDoom/zdbsp) 1.19 (commit
@@ -204,6 +205,17 @@ How the map is built for the engine:
 - The brightmap for the glowing orb is in `Graphics/`, not `Sprites/`, because
   every lump in `Sprites/` is read as a frame of the sprite named by its first
   four letters.
+- The sign's texture brightmap, `Textures/RTSIGNBM.lmp`, is a Doom-format
+  patch, not a PNG. Software reads a texture brightmap raw, without the PNG
+  conversion textures get, so a PNG brightmap silently fails there (the
+  console reports bad column offsets and nothing is bright). Its bright pixels
+  are palette index 0, white, and the rest index 31, black; Software tests for
+  index 0, and Legacy GL and VibeRant D3D for a fully red color, which index 0
+  also is.
+- The orb's sprite brightmap must be transparent exactly where the sprite is,
+  as Software draws the two patches' posts together, so a brightmap that is
+  opaque where the sprite is transparent shifts out of alignment with it.
+  `--validate` checks both this and the sign brightmap's format.
 - The PNGs are stored uncompressed (the zlib output of different builds
   differs), which is why the textures, small as they are, take up most of the
   file.
