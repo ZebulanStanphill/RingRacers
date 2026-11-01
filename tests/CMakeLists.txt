@@ -25,6 +25,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
     "${RR_SOURCE_DIR}/src/r_main.cpp"
+    "${RR_SOURCE_DIR}/src/r_fps.cpp"
     "${RR_SOURCE_DIR}/src/v_video.cpp"
     "${RR_SOURCE_DIR}/src/hardware/hw_draw.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
@@ -91,6 +92,7 @@ regression(menu_uwp menu _UWP)
 regression(menu_desktop menu)
 regression(trace_uwp_hw trace _UWP HWRENDER)
 regression(wipe_math wipe)
+regression(view_interpolation view_interp)
 regression(picture_formats pictures HWRENDER)
 regression(fill_alpha_uwp fills _UWP HWRENDER)
 regression(ripples_uwp ripples _UWP HWRENDER)

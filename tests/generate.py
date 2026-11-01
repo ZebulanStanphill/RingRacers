@@ -518,6 +518,18 @@ def generate(engine, output):
     reference = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", reference)
     render(templates / "postimg.cpp.in", {"SHADER": postimg, "REFERENCE": reference}, output / "postimg.cpp")
 
+    fps = Source(engine / "src/r_fps.cpp")
+    render(templates / "view_interp.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "STATE": fps.section("static viewvars_t pview_old[", "static std::vector<levelinterpolator_t>"),
+        "LERP_FIXED": fps.function("R_LerpFixed"),
+        "LERP_ANGLE": fps.function("R_LerpAngle"),
+        "INTERPOLATE": fps.function("R_InterpolateView"),
+        "UPDATE": fps.function("R_UpdateViewInterpolation"),
+        "RESET": fps.function("R_ResetViewInterpolation"),
+        "CONTEXT": fps.function("R_SetViewContext"),
+    }, output / "view_interp.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):

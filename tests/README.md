@@ -177,6 +177,17 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   argument parsing; a mistake there can only give a wrong message or sampling pixel.
   The former Direct3D 11 copy/readback mocks and extracted SM4 device harness were
   removed. This validates the diagnostic, not the underlying brown-wall rendering.
+- **View interpolation after a reset:** execute the production `R_InterpolateView`,
+  `R_UpdateViewInterpolation`, `R_ResetViewInterpolation` and `R_SetViewContext`
+  with their real state. After a level load (the title screen after EXIT GAME from a
+  race), tics can run before any frame is drawn, because loading skips frames. They
+  must not age the reset or copy the previous level's last view into the old view:
+  the first drawn frame has to be the new view, not a lerp from the old level (which
+  put the title camera outside its map). Check eight undrawn tics, resets on and
+  after the last update's tic, plain interpolation, one view's reset leaving the
+  others interpolating, and the sky view. The pre-fix implementation fails the
+  undrawn-tics case. The clock, BSP lookup and freelook setup are stubs; this is
+  render-only state, and the Xbox title screen after EXIT GAME is untested.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native
   Clang vector arithmetic, with CPU texture sampling stubs. Compare against an
   independent scalar color oracle for crossfade, inversion, Mega Drive black/white

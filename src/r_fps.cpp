@@ -63,6 +63,10 @@ static viewvars_t skyview_new[MAXSPLITSCREENPLAYERS];
 static viewvars_t *oldview = &pview_old[0];
 static tic_t last_view_update;
 static int oldview_invalid[MAXSPLITSCREENPLAYERS] = {0, 0, 0, 0};
+// Set by a reset, cleared by the next R_InterpolateView. Tics that run before any
+// frame is drawn (a slow level load skips frames) must not age the reset or copy
+// pview_new, which still holds the previous level's last view, into pview_old.
+static boolean oldview_undrawn[MAXSPLITSCREENPLAYERS] = {false, false, false, false};
 viewvars_t *newview = &pview_new[0];
 
 
@@ -133,11 +137,13 @@ void R_InterpolateView(fixed_t frac)
 
 	i = R_GetViewNumber();
 
-	if (oldview_invalid[i] != 0)
+	if (oldview_invalid[i] != 0 || oldview_undrawn[i])
 	{
 		// interpolate from newview to newview
 		prevview = newview;
 	}
+
+	oldview_undrawn[i] = false;
 
 	viewx = R_LerpFixed(prevview->x, newview->x, frac);
 	viewy = R_LerpFixed(prevview->y, newview->y, frac);
@@ -162,6 +168,12 @@ void R_UpdateViewInterpolation(void)
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 	{
+		if (oldview_undrawn[i])
+		{
+			// No frame has been drawn since the reset, so pview_new is stale.
+			continue;
+		}
+
 		pview_old[i] = pview_new[i];
 		skyview_old[i] = skyview_new[i];
 		if (oldview_invalid[i] > 0) oldview_invalid[i]--;
@@ -182,11 +194,13 @@ void R_ResetViewInterpolation(UINT8 p)
 		for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 		{
 			oldview_invalid[i] = t;
+			oldview_undrawn[i] = true;
 		}
 	}
 	else
 	{
 		oldview_invalid[p - 1] = t;
+		oldview_undrawn[p - 1] = true;
 	}
 }
 

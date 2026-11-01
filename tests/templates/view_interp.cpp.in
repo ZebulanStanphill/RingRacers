@@ -1,0 +1,164 @@
+#include <cassert>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "r_main.h"
+#include "tables.h"
+#include "i_time.h"
+#include "r_fps.h"
+// Dependency stubs: the clock, the BSP lookup and the freelook setup are not under test.
+// The view variables, tables and I_Error live elsewhere in the engine.
+fixed_t viewx, viewy, viewz;
+angle_t viewangle, aimingangle, viewroll;
+fixed_t viewsin, viewcos;
+sector_t *viewsector;
+player_t *viewplayer;
+fixed_t finesine[5*FINEANGLES/4];
+fixed_t *finecosine = &finesine[FINEANGLES/4];
+static tic_t now = 100;
+tic_t I_GetTime(void) { return now; }
+void I_Error(const char *, ...) { abort(); }
+static subsector_t viewSub;
+static sector_t viewSec;
+subsector_t *R_PointInSubsector(fixed_t, fixed_t) { viewSub.sector = &viewSec; return &viewSub; }
+static void R_SetupFreelook(player_t *, boolean) {}
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@STATE@@
+@@LERP_FIXED@@
+@@LERP_ANGLE@@
+@@INTERPOLATE@@
+@@UPDATE@@
+@@RESET@@
+@@CONTEXT@@
+
+// A frame, as R_SetupCommonFrame draws one: set the new view, then interpolate.
+static void Frame(UINT8 view, fixed_t x, fixed_t frac = FRACUNIT/2)
+{
+	R_SetViewContext((enum viewcontext_e)(VIEWCONTEXT_PLAYER1 + view));
+	newview->x = x;
+	newview->y = x / 2;
+	newview->z = x / 4;
+	newview->angle = ANGLE_90 + (angle_t)x;
+	R_InterpolateView(frac);
+}
+// The start of a tic batch (d_clisrv.c) updates the old view, then game logic ticks, so a
+// reset from the tick happens at the time of the last update.
+static void Tic(void) { ++now; R_UpdateViewInterpolation(); }
+
+#define X FRACUNIT
+static void ExpectView(fixed_t x, const char *what)
+{
+	if (viewx != x || viewy != x / 2 || viewz != x / 4 || viewangle != ANGLE_90 + (angle_t)x)
+	{
+		fprintf(stderr, "%s: view is x=%d y=%d z=%d angle=%u, wanted x=%d\n",
+			what, viewx, viewy, viewz, viewangle, x);
+		abort();
+	}
+}
+
+// Draw a level's last view at x=5000 on every view, so pview_old and pview_new hold it.
+static void PreviousLevel(void)
+{
+	for (UINT8 v = 0; v < MAXSPLITSCREENPLAYERS; ++v)
+	{
+		Frame(v, 4900*X);
+		Tic();
+		Frame(v, 5000*X);
+		Tic();
+	}
+}
+
+int main()
+{
+	int cases = 0;
+
+	// Ordinary interpolation is unchanged. Boot starts with no reset: lerp between old and new.
+	{
+		Frame(0, 0);
+		Tic();
+		Frame(0, 100*X, FRACUNIT/2);
+		ExpectView(50*X, "plain lerp"); // old = 0, new = 100
+		Frame(0, 100*X, 0);
+		ExpectView(0, "frac 0 is the old view");
+		Frame(0, 100*X, FRACUNIT);
+		ExpectView(100*X, "frac 1 is the new view");
+		++cases;
+	}
+
+	// A reset in a tic, with a frame drawn before the next update (a teleport; the
+	// update before the tick has already run, so only one more update is needed).
+	{
+		PreviousLevel();
+		R_ResetViewInterpolation(0);
+		Frame(0, 100*X);
+		ExpectView(100*X, "frame after a reset is the new view, not a lerp");
+		Tic(); // copies the drawn view, finishing the reset
+		Frame(0, 140*X);
+		ExpectView(120*X, "interpolates again after the reset's update"); // old = 100
+		++cases;
+	}
+
+	// The title screen: the level loads on a tic that draws nothing, and the next
+	// tics also run without a frame. The first frame must show the new view.
+	for (int sameTic = 1; sameTic >= 0; --sameTic)
+	{
+		PreviousLevel();
+		if (!sameTic)
+			++now; // a reset after the clock moved on from the last update waits an extra update
+		R_ResetViewInterpolation(0);
+		for (int skipped = 0; skipped < 8; ++skipped)
+			Tic(); // no frame is drawn, so newview is still the previous level's
+		Frame(0, 100*X);
+		ExpectView(100*X, "first frame after tics with no frame is the new view");
+		Frame(0, 100*X, 0);
+		ExpectView(100*X, "frac 0 of the first frame is the new view");
+		// The countdown resumes from the first drawn frame.
+		Tic();
+		Frame(0, 140*X);
+		if (sameTic)
+			ExpectView(120*X, "reset on the update's tic interpolates after one update");
+		else
+		{
+			ExpectView(140*X, "reset after the clock moved holds the view for one more update");
+			Tic();
+			Frame(0, 180*X);
+			ExpectView(160*X, "interpolates after the second update");
+		}
+		++cases;
+	}
+
+	// Resetting one view (a camera cut) doesn't hold up the others, which keep copying.
+	{
+		PreviousLevel();
+		R_ResetViewInterpolation(2); // second player's view
+		Tic();
+		Frame(0, 5100*X);
+		ExpectView(5050*X, "an unreset view keeps interpolating");
+		Frame(1, 100*X);
+		ExpectView(100*X, "the reset view uses its new view");
+		Frame(2, 5100*X);
+		ExpectView(5050*X, "other views are unaffected");
+		++cases;
+	}
+
+	// The sky view of a player shares that player's reset.
+	{
+		PreviousLevel();
+		R_ResetViewInterpolation(0);
+		Tic();
+		R_SetViewContext(VIEWCONTEXT_SKY1);
+		newview->x = 100*X;
+		newview->y = 50*X;
+		newview->z = 25*X;
+		newview->angle = ANGLE_90 + (angle_t)(100*X);
+		R_InterpolateView(FRACUNIT/2);
+		ExpectView(100*X, "sky view after a reset");
+		++cases;
+	}
+
+	printf("%d view interpolation cases passed\n", cases);
+}
