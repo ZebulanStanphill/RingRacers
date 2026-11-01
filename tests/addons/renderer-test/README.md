@@ -20,7 +20,13 @@ rooms and effects still need gameplay validation. Offline generation checks
    two lines to yours) and `models\rendertest.md3` to
    `E:\ringracers\ringracers\models\`. The game reads `models.dat` at launch and
    again when an add-on loads, so adding the file before loading the PK3 is
-   enough. Models need a hardware renderer and **Models** On.
+   enough. Models need a hardware renderer and **Models** On. While
+   `models.dat` is installed it applies to every map and item box, not only
+   this map: with Models On, all item boxes become the plain textured box, even
+   without the add-on loaded. Delete `models.dat` (or its two lines) after
+   testing. If the boxes stay sprites, the log says why: "Error while loading
+   models.dat: ..." when the game can't open the file, or "Unknown
+   sprite/player skin ... detected in models.dat" for a name it doesn't know.
 3. Launch the game, select **VibeRant D3D** (or **Software**, to compare), and
    load the file through the **Addons** menu. With a keyboard, the alternative
    console command is `addfile "E:\ringracers\addons\D_RenderTest_v1.pk3"`.
@@ -157,13 +163,21 @@ it.
 | Palette Rendering | `gr_paletterendering` |
 | Models | `gr_models` |
 
+To switch renderer quickly, bind a key in the console:
+`bind f5 "add renderer 1"` toggles between Software and VibeRant D3D (confirmed
+on Xbox). Binds aren't saved in the config, so to keep it, put that line in
+`ringexec.cfg` in the home folder (`E:\ringracers\ringracers\ringexec.cfg`),
+which the game runs at every launch. Binds don't fire while a menu or the
+console is open.
+
 ## Build and validation
 
 `build.py` generates the UDMF map, every
 texture, flat and sprite as PNG (except the sign's brightmap, a Doom patch; see
 below), the SOC level header, the `BRIGHT` and
-`SPRTINFO` lumps, and the model files, and packages the map-local bot removal
-script from [`quiet.lua`](quiet.lua). Only the map's BSP, the `ZNODES` lump,
+`SPRTINFO` lumps, and the model files, and packages the map-local scripts
+[`quiet.lua`](quiet.lua) (bot removal) and [`scenery.lua`](scenery.lua) (see
+below). Only the map's BSP, the `ZNODES` lump,
 comes from a tool, [ZDBSP](https://github.com/ZDoom/zdbsp) 1.19 (commit
 `5d4fb9c`; it builds with `cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5`):
 
@@ -216,6 +230,22 @@ How the map is built for the engine:
   as Software draws the two patches' posts together, so a brightmap that is
   opaque where the sprite is transparent shifts out of alignment with it.
   `--validate` checks both this and the sign brightmap's format.
+- The two scenery objects, the translucent sprite (`MT_RTTRANS`, editor number
+  3900) and the glowing orb (`MT_RTGLOW`, 3901), may share their numbers with
+  objects in the game's own data. The engine gives a map thing the first object
+  type with its number, so a colliding game object wins: on Xbox the Brightmaps
+  room showed large dark trees where the orbs belong. The numbers can't be
+  checked against the game's assets, so `scenery.lua` handles the collision.
+  When Render Test loads, after the engine has spawned the map's things, it
+  finds each thing numbered 3900 or 3901 whose object isn't the add-on's,
+  removes that object, if any, and spawns the add-on's object at the thing's
+  position (the floor under it plus its height), angle and scale. If it replaced
+  anything, it prints one console line naming each number, the object that had
+  taken it and how many things it replaced, for example `Render Test: the game
+  uses the add-on's editor numbers; spawned the add-on's own objects instead:
+  3901 was MT_NAME (mobj type 123), 24 things`. No line means no collision.
+  `build.py --validate` checks that the script's numbers match the ones in the
+  SOC and the map.
 - The PNGs are stored uncompressed (the zlib output of different builds
   differs), which is why the textures, small as they are, take up most of the
   file.

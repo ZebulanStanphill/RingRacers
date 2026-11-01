@@ -3,7 +3,8 @@
 
 The UDMF map, its textures, flats and sprites, the SOC level header, BRIGHT and
 SPRTINFO lumps, and the model files are generated deterministically here. The
-map-local bot removal script is packaged from quiet.lua. Only the map's BSP
+map-local scripts are packaged from quiet.lua (bot removal) and scenery.lua
+(scenery objects whose editor numbers a game object shares). Only the map's BSP
 (the ZNODES lump) comes from an
 external tool, ZDBSP, which is why --check compares that one lump structurally.
 """
@@ -1196,9 +1197,19 @@ def validate_brightmaps(entries):
     assert not all(sprite[2]) and any(sprite[2]), "RTGLA0 is expected to be partly transparent"
 
 
+def validate_scenery_script(source):
+    """scenery.lua must use the editor numbers the SOC and the map use."""
+    for name, number in (("THING_TRANS", THING_TRANS), ("THING_GLOW", THING_GLOW)):
+        found = re.findall(rf"^local {name} = (\d+)$", source, re.M)
+        assert found == [str(number)], f"scenery.lua has {name} = {found}, but build.py uses {number}"
+    for object_type in ("MT_RTTRANS", "MT_RTGLOW"):
+        assert object_type in source and f"Object {object_type}" in SOC, f"{object_type} is not used by both"
+
+
 def validate_package(entries, models, rewritten=None):
     """The checks behind --validate. Returns a one-line summary."""
     validate_brightmaps(entries)
+    validate_scenery_script(entries["Lua/scenery.lua"].decode("utf-8"))
     wad = read_wad(entries[MAP_WAD])
     assert [name for name, _ in wad] == [MARKER, "TEXTMAP", "ZNODES", "ENDMAP"]
     lumps = dict(wad)
@@ -1244,6 +1255,7 @@ def build(zdbsp):
     znodes, rewritten = run_zdbsp(zdbsp, emit_textmap(geometry, lines, zdbsp=True))
     entries = {
         "Lua/quiet.lua": (HERE / "quiet.lua").read_bytes(),
+        "Lua/scenery.lua": (HERE / "scenery.lua").read_bytes(),
         "SOC/rendertest.soc": SOC.encode("ascii"),
         "BRIGHT": BRIGHT.encode("ascii"),
         "SPRTINFO": SPRTINFO.encode("ascii"),
