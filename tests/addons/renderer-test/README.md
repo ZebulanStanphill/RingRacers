@@ -37,26 +37,43 @@ are unaffected; restarting this map also keeps it free of bots.
 The hall runs west to east. You start at its west end, facing east, in light
 rain. There are three doorways on the left (north) side, west to east: **Fog**,
 **Water**, **Polyobjects**, and three on the right (south): **Light slices**,
-**Transparency**, **Brightmaps**. Item boxes sit near the start and far down
-the hall; they stay hidden until you cross the checkpoint just past the start
-line (see Hall).
+**Transparency**, **Brightmaps**. A doorway in the middle of the east wall, at
+the far end, leads to the **Sky pit** (see Hall). Item boxes sit near the start
+and far down the hall; they stay hidden until you cross the checkpoint just past
+the start line (see Hall).
 
 ## What to look at
 
 **Hall: skybox visibility and models** *(CHANGES: Skybox visibility;
 Sprite-textured models, 3D models and mipmaps).* The hall's sky ceiling lets
-**RAIN** fall around you. Above the walls, the sky shows the skybox, a
-separate enclosed room far west of the hall that nothing connects to. It is lit
-at full brightness, with magenta tiled walls, a teal checkered floor and four
-orange glowing orbs, and has a sky ceiling of its own, so it rains inside it
-too. The skybox camera hangs in the middle of that room at about kart-camera
-height. It has no centre point, so it stays there and only turns as you turn.
-Pass: the sky above the hall shows that bright room with no rain in it, while
-rain still falls around your kart (Legacy GL and VibeRant D3D exclude
-precipitation from skybox views, and Software does too). Fail: rain streaks in
-front of the room's walls in the sky picture. If the sky instead shows the
-hall, or nothing but sky, the skybox is not being drawn, and the check
-tells you nothing.
+**RAIN** fall around you; that rain is expected, and says nothing about the
+skybox. The sky shows the skybox, a separate enclosed room far west of the hall
+that nothing connects to. It is lit at full brightness, with magenta tiled
+walls, a teal checkered floor and four orange glowing orbs, and has a sky
+ceiling of its own, so it rains inside it. The skybox camera hangs in the
+middle of that room at about kart-camera height. It has no centre point, so it
+stays there and only turns as you turn.
+
+The hall's rain falls between you and the sky, so the sky above the hall cannot
+show whether the skybox picture itself contains rain. The **sky pit** can. Drive
+to the **east end** of the hall (straight ahead from the start, about 2400
+units) and through the doorway in the middle of the east wall. It leads into a
+covered area with an ordinary ceiling, so no rain falls there. At its far side,
+a blocked edge (karts cannot cross it, and it is a 32-unit drop) borders the
+pit, a wide shallow sector (1408 units long, 896 wide) whose **floor is sky**
+and whose ceiling is not, so no rain falls in it either. Where its floor would
+be, you see the skybox. Face east from the edge and look down the pit; from the
+hall's east end you can also see it through the doorway. Because nothing in the
+pit or the covered area can rain, every raindrop in the sky picture is a
+skybox-rendering failure.
+
+Pass: the pit shows the skybox room (the teal checkered floor, with the magenta
+walls and orange orbs toward the far end of the pit) with no rain streaks in it,
+while rain still falls around your kart in the hall (Legacy GL and VibeRant D3D
+exclude precipitation from skybox views, and Software does too). Fail: rain
+streaks in front of the room's floor or walls in the pit. If the pit instead
+shows the hall, or nothing but a plain sky texture, the skybox is not being
+drawn, and the check tells you nothing.
 
 The six item boxes stay hidden until you cross the checkpoint 100 units past
 the start line, a line across the whole hall with a post at each end. The engine
@@ -163,11 +180,13 @@ the TEXTMAP and checks what the engine requires: the namespace and version
 first, valid vertex, line and sidedef references, closed sector boundaries with
 no lines crossing or touching mid-line, 3D-floor specials aimed at sectors that
 exist, polyobject loops with their anchor and spawn things, waypoints that link,
-every texture shipped, each checkpoint's two posts (same ID and angle, aimed at a
-line tag that exists), the skybox viewpoint inside a sector with a sky ceiling,
-and in the nodes the original vertex count, seg line numbers, one seg per
-polyobject line, and each polyobject's spawn spot inside one subsector. The CI's
-`regressions` job runs `--check` and uploads the result as `renderer-test-map`.
+every texture shipped, each checkpoint's two posts (same ID and angle, aimed at
+a line tag that exists), the skybox viewpoint inside a sector with a sky
+ceiling, the sky pit's sky floors under non-sky ceilings with every line into
+them blocking karts, and in the nodes the original vertex count, seg line
+numbers, one seg per polyobject line, and each polyobject's spawn spot inside
+one subsector. The CI's `regressions` job runs `--check` and uploads the result
+as `renderer-test-map`.
 
 How the map is built for the engine:
 

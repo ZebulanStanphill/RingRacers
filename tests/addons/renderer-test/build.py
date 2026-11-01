@@ -630,6 +630,12 @@ SKY_ROOM = (-3600, -512, -2576, 512)
 SKY_CENTER = ((SKY_ROOM[0] + SKY_ROOM[2]) // 2, (SKY_ROOM[1] + SKY_ROOM[3]) // 2)
 SKY_CAMERA_HEIGHT = 64
 CHECKPOINT_X, CHECKPOINT_TAG, CHECKPOINT_ID = -850, 70, 1
+# The sky pit, off the hall's east end: a covered doorway and viewing area (ordinary ceiling, so no rain
+# there) looking onto a sector whose floor is sky and whose ceiling is not, so it gets no rain either.
+PIT_DOOR = (1280, -256, 1408, 256)
+PIT_WALK = (1408, -448, 1792, 448)
+SKY_PIT = (1792, -448, 3200, 448)
+PIT_CEILING, PIT_FLOOR = 320, -32
 
 
 def room_x(cx):
@@ -748,6 +754,15 @@ def build_geometry():
     # recognise; its sky ceiling makes it rain around the skybox camera.
     g.sector("sky_room", rect(*SKY_ROOM), wall="RTSKYW", heightceiling=384, texturefloor="RTSKYF",
              textureceiling="F_SKY1", lightlevel=255)
+
+    # 9. The sky pit: the only place where sky is visible but no precipitation can exist, so any rain in the
+    # skybox picture shown there is a bug. Rain only spawns in sectors with a sky ceiling, and none of
+    # these has one. The line along the pit's edge blocks karts.
+    g.sector("pit_door", rect(*PIT_DOOR), heightceiling=PIT_CEILING, lightlevel=180)
+    g.sector("pit_walk", rect(*PIT_WALK), heightceiling=PIT_CEILING, lightlevel=200)
+    g.sector("sky_pit", rect(*SKY_PIT), heightfloor=PIT_FLOOR, heightceiling=PIT_CEILING, texturefloor="F_SKY1",
+             lightlevel=200)
+    g.edge((SKY_PIT[0], SKY_PIT[1]), (SKY_PIT[0], SKY_PIT[3]), blocking=True)
 
     # The control sectors, one 64x64 square each.
     for n, (name, bottom, top, special, args, wall, props) in enumerate(controls):
@@ -1073,6 +1088,19 @@ def validate_map(tm, image_names):
     sky = sectors[holder[0]]
     assert sky["textureceiling"] == "F_SKY1", "the skybox viewpoint needs a sky ceiling, so that it rains there"
     assert sky["heightfloor"] < views[0]["height"] < sky["heightceiling"] - 64
+    # The sky pit: sky floors under ceilings that are not sky (rain only spawns under a sky ceiling, so none
+    # reaches a pit and the skybox picture in it is rain-free unless the renderer draws precipitation there),
+    # and the hall and the skybox room still have their sky ceilings and their rain. A line between a pit and
+    # ordinary floor blocks karts.
+    sky_floors = [i for i, s in enumerate(sectors) if s["texturefloor"] == "F_SKY1"]
+    assert sky_floors, "the map needs a sky pit"
+    assert all(sectors[i]["textureceiling"] != "F_SKY1" for i in sky_floors), "a sky floor under a sky ceiling gets rain"
+    assert all(sectors[i]["heightceiling"] - sectors[i]["heightfloor"] >= 256 for i in sky_floors), "a pit is too shallow to see into"
+    assert sum(1 for s in sectors if s["textureceiling"] == "F_SKY1") >= 2, "the hall and the skybox room need sky ceilings"
+    for n, line in enumerate(lines):
+        pair = [sides[line[k]]["sector"] for k in ("sidefront", "sideback") if k in line]
+        if len(pair) == 2 and (pair[0] in sky_floors) != (pair[1] in sky_floors):
+            assert line.get("blocking") is True, f"line {n} lets karts drive into a sky pit"
     # Everything the map names ships in the PK3 (or comes with the game).
     shipped = {Path(n).stem.upper() for n in image_names}
     used = {s[k] for s in sectors for k in ("texturefloor", "textureceiling")}
