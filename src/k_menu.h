@@ -431,13 +431,13 @@ typedef enum
 	vaopt_shaders,
 	vaopt_paletterendering, // [UWP]
 	vaopt_bettertransparency,
-#ifdef _UWP
-	vaopt_batching,
-#endif
 	vaopt_texturequal, // Texture Filter under HAVE_D3D12
 	vaopt_anisotropic,
 	vaopt_billboarding,
 	vaopt_perspective,
+#ifdef _UWP
+	vaopt_batching,
+#endif
 	vaopt_legacygl_end,
 } vaopt_e;
 

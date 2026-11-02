@@ -106,12 +106,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Better transparency ordering", "Sort transparent objects with water, fog & walls. Costs extra CPU time.",
 		NULL, {.cvar = &cv_glbettertransparency}, 0, 0},
 
-#ifdef _UWP
-	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
-		NULL, {.cvar = &cv_glbatching}, 0, 0},
-
-#endif
-
 #ifdef HAVE_D3D12
 	// [UWP]: Texture Quality only picks Legacy GL's OpenGL texture format;
 	// Direct3D 12 always uses 32-bit textures, so its row offers the filter.
@@ -135,6 +129,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 	{IT_STRING | IT_CVAR, "Software Perspective", "Emulates Software shearing when looking up or down. Not recommended.",
 		NULL, {.cvar = &cv_glshearing}, 0, 0},
+
+#ifdef _UWP
+	// [UWP]: Last, as the setting an average player needs least
+	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
+		NULL, {.cvar = &cv_glbatching}, 0, 0},
+#endif
 };
 
 menu_t OPTIONS_VideoAdvancedDef = {
