@@ -34,6 +34,11 @@ void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, I
 // Runs the last steps before the present (palette rendering's, then the screen effect's) and reads the frame they hand to
 // it like ReadRect reads the screen
 void D3D12_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data);
+// Puts that frame where Present_Frame would, on a screenWidth by screenHeight target filled with another color first, for
+// the Screen Scaling mode (0 Fit, 1 Integer, 2 1:1), and reads a rectangle of the target (y up from its bottom). Returns
+// false, reading nothing, for Fit or a frame the mode doesn't fit, which the system scales instead.
+boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width,
+	INT32 height, INT32 dst_stride, UINT16 *dst_data);
 
 void *D3D12_GetDriverFunction(const char *name);
 boolean D3D12_Surface(INT32 w, INT32 h);

@@ -1998,6 +1998,9 @@ void BindRenderTarget()
 
 #include "d3d12_palette.inc"
 #include "d3d12_screeneffect.inc"
+#include "d3d12_placement.inc"
+ComPtr<ID3D12Resource> g_placeTestTarget; // D3D12_ReadPlacedRectForTest's
+UINT g_placeTestWidth = 0, g_placeTestHeight = 0;
 
 // A full turn every 240 frames, about 1.5 degrees a frame
 void DiagnosticHue(float rgb[3])
@@ -2414,17 +2417,20 @@ void D3D_DeleteTexture(GLMipmap_t *pTexInfo)
 	pTexInfo->downloaded = 0;
 }
 
-// Reads from the screen or, for the tests, the palette step's target; both rest in RENDER_TARGET
-void ReadRectFrom(ID3D12Resource *screen, INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
+// Reads from the screen or, for the tests, the palette step's target or the screen scaling's; all rest in RENDER_TARGET.
+// surfaceWidth and surfaceHeight are the size of a surface other than the screen.
+void ReadRectFrom(ID3D12Resource *screen, INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data,
+	UINT surfaceWidth = 0, UINT surfaceHeight = 0)
 {
 	if (!CanDraw() || !dst_data || width <= 0 || height <= 0)
 		return;
 
+	const UINT screenWidth = surfaceWidth ? surfaceWidth : g_rtWidth, screenHeight = surfaceHeight ? surfaceHeight : g_rtHeight;
 	// OpenGL's y goes up from the bottom of the screen.
-	const INT64 top = (INT64)g_rtHeight - ((INT64)y + height);
-	if (x < 0 || top < 0 || (INT64)x + width > g_rtWidth || top + height > g_rtHeight)
+	const INT64 top = (INT64)screenHeight - ((INT64)y + height);
+	if (x < 0 || top < 0 || (INT64)x + width > screenWidth || top + height > screenHeight)
 	{
-		Log("ReadRect(%d, %d, %d, %d) is outside the %ux%u screen", (int)x, (int)y, (int)width, (int)height, g_rtWidth, g_rtHeight);
+		Log("ReadRect(%d, %d, %d, %d) is outside the %ux%u screen", (int)x, (int)y, (int)width, (int)height, screenWidth, screenHeight);
 		return;
 	}
 
@@ -3025,10 +3031,11 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 
 	// With palette rendering, the screen shown is the finished frame turned into the screen's palette; the SalCRT
 	// screen effects, if chosen, are drawn over that. Screenshots and captures read the screen and that step, not the effect.
+	// Present_Frame then places the result on the screen (Screen Scaling), after the effect.
 	const bool palette = PalettePostprocess();
 	ID3D12Resource *shown = ApplyScreenEffect(palette);
 	const precise_t start = I_GetPreciseTime();
-	Present_Frame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync);
+	Present_Frame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync, PlaceFrame);
 	g_stats.presentTime += I_GetPreciseTime() - start;
 	g_stats.frames++;
 	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
@@ -3364,6 +3371,43 @@ void D3D12_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 height,
 	ReadRectFrom(ApplyScreenEffect(palette), x, y, width, height, dst_stride, dst_data);
 }
 
+boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width,
+	INT32 height, INT32 dst_stride, UINT16 *dst_data)
+{
+	const screen_scaling::Placement placement = screen_scaling::Compute((int)g_rtWidth, (int)g_rtHeight, screenWidth, screenHeight, mode);
+	if (placement.fit || !CanDraw())
+		return false;
+
+	// A screen-sized target, filled with a color the placement must overwrite with black, as a swap chain buffer is
+	if (!g_placeTestTarget || g_placeTestWidth != (UINT)screenWidth || g_placeTestHeight != (UINT)screenHeight)
+	{
+		Core_Retire(g_placeTestTarget);
+		D3D12_HEAP_PROPERTIES heap = {};
+		heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+		D3D12_RESOURCE_DESC desc = g_rt->GetDesc();
+		desc.Width = (UINT)screenWidth;
+		desc.Height = (UINT)screenHeight;
+		if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+			D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr, IID_PPV_ARGS(&g_placeTestTarget)), "CreateCommittedResource (placement test)"))
+			return false;
+		g_placeTestTarget->SetName(L"screen scaling test target");
+		g_placeTestWidth = (UINT)screenWidth;
+		g_placeTestHeight = (UINT)screenHeight;
+		Core_Device()->CreateRenderTargetView(g_placeTestTarget.Get(), nullptr, Core_Rtv(kRtvPlaceTest));
+	}
+	const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kRtvPlaceTest);
+	const float fill[4] = {1.0f, 0.0f, 1.0f, 1.0f};
+	Core_List()->ClearRenderTargetView(rtv, fill, 0, nullptr);
+
+	// The frame as D3D12_FinishUpdate hands it to the present, then as Present_Frame places it
+	const bool palette = PalettePostprocess();
+	ID3D12Resource *shown = ApplyScreenEffect(palette);
+	if (!PlaceFrame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_placeTestTarget.Get(), rtv, placement, (UINT)screenWidth, (UINT)screenHeight))
+		return false;
+	ReadRectFrom(g_placeTestTarget.Get(), x, y, width, height, dst_stride, dst_data, (UINT)screenWidth, (UINT)screenHeight);
+	return true;
+}
+
 void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant)
 {
 	g_testVertexBytes = vertex;
@@ -3410,6 +3454,12 @@ void D3D12_Shutdown(void)
 	RetireTexture(g_masterPalette);
 	RetireTexture(g_postTexture);
 	ShutdownScreenEffect(idle);
+	ShutdownPlacePass(idle);
+	if (idle)
+		g_placeTestTarget.Reset();
+	else
+		Core_Retire(g_placeTestTarget);
+	g_placeTestWidth = g_placeTestHeight = 0;
 	RetireScreenSrv();
 	D3D_FlushScreenTextures();
 	for (auto &fade : g_fadeMaps) RetireTexture(fade.second.texture);

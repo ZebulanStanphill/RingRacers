@@ -352,6 +352,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   against a scalar oracle for odd sizes and 1×N textures. The 3D texture
 repack used for the palette lookup table is checked for row pitch, slice order and
 untouched padding.
+- **Screen Scaling placement:** `screen_scaling` compiles the production `src/screen_scaling.hpp`, which both renderers
+  use to place the frame, under ASan and UBSan with no GPU or engine. Check Fit, Integer at exact fits and k of 1, 2, 3 and 5
+  (limited by the width or the height), odd remainders (the extra pixel is at the right and the bottom), wider and taller
+  screens, 1:1, and the fallbacks to Fit when the frame is larger than the screen in either dimension, for an unlisted mode
+  and for sizes that are not positive. A sweep of 9 frame sizes over about 12,000 screens checks the rectangle,
+  centering, maximal k and the fallbacks. The Direct3D 12 WARP scenes below draw the placement.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
@@ -464,6 +470,14 @@ A second frame builds nothing again, and the palette step's texture is read when
 (`screen-effect-palette`). SalCRT Sharp's fragment doesn't translate, so it must present the plain frame and log once
 (`screen-effect-fallback`). The native translator test checks the same sources' registers, semantics and constant
 offsets and the rejected cases. The game's own shaders, the screen effect's look, and Xbox are untested here.
+Screen Scaling scenes (`scaling-integer`, `scaling-1to1`, `scaling-fallback` and `scaling-effect`) place the same frame of four
+colored quarters, through the driver's `PlaceFrame` and a test-only entry point, on screen-sized targets filled with magenta
+first. At 128×128, 201×151, 200×200, 400×130, 64×64, 70×64 and 64×130 for Integer (k of 2, 2, 3, 2, 1, 1 and 1) and 101×90, 400×300
+and 64×64 for 1:1, every pixel of the rectangle must be the frame's pixel k times smaller and every other pixel black, with
+the rectangle's position worked out by hand (including the odd remainders). Integer and 1:1 on screens the frame doesn't fit
+(and Fit) must place nothing. With SalCRT on, the placed pixels are the effect's output. The harness stubs `Present_Frame`, so the swap chain
+(its size, buffer states and render target views) is not exercised, nor is the black border of a real swap chain's
+buffers on Xbox.
 Invisible-geometry scenes run all 100 pairs of blend modes through a depth-only draw: after a
 translucent sprite silhouette and an untextured sky wall (both Invisible, depth writing), the
 target keeps its color (`blend-invisible`), a farther visible surface is hidden by the depth they

@@ -156,3 +156,17 @@ endif()
 add_test(NAME d3d12_allocators COMMAND d3d12_allocators)
 set_tests_properties(d3d12_allocators PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
+# The placement Screen Scaling's renderers share is a header of its own, with no dependencies.
+add_executable(screen_scaling screen-scaling.cpp)
+target_compile_features(screen_scaling PRIVATE cxx_std_17)
+target_include_directories(screen_scaling PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(screen_scaling PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(screen_scaling PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(screen_scaling PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME screen_scaling COMMAND screen_scaling)
+set_tests_properties(screen_scaling PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")

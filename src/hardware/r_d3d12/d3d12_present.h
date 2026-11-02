@@ -11,6 +11,7 @@
 #define RR_D3D12_PRESENT_H
 
 #include "d3d12_core.h"
+#include "../../screen_scaling.hpp"
 
 namespace rr_d3d12
 {
@@ -21,10 +22,19 @@ namespace rr_d3d12
 // has the window and its context back, and Legacy GL can't present, so the caller falls back to Software.
 bool Present_TakeWindow();
 
-// Copies source (in sourceState, which it's left in) to the swap chain's next buffer, submits the frame and presents
-// it with vsync as the sync interval. Stops the game with an error if the window can't be taken or the swap chain
-// resized.
-void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync);
+// Records the clearing of target (a swap chain buffer, in RENDER_TARGET, whose view is rtv) to black, and the drawing of
+// source (in sourceState, which it's left in) point-sampled over the placement's rectangle of the targetWidth by
+// targetHeight target, which are the screen scaling's Integer and 1:1 modes. The driver provides it. Returns false,
+// having recorded nothing, if it can't.
+typedef bool (*PlaceFrameFn)(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, ID3D12Resource *target,
+	D3D12_CPU_DESCRIPTOR_HANDLE rtv, const screen_scaling::Placement &placement, UINT targetWidth, UINT targetHeight);
+
+// Shows source (in sourceState, which it's left in), a width by height frame, on the swap chain's next buffer, submits
+// the frame and presents it with vsync as the sync interval. Options > Video > Screen Scaling (cv_scr_scaling) decides
+// how. Fit copies the frame into a swap chain of its own size, which the system scales to the window, keeping the
+// aspect ratio. Integer and 1:1 (unless the frame is larger than the screen) size the swap chain to the screen and have
+// place put the frame in it. Stops the game with an error if the window can't be taken or the swap chain resized.
+void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place);
 
 // Gives the window back to ANGLE, by releasing the swap chain and making ANGLE's window surface again, for the
 // Software renderer to use. Does nothing without the swap chain, and makes no context current: the caller does.

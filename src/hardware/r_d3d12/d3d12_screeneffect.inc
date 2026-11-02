@@ -9,8 +9,9 @@
 
 // Included by r_d3d12.cpp after palette rendering's last step. Options > Video > Screen Effect (cv_scr_effect) is
 // 0 Nearest, 1 Sharp Bilinear, 2 SalCRT, 3 SalCRT Sharp. The first two only choose how the RHI path scales a smaller
-// backbuffer up to the window; this driver draws the frame at the swap chain's size, so there is nothing for them to do.
-// The other two run the game's CRT fragment shader over the finished frame, into a target of the same size.
+// backbuffer up to the window; this driver draws the frame at its own size, so there is nothing for them to do.
+// The other two run the game's CRT fragment shader over the finished frame, into a target of the same size. Screen Scaling
+// (d3d12_placement.inc) then decides where on the screen the result goes.
 //
 // The shader is game data (shaders.pk3), not part of this repository: it is read with W_ReadShader, from the
 // glsllist the RHI GL backend reads (rhi_glsllist_crt_fragment.txt, whose lines name the sources to concatenate), and
@@ -175,12 +176,12 @@ bool CompileEffectStage(const std::string &hlsl, const char *profile, UINT flags
 	return false;
 }
 
-UINT CreateEffectSampler(D3D12_TEXTURE_ADDRESS_MODE address)
+UINT CreateEffectSampler(D3D12_TEXTURE_ADDRESS_MODE address, D3D12_FILTER filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR)
 {
 	if (g_nextSampler >= 2048)
 		return UINT32_MAX;
 	D3D12_SAMPLER_DESC desc = {};
-	desc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	desc.Filter = filter;
 	desc.AddressU = desc.AddressV = desc.AddressW = address;
 	desc.MaxAnisotropy = 1;
 	desc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;

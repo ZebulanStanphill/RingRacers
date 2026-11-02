@@ -57,8 +57,8 @@ Underwater and heat postprocessing always keeps its built-in shader.
 Options > Video > Screen Effect (`cv_scr_effect`) is 0 Nearest, 1 Sharp Bilinear, 2 SalCRT or 3 SalCRT Sharp.
 
 - **Nearest and Sharp Bilinear** only choose how the RHI path scales its smaller backbuffer up to the window.
-  VibeRant D3D draws the frame at the swap chain's own size (the swap chain is resized to the frame), so
-  there is nothing to scale and both draw the plain frame.
+  VibeRant D3D draws the frame at the frame's own size, so there is nothing for them to scale and both draw the plain
+  frame. The frame is then placed on the screen by Screen Scaling (below), which samples it point by point.
 - **SalCRT and SalCRT Sharp** run the game's CRT fragment shader over the finished frame as a last pass, after
   palette rendering's last step and before the present. The pass draws the frame (the palette step's texture
   with palette rendering, otherwise the screen) into a render target of the same size, which is then the frame that
@@ -94,6 +94,36 @@ If a lump is missing, translation or compilation fails, or a resource or the pip
 logs the reason once and shows the plain frame for that mode for the rest of the session. It never raises an
 error for this, and the other mode is tried on its own. The per-frame performance lines count the passes and their CPU time.
 
+## Screen scaling
+
+Options > Video > Screen Scaling (`cv_scr_scaling`, placement in `src/screen_scaling.hpp`) is 0 Fit, 1 Integer or
+2 1:1. It places the frame (`vid.width` by `vid.height`) on the screen (`vid.realwidth` by `vid.realheight`, or the
+size `uwp_GetScreenSize` reports). It is the last step, after palette rendering's step and the screen effect, which
+always run at the frame's size: the effect's output is what gets placed.
+
+- **Fit** is the behavior described above: the swap chain is the frame's size, `Present_Frame` copies the frame into
+  it, and the system's `DXGI_SCALING_ASPECT_RATIO_STRETCH` fits it to the window, keeping the aspect ratio.
+- **Integer** scales the frame by the largest whole number k with k times its width and height inside the screen,
+  centered with floor division (the extra pixel of an odd remainder is at the right and the bottom), with black around it.
+- **1:1** is the same with k fixed at 1.
+- A frame larger than the screen in either dimension (so k would be 0) is Fit for both.
+
+For Integer and 1:1 the swap chain is the size of the screen, so the system scales nothing. `Present_Frame` takes
+the next back buffer from PRESENT to RENDER_TARGET and calls the driver's `PlaceFrame` with a view of it. That
+clears the buffer to black, moves the presented frame (the screen, the palette step's texture or the effect's
+target, in RENDER_TARGET) to PIXEL_SHADER_RESOURCE, draws a triangle with a viewport and scissor of the placement's
+rectangle, and restores the frame's state. The pixel shader point-samples the frame, and the vertex shader's texture
+coordinates run from 0 to 1 across the viewport, so each frame texel covers k by k pixels exactly. At k = 1 that is
+a copy, drawn the same way so there is one path to check. Both shaders are compiled at run time with `D3DCompile` (as
+the screen effect's vertex shader is) and use the shared root signature, with a point sampler of their own. The back
+buffer then returns to PRESENT. Changing the mode or the screen's size resizes the swap chain
+(`ResizeSwapChain`), which makes the buffers and their render target views again; the log says how frames are presented
+whenever that changes. If the pipeline can't be made, the driver logs why once and presents with Fit for the rest of the
+session.
+
+The software and Legacy GL (RHI) path draws the same placement through its blit rectangle, with the render pass's black
+clear around it (`i_video_common.cpp`), and Scale and Screen X/Y then act within that rectangle.
+
 ## Tests
 
 - `tests/custom-shaders.cpp` (native) emits 79 general Shader Model 5.1 stages and checks their register
@@ -113,6 +143,14 @@ error for this, and the other mode is tried on its own. The per-frame performanc
   pixels (the effect's output on a frame of four colors, so a flipped frame shows; the plain frame with the effect off;
   the palette step's texture as the source), that a built mode is built once, and that a mode whose shader doesn't
   translate presents the plain frame and logs once.
+- Screen Scaling's calculation is the native `screen_scaling` test (Fit, Integer, 1:1, odd remainders, wider and taller
+  screens, and the fallbacks when the frame is larger than the screen in either dimension, plus a sweep of invariants).
+  The WARP scenes `scaling-integer`, `scaling-1to1`, `scaling-fallback` and `scaling-effect` run the driver's `PlaceFrame`
+  on a screen-sized target through `D3D12_ReadPlacedRectForTest` (the target is filled with magenta first): every pixel
+  of the placed rectangle is checked against the frame's pixel k times smaller, every pixel outside it against black, at
+  exact fits, odd remainders, k of 1, 2 and 3, and wider and taller screens; Fit and frames larger than the screen place
+  nothing; and with SalCRT on, the placed pixels are the effect's output.
 
-The WARP scenes run in Windows CI, and add-on shaders work on Xbox. The screen effect is untested on Xbox. See
+The WARP scenes run in Windows CI, and add-on shaders work on Xbox. The screen effect and Screen Scaling are untested on Xbox; so is the swap chain's own behavior with them
+(`Present_Frame` is a stub in the WARP harness). See
 [the test README](../tests/README.md).

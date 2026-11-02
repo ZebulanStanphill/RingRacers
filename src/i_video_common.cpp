@@ -22,6 +22,7 @@
 #include "f_finale.h"
 #include "m_fixed.h"
 #include "m_misc.h"
+#include "screen_scaling.hpp"
 #include "hwr2/hardware_state.hpp"
 #include "hwr2/patch_atlas.hpp"
 #include "hwr2/twodee.hpp"
@@ -321,13 +322,38 @@ void I_FinishUpdate(void)
 	rhi->push_default_render_pass(true);
 
 	// Upscale draw the backbuffer (with postprocessing maybe?)
+	// Screen Scaling picks the area the frame goes in: all of the screen to fit it (the blit then keeps its aspect
+	// ratio), or the rectangle of a whole-number or unscaled frame. Scale and Screen X/Y then move and size the frame
+	// within that area.
+	float base_x = 0.f;
+	float base_y = 0.f;
+	float base_w = vid.realwidth;
+	float base_h = vid.realheight;
+	{
+		const screen_scaling::Placement placement = screen_scaling::Compute(
+			static_cast<int>(vid.width), static_cast<int>(vid.height),
+			static_cast<int>(vid.realwidth), static_cast<int>(vid.realheight),
+			cv_scr_scaling.value
+		);
+
+		if (!placement.fit)
+		{
+			// The viewport's origin is the bottom left; the placement counts from the top, which has the smaller
+			// margin when an odd pixel is left over, as in VibeRant D3D
+			base_x = static_cast<float>(placement.x);
+			base_y = static_cast<float>(static_cast<int>(vid.realheight) - placement.h - placement.y);
+			base_w = static_cast<float>(placement.w);
+			base_h = static_cast<float>(placement.h);
+		}
+	}
+
 	if (cv_scr_scale.value != FRACUNIT)
 	{
 		float f = std::max(FixedToFloat(cv_scr_scale.value), 0.f);
-		float w = vid.realwidth * f;
-		float h = vid.realheight * f;
-		float x = (vid.realwidth - w) * (0.5f + (FixedToFloat(cv_scr_x.value) * 0.5f));
-		float y = (vid.realheight - h) * (0.5f + (FixedToFloat(cv_scr_y.value) * 0.5f));
+		float w = base_w * f;
+		float h = base_h * f;
+		float x = base_x + (base_w - w) * (0.5f + (FixedToFloat(cv_scr_x.value) * 0.5f));
+		float y = base_y + (base_h - h) * (0.5f + (FixedToFloat(cv_scr_y.value) * 0.5f));
 
 		g_hw_state.blit_rect->set_output(x, y, w, h, true, true);
 		g_hw_state.sharp_bilinear_blit_rect->set_output(x, y, w, h, true, true);
@@ -336,10 +362,10 @@ void I_FinishUpdate(void)
 	}
 	else
 	{
-		g_hw_state.blit_rect->set_output(0, 0, vid.realwidth, vid.realheight, true, true);
-		g_hw_state.sharp_bilinear_blit_rect->set_output(0, 0, vid.realwidth, vid.realheight, true, true);
-		g_hw_state.crt_blit_rect->set_output(0, 0, vid.realwidth, vid.realheight, true, true);
-		g_hw_state.crtsharp_blit_rect->set_output(0, 0, vid.realwidth, vid.realheight, true, true);
+		g_hw_state.blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
+		g_hw_state.sharp_bilinear_blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
+		g_hw_state.crt_blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
+		g_hw_state.crtsharp_blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
 	}
 	g_hw_state.blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
 	g_hw_state.sharp_bilinear_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));

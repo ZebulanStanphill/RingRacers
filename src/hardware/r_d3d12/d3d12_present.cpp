@@ -232,6 +232,7 @@ bool LoadGles()
 // ==========================================================================
 
 constexpr UINT kBuffers = 3; // the swap chain's buffers
+static_assert(kRtvBack2 - kRtvBack0 + 1 >= (int)kBuffers, "each swap chain buffer needs a view slot (kRtvBack0...)");
 constexpr UINT kLatency = 2; // and the frames the CPU can be ahead of it
 constexpr UINT kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 constexpr DXGI_FORMAT kFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // the render target's too
@@ -257,6 +258,7 @@ struct Presenter
 	ComPtr<ID3D12Resource> timestampBuffer; // READBACK, 16 bytes per entry
 	bool timestampsTried = false;
 	bool stopped = false; // shut down, so nothing presents
+	bool placementFailed = false; // the driver couldn't place a frame, so Screen Scaling is Fit from then on
 };
 Presenter g_present;
 INT32 g_traceCopied = -1, g_traceShown = -1;
@@ -459,6 +461,8 @@ bool GetBuffers()
 		if (Core_Failed(g_direct.swapChain->GetBuffer(i, IID_PPV_ARGS(&g_direct.buffers[i])), "GetBuffer (swap chain)"))
 			return false;
 		g_direct.buffers[i]->SetName(name);
+		// To clear the buffer and draw the placed frame in it; made again whenever the buffers are got again
+		Core_Device()->CreateRenderTargetView(g_direct.buffers[i].Get(), nullptr, Core_Rtv(kRtvBack0 + i));
 	}
 	return true;
 }
@@ -701,6 +705,68 @@ bool ResizeSwapChain(UINT width, UINT height)
 	return true;
 }
 
+// The size of the screen or window the swap chain is shown on, 0 by 0 if unknown
+void ScreenSize(UINT &width, UINT &height)
+{
+	width = (UINT)vid.realwidth;
+	height = (UINT)vid.realheight;
+	if (!width || !height)
+	{
+		int screenWidth = 0, screenHeight = 0;
+		uwp_GetScreenSize(&screenWidth, &screenHeight);
+		width = screenWidth > 0 && screenHeight > 0 ? (UINT)screenWidth : 0;
+		height = screenWidth > 0 && screenHeight > 0 ? (UINT)screenHeight : 0;
+	}
+}
+
+// How a frame of the given size is shown: the swap chain's size, and for Integer and 1:1, where in it the frame goes
+struct Layout
+{
+	screen_scaling::Placement placement; // fit: the swap chain is the frame's size, and the system scales it
+	UINT width, height; // the swap chain's size
+};
+
+Layout ChooseLayout(UINT frameWidth, UINT frameHeight)
+{
+	Layout layout;
+	layout.width = frameWidth;
+	layout.height = frameHeight;
+	if (g_present.placementFailed)
+		return layout;
+
+	UINT screenWidth, screenHeight;
+	ScreenSize(screenWidth, screenHeight);
+	layout.placement = screen_scaling::Compute((int)frameWidth, (int)frameHeight, (int)screenWidth, (int)screenHeight,
+		cv_scr_scaling.value);
+	if (!layout.placement.fit)
+	{
+		layout.width = screenWidth;
+		layout.height = screenHeight;
+	}
+	return layout;
+}
+
+// Says how frames are shown whenever that changes: Screen Scaling, a resolution or the screen's size
+void LogLayout(UINT frameWidth, UINT frameHeight, const Layout &layout)
+{
+	static UINT lastFrameWidth, lastFrameHeight;
+	static Layout last;
+	static bool logged = false;
+	const screen_scaling::Placement &p = layout.placement, &l = last.placement;
+	if (logged && lastFrameWidth == frameWidth && lastFrameHeight == frameHeight && layout.width == last.width
+		&& layout.height == last.height && p.fit == l.fit && p.x == l.x && p.y == l.y && p.w == l.w && p.h == l.h && p.k == l.k)
+		return;
+	logged = true;
+	lastFrameWidth = frameWidth;
+	lastFrameHeight = frameHeight;
+	last = layout;
+	if (p.fit)
+		Log("presenting %ux%u frames fit by the system in a %ux%u swap chain", frameWidth, frameHeight, layout.width, layout.height);
+	else
+		Log("presenting %ux%u frames at %dx in a %ux%u swap chain at (%d, %d)", frameWidth, frameHeight, p.k, layout.width,
+			layout.height, p.x, p.y);
+}
+
 } // namespace
 
 bool Present_TakeWindow()
@@ -717,11 +783,13 @@ bool Present_TakeWindow()
 		height = windowWidth > 0 && windowHeight > 0 ? (UINT)windowHeight : kFallbackHeight;
 	}
 
+	// The size Present_Frame will want, so that the first frame doesn't resize it
+	const Layout layout = ChooseLayout(width, height);
 	// TAKE_LATER: Present_Frame tries again once an ANGLE context is current
-	return TakeWindow(width, height, "Legacy GL can't present, so the game falls back to Software") != TAKE_FAILED;
+	return TakeWindow(layout.width, layout.height, "Legacy GL can't present, so the game falls back to Software") != TAKE_FAILED;
 }
 
-void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync)
+void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
 {
 	g_traceCopied = g_traceShown = -1;
 	g_traceCopyFrame = g_traceShowFrame = 0;
@@ -733,10 +801,13 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		return;
 	}
 
+	const Layout layout = ChooseLayout(width, height);
+	LogLayout(width, height, layout);
+
 	if (!g_direct.owned)
 	{
 		// Only if no ANGLE context was current when the driver started
-		const TakeResult taken = TakeWindow(width, height, "Legacy GL can't present");
+		const TakeResult taken = TakeWindow(layout.width, layout.height, "Legacy GL can't present");
 		if (taken == TAKE_LATER)
 		{
 			SubmitWithoutPresenting();
@@ -746,13 +817,13 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			I_Error("Direct3D 12 couldn't take the game window from ANGLE (%s).\nSet Renderer to Software in Video Options > Advanced.",
 				g_direct.failure);
 	}
-	else if (g_direct.width != width || g_direct.height != height)
+	else if (g_direct.width != layout.width || g_direct.height != layout.height)
 	{
-		if (!ResizeSwapChain(width, height))
+		if (!ResizeSwapChain(layout.width, layout.height))
 		{
-			Log("couldn't resize the swap chain to %ux%u", width, height);
+			Log("couldn't resize the swap chain to %ux%u", layout.width, layout.height);
 			I_Error("Direct3D 12 couldn't resize its swap chain to %ux%u.\nSet Renderer to Software in Video Options > Advanced.",
-				width, height);
+				layout.width, layout.height);
 		}
 	}
 
@@ -779,12 +850,32 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 	if (list)
 	{
 		timed = EndGpuTime(timing);
-		Core_Transition(source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
-		Core_Transition(back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
-		Core_FlushBarriers();
-		list->CopyResource(back, source);
-		Core_Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
-		Core_Transition(back, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+		if (layout.placement.fit)
+		{
+			Core_Transition(source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+			Core_Transition(back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST);
+			Core_FlushBarriers();
+			list->CopyResource(back, source);
+			Core_Transition(source, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
+			Core_Transition(back, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PRESENT);
+		}
+		else
+		{
+			// The swap chain is the screen's size: the buffer is cleared to black and the frame drawn in its place,
+			// which leaves source as it was
+			const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kRtvBack0 + index);
+			Core_Transition(back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+			Core_FlushBarriers();
+			if (!place || !place(source, sourceState, back, rtv, layout.placement, layout.width, layout.height))
+			{
+				// Having recorded nothing: this frame is black, and from the next the system fits the frames again
+				const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+				list->ClearRenderTargetView(rtv, black, 0, nullptr);
+				g_present.placementFailed = true;
+				Log("couldn't place the frame in the swap chain; Screen Scaling is Fit from now on");
+			}
+			Core_Transition(back, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+		}
 	}
 	g_traceCopied = g_traceShown = (INT32)index;
 	g_traceCopyFrame = g_traceShowFrame = UWPTraceFrameId();
@@ -815,7 +906,8 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		LOG_ONCE("IDXGISwapChain::Present failed (0x%08X)", (unsigned)hr);
 	}
 	if (trace)
-		Log("  copied the screen to back buffer %u, submitted as fence %llu; waited %.2f ms for the frame latency object%s; presented with sync interval %d (0x%08X, %.2f ms)",
+		Log("  %s the screen %s back buffer %u, submitted as fence %llu; waited %.2f ms for the frame latency object%s; presented with sync interval %d (0x%08X, %.2f ms)",
+			layout.placement.fit ? "copied" : "placed", layout.placement.fit ? "to" : "in",
 			index, (unsigned long long)fence, waitMs, waited == WAIT_OBJECT_0 ? "" : " (gave up)", vsync ? 1 : 0, (unsigned)hr, presentMs);
 
 	NextFrame();

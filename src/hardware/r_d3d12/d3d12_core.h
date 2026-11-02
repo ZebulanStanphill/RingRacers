@@ -112,6 +112,10 @@ enum
 	kRtvScreen = 0,
 	kRtvPost,
 	kRtvEffect,
+	kRtvBack0, // the swap chain's buffers, kRtvBack0 + their index (d3d12_present.cpp), to clear and place the frame in them
+	kRtvBack1,
+	kRtvBack2,
+	kRtvPlaceTest, // the test target of D3D12_ReadPlacedRectForTest
 	kRtvCount = 16,
 };
 enum

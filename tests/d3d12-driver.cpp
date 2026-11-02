@@ -83,7 +83,7 @@ void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stde
 namespace rr_d3d12 {
 bool Present_TakeWindow() { return true; }
 static int presentedFrames=0;
-void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool) {
+void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool, PlaceFrameFn) {
     presentedFrames++;
     // No transition is necessary: submission leaves the source in its supplied state.
     UINT64 fence = Core_Submit("present");
@@ -148,6 +148,33 @@ static void expectQuad(const char *scene,RGB want) { auto p=pixels(); validate(v
 static std::vector<UINT8> palettePixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
 // What the driver hands to the present: the finished frame after palette rendering's last step and the screen effect
 static std::vector<UINT8> presentedPixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPresentedRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
+// The frame as the driver places it on a screenWidth by screenHeight target for Screen Scaling mode 1 (Integer) or 2 (1:1), read
+// whole. Inside the rectangle at (x0, y0) of size k times the frame's, every pixel is the frame's pixel at (x - x0) / k, (y - y0) / k;
+// outside it, every pixel is black although the target was filled with magenta beforehand. The rectangle is worked out by hand in
+// each scene, not by the production calculation.
+static void expectPlaced(const char *scene,int mode,int screenWidth,int screenHeight,int x0,int y0,int k,const std::vector<UINT8> &frame) {
+    std::vector<UINT8> p((size_t)screenWidth*screenHeight*3,0xcd);
+    const bool placed=D3D12_ReadPlacedRectForTest(mode,screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
+    validate(validationQueue);
+    require(scene,placed,"the driver didn't place the frame");
+    int wrong=0, black=0;
+    for(int y=0;y<screenHeight;y++) for(int x=0;x<screenWidth;x++) {
+        const bool inside=x>=x0 && x<x0+W*k && y>=y0 && y<y0+H*k;
+        const RGB want=inside?at(frame,(x-x0)/k,(y-y0)/k):RGB{0,0,0};
+        if(!within(at(p,x,y,screenWidth),want)) wrong++;
+        else if(!inside) black++;
+    }
+    if(!quietOracles && wrong) fprintf(stderr,"%s: %d of %dx%d pixels aren't where the placement puts them\n",scene,wrong,screenWidth,screenHeight);
+    require(scene,wrong==0,"a pixel of the placed frame or its border is wrong");
+    require(scene,black==screenWidth*screenHeight-W*k*H*k,"the border wasn't checked whole");
+}
+// Modes that leave the frame to the system (Fit, or a frame larger than the screen) place nothing
+static void expectNotPlaced(const char *scene,int mode,int screenWidth,int screenHeight) {
+    std::vector<UINT8> p((size_t)screenWidth*screenHeight*3,0xcd);
+    const bool placed=D3D12_ReadPlacedRectForTest(mode,screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
+    validate(validationQueue);
+    require(scene,!placed,"the driver placed a frame that is left to the system");
+}
 static unsigned occurrences(const std::string &text,const char *what) { unsigned n=0; for(size_t at=0;(at=text.find(what,at))!=std::string::npos;at+=strlen(what)) n++; return n; }
 static void expectPost(const char *scene,RGB want,int x=32,int y=32) { auto p=palettePixels(); validate(validationQueue); same(scene,"palette pixel",x,y,at(p,x,y),want); }
 // Some pixel of rows y0 to y1 in a column: a one-pixel line lies on a raster boundary, so which row holds it isn't pinned
@@ -204,6 +231,7 @@ static const char *const kOracles[]={
     "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane", "indexed", "line",
     "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
+    "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect",
     "texture", "texture-update", "texture-reuse", "mips",
     "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
@@ -553,6 +581,37 @@ int main(int argc,char **argv) {
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
             cv_scr_effect.value=1;
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-off",p,tl,tr,bl,br); }
+            cv_scr_effect.value=0;
+        }
+        // Screen Scaling's Integer and 1:1: the frame of four quarters is drawn point-sampled at k times its size in the middle of a
+        // screen-sized target, which is black around it, or left to the system when it doesn't fit. The target is filled with magenta
+        // first, so a missing clear shows. (x, y) is the rectangle's top left, floor((screen - size) / 2); an odd remainder leaves the
+        // larger margin on the right and bottom.
+        {
+            const RGB tl={200,80,16}, tr={40,160,16}, bl={120,240,16}, br={240,20,16};
+            cv_scr_effect.value=0; quadrants(tl,tr,bl,br);
+            const std::vector<UINT8> frame=presentedPixels(); validate(validationQueue);
+            check("scaling-integer",frame,16,16,tl); check("scaling-integer",frame,48,16,tr); check("scaling-integer",frame,16,48,bl); check("scaling-integer",frame,48,48,br);
+            expectPlaced("scaling-integer",1,128,128,0,0,2,frame);   // exactly twice the frame
+            expectPlaced("scaling-integer",1,201,151,36,11,2,frame); // 151 / 64 is 2; 201 - 128 and 151 - 128 are odd
+            expectPlaced("scaling-integer",1,200,200,4,4,3,frame);   // 192 of 200
+            expectPlaced("scaling-integer",1,400,130,136,1,2,frame); // the height decides: 130 / 64 is 2
+            expectPlaced("scaling-integer",1,64,64,0,0,1,frame);     // k is 1: the frame as it is
+            expectPlaced("scaling-integer",1,70,64,3,0,1,frame);     // a wider screen
+            expectPlaced("scaling-integer",1,64,130,0,33,1,frame);   // a taller screen: the width decides, 64 / 64 is 1
+            expectPlaced("scaling-1to1",2,101,90,18,13,1,frame);     // 37 and 26 left over
+            expectPlaced("scaling-1to1",2,400,300,168,118,1,frame);  // however large the screen, not scaled
+            expectPlaced("scaling-1to1",2,64,64,0,0,1,frame);
+            // The frame doesn't fit the screen in one dimension or both: left to the system's fit, as is Fit itself
+            expectNotPlaced("scaling-fallback",1,63,100); expectNotPlaced("scaling-fallback",1,100,63); expectNotPlaced("scaling-fallback",1,40,40);
+            expectNotPlaced("scaling-fallback",2,63,100); expectNotPlaced("scaling-fallback",2,100,63); expectNotPlaced("scaling-fallback",2,40,40);
+            expectNotPlaced("scaling-fallback",0,200,200); expectNotPlaced("scaling-fallback",0,63,100);
+            // The screen effect runs at the frame's size, and its result is what is placed
+            const RGB shadedTl={200,40,128}, shadedTr={40,80,128}, shadedBl={120,120,128}, shadedBr={240,10,128};
+            cv_scr_effect.value=2; quadrants(tl,tr,bl,br);
+            const std::vector<UINT8> shaded=presentedPixels(); validate(validationQueue);
+            check("scaling-effect",shaded,16,16,shadedTl); check("scaling-effect",shaded,48,16,shadedTr); check("scaling-effect",shaded,16,48,shadedBl); check("scaling-effect",shaded,48,48,shadedBr);
+            expectPlaced("scaling-effect",1,201,151,36,11,2,shaded);
             cv_scr_effect.value=0;
         }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};

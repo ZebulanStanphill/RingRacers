@@ -28,6 +28,9 @@ menuitem_t OPTIONS_Video[] =
 		NULL, {.cvar = &cv_fullscreen}, 0, 0},
 #endif
 
+	{IT_STRING | IT_CVAR, "Screen Scaling", "Fit fills the screen. Integer keeps pixels even. 1:1 shows them at their real size.",
+		NULL, {.cvar = &cv_scr_scaling}, 0, 0},
+
 	{IT_STRING | IT_CVAR, "V-Sync", "Reduce image tearing and judder.",
 		NULL, {.cvar = &cv_vidwait}, 0, 0},
 
@@ -39,9 +42,6 @@ menuitem_t OPTIONS_Video[] =
 		
 	{IT_STRING | IT_SUBMENU, "Color Profile...", "Adjust the color profile of the game's display.",
 		NULL, {.submenu = &OPTIONS_VideoColorProfileDef}, 0, 0},
-
-	{IT_NOTHING|IT_SPACE, NULL, NULL,
-		NULL, {NULL}, 0, 0},
 
 	{IT_NOTHING|IT_SPACE, NULL, NULL,
 		NULL, {NULL}, 0, 0},
