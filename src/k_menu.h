@@ -434,7 +434,7 @@ typedef enum
 #ifdef _UWP
 	vaopt_batching,
 #endif
-	vaopt_texturequal,
+	vaopt_texturequal, // Texture Filter under HAVE_D3D12
 	vaopt_anisotropic,
 	vaopt_billboarding,
 	vaopt_perspective,

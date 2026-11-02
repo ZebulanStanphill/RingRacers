@@ -112,6 +112,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 #endif
 
+#ifdef HAVE_D3D12
+	// [UWP]: Texture Quality only picks Legacy GL's OpenGL texture format;
+	// Direct3D 12 always uses 32-bit textures, so its row offers the filter.
+	{IT_STRING | IT_CVAR, "Texture Filter", "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures.",
+		NULL, {.cvar = &cv_glfiltermode}, 0, 0},
+#else
 	{IT_STRING | IT_CVAR, "Texture Quality", "Texture depth. Higher values are recommended.",
 		NULL, {.cvar = &cv_scr_depth}, 0, 0},
 
@@ -119,6 +125,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Texture Filter", "Texture Filter. Nearest is recommended.",
 		NULL, {.cvar = &cv_glfiltermode}, 0, 0},
 	*/
+#endif
 
 	{IT_STRING | IT_CVAR, "Anisotropic", "Lower values will improve performance at a minor quality loss.",
 		NULL, {.cvar = &cv_glanisotropicmode}, 0, 0},
