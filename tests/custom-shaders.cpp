@@ -8,6 +8,7 @@
 #include "hardware/r_d3d12/custom_shader.h"
 #include "hardware/hw_defs.h"
 #include "hardware/hw_glsl.h"
+#include "screen-effect-fixtures.h"
 static void Write(const std::filesystem::path &dir, const std::string &name, const LegacyShaderHLSL &s) {
     if(dir.empty()) return;
     std::ofstream(dir/(name+".vert.hlsl")) << s.vertex;
@@ -238,5 +239,35 @@ void main() {
     assert(Translate(gl_shadersources[0].vertex,depthFragment,0,depth,error,false,0));
     assert(depth.vertex==water.vertex);
     if(!output.empty()) std::ofstream(output/"render-depth.frag.hlsl")<<depth.fragment;++cases;
+    // The screen effects' translator: the RHI's sources concatenated in order, with their macros resolved.
+    {
+        ScreenEffectHLSL effect; std::string effectError;
+        assert(TranslateScreenEffect({kStandInCompat,kStandInEffect},effect,effectError) && effectError.empty());
+        // Two mat4, a mat3 (three vec4 columns) and then the vec2, in std140
+        assert(effect.sampler0SizeOffset==176 && effect.constantsBytes==184);
+        for(const char *text:{"register(b0, space0)","register(t0, space0)","register(s0, space0)","register(t1, space0)",
+            "register(s1, space0)","v_texcoord0 : TEXCOORD0","v_color : TEXCOORD1","o_color : SV_Target0"})
+            if(!Has(effect.fragment,text)) { fprintf(stderr,"screen effect HLSL lacks %s\n",text); assert(false); }
+        // Everything is in space 0 and nothing else is bound
+        size_t registers=0;
+        for(size_t pos=0;(pos=effect.fragment.find("register(",pos))!=std::string::npos;++pos) ++registers;
+        assert(registers==5 && !Has(effect.fragment,"space1") && !Has(effect.fragment,"space3"));
+        if(!output.empty()) std::ofstream(output/"screen-effect.frag.hlsl")<<effect.fragment;++cases;
+        // A shader without the uniform has no offset to write, and its other uniforms need not exist
+        assert(TranslateScreenEffect({kStandInCompat,kStandInNoSize},effect,effectError));
+        assert(effect.sampler0SizeOffset==-1 && effect.constantsBytes==0 && Has(effect.fragment,"register(t0, space0)"));
+        // Sources that don't translate leave nothing, with the reason, and don't disturb the next translation
+        const std::string broken=std::string(kStandInEffect)+"void broken( { }";
+        assert(!TranslateScreenEffect({kStandInCompat,broken},effect,effectError));
+        assert(!effectError.empty() && effect.fragment.empty() && effect.sampler0SizeOffset==-1);
+        assert(!TranslateScreenEffect({kStandInEffect},effect,effectError)); // no compatibility macros: UNIFORM isn't defined
+        assert(!effectError.empty() && effect.fragment.empty());
+        assert(!TranslateScreenEffect({},effect,effectError) && !effectError.empty());
+        assert(!TranslateScreenEffect({kStandInCompat,std::string(1024*1024,' ')},effect,effectError) && effectError.find("exceeds 1 MB")!=std::string::npos);
+        // A varying the driver's vertex shader doesn't write
+        std::string extra=kStandInEffect; extra.replace(extra.find("UNIFORM(1,0)"),0,"FRAGMENT_VARYING_IN(2) vec2 v_extra;\n");
+        assert(!TranslateScreenEffect({kStandInCompat,extra},effect,effectError) && effectError.find("unsupported varying")!=std::string::npos);
+        assert(TranslateScreenEffect({kStandInCompat,kStandInEffect},effect,effectError) && effect.sampler0SizeOffset==176);
+    }
     printf("SM5.1: %d complete GLSL shader/layout pairs, interface errors and compiler recovery passed\n",cases);
 }

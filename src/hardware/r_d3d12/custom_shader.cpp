@@ -308,3 +308,81 @@ bool TranslateLegacyShader(const std::string &vertex, const std::string &fragmen
         return true;
     } catch(const std::exception &e) { error=e.what(); return false; }
 }
+
+bool TranslateScreenEffect(const std::vector<std::string> &sources, ScreenEffectHLSL &output, std::string &error) {
+    output={}; error.clear();
+    try {
+        size_t total=0; for(const auto &source:sources) total+=source.size();
+        if(sources.empty()) throw std::runtime_error("no GLSL sources");
+        if(total>1024*1024) throw std::runtime_error("screen effect source exceeds 1 MB");
+        static const bool initialized=glslang::InitializeProcess();
+        if(!initialized) throw std::runtime_error("glslang initialization failed");
+        // The RHI GL backend prepends its version (120 there) and the program's defines (blit_rect's ENABLE_VA_TEXCOORD0);
+        // 450 makes the compatibility macros declare Vulkan-style set/binding/location, which this translator needs.
+        // Relaxed Vulkan rules accept uniforms outside a block and gather them in one block, at set 3.
+        const std::string prefix="#version 450\n#define ENABLE_VA_TEXCOORD0\n";
+        // The RHI's declarations are UNIFORM(set, binding) in every case, but Vulkan GLSL allows set/binding only on
+        // resources and blocks. Its sets are 0 for samplers and 1 and 2 for the uniform groups, so after the
+        // compatibility macros, uniforms in sets 1 and 2 are declared without them.
+        const std::string uniforms=
+            "\n#undef UNIFORM\n"
+            "#define RR_UNIFORM_SET_0(b) layout(set = 0, binding = b) uniform\n"
+            "#define RR_UNIFORM_SET_1(b) uniform\n"
+            "#define RR_UNIFORM_SET_2(b) uniform\n"
+            "#define UNIFORM(s, b) RR_UNIFORM_SET_##s(b)\n";
+        std::vector<const char *> strings{prefix.c_str()};
+        for(const auto &source:sources) {
+            strings.push_back(source.c_str());
+            if(source.find("#define UNIFORM(")!=std::string::npos) strings.push_back(uniforms.c_str());
+        }
+        glslang::TShader shader(EShLangFragment);
+        shader.setStrings(strings.data(),(int)strings.size());
+        shader.setEnvInput(glslang::EShSourceGlsl,EShLangFragment,glslang::EShClientVulkan,450);
+        shader.setEnvInputVulkanRulesRelaxed();
+        shader.setEnvClient(glslang::EShClientVulkan,glslang::EShTargetVulkan_1_0);
+        shader.setEnvTarget(glslang::EShTargetSpv,glslang::EShTargetSpv_1_0);
+        shader.setGlobalUniformBlockName("rr_screen_effect_uniforms");
+        shader.setGlobalUniformSet(3);
+        shader.setGlobalUniformBinding(0);
+        if(!shader.parse(GetDefaultResources(),450,false,(EShMessages)(EShMsgSpvRules|EShMsgVulkanRules)))
+            throw std::runtime_error(shader.getInfoLog());
+        glslang::TProgram program; program.addShader(&shader);
+        if(!program.link((EShMessages)(EShMsgSpvRules|EShMsgVulkanRules)))
+            throw std::runtime_error(program.getInfoLog());
+        std::vector<unsigned> ir;
+        glslang::SpvOptions options; options.disableOptimizer=true;
+        glslang::GlslangToSpv(*program.getIntermediate(EShLangFragment),ir,&options);
+        spirv_cross::CompilerHLSL compiler(std::move(ir));
+        auto hlsl=compiler.get_hlsl_options(); hlsl.shader_model=51;
+        compiler.set_hlsl_options(hlsl);
+        auto resources=compiler.get_shader_resources();
+        for(const auto &input:resources.stage_inputs) {
+            const unsigned location=compiler.get_decoration(input.id,spv::DecorationLocation);
+            if(location>1) throw std::runtime_error("unsupported varying "+input.name);
+        }
+        for(const auto &image:resources.sampled_images) {
+            if(compiler.get_decoration(image.id,spv::DecorationDescriptorSet)!=0 || compiler.get_decoration(image.id,spv::DecorationBinding)>1)
+                throw std::runtime_error("unsupported sampler "+image.name);
+        }
+        spirv_cross::HLSLResourceBinding map;
+        map.stage=spv::ExecutionModelFragment; map.desc_set=3; map.binding=0; map.cbv.register_binding=0;
+        compiler.add_hlsl_resource_binding(map);
+        for(unsigned binding : {0u,1u}) {
+            spirv_cross::HLSLResourceBinding image;
+            image.stage=spv::ExecutionModelFragment; image.desc_set=0; image.binding=binding;
+            image.srv.register_binding=image.sampler.register_binding=binding;
+            compiler.add_hlsl_resource_binding(image);
+        }
+        // Reflect before compile(), which may rename variables
+        for(const auto &block:resources.uniform_buffers) {
+            if(compiler.get_decoration(block.id,spv::DecorationDescriptorSet)!=3) throw std::runtime_error("unsupported uniform block "+block.name);
+            const auto &type=compiler.get_type(block.base_type_id);
+            output.constantsBytes=(unsigned)compiler.get_declared_struct_size(type);
+            for(uint32_t member=0;member<type.member_types.size();++member)
+                if(compiler.get_member_name(block.base_type_id,member)=="u_sampler0_size")
+                    output.sampler0SizeOffset=(int)compiler.type_struct_member_offset(type,member);
+        }
+        output.fragment=compiler.compile();
+        return true;
+    } catch(const std::exception &e) { output={}; error=e.what(); return false; }
+}

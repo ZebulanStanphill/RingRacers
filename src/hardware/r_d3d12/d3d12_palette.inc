@@ -192,6 +192,25 @@ void D3D_ClearLightTables(void)
 	g_lightTables.clear();
 }
 
+// A view of the screen to read it with, for palette rendering's last step and the screen effect
+bool EnsureScreenSrv()
+{
+	if (g_screenSrv == UINT32_MAX)
+	{
+		const UINT index = AllocateSrv();
+		if (index == UINT32_MAX)
+			return false;
+		D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
+		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srv.Format = kScreenFormat;
+		srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srv.Texture2D.MipLevels = 1;
+		Core_Device()->CreateShaderResourceView(g_rt.Get(), &srv, SrvCpu(index));
+		g_screenSrv = index;
+	}
+	return true;
+}
+
 // g_postTexture at the screen's size, and a view of the screen to read it with
 bool PreparePaletteTargets()
 {
@@ -216,20 +235,7 @@ bool PreparePaletteTargets()
 		Log("made a %ux%u texture for palette rendering's last step", g_rtWidth, g_rtHeight);
 	}
 
-	if (g_screenSrv == UINT32_MAX)
-	{
-		const UINT index = AllocateSrv();
-		if (index == UINT32_MAX)
-			return false;
-		D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
-		srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srv.Format = kScreenFormat;
-		srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srv.Texture2D.MipLevels = 1;
-		Core_Device()->CreateShaderResourceView(g_rt.Get(), &srv, SrvCpu(index));
-		g_screenSrv = index;
-	}
-	return true;
+	return EnsureScreenSrv();
 }
 
 // Turns the finished frame into the screen's palette, in g_postTexture. Returns whether it did.

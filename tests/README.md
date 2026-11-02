@@ -90,9 +90,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   valid shader padded by a comment: either stage translates at exactly 1 MB and is
   refused, for its size, one byte over. Check the expected constant-buffer
   declarations, std140 pack offsets and resource slots directly, with every
-  register in space 0. Native translation emits 78 general Shader Model 5.1
+  register in space 0. Native translation emits 79 general Shader Model 5.1
   stages to `translated-shaders`; Windows CI compiles these and the smoke-test
-  add-on's 19 stages there as SM5.1, for 97 total. The Direct3D 11
+  add-on's 19 stages there as SM5.1, for 98 total (the 79 include one stand-in screen
+  effect fragment, from `TranslateScreenEffect`, which the screen-effect scenes below draw). The Direct3D 11
   dispatch and GPU factory harnesses were removed with that driver.
   `custom_shader_dispatch` runs the production Direct3D 12 loader, compiler,
   cleaner and shader selection with translation, shader compilation and pipeline
@@ -120,7 +121,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   through the production shader loader; native checks verify five stage bindings,
   water's default vertex stage, untouched targets, missing-path rejection, nine
   translated target/layout pairs and the water refraction variant. Windows CI
-  compiles the pack's 19 SM5.1 stages, bringing the combined translated corpus to 97.
+  compiles the pack's 19 SM5.1 stages, bringing the combined translated corpus to 98.
   The user confirmed the pack's markers on Xbox; its refracted water is untested there.
 - **Installable renderer test map:** [download and
   instructions](addons/renderer-test/README.md). A generated UDMF race map,
@@ -453,6 +454,16 @@ change is shown to do none of them.
 alpha and draws it over 64 colored bands at two tics. The result must be that color blended
 over the scenery shifted by the production ripple (four rows down, then eight up), which the
 unrefracted output differs from by several levels.
+Screen-effect scenes (SalCRT and SalCRT Sharp, `screen-effect-off`, `screen-effect`, `screen-effect-fallback` and
+`screen-effect-palette`) use stand-in shaders from `screen-effect-fixtures.h`, written with the game's RHI macros but not
+the game's CRT shaders, which are game data. A stub `W_ReadShader` serves them through a glsllist, as the driver reads
+the game's. A 64×64 frame of four quarters of different colors must come out as its red, half its green and 128 (the
+dot pattern's red, read at a coordinate that only a repeating sampler wraps back to it, and the frame's height over 64),
+in the right quarter (`screen-effect`); with the effect off or on Sharp Bilinear it is as drawn (`screen-effect-off`).
+A second frame builds nothing again, and the palette step's texture is read when Palette Rendering is on
+(`screen-effect-palette`). SalCRT Sharp's fragment doesn't translate, so it must present the plain frame and log once
+(`screen-effect-fallback`). The native translator test checks the same sources' registers, semantics and constant
+offsets and the rejected cases. The game's own shaders, the screen effect's look, and Xbox are untested here.
 Invisible-geometry scenes run all 100 pairs of blend modes through a depth-only draw: after a
 translucent sprite silhouette and an untextured sky wall (both Invisible, depth writing), the
 target keeps its color (`blend-invisible`), a farther visible surface is hidden by the depth they

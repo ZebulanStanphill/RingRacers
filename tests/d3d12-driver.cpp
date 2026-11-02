@@ -33,6 +33,7 @@
 #include <string>
 #include <vector>
 #include "t_fsin.c"
+#include "screen-effect-fixtures.h"
 #undef min
 #undef max
 #undef clamp
@@ -43,6 +44,7 @@ static_assert((PF_Invert & PF_Occlude) == 0, "Inversion must not alias depth wri
 static std::string logs, negative;
 static bool negativeRejected=false;
 static std::vector<UINT8> lumpBytes; // what the stubbed wipe mask lump holds
+static std::map<std::string,std::string> shaderLumps; // what the stubbed shaders.pk3 holds: the screen effects' sources
 extern "C" {
 UINT8 g_wipemode=0, g_wipetype=0, g_wipeframe=0;
 boolean g_wipereverse=0, g_wipeencorewiggle=0;
@@ -58,6 +60,14 @@ lumpnum_t W_CheckNumForName(const char *n) { return (!strcmp(n,"FADE0000")||!str
 size_t W_LumpLength(lumpnum_t) { return lumpBytes.size(); }
 void W_ReadLump(lumpnum_t, void *d) { memcpy(d,lumpBytes.data(),lumpBytes.size()); }
 consvar_t cv_reducevfx{};
+consvar_t cv_scr_effect{};
+boolean W_ReadShader(const char *name, size_t *size, void *dest) {
+    auto lump=shaderLumps.find(name);
+    if(lump==shaderLumps.end()) return false;
+    *size=lump->second.size();
+    if(dest) memcpy(dest,lump->second.data(),lump->second.size());
+    return true;
+}
 CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nullptr}};
 INT32 R_AdjustLightLevel(INT32 light) { return light; }
 void HWR_Startup() {}
@@ -136,6 +146,9 @@ static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels
 static void expectQuad(const char *scene,RGB want) { auto p=pixels(); validate(validationQueue); check(scene,p,32,32,want); check(scene,p,20,20,want); check(scene,p,44,44,want); }
 // Palette rendering's last step, read like expect reads the screen. It leaves the buffer as filled while Palette Rendering is off.
 static std::vector<UINT8> palettePixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
+// What the driver hands to the present: the finished frame after palette rendering's last step and the screen effect
+static std::vector<UINT8> presentedPixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPresentedRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
+static unsigned occurrences(const std::string &text,const char *what) { unsigned n=0; for(size_t at=0;(at=text.find(what,at))!=std::string::npos;at+=strlen(what)) n++; return n; }
 static void expectPost(const char *scene,RGB want,int x=32,int y=32) { auto p=palettePixels(); validate(validationQueue); same(scene,"palette pixel",x,y,at(p,x,y),want); }
 // Some pixel of rows y0 to y1 in a column: a one-pixel line lies on a raster boundary, so which row holds it isn't pinned
 static void checkAny(const char *scene,const std::vector<UINT8> &p,int x,int y0,int y1,RGB want,int width=W) {
@@ -190,6 +203,7 @@ static const char *const kOracles[]={
     "opaque", "translucent", "additive", "subtract", "reverse", "multiply", "environment", "masked", "invert", "fog",
     "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane", "indexed", "line",
     "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
+    "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "texture", "texture-update", "texture-reuse", "mips",
     "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
@@ -500,6 +514,47 @@ int main(int argc,char **argv) {
             clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
             deleteTexture(&customTexture);
         }
+        // The SalCRT screen effects. The game's shaders are game data, so the lumps are stand-ins that use the same RHI macros;
+        // the stub W_ReadShader serves them. SalCRT's work: through the glsllist (with a comment, CRLF and a blank line, and an
+        // entry that already ends in .glsl), its translation and compilation, and the pass, whose output is the frame's red,
+        // half its green (the frame's width over 128) and 128 (the dot pattern's red, read through a repeating sampler, times
+        // the frame's height over 64). SalCRT Sharp's fragment doesn't translate: its frame is shown as it is, logged once.
+        {
+            shaderLumps["rhi_glsllist_crt_fragment.txt"]="# stand-in sources\r\nrhi_glsl_lib_versioncompat\r\n\r\nrhi_glsl_fragment_crt.glsl\n";
+            shaderLumps["rhi_glsl_lib_versioncompat.glsl"]=kStandInCompat;
+            shaderLumps["rhi_glsl_fragment_crt.glsl"]=kStandInEffect;
+            shaderLumps["rhi_glsllist_crtsharp_fragment.txt"]="rhi_glsl_lib_versioncompat\nrhi_glsl_fragment_crtsharp\n";
+            shaderLumps["rhi_glsl_fragment_crtsharp.glsl"]="void main() { OUTPUT_COLOR = vec4(; }";
+            const RGB tl={200,80,16}, tr={40,160,16}, bl={120,240,16}, br={240,20,16};
+            const RGB shadedTl={200,40,128}, shadedTr={40,80,128}, shadedBl={120,120,128}, shadedBr={240,10,128};
+            // The pixels at the middle of the screen's four quarters (images read back have their top row first)
+            auto corners=[&](const char *scene,const std::vector<UINT8> &p,RGB a,RGB b,RGB c,RGB d) {
+                check(scene,p,16,16,a); check(scene,p,48,16,b); check(scene,p,16,48,c); check(scene,p,48,48,d);
+            };
+            cv_scr_effect.value=0; quadrants(tl,tr,bl,br);
+            { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-off",p,tl,tr,bl,br); }
+            const size_t effectLog=logs.size();
+            cv_scr_effect.value=2; quadrants(tl,tr,bl,br);
+            { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
+            // A presented frame, and a second pass: nothing is built again
+            D3D12_FinishUpdate(0); quadrants(tl,tr,bl,br);
+            { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
+            const std::string effectText=logs.substr(effectLog);
+            require("screen-effect",occurrences(effectText,"screen effect SalCRT is ready")==1 && effectText.find("SalCRT failed")==std::string::npos,"SalCRT was not built exactly once");
+            // Not the shaders of the other mode, either
+            cv_scr_effect.value=3; quadrants(tl,tr,bl,br);
+            for(int frame=0;frame<2;frame++) {
+                auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-fallback",p,tl,tr,bl,br); D3D12_FinishUpdate(0); quadrants(tl,tr,bl,br);
+            }
+            const std::string fallbackText=logs.substr(effectLog);
+            require("screen-effect-fallback",occurrences(fallbackText,"screen effect SalCRT Sharp failed: translation failed")==1 && fallbackText.find("SalCRT Sharp is ready")==std::string::npos,"SalCRT Sharp's failure was not logged once");
+            // Back to the first mode, which stays built; with the effect off the frame is as drawn
+            cv_scr_effect.value=2;
+            { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
+            cv_scr_effect.value=1;
+            { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-off",p,tl,tr,bl,br); }
+            cv_scr_effect.value=0;
+        }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};
         GLMipmap_t tex={}; tex.format=GL_TEXFMT_RGBA; tex.width=tex.height=2; tex.data=texels.data();
         reset(); texture(&tex); textured();
@@ -571,6 +626,10 @@ int main(int argc,char **argv) {
             reset(); paletteDraw(lightId);
             // The screen holds the light table's color; the finished frame holds the screen palette's color for its index.
             expect("palette",oldColor); expectPost("palette-post",index19);
+            // The screen effect reads the palette step's texture, not the screen
+            cv_scr_effect.value=2;
+            { auto p=presentedPixels(); validate(validationQueue); same("screen-effect-palette","pixel",32,32,at(p,32,32),{index19[0],index19[1]/2,128}); }
+            cv_scr_effect.value=0;
             // Presenting again repeats the pass on the same screen
             D3D12_FinishUpdate(0);
             // b) One frame, no readback between the draws: the first keeps the old table, the second gets the new one.

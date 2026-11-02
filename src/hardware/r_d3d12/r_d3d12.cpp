@@ -99,6 +99,8 @@ struct Stats
 	int portalApertures, portalDepthResets, portalStencilLevels, portalMaxLevel, fadeMaps;
 	int lightTablesCreated, lightTablesUpdated, paletteUploads, paletteSteps;
 	precise_t paletteTime;
+	int effectPasses;
+	precise_t effectTime;
 	precise_t presentTime;
 };
 Stats g_stats;
@@ -599,6 +601,9 @@ GpuTexture *g_currentLightTable = nullptr;
 // Where the finished frame is turned into the screen's palette, keeping the screen as drawn
 GpuTexture g_postTexture;
 UINT g_screenSrv = UINT32_MAX; // g_rt as a shader resource, for that last step
+// The screen effect's target, which is what is shown while it runs, and its dot pattern and samplers (see d3d12_screeneffect.inc)
+GpuTexture g_effectTarget, g_dotPattern;
+UINT g_effectSamplers[2] = {UINT32_MAX, UINT32_MAX};
 // The lookup table and light table last set at t2 and t3 on the open list, as descriptor handles
 UINT64 g_boundPaletteTables[2] = {};
 void Flush();
@@ -1409,6 +1414,7 @@ bool InitDrawing()
 	g_srvIndices.Reset(4, 65536 - 4);
 	InitArenas();
 	g_samplers.clear(); g_nextSampler = 1;
+	g_effectSamplers[0] = g_effectSamplers[1] = UINT32_MAX;
 	D3D12_SAMPLER_DESC sampler = {};
 	sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
 	sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -1991,6 +1997,7 @@ void BindRenderTarget()
 }
 
 #include "d3d12_palette.inc"
+#include "d3d12_screeneffect.inc"
 
 // A full turn every 240 frames, about 1.5 degrees a frame
 void DiagnosticHue(float rgb[3])
@@ -2050,6 +2057,7 @@ bool CreateRenderTarget(UINT width, UINT height)
 	// The view of the old screen goes with it. The palette step's target is remade at the new size when next needed.
 	RetireScreenSrv();
 	RetireTexture(g_postTexture);
+	RetireTexture(g_effectTarget);
 	Core_Retire(g_rt);
 	Core_Retire(g_depth);
 	g_rtWidth = g_rtHeight = 0;
@@ -3015,10 +3023,12 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 		Log("presenting frame %d: %d clears, %d polygons, %d batches, %d models so far", g_stats.frames,
 			g_stats.clears, g_stats.polygons, g_stats.batches, g_stats.models);
 
-	// With palette rendering, the screen shown is the finished frame turned into the screen's palette
+	// With palette rendering, the screen shown is the finished frame turned into the screen's palette; the SalCRT
+	// screen effects, if chosen, are drawn over that. Screenshots and captures read the screen and that step, not the effect.
 	const bool palette = PalettePostprocess();
+	ID3D12Resource *shown = ApplyScreenEffect(palette);
 	const precise_t start = I_GetPreciseTime();
-	Present_Frame(palette ? g_postTexture.res.Get() : g_rt.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync);
+	Present_Frame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync);
 	g_stats.presentTime += I_GetPreciseTime() - start;
 	g_stats.frames++;
 	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
@@ -3281,6 +3291,10 @@ void D3D12_LogPerf(double seconds)
 		I_OutputMsg("UWP perf:   D3D12: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
 			g_paletteRendering ? "on" : "off", (unsigned)g_lightTables.size(), s.lightTablesCreated, s.lightTablesUpdated,
 			s.paletteUploads, s.paletteSteps / n, PreciseToMs(s.paletteTime) / n);
+	if (cv_scr_effect.value >= 2 || s.effectPasses)
+		I_OutputMsg("UWP perf:   D3D12: screen effect: %s; %.2f passes per frame, %.2f ms per frame\n",
+			cv_scr_effect.value >= 2 && cv_scr_effect.value <= 3 ? kEffectNames[cv_scr_effect.value - 2] : "off",
+			s.effectPasses / n, PreciseToMs(s.effectTime) / n);
 	I_OutputMsg("UWP perf:   D3D12: models %.1f/frame, skies %.1f/frame; fallbacks %d, lerps %d, sky rebuilds %d; static arena %u chunks (%.2f MB), %u dedicated buffers; mips %llu generated (%.2f CPU ms)\n",
 		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
 		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
@@ -3297,7 +3311,8 @@ void D3D12_LogPerf(double seconds)
 	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
 	const bool localValid = adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local));
 	const UINT64 targets = (g_rt ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0) + (g_depth ? (UINT64)g_rtWidth * g_rtHeight * 4 : 0)
-		+ (g_postTexture.res ? (UINT64)g_postTexture.width * g_postTexture.height * 4 : 0) + Present_SwapChainBytes();
+		+ (g_postTexture.res ? (UINT64)g_postTexture.width * g_postTexture.height * 4 : 0)
+		+ (g_effectTarget.res ? (UINT64)g_effectTarget.width * g_effectTarget.height * 4 : 0) + Present_SwapChainBytes();
 	if (localValid)
 		I_OutputMsg("UWP perf:   D3D12: memory: local budget %.1f, usage %.1f MB; render targets/swap chain ~%.1f MB\n",
 			local.Budget / 1048576.0, local.CurrentUsage / 1048576.0, targets / 1048576.0);
@@ -3340,6 +3355,13 @@ void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, I
 {
 	if (PalettePostprocess())
 		ReadRectFrom(g_postTexture.res.Get(), x, y, width, height, dst_stride, dst_data);
+}
+
+void D3D12_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
+{
+	// The frame as D3D12_FinishUpdate hands it to the present
+	const bool palette = PalettePostprocess();
+	ReadRectFrom(ApplyScreenEffect(palette), x, y, width, height, dst_stride, dst_data);
 }
 
 void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant)
@@ -3387,6 +3409,7 @@ void D3D12_Shutdown(void)
 	RetireTexture(g_screenPalette);
 	RetireTexture(g_masterPalette);
 	RetireTexture(g_postTexture);
+	ShutdownScreenEffect(idle);
 	RetireScreenSrv();
 	D3D_FlushScreenTextures();
 	for (auto &fade : g_fadeMaps) RetireTexture(fade.second.texture);

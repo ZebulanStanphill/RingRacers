@@ -31,6 +31,9 @@ boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset
 void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant);
 // Runs palette rendering's last step and reads its result like ReadRect reads the screen; nothing is read without it
 void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data);
+// Runs the last steps before the present (palette rendering's, then the screen effect's) and reads the frame they hand to
+// it like ReadRect reads the screen
+void D3D12_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data);
 
 void *D3D12_GetDriverFunction(const char *name);
 boolean D3D12_Surface(INT32 w, INT32 h);

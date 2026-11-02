@@ -111,6 +111,7 @@ enum
 {
 	kRtvScreen = 0,
 	kRtvPost,
+	kRtvEffect,
 	kRtvCount = 16,
 };
 enum
