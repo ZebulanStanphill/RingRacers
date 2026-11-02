@@ -155,7 +155,10 @@ it.
 
 The map ships an `ENCORE` lump, a palette remap that swaps red and blue, because
 without one Encore would only mirror the screen. In Encore, reds turn blue and
-blues red across the map, while white and grays stay put.
+blues red across the map, while white and grays stay put. Sector color tints
+don't change, by design and in both renderers: the game remaps a UDMF sector's
+textures but not its `lightcolor` and `fadecolor`. So a pool looks recolored from
+outside but unchanged from inside, and the fog rooms keep their red and blue.
 
 ## Settings to compare
 
