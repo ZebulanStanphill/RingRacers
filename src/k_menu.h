@@ -421,9 +421,8 @@ typedef enum
 	vaopt_spacer8,
 	vaopt_spacer9,
 #ifdef HAVE_D3D12
-	// VibeRant D3D's description has two more lines
+	// VibeRant D3D's description has one more line
 	vaopt_spacer9a,
-	vaopt_spacer9b,
 #endif
 	vaopt_renderer,
 	vaopt_legacygl_begin,

@@ -51,10 +51,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_SPACE, "featuring 3D models, true perspective,", "",
 		NULL, {NULL}, 0, 0},
 
-	{IT_STRING | IT_SPACE, "& more parity with Software. Some", "",
-		NULL, {NULL}, 0, 0},
-
-	{IT_STRING | IT_SPACE, "features remain missing/degraded.", "",
+	{IT_STRING | IT_SPACE, "& more parity with Software.", "",
 		NULL, {NULL}, 0, 0},
 #else
 	{IT_STRING | IT_SPACE, "Legacy GL supports 3D models and true", "",
