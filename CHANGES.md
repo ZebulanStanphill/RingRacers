@@ -68,6 +68,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 - **Palette control** *(works on Xbox)*. `gr_paletterendering` defaults to On and requires Shaders on.
 - **Better transparency ordering** *(untested on Xbox)*. Saved `gr_bettertransparency` defaults to Off on every hardware-renderer platform; On inserts blended sprites, models, linkdraw attachments, and always-on-top sprites into the transparent surface pass using overlap, depth, and plane-side checks. It adds per-view CPU sorting and storage without scene copies, preserves opaque depth drawing and water-capture runs, and works with Shaders on or off; proxy model bounds, unsplit face crossings, cyclic intersections, and triangles within translucent models limit accuracy.
 - **Batching** *(works on Xbox)*. `gr_batching` defaults to On, resets at launch, and appears directly below Better transparency ordering for controller access.
+- **Texture Filter** *(untested on Xbox)*. VibeRant D3D's options show **Texture Filter** (`gr_filtermode`: Nearest, Bilinear, Trilinear, Linear_Nearest, Nearest_Linear, Nearest_Mipmap) where **Texture Quality** was; that setting only chooses Legacy GL's OpenGL texture format, while Direct3D 12 always uses 32-bit textures. A new mode applies at once, and **Anisotropic** takes effect with Bilinear, Trilinear, Nearest_Linear and Nearest_Mipmap, which filter distant texels.
 
 ## Software renderer and GL2 RHI
 
