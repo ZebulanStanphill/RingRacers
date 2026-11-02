@@ -144,13 +144,18 @@ all one sign texture with a bright glyph band, and four dark orbs with a glowing
 core and ring. The glyphs, core and ring should stay full-bright, untinted by
 the room's blue, and the rest of each surface should be dark. Compare **Palette
 Rendering** On and Off, and Encore, where the texel remap should persist on the
-brightmapped pixels.
+brightmapped pixels: in Encore the sign's yellow glyphs turn cyan and its cyan
+band edges yellow, and the orbs' glow changes color too, all still full-bright.
 
 **Encore** *(Encore distortion; Encore inversion flag).* With `-e`, repeat the
 Water room's underwater and heat views: the mirroring should combine with the
 distortion instead of replacing it. Wherever Encore inverts the screen, such as
 the start of the map, the scene should invert instead of a white quad covering
 it.
+
+The map ships an `ENCORE` lump, a palette remap that swaps red and blue, because
+without one Encore would only mirror the screen. In Encore, reds turn blue and
+blues red across the map, while white and grays stay put.
 
 ## Settings to compare
 
@@ -185,6 +190,7 @@ comes from a tool, [ZDBSP](https://github.com/ZDoom/zdbsp) 1.19 (commit
 python3 tests/addons/renderer-test/build.py --zdbsp path/to/zdbsp
 python3 tests/addons/renderer-test/build.py --check --zdbsp path/to/zdbsp
 python3 tests/addons/renderer-test/build.py --validate
+python3 tests/addons/renderer-test/build.py --encore-from path/to/PLAYPAL
 ```
 
 `--check` rebuilds, compares every PK3 entry and model file byte for byte, and
@@ -202,6 +208,14 @@ them blocking karts, and in the nodes the original vertex count, seg line
 numbers, one seg per polyobject line, and each polyobject's spawn spot inside
 one subsector. The CI's `regressions` job runs `--check` and uploads the result
 as `renderer-test-map`.
+
+`--validate` also checks that the map's `ENCORE` lump is the 256-byte red/blue
+swap remap, between `ZNODES` and `ENDMAP`. That remap is embedded in `build.py`
+as a constant, because the PLAYPAL it derives from is game data this repository
+doesn't ship. `--encore-from` recomputes it from a v2.4 PLAYPAL file (the first
+768 bytes of `bios.pk3`'s `PLAYPAL`; each entry is the palette color nearest to
+the color with red and blue swapped, lowest index on ties) and fails if the
+result differs from the constant.
 
 How the map is built for the engine:
 

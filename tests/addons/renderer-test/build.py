@@ -7,6 +7,7 @@ map-local scripts are packaged from quiet.lua (bot removal) and scenery.lua
 (scenery objects whose editor numbers a game object shares). Only the map's BSP
 (the ZNODES lump) comes from an
 external tool, ZDBSP, which is why --check compares that one lump structurally.
+The map also carries an ENCORE lump, a red/blue swap remap embedded below.
 """
 
 import argparse
@@ -29,6 +30,23 @@ MAP_NAME = "RR_RENDERTEST"
 MAP_WAD = f"maps/{MAP_NAME}.wad"
 MARKER = "MAP01"  # the map's name comes from the file name; a WAD lump name holds 8 characters
 EXTERNAL_TEXTURES = {"F_SKY1"}  # shipped with the game itself
+
+# The map's ENCORE lump: for each palette index, the index Encore mode shows
+# instead. It swaps red and blue: entry i is the palette color nearest (squared
+# RGB distance, lowest index on ties) to color i with its red and blue swapped,
+# computed from the v2.4 PLAYPAL (the first 768 bytes of bios.pk3's PLAYPAL).
+# The palette is game data we don't ship, so only the result is embedded;
+# --encore-from PATH recomputes it from a PLAYPAL file and fails on a mismatch.
+ENCORE_REMAP = bytes.fromhex(
+    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    "9495969898999a9a9b9c9c9d9e9efdfd919284858687878788888888899d9d9d"
+    "838d8d8889898a9f83ffff7b8e8e8f8a80818182828c8c0f788c8c0d10131619"
+    "606162636465666768696a6b6c6d6e6f70717273747576775840bcbdbebfbf4f"
+    "50515340403334354345ecef55424d4ed0d1d22020212223232527282a2b2d47"
+    "c8c9cacbcccccdcfbabbd3d4d6e7faecb0b1b2b3b4b5b6b7b8b9babb7a7b7c7d"
+    "c0c1c2c3c4c5c6c7a0a1a2a3acacacad909192aaababacac919292939394abab"
+    "abacacacacadadad89aeae8a8aaf8b8baa0c0e0f1112131415aeaeaefc2e2f49"
+)
 
 # Editor numbers (MapThingNum) for the add-on's own scenery objects.
 THING_TRANS = 3900
@@ -1206,13 +1224,26 @@ def validate_scenery_script(source):
         assert object_type in source and f"Object {object_type}" in SOC, f"{object_type} is not used by both"
 
 
+def encore_remap(playpal):
+    """The red/blue swap remap for a PLAYPAL (only its first palette, 768 bytes, is used)."""
+    assert len(playpal) >= 768, "PLAYPAL is shorter than one palette"
+    palette = [tuple(playpal[i * 3:i * 3 + 3]) for i in range(256)]
+
+    def nearest(color):
+        return min(range(256), key=lambda j: sum((a - b) ** 2 for a, b in zip(color, palette[j])))
+
+    return bytes(nearest((b, g, r)) for r, g, b in palette)
+
+
 def validate_package(entries, models, rewritten=None):
     """The checks behind --validate. Returns a one-line summary."""
     validate_brightmaps(entries)
     validate_scenery_script(entries["Lua/scenery.lua"].decode("utf-8"))
     wad = read_wad(entries[MAP_WAD])
-    assert [name for name, _ in wad] == [MARKER, "TEXTMAP", "ZNODES", "ENDMAP"]
+    assert [name for name, _ in wad] == [MARKER, "TEXTMAP", "ZNODES", "ENCORE", "ENDMAP"]
     lumps = dict(wad)
+    assert len(lumps["ENCORE"]) == 256, "the engine ignores an ENCORE lump that is not 256 bytes"
+    assert lumps["ENCORE"] == ENCORE_REMAP, "the ENCORE lump is not the red/blue swap remap"
     geometry = build_geometry()
     lines = geometry.build()
     text = lumps["TEXTMAP"].decode("ascii")
@@ -1245,7 +1276,8 @@ def validate_package(entries, models, rewritten=None):
 # --------------------------------------------------------------------------
 
 def map_wad(textmap, znodes):
-    return wad_bytes([(MARKER, b""), ("TEXTMAP", textmap.encode("ascii")), ("ZNODES", znodes), ("ENDMAP", b"")])
+    return wad_bytes([(MARKER, b""), ("TEXTMAP", textmap.encode("ascii")), ("ZNODES", znodes),
+                      ("ENCORE", ENCORE_REMAP), ("ENDMAP", b"")])
 
 
 def build(zdbsp):
@@ -1294,7 +1326,15 @@ def main():
                         help="rebuild and compare with the committed PK3 and models, then validate them")
     parser.add_argument("--validate", action="store_true",
                         help="validate the committed PK3 and models without rebuilding (needs no ZDBSP)")
+    parser.add_argument("--encore-from", metavar="PLAYPAL", type=Path,
+                        help="recompute the Encore remap from a PLAYPAL file and fail if it differs from the embedded one")
     args = parser.parse_args()
+
+    if args.encore_from:
+        if encore_remap(args.encore_from.read_bytes()) != ENCORE_REMAP:
+            parser.error(f"the red/blue swap of {args.encore_from} differs from ENCORE_REMAP")
+        print(f"ENCORE_REMAP matches the red/blue swap of {args.encore_from}")
+        return
 
     if args.validate:
         if not PACKAGE.exists():
