@@ -188,6 +188,13 @@ static int comparePolygonKeys(const void *p1, const void *p2)
 	return 0;
 }
 
+// Sorts indices into polygonSortKeys rather than the keys themselves: qsort moves
+// whole elements, and moving 64-byte keys cost more than the comparisons saved.
+static int comparePolygonIndices(const void *p1, const void *p2)
+{
+	return comparePolygonKeys(&polygonSortKeys[*(const UINT32 *)p1], &polygonSortKeys[*(const UINT32 *)p2]);
+}
+
 // Fills the sort key of every polygon. With shaders, the order is shader, texture,
 // brightmap, polyflags, colors and light; without, texture, polyflags and color.
 static void buildPolygonSortKeys(boolean shaders)
@@ -272,7 +279,7 @@ void HWR_RenderBatches(void)
 	ps_hw_numpolys = polygonArraySize;
 	ps_hw_numcalls = ps_hw_numverts = 0;
 	ps_hw_numshaders = ps_hw_numtextures = ps_hw_numpolyflags = ps_hw_numcolors = 1;
-	// sort polygons by compact keys, then write the sorted order to polygonIndexArray
+	// sort polygonIndexArray by the polygons' compact keys
 	ps_hw_batchsorttime = I_GetPreciseTime();
 	if (polygonSortKeysAllocSize < polygonArrayAllocSize)
 	{
@@ -281,11 +288,11 @@ void HWR_RenderBatches(void)
 		polygonSortKeysAllocSize = polygonArrayAllocSize;
 	}
 	buildPolygonSortKeys(cv_glshaders.value && gl_shadersavailable);
-	qsort(polygonSortKeys, polygonArraySize, sizeof(PolygonSortKey), comparePolygonKeys);
 	for (i = 0; i < polygonArraySize; i++)
 	{
-		polygonIndexArray[i] = polygonSortKeys[i].index;
+		polygonIndexArray[i] = i;
 	}
+	qsort(polygonIndexArray, polygonArraySize, sizeof(UINT32), comparePolygonIndices);
 	ps_hw_batchsorttime = I_GetPreciseTime() - ps_hw_batchsorttime;
 	// sort order
 	// 1. shader

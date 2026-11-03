@@ -19,9 +19,11 @@ static std::vector<int> Sort(const std::vector<PolygonArrayEntry> &polygons, boo
     std::vector<PolygonSortKey> keys(copy.size());
     polygonSortKeys = keys.data(); polygonSortKeysAllocSize = (int)keys.size();
     buildPolygonSortKeys(shaders);
-    qsort(keys.data(), keys.size(), sizeof(PolygonSortKey), comparePolygonKeys);
+    std::vector<UINT32> indices(copy.size());
+    for (size_t i = 0; i < indices.size(); i++) indices[i] = (UINT32)i;
+    qsort(indices.data(), indices.size(), sizeof(UINT32), comparePolygonIndices);
     std::vector<int> order;
-    for (const PolygonSortKey &key : keys) order.push_back((int)key.index);
+    for (UINT32 index : indices) order.push_back((int)index);
     return order;
 }
 static PolygonArrayEntry Entry(GLMipmap_t *texture = nullptr) {
