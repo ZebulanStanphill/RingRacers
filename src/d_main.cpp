@@ -1154,11 +1154,6 @@ void D_SRB2Loop(void)
 
 	// Pushing of + parameters is now done back in D_SRB2Main, not here.
 
-#ifdef _UWP
-	// [UWP]: The profiler started in D_SRB2Main; this ends its startup phase, however D_SRB2Main returned
-	i_uwpprofstartup = false;
-#endif
-
 	I_UpdateTime();
 	oldentertics = I_GetTime();
 
@@ -1193,6 +1188,10 @@ void D_SRB2Loop(void)
 	S_SetMasterVolume();
 	S_SetMusicVolume();
 	S_SetSfxVolume();
+
+#ifdef _UWP
+	I_UWPStartProfiler();
+#endif
 
 	for (;;)
 	{
@@ -2041,8 +2040,6 @@ void D_SRB2Main(void)
 	Z_Init();
 #ifdef _UWP
 	I_UWPRequireGameMode();
-	// [UWP]: Logging and Z_Init's UWP log lines are up; the profiler samples startup until D_SRB2Loop
-	I_UWPStartProfiler();
 #endif
 	CON_SetLoadingProgress(LOADED_ZINIT);
 
