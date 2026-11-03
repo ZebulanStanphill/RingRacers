@@ -178,5 +178,5 @@ int main(){
 @@SINE_FAILURE@@
     assert(Capture(&surface,PF_Translucent,poly,4));assert(Scene.width==256&&Scene.format==2);
     assert(!active&&begins==ends);
-    puts("D3D12 capture bounds, constants, split views, grouped transitions, one capture per run and failure recovery passed");
+    puts("D3D12 capture bounds, constants, split views, grouped transitions, immutable growth and failure recovery passed");
 }

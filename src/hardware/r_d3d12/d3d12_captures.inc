@@ -164,28 +164,42 @@ static bool CaptureWaterScene(FSurfaceInfo *surface, FBITFIELD flags,
 		(float)(g_gl.viewport[0] + g_gl.viewport[2] - 1),
 		(float)(g_rtHeight - g_gl.viewport[1] - 1)}, mode, {0, 0, 0}};
 	if (!SetPixelConstants(18, &constants, sizeof constants)) return false;
-	// A coplanar run copies the whole viewport once, with its first piece, and
-	// its later pieces copy nothing. Nothing but the run's own pieces draws
-	// between them and each writes only inside its own bounds, so the pixels
-	// any later piece samples still hold the scene from before the run. Never
-	// recapture mid-run: that would copy the partially refracted scene. A piece
-	// outside the copy (the viewport changed mid-run) starts a new capture.
-	const UINT viewLeft = g_gl.viewport[0], viewTop = g_rtHeight - g_gl.viewport[1] - g_gl.viewport[3];
-	const D3D12_BOX &held = g_waterCapturedBounds;
-	const bool fresh = !g_waterCaptureGrouped || !g_waterCaptureReady
-		|| needed.left < held.left || needed.top < held.top
-		|| needed.right > held.right || needed.bottom > held.bottom;
-	if (fresh)
+	// Grow an immutable capture only into pixels no earlier piece could have
+	// touched. The old rectangle already includes every earlier polygon and
+	// its ripple margin. Never overwrite it with the partially refracted scene.
+	const bool fresh = !g_waterCaptureGrouped || !g_waterCaptureReady;
+	D3D12_BOX bounds = needed;
+	if (!fresh)
 	{
-		D3D12_BOX bounds = needed;
-		if (g_waterCaptureGrouped)
-			bounds = {viewLeft, viewTop, 0, viewLeft + g_gl.viewport[2], viewTop + g_gl.viewport[3], 1};
+		bounds.left = std::min(bounds.left, g_waterCapturedBounds.left);
+		bounds.top = std::min(bounds.top, g_waterCapturedBounds.top);
+		bounds.right = std::max(bounds.right, g_waterCapturedBounds.right);
+		bounds.bottom = std::max(bounds.bottom, g_waterCapturedBounds.bottom);
+	}
+	if (fresh || bounds.left != g_waterCapturedBounds.left || bounds.top != g_waterCapturedBounds.top
+		|| bounds.right != g_waterCapturedBounds.right || bounds.bottom != g_waterCapturedBounds.bottom)
+	{
 		BeginCaptureRegions(g_waterScene);
-		CopyRenderTargetRegion(g_waterScene, bounds);
-		g_stats.screens++;
-		g_stats.waterCopies++;
-		g_testWaterCopies++;
-		g_stats.waterPixels += (UINT64)(bounds.right - bounds.left) * (bounds.bottom - bounds.top);
+		const auto copy = [&](UINT left, UINT top, UINT right, UINT bottom)
+		{
+			if (right <= left || bottom <= top) return;
+			const D3D12_BOX box = {left, top, 0, right, bottom, 1};
+			CopyRenderTargetRegion(g_waterScene, box);
+			g_stats.screens++;
+			g_stats.waterCopies++;
+			g_testWaterCopies++;
+			g_stats.waterPixels += (UINT64)(right - left) * (bottom - top);
+		};
+		if (fresh)
+			copy(bounds.left, bounds.top, bounds.right, bounds.bottom);
+		else
+		{
+			const D3D12_BOX &old = g_waterCapturedBounds;
+			copy(bounds.left, bounds.top, bounds.right, old.top);
+			copy(bounds.left, old.bottom, bounds.right, bounds.bottom);
+			copy(bounds.left, old.top, old.left, old.bottom);
+			copy(old.right, old.top, bounds.right, old.bottom);
+		}
 		EndCaptureRegions(g_waterScene);
 		g_waterCapturedBounds = bounds;
 		g_waterCaptureReady = g_waterCaptureGrouped;
