@@ -527,9 +527,9 @@ refraction against the fixed-point sine and independent blend math; grouped surf
 original captured background while later pieces draw. The `fog-palette` and `water-refraction`
 shader mutants (above) must fail their oracles, and capture counters check the grouping under GPU-based validation. Native D3D12
 capture tests mock the texture, copy, binding and constant helpers, checking literal expected bounds (including fractional vertices) and
-constant bytes, split views, clipping, failures, resizing and disjoint water growth. A growing water
-capture uses one batched transition round trip around up to four strips; an unchanged grouped
-rectangle uses none. `capture-mixed` requires fog and water in the same command list;
+constant bytes, split views, clipping, failures, resizing and water runs. A coplanar water run copies
+the whole viewport once, in one transition round trip, with its first piece; its later pieces use none.
+`capture-mixed` requires fog and water in the same command list;
 `capture-recreate` checks capture replacement after flushing resources still referenced by
 recorded draws and after a resize; `capture-skipped` skips two-vertex fans after capture
 and checks the next capture/draw, including pending opposite-transition merging. Xbox visual results, render-target decompression cost and performance
@@ -595,11 +595,11 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   multiples of 1/8, so the shader's `floor` calls matter), and exercise 8,640 shader
   composites across blend modes, alpha values, distances, times and split-view
   edges. Extract projected bounds from `r_d3d12/d3d12_captures.inc`.
-  `water_capture_d3d12` checks bounded copies, disjoint rectangle growth, grouping,
+  `water_capture_d3d12` checks bounded copies, one whole-viewport copy per grouped run,
   allocation failures, resize and clipped faces. Its expected bounds
   (including fractional vertices), constant bytes, scene and sine texture bindings
-  are literal values, and the growth strips must cover exactly the union of the
-  pieces' bounds. Engine-side water-plane continuation and transparent-node dispatch
+  are literal values, and a run's later pieces must copy nothing and still see the
+  scene from before the run. Engine-side water-plane continuation and transparent-node dispatch
   checks moved from the removed `water_capture` harness to this Direct3D 12
   harness, retaining slope/layer changes and wall/non-ripple interruptions.
   Direct3D 11 blend-state and capture harnesses were removed; Direct3D 12 WARP

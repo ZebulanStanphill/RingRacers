@@ -144,7 +144,7 @@ def generate(engine, output):
         clear_binds = (f"bound[{srv}]=bound[13]=nullptr;" if kind == "Water" else f"bound[{srv}]=nullptr;")
         split = f"""
         for(const FlagCase &c:flagCases){{
-            {'SetWaterSurface(1);' if kind == 'Water' else ''}
+            {'SetWaterSurface(0);' if kind == 'Water' else ''}
             size_t before=copies.size();int rounds=begins;
             {clear_binds}constants[{param}].clear();
             assert(Capture(&surface,c.flags,poly,4));
@@ -153,6 +153,13 @@ def generate(engine, output):
             assert(constants[{param}]=={expected_constants});
             {bind_checks}
         }}
+"""
+        if kind == "Water":
+            # A grouped run's first piece copies the whole viewport instead of the piece's bounds.
+            split += """        SetWaterSurface(1);
+        {size_t before=copies.size();
+         assert(Capture(&surface,PF_Translucent,poly,4));assert(copies.size()==before+1);
+         SameBox(copies.back(),D3D12_BOX{UINT(vx),UINT(96-vy-48),0,UINT(vx+64),UINT(96-vy),1});}
 """
         specific = """
     // Each face gets current scenery: captures of an identical target copy again.
@@ -180,13 +187,13 @@ def generate(engine, output):
     SetWaterSurface(1);constants[18].clear();
     assert(Capture(&surface,PF_Environment,poly,4));assert(constants[18]==WaterBytes(32,16,127,79,5));
     g_gl.viewport[0]=g_gl.viewport[1]=0;g_gl.viewport[2]=128;g_gl.viewport[3]=96;
-    // Four-sided growth issues up to four strips in one transition round trip.
+    // The first piece of a coplanar run copies the whole viewport in one round trip; later pieces copy nothing
+    // and still sample the scene from before the run, even though earlier pieces have since drawn.
     const std::vector<std::vector<int>> rectangles={{52,40,60,48},{48,38,58,46},
         {57,43,66,53},{50,25,62,42},{44,48,64,61},{40,20,70,67}};
     for(int reverse:{0,1}){
-        InitTarget();const auto original=g_rt.pixels;std::vector<bool> copied(128*96,false);
-        SetWaterSurface(1);UINT64 pixelsBefore=g_stats.waterPixels;bool sawFour=false;
-        int ux0=128,uy0=96,ux1=0,uy1=0;
+        InitTarget();const auto original=g_rt.pixels;
+        SetWaterSurface(1);UINT64 pixelsBefore=g_stats.waterPixels;
         for(size_t i=0;i<rectangles.size();++i){
             const auto &r=rectangles[reverse?rectangles.size()-1-i:i];
             auto piece=Rectangle(r[0],r[1],r[2],r[3]);if(i)SetWaterSurface(2);
@@ -194,27 +201,29 @@ def generate(engine, output):
             bound[12]=bound[13]=nullptr;
             assert(Capture(&surface,PF_Translucent,piece.data(),4));
             assert(bound[12]==&Scene&&bound[13]==&g_waterSine);
-            size_t strips=copies.size()-before;assert(strips<=4);sawFour|=strips==4;
-            assert(begins-rounds==int(strips!=0)&&ends==begins);
-            for(size_t n=before;n<copies.size();++n){
-                auto b=copies[n];for(UINT y=b.top;y<b.bottom;++y)for(UINT x=b.left;x<b.right;++x){
-                    assert(!copied[y*128+x]);copied[y*128+x]=true;
-                }
-            }
-            for(size_t n=0;n<copied.size();++n)if(copied[n])assert(Scene.pixels[n]==original[n]);
-            // The strips together cover exactly the bounding box of every piece so far: each rectangle
-            // plus a 16 row ripple margin above and below (clamped to the 96 row target).
-            ux0=std::min(ux0,r[0]);ux1=std::max(ux1,r[2]);
-            uy0=std::min(uy0,std::max(r[1]-16,0));uy1=std::max(uy1,std::min(r[3]+16,96));
-            for(int y=0;y<96;++y)for(int x=0;x<128;++x)
-                assert(copied[y*128+x]==(x>=ux0&&x<ux1&&y>=uy0&&y<uy1));
-            before=copies.size();rounds=begins;
-            assert(Capture(&surface,PF_Translucent,piece.data(),4));
-            assert(copies.size()==before&&begins==rounds);
+            if(!i){
+                assert(copies.size()==before+1&&begins==rounds+1&&ends==begins);
+                SameBox(copies.back(),D3D12_BOX{0,0,0,128,96,1});
+                assert(Scene.pixels==original);
+            } else assert(copies.size()==before&&begins==rounds&&ends==begins);
+            assert(Scene.pixels==original);
             for(int y=r[1];y<r[3];++y)for(int x=r[0];x<r[2];++x)g_rt.pixels[y*128+x]=99999;
         }
-        assert(g_stats.waterPixels-pixelsBefore==UINT64(std::count(copied.begin(),copied.end(),true)));
-        if(!reverse)assert(sawFour);
+        assert(g_stats.waterPixels-pixelsBefore==128*96);
+    }
+    // A new run copies again, and a standalone piece copies only its own bounds (a 16 row ripple margin
+    // above and below, clamped to the target).
+    InitTarget();
+    {
+        auto piece=Rectangle(52,40,60,48);
+        SetWaterSurface(1);size_t before=copies.size();
+        assert(Capture(&surface,PF_Translucent,piece.data(),4));
+        assert(copies.size()==before+1);SameBox(copies.back(),D3D12_BOX{0,0,0,128,96,1});
+        SetWaterSurface(2);assert(Capture(&surface,PF_Translucent,piece.data(),4));assert(copies.size()==before+1);
+        SetWaterSurface(1);assert(Capture(&surface,PF_Translucent,piece.data(),4));assert(copies.size()==before+2);
+        SetWaterSurface(0);assert(Capture(&surface,PF_Translucent,piece.data(),4));assert(copies.size()==before+3);
+        SameBox(copies.back(),D3D12_BOX{52,24,0,60,64,1});
+        SetWaterSurface(0);assert(Capture(&surface,PF_Translucent,piece.data(),4));assert(copies.size()==before+4);
     }
     // Identical bounds in a new group/view or standalone draw capture again.
     for(int state:{0,1}){
