@@ -13,7 +13,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <set>
 #include <string>
 #include <system_error>
@@ -93,14 +92,46 @@ void UWPMapCache::Load()
 	loaded_ = true;
 	path_ = std::string(srb2home) + PATHSEP + "mapcache.bin";
 
-	std::ifstream in(path_, std::ios::binary);
+	// One read of the whole file, unbuffered: a stream's small buffer made this many small reads from the USB drive
+	FILE* in = std::fopen(path_.c_str(), "rb");
 	if (!in)
 	{
 		I_OutputMsg("UWP: no map cache yet\n");
 		return;
 	}
-	std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-	if (in.bad() || !cache_.Load(bytes.data(), bytes.size(), ParserVersion()))
+	std::setvbuf(in, nullptr, _IONBF, 0);
+
+	const precise_t start = I_GetPreciseTime();
+	std::vector<uint8_t> bytes;
+	bool readok = false;
+	if (std::fseek(in, 0, SEEK_END) == 0)
+	{
+		const long size = std::ftell(in);
+		if (size >= 0 && std::fseek(in, 0, SEEK_SET) == 0)
+		{
+			bytes.resize(static_cast<size_t>(size));
+			size_t got = 0;
+			while (got < bytes.size())
+			{
+				const size_t n = std::fread(bytes.data() + got, 1, bytes.size() - got, in);
+				if (n == 0)
+				{
+					break; // End of file or an error
+				}
+				got += n;
+			}
+			readok = got == bytes.size();
+		}
+	}
+	std::fclose(in);
+
+	if (readok)
+	{
+		I_OutputMsg("UWP: map cache: read %.1f MB in %.2f s\n", static_cast<double>(bytes.size()) / (1024.0 * 1024.0),
+			static_cast<double>(I_GetPreciseTime() - start) / static_cast<double>(I_GetPrecisePrecision()));
+	}
+
+	if (!readok || !cache_.Load(bytes.data(), bytes.size(), ParserVersion()))
 	{
 		I_OutputMsg("UWP: map cache %s is unreadable or from another version; starting over\n", path_.c_str());
 	}
@@ -122,6 +153,7 @@ UWPMapCache::~UWPMapCache()
 		});
 		const std::string tmp = path_ + ".tmp";
 		bool ok = false;
+		const precise_t savestart = I_GetPreciseTime();
 		{
 			std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
 			if (out)
@@ -139,7 +171,8 @@ UWPMapCache::~UWPMapCache()
 		}
 		if (ok)
 		{
-			std::snprintf(saved, sizeof saved, "; saved %.1f MB", static_cast<double>(bytes.size()) / (1024.0 * 1024.0));
+			std::snprintf(saved, sizeof saved, "; saved %.1f MB in %.2f s", static_cast<double>(bytes.size()) / (1024.0 * 1024.0),
+				static_cast<double>(I_GetPreciseTime() - savestart) / static_cast<double>(I_GetPrecisePrecision()));
 		}
 		else
 		{
