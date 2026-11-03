@@ -4418,7 +4418,20 @@ static void HWR_DrawDropShadow(mobj_t *thing, fixed_t scale)
 
 	groundz = R_GetShadowZ(thing, &groundslope);
 
-	gpatch = (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE);
+	{
+		// Look the lump up again only when a file has been added since (it could replace DSHADOW)
+		static lumpnum_t shadowlump = LUMPERROR;
+		static UINT16 shadowwads = 0;
+		if (!shadowwads || shadowwads != numwadfiles)
+		{
+			shadowlump = W_CheckNumForName("DSHADOW");
+			shadowwads = numwadfiles;
+		}
+		if (shadowlump == LUMPERROR)
+			gpatch = (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE);// the missing patch
+		else
+			gpatch = (patch_t *)W_CachePatchNum(shadowlump, PU_SPRITE);
+	}
 	if (!(gpatch && ((GLPatch_t *)gpatch->hardware)->mipmap->format)) return;
 	HWR_GetPatch(gpatch);
 
