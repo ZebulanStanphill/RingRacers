@@ -511,6 +511,10 @@ def generate(engine, output):
         "FIXTURE": "\n".join(fixture_code),
     }, output / "horizon.cpp")
 
+    render(templates / "batch_sort.cpp.in", {
+        "SORT_KEYS": batching.section("typedef struct\n{\n\tINT32 shader;", "// This function organizes the geometry"),
+    }, output / "batch_sort.cpp")
+
     postimg_mobj = Source(engine / "src/p_mobj.c")
     render(templates / "postimg_selection.cpp.in", {
         "CAMERA_HEAT": postimg_mobj.function("P_CameraCheckHeat"),

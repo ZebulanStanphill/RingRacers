@@ -1,0 +1,105 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+#include "hardware/hw_batching.h"
+#undef min
+#undef max
+
+PolygonArrayEntry *polygonArray = nullptr;
+int polygonArraySize = 0;
+@@SORT_KEYS@@
+
+// Sorts the polygons as HWR_RenderBatches does and returns the sorted polygon indices.
+static std::vector<int> Sort(const std::vector<PolygonArrayEntry> &polygons, bool shaders) {
+    std::vector<PolygonArrayEntry> copy = polygons;
+    polygonArray = copy.data();
+    polygonArraySize = (int)copy.size();
+    std::vector<PolygonSortKey> keys(copy.size());
+    polygonSortKeys = keys.data(); polygonSortKeysAllocSize = (int)keys.size();
+    buildPolygonSortKeys(shaders);
+    qsort(keys.data(), keys.size(), sizeof(PolygonSortKey), comparePolygonKeys);
+    std::vector<int> order;
+    for (const PolygonSortKey &key : keys) order.push_back((int)key.index);
+    return order;
+}
+static PolygonArrayEntry Entry(GLMipmap_t *texture = nullptr) {
+    PolygonArrayEntry entry{};
+    entry.texture = texture;
+    entry.shader = 3;
+    return entry;
+}
+using Order = std::vector<int>;
+
+int main() {
+    GLMipmap_t low{}, high{}, brightHigh{};
+    low.downloaded = 5; high.downloaded = 9; brightHigh.downloaded = 7;
+
+    // Skywalls (no texture) and horizon lines come first, in submission order, whatever their other fields.
+    {
+        std::vector<PolygonArrayEntry> polys(6, Entry(&low));
+        polys[0].shader = 1;
+        polys[1].polyFlags = PF_NoTexture; polys[1].shader = 9;
+        polys[1].surf.PolyColor.rgba = 0xFFFFFFFF; polys[1].texture = &high;
+        polys[2].shader = 0;
+        polys[3].horizonSpecial = true; polys[3].shader = 7;
+        polys[4].polyFlags = PF_NoTexture;
+        polys[5].shader = 0; polys[5].texture = &high;
+        assert((Sort(polys, true) == Order{1, 3, 4, 2, 5, 0}));
+    }
+    // Shader, texture, brightmap, polyflags, then the colors and light fields, in that order of importance.
+    // Each entry below differs from the previous one only in a less important field than the last, or sets a
+    // more important one, so the list is in sorted order; any shuffle of it must sort back to it.
+    {
+        std::vector<PolygonArrayEntry> sorted;
+        PolygonArrayEntry e = Entry(&low);
+        e.shader = 1; e.texture = &high; e.polyFlags = 99; sorted.push_back(e);           // lowest shader
+        e = Entry(nullptr); e.surf.PolyColor.rgba = 5; sorted.push_back(e);               // no texture
+        e = Entry(&low); e.brightmap = &brightHigh; e.polyFlags = 0; sorted.push_back(e); // texture, then brightmap...
+        e = Entry(&high); e.polyFlags = 0; sorted.push_back(e);                           // ...before a higher texture
+        e.polyFlags = 1; sorted.push_back(e);
+        e.surf.PolyColor.rgba = 1; sorted.push_back(e);
+        e.surf.PolyColor.rgba = 0x80000000; sorted.push_back(e);
+        e.surf.TintColor.rgba = 1; sorted.push_back(e);
+        e.surf.FadeColor.rgba = 0xFF000000; sorted.push_back(e);
+        e.surf.LightInfo.light_level = 1; sorted.push_back(e);
+        e.surf.LightInfo.fade_start = 1; sorted.push_back(e);
+        e.surf.LightInfo.fade_end = 1; sorted.push_back(e);
+        e.surf.LightInfo.directional = true; sorted.push_back(e);
+        e.surf.LightTableId = 4; sorted.push_back(e);
+        Order shuffle = {7, 0, 12, 3, 9, 1, 5, 11, 2, 10, 4, 8, 6, 13};
+        assert(shuffle.size() == sorted.size());
+        std::vector<PolygonArrayEntry> scrambled;
+        for (int i : shuffle) scrambled.push_back(sorted[i]);
+        Order recovered;
+        for (int i : Sort(scrambled, true)) recovered.push_back(shuffle[i]);
+        Order expected;
+        for (int i = 0; i < (int)sorted.size(); i++) expected.push_back(i);
+        assert(recovered == expected);
+    }
+    // The same state in any number of polygons keeps submission order, and colors compare both ways.
+    {
+        std::vector<PolygonArrayEntry> polys(5, Entry(&low));
+        assert((Sort(polys, true) == Order{0, 1, 2, 3, 4}));
+        polys[1].surf.PolyColor.rgba = 0xFFFFFFFF;
+        polys[3].surf.PolyColor.rgba = 0x01000000;
+        assert((Sort(polys, true) == Order{0, 2, 4, 3, 1}));
+        polys[0].surf.PolyColor.rgba = 0xFFFFFFFF;
+        polys[3].surf.PolyColor.rgba = 0;
+        assert((Sort(polys, true) == Order{2, 3, 4, 0, 1}));
+    }
+    // Without shaders only the texture, polyflags and color matter, and polygons without a texture keep their order first.
+    {
+        std::vector<PolygonArrayEntry> polys = {Entry(&high), Entry(nullptr), Entry(&low), Entry(&low), Entry(&high)};
+        polys[0].shader = 1; polys[2].shader = 8; polys[2].surf.TintColor.rgba = 3; polys[2].surf.LightInfo.light_level = 200;
+        polys[3].polyFlags = 1;
+        polys[4].surf.PolyColor.rgba = 1;
+        polys[1].polyFlags = PF_NoTexture;
+        assert((Sort(polys, false) == Order{1, 2, 3, 0, 4}));
+        polys[1].polyFlags = 0;
+        polys.push_back(Entry(nullptr));
+        assert((Sort(polys, false) == Order{1, 5, 2, 3, 0, 4}));
+    }
+    puts("batch sort keys passed");
+}

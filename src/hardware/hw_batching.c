@@ -147,108 +147,88 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 	}
 }
 
-static int comparePolygons(const void *p1, const void *p2)
+// What the sort compares, copied out of polygonArray so that comparisons stay in one
+// contiguous array instead of chasing large entries and texture pointers.
+// The fields are in sort order; index is the final tiebreak, which keeps the sort
+// total and deterministic.
+typedef struct
 {
-	unsigned int index1 = *(const unsigned int*)p1;
-	unsigned int index2 = *(const unsigned int*)p2;
-	PolygonArrayEntry* poly1 = &polygonArray[index1];
-	PolygonArrayEntry* poly2 = &polygonArray[index2];
-	int diff;
-	INT64 diff64;
-	UINT32 downloaded1 = 0;
-	UINT32 downloaded2 = 0;
+	INT32 shader;// -1 for skywalls and horizon lines, which must retain their order
+	UINT32 texture;// the texture's `downloaded` name, or 0
+	UINT32 brightmap;
+	UINT64 polyFlags;
+	UINT32 polyColor, tintColor, fadeColor;
+	UINT32 lightLevel, fadeStart, fadeEnd, directional, lightTableId;
+	UINT32 index;
+} PolygonSortKey;
 
-	int shader1 = poly1->shader;
-	int shader2 = poly2->shader;
-	// make skywalls and horizon lines first in order
-	if (poly1->polyFlags & PF_NoTexture || poly1->horizonSpecial)
-		shader1 = -1;
-	if (poly2->polyFlags & PF_NoTexture || poly2->horizonSpecial)
-		shader2 = -1;
-	diff = shader1 - shader2;
-	if (diff != 0) return diff;
+static PolygonSortKey *polygonSortKeys = NULL;
+static int polygonSortKeysAllocSize = 0;
 
-	// skywalls and horizon lines must retain their order for horizon lines to work
-	if (shader1 == -1 && shader2 == -1)
-		return index1 - index2;
+#define COMPARE_KEY_FIELD(field) \
+	if (key1->field != key2->field) return key1->field < key2->field ? -1 : 1
 
-	if (poly1->texture)
-		downloaded1 = poly1->texture->downloaded; // there should be a opengl texture name here, usable for comparisons
-	if (poly2->texture)
-		downloaded2 = poly2->texture->downloaded;
-	diff64 = downloaded1 - downloaded2;
-	if (diff64 != 0) return diff64;
-
-	downloaded1 = 0;
-	downloaded2 = 0;
-	if (poly1->brightmap)
-		downloaded1 = poly1->brightmap->downloaded; // there should be a opengl texture name here, usable for comparisons
-	if (poly2->brightmap)
-		downloaded2 = poly2->brightmap->downloaded;
-	diff64 = downloaded1 - downloaded2;
-	if (diff64 != 0) return diff64;
-
-	diff = poly1->polyFlags - poly2->polyFlags;
-	if (diff != 0) return diff;
-
-	diff64 = poly1->surf.PolyColor.rgba - poly2->surf.PolyColor.rgba;
-	if (diff64 < 0) return -1; else if (diff64 > 0) return 1;
-	diff64 = poly1->surf.TintColor.rgba - poly2->surf.TintColor.rgba;
-	if (diff64 < 0) return -1; else if (diff64 > 0) return 1;
-	diff64 = poly1->surf.FadeColor.rgba - poly2->surf.FadeColor.rgba;
-	if (diff64 < 0) return -1; else if (diff64 > 0) return 1;
-
-	diff = poly1->surf.LightInfo.light_level - poly2->surf.LightInfo.light_level;
-	if (diff != 0) return diff;
-	diff = poly1->surf.LightInfo.fade_start - poly2->surf.LightInfo.fade_start;
-	if (diff != 0) return diff;
-	diff = poly1->surf.LightInfo.fade_end - poly2->surf.LightInfo.fade_end;
-	if (diff != 0) return diff;
-
-	diff = poly1->surf.LightInfo.directional - poly2->surf.LightInfo.directional;
-	if (diff != 0) return diff;
-
-	// [UWP]: palette rendering
-	if (poly1->surf.LightTableId != poly2->surf.LightTableId)
-		return poly1->surf.LightTableId < poly2->surf.LightTableId ? -1 : 1;
-
+static int comparePolygonKeys(const void *p1, const void *p2)
+{
+	const PolygonSortKey *key1 = (const PolygonSortKey *)p1;
+	const PolygonSortKey *key2 = (const PolygonSortKey *)p2;
+	COMPARE_KEY_FIELD(shader);
+	COMPARE_KEY_FIELD(texture);
+	COMPARE_KEY_FIELD(brightmap);
+	COMPARE_KEY_FIELD(polyFlags);
+	COMPARE_KEY_FIELD(polyColor);
+	COMPARE_KEY_FIELD(tintColor);
+	COMPARE_KEY_FIELD(fadeColor);
+	COMPARE_KEY_FIELD(lightLevel);
+	COMPARE_KEY_FIELD(fadeStart);
+	COMPARE_KEY_FIELD(fadeEnd);
+	COMPARE_KEY_FIELD(directional);
+	COMPARE_KEY_FIELD(lightTableId);
+	COMPARE_KEY_FIELD(index);
 	return 0;
 }
 
-static int comparePolygonsNoShaders(const void *p1, const void *p2)
+// Fills the sort key of every polygon. With shaders, the order is shader, texture,
+// brightmap, polyflags, colors and light; without, texture, polyflags and color.
+static void buildPolygonSortKeys(boolean shaders)
 {
-	unsigned int index1 = *(const unsigned int*)p1;
-	unsigned int index2 = *(const unsigned int*)p2;
-	PolygonArrayEntry* poly1 = &polygonArray[index1];
-	PolygonArrayEntry* poly2 = &polygonArray[index2];
-	int diff;
-	INT64 diff64;
+	int i;
+	for (i = 0; i < polygonArraySize; i++)
+	{
+		const PolygonArrayEntry *poly = &polygonArray[i];
+		PolygonSortKey *key = &polygonSortKeys[i];
+		boolean keepOrder = poly->polyFlags & PF_NoTexture || poly->horizonSpecial;
 
-	GLMipmap_t *texture1 = poly1->texture;
-	GLMipmap_t *texture2 = poly2->texture;
-	UINT32 downloaded1 = 0;
-	UINT32 downloaded2 = 0;
-	if (poly1->polyFlags & PF_NoTexture || poly1->horizonSpecial)
-		texture1 = NULL;
-	if (poly2->polyFlags & PF_NoTexture || poly2->horizonSpecial)
-		texture2 = NULL;
-	if (texture1)
-		downloaded1 = texture1->downloaded; // there should be a opengl texture name here, usable for comparisons
-	if (texture2)
-		downloaded2 = texture2->downloaded;
-	// skywalls and horizon lines must retain their order for horizon lines to work
-	if (!texture1 && !texture2)
-		return index1 - index2;
-	diff64 = downloaded1 - downloaded2;
-	if (diff64 != 0) return diff64;
+		memset(key, 0, sizeof *key);
+		key->index = i;
+		if (!shaders)
+			keepOrder = keepOrder || !poly->texture;
+		if (keepOrder)
+		{
+			// make skywalls and horizon lines first in order
+			key->shader = -1;
+			continue;
+		}
 
-	diff = poly1->polyFlags - poly2->polyFlags;
-	if (diff != 0) return diff;
+		if (shaders)
+			key->shader = poly->shader;
+		if (poly->texture)
+			key->texture = poly->texture->downloaded; // there should be a opengl texture name here, usable for comparisons
+		key->polyFlags = poly->polyFlags;
+		key->polyColor = poly->surf.PolyColor.rgba;
+		if (!shaders)
+			continue;
 
-	diff64 = poly1->surf.PolyColor.rgba - poly2->surf.PolyColor.rgba;
-	if (diff64 < 0) return -1; else if (diff64 > 0) return 1;
-
-	return 0;
+		if (poly->brightmap)
+			key->brightmap = poly->brightmap->downloaded;
+		key->tintColor = poly->surf.TintColor.rgba;
+		key->fadeColor = poly->surf.FadeColor.rgba;
+		key->lightLevel = poly->surf.LightInfo.light_level;
+		key->fadeStart = poly->surf.LightInfo.fade_start;
+		key->fadeEnd = poly->surf.LightInfo.fade_end;
+		key->directional = poly->surf.LightInfo.directional;
+		key->lightTableId = poly->surf.LightTableId; // [UWP]: palette rendering
+	}
 }
 
 // This function organizes the geometry collected by HWR_ProcessPolygon calls into batches and uses
@@ -292,18 +272,20 @@ void HWR_RenderBatches(void)
 	ps_hw_numpolys = polygonArraySize;
 	ps_hw_numcalls = ps_hw_numverts = 0;
 	ps_hw_numshaders = ps_hw_numtextures = ps_hw_numpolyflags = ps_hw_numcolors = 1;
-	// init polygonIndexArray
+	// sort polygons by compact keys, then write the sorted order to polygonIndexArray
+	ps_hw_batchsorttime = I_GetPreciseTime();
+	if (polygonSortKeysAllocSize < polygonArrayAllocSize)
+	{
+		free(polygonSortKeys);
+		polygonSortKeys = malloc(polygonArrayAllocSize * sizeof(PolygonSortKey));
+		polygonSortKeysAllocSize = polygonArrayAllocSize;
+	}
+	buildPolygonSortKeys(cv_glshaders.value && gl_shadersavailable);
+	qsort(polygonSortKeys, polygonArraySize, sizeof(PolygonSortKey), comparePolygonKeys);
 	for (i = 0; i < polygonArraySize; i++)
 	{
-		polygonIndexArray[i] = i;
+		polygonIndexArray[i] = polygonSortKeys[i].index;
 	}
-
-	// sort polygons
-	ps_hw_batchsorttime = I_GetPreciseTime();
-	if (cv_glshaders.value && gl_shadersavailable)
-		qsort(polygonIndexArray, polygonArraySize, sizeof(unsigned int), comparePolygons);
-	else
-		qsort(polygonIndexArray, polygonArraySize, sizeof(unsigned int), comparePolygonsNoShaders);
 	ps_hw_batchsorttime = I_GetPreciseTime() - ps_hw_batchsorttime;
 	// sort order
 	// 1. shader
