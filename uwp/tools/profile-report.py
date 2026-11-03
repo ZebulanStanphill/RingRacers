@@ -6,8 +6,6 @@ usage: profile-report.py uwp-profile.txt ringracers-uwp.map|- [top N] [--dll nam
 Profiles from builds with the renderer split name phases "Software: 3D view" and "Legacy GL: 3D view"; older ones just
 "3D view". Each phase and each renderer shows how much of it is inside ANGLE (libGLESv2.dll or libEGL.dll, anywhere in the
 call stack), which needs stacks. A map file of "-" skips symbols, for a report that only needs that.
-Profiles that also sample startup have a "No renderer: startup" phase, reported on its own rather than in the in-level
-shares.
 
 With call stacks in the profile (builds after 9aa8798), also shows each function's time including what it called
 ("inclusive"), and which game functions the hottest code was called from. --dll maps addresses in other modules to
@@ -153,15 +151,11 @@ def main():
         return f", {100.0 * angle[name] / withstacks[name]:.1f}% inside ANGLE" if withstacks.get(name) else ""
 
     print(header)
-    # Startup samples (the "startup" phase) are reported on their own, outside the in-level totals
-    def is_startup(name):
-        return name.endswith(": startup")
-    total = sum(c for name, entries in phases.items() if not is_startup(name) for _, _, c in entries)
+    total = sum(c for entries in phases.values() for _, _, c in entries)
     allfuncs = collections.Counter()
     for name, entries in phases.items():
         n = sum(c for _, _, c in entries)
-        share = "during startup" if is_startup(name) else f"{100.0 * n / max(total, 1):.1f}% of all in levels"
-        print(f"\n== {name}: {n} samples, {share}{angle_text(name)}")
+        print(f"\n== {name}: {n} samples, {100.0 * n / max(total, 1):.1f}% of all in levels{angle_text(name)}")
         funcs = collections.Counter()
         mods = collections.Counter()
         for mod, off, count in entries:
@@ -169,23 +163,17 @@ def main():
             mods[path.replace("\\", "/").split("/")[-1]] += count
             key = symbols.name(path, off)
             funcs[key] += count
-            if not is_startup(name):
-                allfuncs[key] += count
+            allfuncs[key] += count
         print("   modules: " + ", ".join(f"{m} {100.0 * c / n:.1f}%" for m, c in mods.most_common(6)))
         for key, count in funcs.most_common(top):
-            if is_startup(name):
-                print(f"   {100.0 * count / n:5.1f}%  {key}")
-            else:
-                print(f"   {100.0 * count / n:5.1f}%  {100.0 * count / max(total, 1):5.1f}% all  {key}")
-    print(f"\n== all phases in levels: {total} samples")
+            print(f"   {100.0 * count / n:5.1f}%  {100.0 * count / total:5.1f}% all  {key}")
+    print(f"\n== all phases: {total} samples")
     for key, count in allfuncs.most_common(top):
         print(f"   {100.0 * count / total:5.1f}%  {key}")
 
     # Per renderer (all together in older profiles, which don't say), "inside ANGLE" meaning any frame of the call stack
     renderers = collections.OrderedDict()
     for name, entries in phases.items():
-        if is_startup(name):
-            continue
         r = renderers.setdefault(renderer_of(name), [0, 0, 0])
         r[0] += sum(c for _, _, c in entries)
         r[1] += withstacks.get(name, 0)
