@@ -1400,6 +1400,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	INT32 flatflag = 63;
 	boolean texflat = false;
 	float scrollx = 0.0f, scrolly = 0.0f, anglef = 0.0f;
+	double anglecos = 1.0, anglesin = 0.0;
 	angle_t angle = 0;
 	FSurfaceInfo    Surf;
 	float tempxsow, tempytow;
@@ -1521,9 +1522,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		tempytow = flatyref;
 
 		anglef = ANG2RAD(InvAngle(angle));
+		anglecos = cos(anglef);
+		anglesin = sin(anglef);
 
-		flatxref = (tempxsow * cos(anglef)) - (tempytow * sin(anglef));
-		flatyref = (tempxsow * sin(anglef)) + (tempytow * cos(anglef));
+		flatxref = (tempxsow * anglecos) - (tempytow * anglesin);
+		flatyref = (tempxsow * anglesin) + (tempytow * anglecos);
 	}
 
 #define SETUP3DVERT(vert, vx, vy) {\
@@ -1544,8 +1547,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		{\
 			tempxsow = vert->s;\
 			tempytow = vert->t;\
-			vert->s = (tempxsow * cos(anglef)) - (tempytow * sin(anglef));\
-			vert->t = (tempxsow * sin(anglef)) + (tempytow * cos(anglef));\
+			vert->s = (tempxsow * anglecos) - (tempytow * anglesin);\
+			vert->t = (tempxsow * anglesin) + (tempytow * anglecos);\
 		}\
 \
 		vert->x = (vx);\
