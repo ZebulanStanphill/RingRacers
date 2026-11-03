@@ -358,6 +358,13 @@ untouched padding.
   screens, 1:1, and the fallbacks to Fit when the frame is larger than the screen in either dimension, for an unlisted mode
   and for sizes that are not positive. A sweep of 9 frame sizes over about 12,000 screens checks the rectangle,
   centering, maximal k and the fallbacks. The Direct3D 12 WARP scenes below draw the placement.
+- **Map preview cache:** `map_preview_cache` compiles the production `src/map_preview_cache.hpp`, which the UWP build uses to
+  keep each map WAD's thumbnail and minimap bytes and each staff ghost's parsed brief on disk between launches, under ASan and
+  UBSan with no engine. Check a round trip of maps (both lumps, the picture only, neither, an empty lump) and ghosts (valid
+  with a name, and one the parser rejected), and that a change to any of the key's name, CRC32, size or compressed size
+  misses. A file with the wrong magic, another format or parser version, trailing bytes, a count or a length that runs past
+  the end, or any truncation (every length of a valid file) is rejected whole, without a read out of bounds. Pruning with
+  `keep`, the stability of the pointers `Find` returns across later `Put`s, and when the cache is dirty are checked too.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 

@@ -4026,6 +4026,14 @@ fail:
 	return ret;
 }
 
+#ifdef _UWP
+// [UWP]: Part of the map preview cache's parser version: G_GetStaffGhostBrief reads what these allow
+UINT32 G_UWPDemoVersions(void)
+{
+	return ((UINT32)MINDEMOVERSION << 16) | DEMOVERSION;
+}
+#endif
+
 //
 // G_TimeDemo
 // NOTE: name is a full filename for external demos

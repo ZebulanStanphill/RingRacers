@@ -231,6 +231,9 @@ void G_DoPlayDemoEx(const char *defdemoname, lumpnum_t deflumpnum);
 void G_TimeDemo(const char *name);
 void G_AddGhost(savebuffer_t *buffer, const char *defdemoname);
 staffbrief_t *G_GetStaffGhostBrief(UINT8 *buffer);
+#ifdef _UWP
+UINT32 G_UWPDemoVersions(void); // [UWP]: the oldest and newest demo versions the game reads, for the map preview cache
+#endif
 void G_FreeGhosts(void);
 void G_DoneLevelLoad(void);
 

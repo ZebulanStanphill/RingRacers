@@ -170,3 +170,17 @@ endif()
 add_test(NAME screen_scaling COMMAND screen_scaling)
 set_tests_properties(screen_scaling PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
+# The startup map preview cache's file format and lookups are a header of their own, with no dependencies.
+add_executable(map_preview_cache map-preview-cache.cpp)
+target_compile_features(map_preview_cache PRIVATE cxx_std_17)
+target_include_directories(map_preview_cache PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(map_preview_cache PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(map_preview_cache PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(map_preview_cache PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME map_preview_cache COMMAND map_preview_cache)
+set_tests_properties(map_preview_cache PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")

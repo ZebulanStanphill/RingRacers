@@ -58,6 +58,7 @@ set(SRB2_MAIN_SOURCES
 	p_link.cpp
 	p_loop.c
 	p_map.c
+	p_mapcache.cpp
 	p_mapthing.cpp
 	p_maputl.c
 	p_mobj.c

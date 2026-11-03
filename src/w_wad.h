@@ -77,6 +77,7 @@ struct lumpinfo_t
 	compmethod compression; // lump compression method
 #ifdef _UWP
 	boolean uwplocalheader; // [UWP]: position is still that of the zip entry's local header; data position is resolved on first use
+	UINT32 uwpcrc32; // [UWP]: the zip entry's CRC32; set for PK3 lumps only (map preview cache key)
 #endif
 };
 

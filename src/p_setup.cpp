@@ -19,6 +19,7 @@
 #include "cxxutil.hpp"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
+#include "p_mapcache.h"
 #endif
 
 #include "doomdef.h"
@@ -9340,6 +9341,9 @@ UINT8 P_InitMapData(void)
 	virtres_t *virtmap;
 	virtlump_t *minimap, *thumbnailPic;
 	char *name;
+#ifdef _UWP
+	UWPMapCache mapcache; // [UWP]: reads mapcache.bin now and saves it when this returns
+#endif
 
 	for (i = 0; i < nummapheaders; ++i)
 	{
@@ -9421,9 +9425,14 @@ UINT8 P_InitMapData(void)
 				wadnamemap = i+1;
 
 			// Get map thumbnail and minimap
+#ifdef _UWP
+			// [UWP]: From the map cache if it has this map, which leaves virtmap NULL
+			mapcache.GetMapPictures(mapheaderinfo[i]->lumpnum, &virtmap, &thumbnailPic, &minimap);
+#else
 			virtmap = vres_GetMap(mapheaderinfo[i]->lumpnum);
 			thumbnailPic = vres_Find(virtmap, "PICTURE");
 			minimap = vres_Find(virtmap, "MINIMAP");
+#endif
 
 			// Clear out existing graphics...
 			if (mapheaderinfo[i]->thumbnailPic)
@@ -9486,12 +9495,17 @@ UINT8 P_InitMapData(void)
 						continue;
 					}
 
+#ifdef _UWP
+					// [UWP]: From the map cache if it has this ghost
+					staffbrief_t* briefghost = mapcache.GetStaffBrief(wadindex, lumpnum);
+#else
 					size_t lumplength = W_LumpLengthPwad(wadindex, lumpnum);
 					UINT8* ghostdata = static_cast<UINT8*>(Z_Malloc(lumplength, PU_STATIC, nullptr));
 					auto ghostdata_finalizer = srb2::finally([=]() { Z_Free(ghostdata); });
 
 					W_ReadLumpPwad(wadindex, lumpnum, ghostdata);
 					staffbrief_t* briefghost = G_GetStaffGhostBrief(ghostdata);
+#endif
 					if (briefghost == nullptr)
 					{
 						continue;
@@ -9520,6 +9534,9 @@ UINT8 P_InitMapData(void)
 
 			P_DeriveAutoMedalTimes(*mapheaderinfo[i]);
 
+#ifdef _UWP
+			if (virtmap != NULL) // [UWP]: NULL when the map cache had it
+#endif
 			vres_Free(virtmap);
 		}
 	}

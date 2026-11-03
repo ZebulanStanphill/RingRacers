@@ -922,6 +922,7 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 		lump_p->size = LONG(zentry->size);
 #ifdef _UWP
 		lump_p->uwplocalheader = w_uwptrustlayout;
+		lump_p->uwpcrc32 = LONG(zentry->CRC32);
 #endif
 
 		fullname = static_cast<char*>(malloc(SHORT(zentry->namelen) + 1));
