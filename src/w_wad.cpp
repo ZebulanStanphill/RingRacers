@@ -43,6 +43,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <vector>
 #ifdef _UWP
 #include <atomic>
 #include <chrono>
@@ -56,6 +57,7 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "fastcmp.h"
+#include "name_index.hpp"
 
 #include "g_game.h" // G_LoadGameData
 #include "m_cond.h" // gamedata itself
@@ -126,6 +128,10 @@ static UINT16 lumpnumcacheindex = 0;
 //===========================================================================
 UINT16 numwadfiles = 0; // number of active wadfiles
 wadfile_t *wadfiles[MAX_WADFILES]; // 0 to numwadfiles-1 are valid
+
+// Per-file index from each lump's stored hash to its position, so that W_CheckNumForNamePwad needn't scan every lump.
+// Indexed by wad number; built once in W_InitFile, as a file's lumps never change afterwards.
+static std::vector<name_index::HashPositions> g_lumpNameIndex;
 
 #ifdef _UWP
 // [UWP]: Set while W_InitFile checks and reads the directory of a main file verified in the background, so that
@@ -349,6 +355,7 @@ void W_Shutdown(void)
 		Z_Free(wad->lumpinfo);
 		Z_Free(wad);
 	}
+	g_lumpNameIndex.clear();
 
 	// Cleanup the separate shader lookup
 	if (g_shaderspk3file)
@@ -1241,6 +1248,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	// add the wadfile
 	//
 	CONS_Printf(M_GetText("Added file %s (%u lumps)\n"), filename, numlumps);
+	if (g_lumpNameIndex.size() <= numwadfiles)
+		g_lumpNameIndex.resize(numwadfiles + 1);
+	g_lumpNameIndex[numwadfiles].Clear();
+	for (UINT16 lumpnum = 0; lumpnum < numlumps; lumpnum++)
+		g_lumpNameIndex[numwadfiles].Add(lumpinfo[lumpnum].hash, lumpnum);
 	wadfiles[numwadfiles] = wadfile;
 	numwadfiles++; // must come BEFORE W_LoadDehackedLumps, so any addfile called by COM_BufInsertText called by Lua doesn't overwrite what we just loaded
 
@@ -1496,6 +1508,17 @@ UINT16 W_CheckNumForNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 	//
 	if (startlump < wadfiles[wad]->numlumps)
 	{
+		const lumpinfo_t *lumps = wadfiles[wad]->lumpinfo;
+
+		if (wad < g_lumpNameIndex.size())
+		{
+			const int64_t found = g_lumpNameIndex[wad].FirstFrom(hash, startlump, [&](UINT32 pos)
+			{
+				return !strncasecmp(lumps[pos].name, name, 8);
+			});
+			return found < 0 ? INT16_MAX : static_cast<UINT16>(found);
+		}
+
 		lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 		for (i = startlump; i < wadfiles[wad]->numlumps; i++, lump_p++)
 		{
