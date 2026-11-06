@@ -40,6 +40,7 @@
 #include "doomdef.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
+#include "i_uwpdata.h"
 #endif
 #include "am_map.h"
 #include "console.h"
@@ -1657,6 +1658,15 @@ static void D_AddFile(initmultiplefilesentry_t *list, size_t index, const char *
 	list[index].md5sum = md5copy;
 }
 
+// [UWP]: A main data file is loaded from its copy in internal storage when there is a usable one (i_uwpdata.h)
+static void D_AddDataFile(initmultiplefilesentry_t *list, size_t index, const char *file, const char *md5sum)
+{
+#ifdef _UWP
+	file = I_UWPDataResolve(file, md5sum);
+#endif
+	D_AddFile(list, index, file, md5sum);
+}
+
 static inline void D_CleanFile(initmultiplefilesentry_t *list, size_t count)
 {
 	size_t i;
@@ -1762,22 +1772,28 @@ static void IdentifyVersion(void)
 	snprintf(configfile, sizeof configfile, "%s" PATHSEP CONFIGFILENAME, srb2waddir);
 	configfile[sizeof configfile - 1] = '\0';
 
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","scripts.pk3"), ASSET_HASH_SCRIPTS_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","gfx.pk3"), ASSET_HASH_GFX_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_general.pk3"), ASSET_HASH_TEXTURES_GENERAL_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_segazones.pk3"), ASSET_HASH_TEXTURES_SEGAZONES_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_originalzones.pk3"), ASSET_HASH_TEXTURES_ORIGINALZONES_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","chars.pk3"), ASSET_HASH_CHARS_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","followers.pk3"), ASSET_HASH_FOLLOWERS_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","maps.pk3"), ASSET_HASH_MAPS_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","unlocks.pk3"), ASSET_HASH_UNLOCKS_PK3);
-	D_AddFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","staffghosts.pk3"), ASSET_HASH_STAFFGHOSTS_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","scripts.pk3"), ASSET_HASH_SCRIPTS_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","gfx.pk3"), ASSET_HASH_GFX_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_general.pk3"), ASSET_HASH_TEXTURES_GENERAL_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_segazones.pk3"), ASSET_HASH_TEXTURES_SEGAZONES_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_originalzones.pk3"), ASSET_HASH_TEXTURES_ORIGINALZONES_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","chars.pk3"), ASSET_HASH_CHARS_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","followers.pk3"), ASSET_HASH_FOLLOWERS_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","maps.pk3"), ASSET_HASH_MAPS_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","unlocks.pk3"), ASSET_HASH_UNLOCKS_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","staffghosts.pk3"), ASSET_HASH_STAFFGHOSTS_PK3);
 #ifdef USE_PATCH_FILE
-	D_AddFile(startupiwads, num_startupiwads++, va(pandf,srb2waddir,"patch.pk3"), ASSET_HASH_PATCH_PK3);
+	D_AddDataFile(startupiwads, num_startupiwads++, va(pandf,srb2waddir,"patch.pk3"), ASSET_HASH_PATCH_PK3);
+#endif
+
+#ifdef _UWP
+#define MUSICPATH(path) I_UWPDataResolve(path, NULL)
+#else
+#define MUSICPATH(path) (path)
 #endif
 
 #define MUSICTEST(str) \
-		musicpath = va(spandf,srb2waddir,"data",str);\
+		musicpath = MUSICPATH(va(spandf,srb2waddir,"data",str));\
 		handle = W_OpenWadFile(&musicpath, NULL, false); \
 		if (handle) \
 		{ \
@@ -1802,6 +1818,11 @@ static void IdentifyVersion(void)
 	}
 
 #undef MUSICTEST
+#undef MUSICPATH
+
+#ifdef _UWP
+	I_UWPDataLogStartup();
+#endif
 }
 
 static void

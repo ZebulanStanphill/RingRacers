@@ -366,6 +366,14 @@ untouched padding.
   misses. A file with the wrong magic, another format or parser version, trailing bytes, a count or a length that runs past
   the end, or any truncation (every length of a valid file) is rejected whole, without a read out of bounds. Pruning with
   `keep`, the stability of the pointers `Find` returns across later `Put`s, and when the cache is dirty are checked too.
+- **UWP data copy record:** `uwp_data_copy` compiles the production `src/uwp_data_copy.hpp`, which decides whether the
+  copy of a game data file in the app's internal storage can be loaded instead of the file on the USB drive, under ASan and
+  UBSan with no engine. Check the one-line sidecar's round trip (including an empty file, the largest size and times, and a
+  file with no expected MD5), and that other magic or versions, missing fields, signs, overflowing numbers, uppercase or
+  short MD5s, extra lines, trailing text, embedded NULs and every truncation are rejected. Check the usability decision: a
+  matching copy is usable, and a missing source or copy, a missing or invalid sidecar, a source whose size or last-write
+  time changed, an expected MD5 that changed (or appeared for a file recorded without one), and a copy of the wrong size
+  each give their own verdict, in a fixed order. Copying, renaming and loading on Xbox are untested here.
 - **Name indexes:** `name_index` compiles the production `src/name_index.hpp`, the hash indexes that replace the linear
   lump-name, PK3 folder and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
   `HashPositions::FirstFrom` and `LastBelow` with the original forward (`W_CheckNumForNamePwad`) and backward

@@ -186,6 +186,20 @@ add_test(NAME map_preview_cache COMMAND map_preview_cache)
 set_tests_properties(map_preview_cache PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
+# The record beside a copy of a game data file and the rule for using the copy are a header of their own, with no dependencies.
+add_executable(uwp_data_copy uwp-data-copy.cpp)
+target_compile_features(uwp_data_copy PRIVATE cxx_std_17)
+target_include_directories(uwp_data_copy PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(uwp_data_copy PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(uwp_data_copy PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(uwp_data_copy PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME uwp_data_copy COMMAND uwp_data_copy)
+set_tests_properties(uwp_data_copy PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
 # The hash indexes behind the startup name lookups are a header of their own, with no dependencies.
 add_executable(name_index name-index.cpp)
 target_compile_features(name_index PRIVATE cxx_std_17)

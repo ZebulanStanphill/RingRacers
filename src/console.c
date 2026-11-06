@@ -747,6 +747,11 @@ void CON_Ticker(void)
 	INT32 i;
 	INT32 minheight;
 
+#ifdef _UWP
+	// [UWP]: Logs how copying the game files to internal storage went, once the background worker is done with it
+	W_UWPPollAssetCheck();
+#endif
+
 	Lock_state();
 
 	minheight = 20 * con_scalefactor;	// 20 = 8+8+4
