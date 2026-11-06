@@ -24,6 +24,7 @@
 #include "d_main.h"
 #include "g_demo.h"
 #include "i_system.h"
+#include "i_uwpdata.h"
 #include "z_zone.h"
 
 namespace
@@ -90,7 +91,21 @@ void UWPMapCache::Load()
 		return;
 	}
 	loaded_ = true;
-	path_ = std::string(srb2home) + PATHSEP + "mapcache.bin";
+	const std::string oldpath = std::string(srb2home) + PATHSEP + "mapcache.bin";
+	// Internal storage is far faster than the USB drive, where the cache used to be (i_uwpdata.h)
+	const char* local = I_UWPLocalFolder();
+	path_ = local ? std::string(local) + PATHSEP + "mapcache.bin" : oldpath;
+	if (local)
+	{
+		// Delete the old cache, so that no one has to clean it up by hand
+		std::error_code ec;
+		bool removed = std::filesystem::remove(oldpath, ec);
+		removed = std::filesystem::remove(oldpath + ".tmp", ec) || removed;
+		if (removed)
+		{
+			I_OutputMsg("UWP: map cache: deleted the old one from %s\n", oldpath.c_str());
+		}
+	}
 
 	// One read of the whole file, unbuffered: a stream's small buffer made this many small reads from the USB drive
 	FILE* in = std::fopen(path_.c_str(), "rb");
