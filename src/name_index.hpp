@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -75,6 +77,52 @@ public:
 
 private:
 	std::unordered_map<uint32_t, std::vector<uint32_t>> map_;
+};
+
+/// From every directory prefix of a lump's full name (ASCII-lowercased, up to and including each '/') to the first
+/// position that has it. Finds what a scan with strnicmp over the first strlen(name) chars finds, for a name that is a
+/// directory prefix itself.
+class FolderStarts
+{
+public:
+	/// Positions must be added in increasing order; the first position of a prefix is kept.
+	void Add(const char* fullname, uint32_t pos)
+	{
+		std::string lower;
+		for (const char* p = fullname; *p; p++)
+		{
+			char c = *p;
+			if (c >= 'A' && c <= 'Z')
+				c = static_cast<char>(c - 'A' + 'a');
+			lower += c;
+			if (c == '/')
+				map_.emplace(lower, pos);
+		}
+	}
+
+	void Clear() { map_.clear(); }
+
+	/// The first position whose full name starts, ignoring ASCII case, with name. Only for a name that is non-empty
+	/// and ends with '/'.
+	std::optional<uint32_t> First(const char* name) const
+	{
+		std::string lower;
+		for (const char* p = name; *p; p++)
+		{
+			char c = *p;
+			if (c >= 'A' && c <= 'Z')
+				c = static_cast<char>(c - 'A' + 'a');
+			lower += c;
+		}
+		assert(!lower.empty() && lower.back() == '/');
+		auto it = map_.find(lower);
+		if (it == map_.end())
+			return std::nullopt;
+		return it->second;
+	}
+
+private:
+	std::unordered_map<std::string, uint32_t> map_;
 };
 
 } // namespace name_index

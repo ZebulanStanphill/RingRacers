@@ -367,11 +367,14 @@ untouched padding.
   the end, or any truncation (every length of a valid file) is rejected whole, without a read out of bounds. Pruning with
   `keep`, the stability of the pointers `Find` returns across later `Put`s, and when the cache is dirty are checked too.
 - **Name indexes:** `name_index` compiles the production `src/name_index.hpp`, the hash indexes that replace the linear
-  lump-name and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
+  lump-name, PK3 folder and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
   `HashPositions::FirstFrom` and `LastBelow` with the original forward (`W_CheckNumForNamePwad`) and backward
   (`R_CheckTextureNumForName`) scans over the same hash and `strncasecmp` predicate: real and forced-colliding hashes,
   entries whose stored hash is not that of their name, case variations, names shorter than, exactly and longer than 8
-  characters, high-bit bytes, nonzero start positions and misses.
+  characters, high-bit bytes, nonzero start positions and misses. `FolderStarts` is compared with the original
+  `W_CheckNumForFolderStartPK3` prefix scan, including its SLADE single-directory-entry rule and the
+  past-the-end result on a miss: nested folders, case variations, prefixes that are not directories (`map/` against
+  `maps/`) and high-bit bytes.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 

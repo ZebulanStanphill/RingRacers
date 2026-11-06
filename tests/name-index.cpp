@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <random>
 #include <string>
 #include <strings.h>
@@ -50,6 +51,14 @@ static std::string randomName(size_t maxlen)
 	size_t len = roll(maxlen + 1);
 	for (size_t i = 0; i < len; i++)
 		s += alphabet[roll(sizeof alphabet - 1)];
+	return s;
+}
+
+static std::string randomCase(std::string s)
+{
+	for (char& c : s)
+		if (roll(2))
+			c = (char)((c >= 'a' && c <= 'z') ? c - 32 : (c >= 'A' && c <= 'Z') ? c + 32 : c);
 	return s;
 }
 
@@ -168,9 +177,104 @@ static int testHashPositions()
 	return 0;
 }
 
+// The original W_CheckNumForFolderStartPK3 with startlump 0
+static uint32_t linearFolderStart(const std::vector<std::string>& names, const char* name)
+{
+	size_t name_length = std::strlen(name);
+	uint32_t i;
+	for (i = 0; i < names.size(); i++)
+	{
+		if (strncasecmp(name, names[i].c_str(), name_length) == 0)
+		{
+			if (names[i].size() == name_length)
+				i++;
+			break;
+		}
+	}
+	return i;
+}
+
+static int testFolderStarts()
+{
+	static const char* const segments[] = {
+		"maps", "Maps", "MAPS", "map", "mapsx", "staffghosts", "StaffGhosts", "a", "A", "\xe9", "\xc9", "lua", "x.y", "",
+	};
+	const size_t nsegments = sizeof segments / sizeof segments[0];
+
+	// Direct behavior: SLADE directory entry, nested folders, a prefix that is not a directory
+	{
+		FolderStarts f;
+		f.Add("Maps/", 0);
+		f.Add("Maps/MAP01.wad", 1);
+		f.Add("mapsx/y", 2);
+		f.Add("top", 3);
+		CHECK(f.First("maps/") == std::optional<uint32_t>(0));
+		CHECK(f.First("MAPS/") == std::optional<uint32_t>(0));
+		CHECK(f.First("mapsx/") == std::optional<uint32_t>(2));
+		CHECK(!f.First("map/"));
+		CHECK(!f.First("top/"));
+		f.Clear();
+		CHECK(!f.First("maps/"));
+	}
+
+	for (int round = 0; round < 3000; round++)
+	{
+		size_t count = roll(30);
+		std::vector<std::string> names;
+		FolderStarts index;
+		for (size_t i = 0; i < count; i++)
+		{
+			std::string n;
+			uint32_t depth = roll(4);
+			for (uint32_t d = 0; d < depth; d++)
+				n += std::string(segments[roll((uint32_t)nsegments)]) + "/";
+			if (roll(3))
+				n += std::string(segments[roll((uint32_t)nsegments)]) + (roll(2) ? ".lmp" : "");
+			names.push_back(n);
+			index.Add(n.c_str(), (uint32_t)i);
+		}
+
+		for (int q = 0; q < 40; q++)
+		{
+			std::string query;
+			uint32_t kind = roll(3);
+			if (kind == 0 && count)
+			{
+				// A directory prefix of an existing name, in other case
+				const std::string& base = names[roll((uint32_t)count)];
+				std::vector<size_t> slashes;
+				for (size_t k = 0; k < base.size(); k++)
+					if (base[k] == '/')
+						slashes.push_back(k);
+				if (slashes.empty())
+					continue;
+				query = randomCase(base.substr(0, slashes[roll((uint32_t)slashes.size())] + 1));
+			}
+			else
+			{
+				uint32_t depth = 1 + roll(3);
+				for (uint32_t d = 0; d < depth; d++)
+					query += randomCase(std::string(segments[roll((uint32_t)nsegments)])) + "/";
+			}
+			uint32_t want = linearFolderStart(names, query.c_str());
+			std::optional<uint32_t> got = index.First(query.c_str());
+			// What the engine hook returns
+			uint32_t hook = (uint32_t)names.size();
+			if (got)
+			{
+				hook = *got;
+				if (names[hook].size() == query.size())
+					hook++;
+			}
+			CHECK(hook == want);
+		}
+	}
+	return 0;
+}
+
 int main()
 {
-	if (testHashPositions())
+	if (testHashPositions() || testFolderStarts())
 		return 1;
 	std::puts("name_index: ok");
 	return 0;

@@ -43,6 +43,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <vector>
 #ifdef _UWP
 #include <atomic>
@@ -132,6 +133,10 @@ wadfile_t *wadfiles[MAX_WADFILES]; // 0 to numwadfiles-1 are valid
 // Per-file index from each lump's stored hash to its position, so that W_CheckNumForNamePwad needn't scan every lump.
 // Indexed by wad number; built once in W_InitFile, as a file's lumps never change afterwards.
 static std::vector<name_index::HashPositions> g_lumpNameIndex;
+
+// Likewise for PK3 files: from each directory prefix of a lump's full name to its first lump, for
+// W_CheckNumForFolderStartPK3. Files that aren't PK3s have none.
+static std::vector<std::optional<name_index::FolderStarts>> g_folderStarts;
 
 #ifdef _UWP
 // [UWP]: Set while W_InitFile checks and reads the directory of a main file verified in the background, so that
@@ -356,6 +361,7 @@ void W_Shutdown(void)
 		Z_Free(wad);
 	}
 	g_lumpNameIndex.clear();
+	g_folderStarts.clear();
 
 	// Cleanup the separate shader lookup
 	if (g_shaderspk3file)
@@ -1253,6 +1259,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	g_lumpNameIndex[numwadfiles].Clear();
 	for (UINT16 lumpnum = 0; lumpnum < numlumps; lumpnum++)
 		g_lumpNameIndex[numwadfiles].Add(lumpinfo[lumpnum].hash, lumpnum);
+	if (g_folderStarts.size() <= numwadfiles)
+		g_folderStarts.resize(numwadfiles + 1);
+	g_folderStarts[numwadfiles].reset();
+	if (type == RET_PK3)
+	{
+		g_folderStarts[numwadfiles].emplace();
+		for (UINT16 lumpnum = 0; lumpnum < numlumps; lumpnum++)
+			g_folderStarts[numwadfiles]->Add(lumpinfo[lumpnum].fullname, lumpnum);
+	}
 	wadfiles[numwadfiles] = wadfile;
 	numwadfiles++; // must come BEFORE W_LoadDehackedLumps, so any addfile called by COM_BufInsertText called by Lua doesn't overwrite what we just loaded
 
@@ -1587,6 +1602,20 @@ UINT16 W_CheckNumForFolderStartPK3(const char *name, UINT16 wad, UINT16 startlum
 	INT32 i;
 	lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 	name_length = strlen(name);
+
+	if (startlump == 0 && name_length && name[name_length - 1] == '/'
+		&& wad < g_folderStarts.size() && g_folderStarts[wad])
+	{
+		const std::optional<uint32_t> found = g_folderStarts[wad]->First(name);
+		if (!found)
+			return wadfiles[wad]->numlumps;
+		i = *found;
+		/* SLADE is special and puts a single directory entry. Skip that. */
+		if (strlen(wadfiles[wad]->lumpinfo[i].fullname) == name_length)
+			i++;
+		return i;
+	}
+
 	for (i = startlump; i < wadfiles[wad]->numlumps; i++, lump_p++)
 	{
 		if (strnicmp(name, lump_p->fullname, name_length) == 0)
