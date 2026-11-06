@@ -342,6 +342,24 @@ const char* I_UWPDataResolve(const char* source, const char* expectedmd5)
 void I_UWPDataLogStartup(void)
 {
 	I_OutputMsg("UWP: data: chose where to load from in %.3f s\n", g_decisionSeconds);
+
+	// How much room the copies have. Free for this app and free on the drive differ if the app has a quota.
+	if (g_localRoot[0])
+	{
+		const std::wstring root = Widen(g_localRoot);
+		ULARGE_INTEGER available, total, drivefree;
+		if (GetDiskFreeSpaceExW(root.c_str(), &available, &total, &drivefree))
+		{
+			I_OutputMsg("UWP: data: internal storage: %llu MB free for this app, %llu MB free of %llu MB on the drive\n",
+				static_cast<unsigned long long>(available.QuadPart / (1024 * 1024)),
+				static_cast<unsigned long long>(drivefree.QuadPart / (1024 * 1024)),
+				static_cast<unsigned long long>(total.QuadPart / (1024 * 1024)));
+		}
+		else
+		{
+			I_OutputMsg("UWP: data: internal storage: cannot get its free space (error %lu)\n", GetLastError());
+		}
+	}
 }
 
 boolean I_UWPDataIsCopy(const char* path)
