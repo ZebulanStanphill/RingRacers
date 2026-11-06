@@ -368,12 +368,17 @@ typedef enum
 	UWPPROF_3D, // rendering the 3D view
 	UWPPROF_2D, // the rest of D_Display: the HUD, menus, wipes, and passing the software screen to the GPU
 	UWPPROF_DISPLAY, // I_FinishUpdate: drawing the 2D layer, scaling it to the screen, and presenting
+	UWPPROF_STARTUP, // D_SRB2Main, which the profiler sets itself while i_uwpprofstartup is true
 	NUMUWPPROFPHASES
 } uwpprofphase_t;
 extern volatile INT32 i_uwpprofphase;
 
 // [UWP]: Whether a level is being played (not paused), for the profiler, which only counts samples taken then
 extern volatile INT32 i_uwpprofinlevel;
+
+// [UWP]: Whether the game is still starting up, from the start until D_SRB2Loop. The profiler records those samples
+// under UWPPROF_STARTUP, with call stacks.
+extern volatile INT32 i_uwpprofstartup;
 
 // [UWP]: The points of a Software frame ANGLE's GPU work is timed between (sdl/i_uwpangle.cpp)
 typedef enum
