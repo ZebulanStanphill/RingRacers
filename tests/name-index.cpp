@@ -272,9 +272,39 @@ static int testFolderStarts()
 	return 0;
 }
 
+// A copy of R_TextureCacheKey (r_textures.cpp): the texture-id memo's key
+static std::string textureCacheKey(const char* name)
+{
+	std::string key;
+	for (int i = 0; i < 8 && name[i]; i++)
+	{
+		char c = name[i];
+		if (c >= 'a' && c <= 'z')
+			c = (char)(c - 'a' + 'A');
+		key += c;
+	}
+	return key;
+}
+
+// The memo keyed by textureCacheKey must hit exactly when the old array scan's strncasecmp over 8 chars did
+static int testTextureMemoKey()
+{
+	for (int round = 0; round < 200000; round++)
+	{
+		std::string a = randomName(11);
+		std::string b = roll(2) ? randomCase(a) : randomName(11);
+		if (roll(4) == 0 && a.size() > 8)
+			b = randomCase(a.substr(0, 8)) + randomName(3);
+		bool scan = strncasecmp(a.c_str(), b.c_str(), 8) == 0;
+		bool key = textureCacheKey(a.c_str()) == textureCacheKey(b.c_str());
+		CHECK(scan == key);
+	}
+	return 0;
+}
+
 int main()
 {
-	if (testHashPositions() || testFolderStarts())
+	if (testHashPositions() || testFolderStarts() || testTextureMemoKey())
 		return 1;
 	std::puts("name_index: ok");
 	return 0;

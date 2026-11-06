@@ -15,6 +15,8 @@
 #include "r_textures.h"
 
 #include <algorithm>
+#include <string>
+#include <unordered_map>
 
 #include "doomdef.h"
 #include "g_game.h"
@@ -32,6 +34,7 @@
 #include "byteptr.h"
 #include "dehacked.h"
 #include "k_terrain.h"
+#include "name_index.hpp"
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h" // HWR_LoadMapTextures
@@ -66,12 +69,24 @@ INT32 *texturebrightmaps;
 INT32 g_texturenum_dbgline;
 
 // Painfully simple texture id cacheing to make maps load faster. :3
-static struct {
-	char name[9];
-	UINT32 hash;
-	INT32 id;
-} *tidcache = NULL;
-static INT32 tidcachelen = 0;
+// Keyed by the first 8 characters of the name, uppercased (what strncasecmp compares).
+static std::unordered_map<std::string, INT32> tidcache;
+
+// textures[0, numtextures) by their stored hash, for R_CheckTextureNumForName. Textures are only ever appended.
+static name_index::HashPositions textureIndex;
+
+static std::string R_TextureCacheKey(const char *name)
+{
+	std::string key;
+	for (INT32 i = 0; i < 8 && name[i]; i++)
+	{
+		char c = name[i];
+		if (c >= 'a' && c <= 'z')
+			c = static_cast<char>(c - 'a' + 'A');
+		key += c;
+	}
+	return key;
+}
 
 //
 // MAPTEXTURE_T CACHING
@@ -1507,6 +1522,9 @@ static INT32 R_DefineTextures(INT32 i, UINT16 w)
 
 static void R_FinishLoadingTextures(INT32 add)
 {
+	for (INT32 i = numtextures; i < numtextures + add; i++)
+		textureIndex.Add(textures[i]->hash, i);
+
 	numtextures += add;
 
 #ifdef HWRENDER
@@ -2089,12 +2107,9 @@ lumpnum_t R_GetFlatNumForName(const char *name)
 
 void R_ClearTextureNumCache(boolean btell)
 {
-	if (tidcache)
-		Z_Free(tidcache);
-	tidcache = NULL;
 	if (btell)
-		CONS_Debug(DBG_SETUP, "Fun Fact: There are %d textures used in this map.\n", tidcachelen);
-	tidcachelen = 0;
+		CONS_Debug(DBG_SETUP, "Fun Fact: There are %d textures used in this map.\n", static_cast<INT32>(tidcache.size()));
+	tidcache.clear();
 }
 
 //
@@ -2104,7 +2119,6 @@ void R_ClearTextureNumCache(boolean btell)
 //
 INT32 R_CheckTextureNumForName(const char *name)
 {
-	INT32 i;
 	UINT32 hash;
 
 	// "NoTexture" marker.
@@ -2113,24 +2127,22 @@ INT32 R_CheckTextureNumForName(const char *name)
 
 	hash = quickncasehash(name, 8);
 
-	for (i = 0; i < tidcachelen; i++)
-		if (tidcache[i].hash == hash && !strncasecmp(tidcache[i].name, name, 8))
-			return tidcache[i].id;
+	const std::string key = R_TextureCacheKey(name);
+	const auto cached = tidcache.find(key);
+	if (cached != tidcache.end())
+		return cached->second;
 
 	// Need to parse the list backwards, so textures loaded more recently are used in lieu of ones loaded earlier
-	//for (i = 0; i < numtextures; i++) <- old
-	for (i = (numtextures - 1); i >= 0; i--) // <- new
-		if (textures[i]->hash == hash && !strncasecmp(textures[i]->name, name, 8))
-		{
-			tidcachelen++;
-			Z_Realloc(tidcache, tidcachelen * sizeof(*tidcache), PU_STATIC, &tidcache);
-			strncpy(tidcache[tidcachelen-1].name, name, 8);
-			tidcache[tidcachelen-1].name[8] = '\0';
-			CONS_Debug(DBG_SETUP, "texture #%s: %s\n", sizeu1(tidcachelen), tidcache[tidcachelen-1].name);
-			tidcache[tidcachelen-1].hash = hash;
-			tidcache[tidcachelen-1].id = i;
-			return i;
-		}
+	const int64_t found = textureIndex.LastBelow(hash, numtextures, [&](UINT32 i)
+	{
+		return !strncasecmp(textures[i]->name, name, 8);
+	});
+	if (found >= 0)
+	{
+		tidcache.emplace(key, static_cast<INT32>(found));
+		CONS_Debug(DBG_SETUP, "texture #%s: %.8s\n", sizeu1(tidcache.size()), name);
+		return static_cast<INT32>(found);
+	}
 
 	return -1;
 }

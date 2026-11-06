@@ -374,7 +374,8 @@ untouched padding.
   characters, high-bit bytes, nonzero start positions and misses. `FolderStarts` is compared with the original
   `W_CheckNumForFolderStartPK3` prefix scan, including its SLADE single-directory-entry rule and the
   past-the-end result on a miss: nested folders, case variations, prefixes that are not directories (`map/` against
-  `maps/`) and high-bit bytes.
+  `maps/`) and high-bit bytes. The texture-id memo's key (the first 8 characters, uppercased) is checked to match
+  exactly when the old memo scan's `strncasecmp` over 8 characters matched.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 
