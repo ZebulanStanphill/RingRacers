@@ -12,7 +12,10 @@
 /// that led there (found with the unwind data of each module), and what it was doing (uwpprofphase_t). Every 20
 /// seconds, it writes how many samples it took at each address and with each call stack while a level was being
 /// played, for each renderer (Software, Legacy GL), to E:\ringracers\uwp-profile.txt. It starts at the beginning of
-/// startup and also samples that, under the phase "startup" and no renderer, until the main loop begins. Addresses are written as
+/// startup and also samples that, under the phase "startup" and no renderer, until the main loop begins. Samples at
+/// any other time (menus, the title screen, a paused or loading level, intermission, voting, the podium, cutscenes)
+/// are recorded the same way, under a phase named for the game state (uwpprofphase_t) and the current renderer.
+/// Addresses are written as
 /// offsets into their module, which for the game itself (ringracers-uwp.exe) ringracers-uwp.map from the same build
 /// maps to functions. Each sample pauses the main thread for about 0.25 ms on Xbox, so sampling more often slows the
 /// game noticeably.
@@ -35,6 +38,7 @@
 
 #include "../i_system.h"
 #include "../i_video.h"
+#include "../g_state.h"
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -50,7 +54,8 @@ namespace
 constexpr const char* kProfilePath = "E:\\ringracers\\uwp-profile.txt";
 constexpr auto kWriteInterval = std::chrono::seconds(20);
 constexpr LONGLONG kSampleInterval = -200000; // 20 ms, in 100 ns units (negative for relative to now)
-constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display", "startup"};
+constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display", "startup",
+	"level paused or loading", "title and menus", "intermission", "voting", "podium", "cutscenes", "elsewhere"};
 // What was drawing: rendermode's render_soft, render_opengl, and anything else (render_none)
 enum Renderer
 {
@@ -217,9 +222,39 @@ Renderer RendererOf(INT32 mode)
 	}
 }
 
+// The phase for a sample taken when no level is being played and startup is over, from gamestate
+int PhaseOfGameState(INT32 state)
+{
+	switch (state)
+	{
+	case GS_LEVEL:
+		return UWPPROF_LEVELIDLE;
+	case GS_NULL:
+	case GS_TITLESCREEN:
+	case GS_MENU:
+	case GS_WAITINGPLAYERS:
+	case GS_DEDICATEDSERVER:
+		return UWPPROF_MENUS;
+	case GS_INTERMISSION:
+	case GS_CONTINUING:
+		return UWPPROF_INTERMISSION;
+	case GS_VOTING:
+		return UWPPROF_VOTING;
+	case GS_CEREMONY:
+		return UWPPROF_PODIUM;
+	case GS_INTRO:
+	case GS_CUTSCENE:
+	case GS_CREDITS:
+	case GS_EVALUATION:
+		return UWPPROF_CUTSCENES;
+	default:
+		return UWPPROF_ELSEWHERE;
+	}
+}
+
 struct Profile
 {
-	// Samples in levels by renderer and phase, by address and by call stack
+	// Samples by renderer and phase, by address and by call stack
 	std::unordered_map<uintptr_t, uint32_t> counts[NUMRENDERERS][NUMUWPPROFPHASES];
 	std::unordered_map<Stack, uint32_t, StackHash> stacks[NUMRENDERERS][NUMUWPPROFPHASES];
 	uint64_t levelsamples = 0;
@@ -500,6 +535,7 @@ void SampleMainThread(Sampler sampler)
 		INT32 phase = UWPPROF_OTHER;
 		INT32 inlevel = false;
 		INT32 startup = false;
+		INT32 state = GS_NULL;
 		INT32 mode = render_none;
 		Stack stack = {};
 		int frames = 0;
@@ -511,8 +547,12 @@ void SampleMainThread(Sampler sampler)
 			phase = i_uwpprofphase;
 			inlevel = i_uwpprofinlevel;
 			startup = i_uwpprofstartup;
+			// gamestate is a plain int-sized global that only the main thread writes, so like rendermode it can be
+			// read here without a mirror (a torn or stale read is impossible, and the worst case is a sample filed
+			// under the previous state)
+			state = gamestate;
 			mode = rendermode;
-			if (gotcontext && (inlevel || startup) && sampler.unwind)
+			if (gotcontext && sampler.unwind)
 			{
 				frames = UnwindStack(sampler.unwind, modules, false, sampler.stacklow, sampler.stackhigh, &context,
 					stack.data(), kMaxFrames, &unknown);
@@ -548,6 +588,13 @@ void SampleMainThread(Sampler sampler)
 		}
 		else
 		{
+			const int otherphase = PhaseOfGameState(state);
+			const Renderer renderer = RendererOf(mode);
+			profile.counts[renderer][otherphase][frames ? stack[0] : context.Rip]++;
+			if (frames)
+			{
+				profile.stacks[renderer][otherphase][stack]++;
+			}
 			profile.othersamples++;
 		}
 
@@ -561,9 +608,9 @@ void SampleMainThread(Sampler sampler)
 			}
 		}
 
-		// Written when there are new samples from levels or startup, or failures, so those show up too
+		// Written when there are new samples, or failures, so those show up too
 		const Clock::time_point now = Clock::now();
-		const uint64_t interesting = profile.levelsamples + profile.startupsamples + profile.failedsamples;
+		const uint64_t interesting = profile.levelsamples + profile.startupsamples + profile.othersamples + profile.failedsamples;
 		if (now - lastwrite >= kWriteInterval && interesting > written)
 		{
 			WriteProfile(profile, std::chrono::duration<double>(now - start).count());
@@ -621,7 +668,7 @@ void I_UWPStartProfiler(void)
 		return;
 	}
 
-	I_OutputMsg("UWP: profiling the main thread during startup and while playing levels about %lld times a second, written to %s every %lld s\n",
+	I_OutputMsg("UWP: profiling the main thread in startup, levels, menus and other screens about %lld times a second, written to %s every %lld s\n",
 		-10000000LL / kSampleInterval, kProfilePath, static_cast<long long>(kWriteInterval.count()));
 }
 

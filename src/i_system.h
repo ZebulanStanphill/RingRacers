@@ -369,11 +369,20 @@ typedef enum
 	UWPPROF_2D, // the rest of D_Display: the HUD, menus, wipes, and passing the software screen to the GPU
 	UWPPROF_DISPLAY, // I_FinishUpdate: drawing the 2D layer, scaling it to the screen, and presenting
 	UWPPROF_STARTUP, // D_SRB2Main, which the profiler sets itself while i_uwpprofstartup is true
+	// The rest the profiler also sets itself, from gamestate, whenever no level is being played or startup is going
+	UWPPROF_LEVELIDLE, // GS_LEVEL while paused, or while the level is loading
+	UWPPROF_MENUS, // GS_TITLESCREEN, GS_MENU, GS_WAITINGPLAYERS, GS_DEDICATEDSERVER, GS_NULL
+	UWPPROF_INTERMISSION, // GS_INTERMISSION, GS_CONTINUING
+	UWPPROF_VOTING, // GS_VOTING
+	UWPPROF_PODIUM, // GS_CEREMONY
+	UWPPROF_CUTSCENES, // GS_INTRO, GS_CUTSCENE, GS_CREDITS, GS_EVALUATION
+	UWPPROF_ELSEWHERE, // any other gamestate
 	NUMUWPPROFPHASES
 } uwpprofphase_t;
 extern volatile INT32 i_uwpprofphase;
 
-// [UWP]: Whether a level is being played (not paused), for the profiler, which only counts samples taken then
+// [UWP]: Whether a level is being played (not paused), for the profiler, which counts samples taken then as level
+// samples, and sorts the rest by gamestate
 extern volatile INT32 i_uwpprofinlevel;
 
 // [UWP]: Whether the game is still starting up, from the start until D_SRB2Loop. The profiler records those samples
