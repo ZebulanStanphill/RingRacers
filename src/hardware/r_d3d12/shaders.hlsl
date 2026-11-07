@@ -69,6 +69,10 @@ cbuffer DrawConstants : register(b0)
 	float3 u_portal_pad;
 	float4 u_postimg_rect; // min/max UV in the square captured texture
 	float4 u_postimg_info; // tic time, postimg_t, full screen UV extent
+	int4 u_roll_transform;
+	int4 u_roll_canvas;
+	int4 u_roll_source;
+	float4 u_roll_scale;
 #endif
 };
 
@@ -398,13 +402,33 @@ float4 PSDefault(VSOut i) : SV_Target
 	return AlphaTest(t_tex.Sample(s_tex, i.uv) * u_poly_color);
 }
 
+// Whole canvas pixels make FixedMul exact integer products. HLSL signed >>
+// is arithmetic, matching Software on MSVC and clang.
+int2 RollSource(int2 d, int4 transform)
+{
+	return int2((d.x * transform.x + d.y * transform.y + transform.z) >> 16,
+		(-d.x * transform.y + d.y * transform.x + transform.w) >> 16);
+}
+
 // GLSL_SOFTWARE_FRAGMENT_SHADER
 RR_RS
 float4 PSSoftware(VSOut i) : SV_Target
 {
-	float4 texel = t_tex.Sample(s_tex, i.uv);
+	float2 uv = i.uv;
+#ifdef _UWP
+	if (u_roll_source.w)
+	{
+		int2 d = int2(floor(uv)) + u_roll_canvas.zw - u_roll_canvas.xy / 2;
+		int2 source = RollSource(d, u_roll_transform);
+		int sx = source.x, sy = source.y;
+		if (sx < 0 || sy < 0 || sx >= u_roll_source.x || sy >= u_roll_source.y) discard;
+		if (u_roll_source.z) sx = u_roll_source.x - 1 - sx;
+		uv = (float2(sx, sy) + 0.5) * u_roll_scale.xy;
+	}
+#endif
+	float4 texel = t_tex.Sample(s_tex, uv);
 	float4 base_color = texel * u_poly_color;
-	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
+	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, uv).r);
 	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 	float final_lighting = u_lighting + light_gain;
 	if (u_palette)

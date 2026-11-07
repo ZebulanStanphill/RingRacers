@@ -62,6 +62,7 @@ void D3D12_FillVoid(void);
 boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength);
 void D3D12_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
 void D3D12_LogPerf(double seconds);
+boolean D3D_CanRollSprite(void);
 
 // Gives the window back to ANGLE if the driver's swap chain has it, for the Software renderer; no context is made
 // current. The driver takes the window again when Legacy GL starts.

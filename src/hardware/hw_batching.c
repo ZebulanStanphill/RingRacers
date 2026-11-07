@@ -413,6 +413,12 @@ void HWR_RenderBatches(void)
 				changeState = true;
 				changeTexture = true;
 			}
+#ifdef HAVE_D3D12
+			if (((currentPolyFlags ^ nextPolyFlags) & PF_RollSprite)
+				|| ((currentPolyFlags & nextPolyFlags & PF_RollSprite)
+				&& memcmp(currentSurfaceInfo.roll, nextSurfaceInfo.roll, sizeof(currentSurfaceInfo.roll))))
+				changeState = changeSurfaceInfo = true;
+#endif
 			if (currentPolyFlags != nextPolyFlags)
 			{
 				changeState = true;

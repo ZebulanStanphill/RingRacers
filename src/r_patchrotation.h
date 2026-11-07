@@ -30,3 +30,22 @@ extern fixed_t rollsinang[ROTANGLES];
 #endif
 
 #endif
+
+#if defined(ROTSPRITE) && defined(HAVE_D3D12) && defined(HWRENDER)
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct
+{
+	patchrotation_t transform;
+	INT32 width, height, leftoffset, topoffset;
+} rollgeometry_t;
+void RotatedPatch_Geometry(rollgeometry_t *out, patch_t *patch,
+	INT32 angle, INT32 xpivot, INT32 ypivot, boolean flip);
+const rollgeometry_t *Patch_GetRollGeometry(spriteframe_t *sprite, size_t frame,
+	size_t slot, boolean flip, void *info, INT32 angle);
+extern UINT32 hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry;
+#ifdef __cplusplus
+}
+#endif
+#endif

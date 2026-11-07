@@ -289,7 +289,8 @@ def generate(engine, output):
     rotation_parts = "\n".join(cpp_alloc(rotation.function(name)) for name in [
         "RotatedPatch_Create", "RotatedPatch_CalculateDimensions", "RotatedPatch_Sample",
         "Patch_FreeInvalidatedBrightmaps", "Patch_InvalidateRotatedBrightmaps",
-        "Patch_GetRotatedBrightmap", "RotatedPatch_DoRotation", "Patch_GetRotatedSprite"])
+        "Patch_GetRotatedBrightmap", "RotatedPatch_DoRotation", "Patch_GetRotatedSprite",
+        "RotatedPatch_Geometry", "Patch_GetRollGeometry"])
     picture_parts = "\n".join(cpp_alloc(pictures.function(name)) for name in [
         "Picture_FormatBPP", "Picture_IsInternalPatchFormat", "Picture_IsDoomPatchFormat",
         "Picture_IsPatchFormat", "Picture_IsFlatFormat", "Picture_GetPatchPixel",
@@ -298,6 +299,8 @@ def generate(engine, output):
         "Patch_Create", "Patch_FreeData", "Patch_Free", "Patch_FreeTagsCallback", "Patch_FreeTags"])
     sprite_parts = {
         "ROTATION": rotation_parts,
+        "ROLL_SURFACE": hardware.function("HWR_RollSurface") + hardware.function("HWR_SpriteUV"),
+        "ROLL_SHADER": Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("RollSource").replace("return int2(", "return makeInt2("),
         "BASELINE": cpp_alloc(Source(Path(__file__).parent / "fixtures/sprite-rotation-baseline.c").section(
             "static void Baseline_CalculateDimensions", "\n// END")),
         "PICTURES": picture_parts,
@@ -322,6 +325,8 @@ def generate(engine, output):
         "CURRENT_TEXTURE": batching.function("HWR_SetCurrentTexture"),
         "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
             "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
+        "BATCH_ROLL": function_section(batching, "HWR_RenderBatches",
+            "#ifdef HAVE_D3D12\n\t\t\tif (((currentPolyFlags", "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
         "BATCH_CHANGE": function_section(batching, "HWR_RenderBatches",
             "\t\t\tif (currentTexture != nextTexture || currentBrightmap != nextBrightmap)",
             "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
@@ -404,7 +409,7 @@ def generate(engine, output):
     render(templates / "spring_clip.cpp.in", {
         "HELPERS": hardware.section("// [UWP]: Software hides a spring that sits inside a wall.",
             "// End [UWP] spring silhouette geometry."),
-        "DRAW_SPRITE": draw_sprite,
+        "DRAW_SPRITE": hardware.function("HWR_SpriteUV") + draw_sprite,
         "ROUTES": routes,
     }, output / "spring_clip.cpp")
 

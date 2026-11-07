@@ -33,6 +33,9 @@
 #include "../r_fps.h"
 #include "../r_local.h"
 #include "../r_patch.h"
+#ifdef HAVE_D3D12
+#include "../r_patchrotation.h"
+#endif
 #include "../r_picformats.h"
 #include "../r_bsp.h"
 #include "../d_clisrv.h"
@@ -789,9 +792,31 @@ static void HWR_SpringProbeEntry(size_t w, const hwr_springwall_t *entry, boolea
 	I_OutputMsg("%s", message);
 }
 
+#ifdef HAVE_D3D12
+static void HWR_RollSurface(FSurfaceInfo *surf, gl_vissprite_t *spr)
+{
+	const rollgeometry_t *g = (const rollgeometry_t *)spr->rollgeometry;
+	const patchrotation_t *t = &g->transform;
+	GLPatch_t *patch = (GLPatch_t *)spr->gpatch->hardware;
+	float scale[2] = {patch->max_s / t->width, patch->max_t / t->height};
+	INT32 data[16] = {t->ca, t->sa, t->xcenter, t->ycenter,
+		t->canvaswidth, t->canvasheight, t->cropx, t->cropy,
+		t->width, t->height, t->flip, 1, 0, 0, 0, 0};
+	memcpy(surf->roll, data, sizeof(data));
+	memcpy(surf->roll + 12, scale, sizeof(scale));
+}
+#endif
+
 static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
 	FBITFIELD flags, INT32 shader, gl_vissprite_t *spr)
 {
+#ifdef HAVE_D3D12
+	if (spr->rollgeometry)
+	{
+		HWR_RollSurface(surf, spr);
+		flags |= PF_RollSprite;
+	}
+#endif
 	hwr_springview_t view;
 	size_t w, i, count = 0, farthestthick;
 	INT32 buffer = 0;
@@ -4713,6 +4738,19 @@ static void HWR_RotateSpritePolyToAim(gl_vissprite_t *spr, FOutVector *wallVerts
 	}
 }
 
+static float HWR_SpriteUV(gl_vissprite_t *spr, boolean vertical)
+{
+#ifdef HAVE_D3D12
+	if (spr->rollgeometry)
+	{
+		const rollgeometry_t *g = (const rollgeometry_t *)spr->rollgeometry;
+		return vertical ? g->height : g->width;
+	}
+#endif
+	return vertical ? ((GLPatch_t *)spr->gpatch->hardware)->max_t
+		: ((GLPatch_t *)spr->gpatch->hardware)->max_s;
+}
+
 static void HWR_SplitSprite(gl_vissprite_t *spr)
 {
 	FOutVector wallVerts[4];
@@ -4765,25 +4803,25 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 
 	if (spr->flip)
 	{
-		baseWallVerts[0].s = baseWallVerts[3].s = ((GLPatch_t *)gpatch->hardware)->max_s;
+		baseWallVerts[0].s = baseWallVerts[3].s = HWR_SpriteUV(spr, 0);
 		baseWallVerts[2].s = baseWallVerts[1].s = 0;
 	}
 	else
 	{
 		baseWallVerts[0].s = baseWallVerts[3].s = 0;
-		baseWallVerts[2].s = baseWallVerts[1].s = ((GLPatch_t *)gpatch->hardware)->max_s;
+		baseWallVerts[2].s = baseWallVerts[1].s = HWR_SpriteUV(spr, 0);
 	}
 
 	// flip the texture coords (look familiar?)
 	if (spr->vflip)
 	{
-		baseWallVerts[3].t = baseWallVerts[2].t = ((GLPatch_t *)gpatch->hardware)->max_t;
+		baseWallVerts[3].t = baseWallVerts[2].t = HWR_SpriteUV(spr, 1);
 		baseWallVerts[0].t = baseWallVerts[1].t = 0;
 	}
 	else
 	{
 		baseWallVerts[3].t = baseWallVerts[2].t = 0;
-		baseWallVerts[0].t = baseWallVerts[1].t = ((GLPatch_t *)gpatch->hardware)->max_t;
+		baseWallVerts[0].t = baseWallVerts[1].t = HWR_SpriteUV(spr, 1);
 	}
 
 	// if it has a dispoffset, push it a little towards the camera
@@ -5220,6 +5258,11 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 	if (!spr->mobj->subsector)
 		return;
 
+#ifdef HAVE_D3D12
+	if (spr->rollgeometry) ++hwr_roll_shader;
+	else if (spr->rotated) ++hwr_roll_cpu;
+#endif
+
 	if (spr->mobj->subsector->sector->numlights
 		&& (spr->mobj->renderflags & RF_ABSOLUTELIGHTLEVEL) == 0
 		&& !splat)
@@ -5259,21 +5302,21 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 	if (spr->flip)
 	{
-		wallVerts[0].s = wallVerts[3].s = ((GLPatch_t *)gpatch->hardware)->max_s;
+		wallVerts[0].s = wallVerts[3].s = HWR_SpriteUV(spr, 0);
 		wallVerts[2].s = wallVerts[1].s = 0;
 	}else{
 		wallVerts[0].s = wallVerts[3].s = 0;
-		wallVerts[2].s = wallVerts[1].s = ((GLPatch_t *)gpatch->hardware)->max_s;
+		wallVerts[2].s = wallVerts[1].s = HWR_SpriteUV(spr, 0);
 	}
 
 	// flip the texture coords (look familiar?)
 	if (spr->vflip)
 	{
-		wallVerts[3].t = wallVerts[2].t = ((GLPatch_t *)gpatch->hardware)->max_t;
+		wallVerts[3].t = wallVerts[2].t = HWR_SpriteUV(spr, 1);
 		wallVerts[0].t = wallVerts[1].t = 0;
 	}else{
 		wallVerts[3].t = wallVerts[2].t = 0;
-		wallVerts[0].t = wallVerts[1].t = ((GLPatch_t *)gpatch->hardware)->max_t;
+		wallVerts[0].t = wallVerts[1].t = HWR_SpriteUV(spr, 1);
 	}
 
 
@@ -6440,6 +6483,9 @@ static void HWR_AddPrecipitationSprites(void)
 // BP why not use xtoviexangle/viewangletox like in bsp ?....
 static void HWR_ProjectSprite(mobj_t *thing)
 {
+#ifdef HAVE_D3D12
+	const rollgeometry_t *rollgeometry = NULL;
+#endif
 	gl_vissprite_t *vis;
 	float tr_x, tr_y;
 	float tz;
@@ -6659,6 +6705,20 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	{
 		rollangle = R_GetRollAngle(papersprite == vflip
 				? spriterotangle : InvAngle(spriterotangle));
+#ifdef HAVE_D3D12
+		if (!papersprite && !splat && !(thing->flags2 & MF2_LINKDRAW) && D3D_CanRollSprite())
+			rollgeometry = Patch_GetRollGeometry(sprframe, thing->frame & FF_FRAMEMASK,
+				rot, flip, sprinfo, rollangle);
+		if (rollgeometry)
+		{
+			spr_width = rollgeometry->width * FRACUNIT;
+			spr_height = rollgeometry->height * FRACUNIT;
+			spr_offset = rollgeometry->leftoffset * FRACUNIT;
+			spr_topoffset = rollgeometry->topoffset * FRACUNIT + FEETADJUST;
+			flip = 0;
+		}
+		else
+#endif
 		rotsprite = Patch_GetRotatedSprite(sprframe, (thing->frame & FF_FRAMEMASK), rot, flip, false, sprinfo, rollangle);
 
 		if (rotsprite != NULL)
@@ -6913,6 +6973,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->spriteyoffset = FIXED_TO_FLOAT(spr_topoffset);
 
 	vis->rotated = false;
+#ifdef HAVE_D3D12
+	vis->rollgeometry = rollgeometry;
+#endif
 
 #ifdef ROTSPRITE
 	if (rotsprite)
@@ -7087,6 +7150,9 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	// store information in a vissprite
 	//
 	vis = HWR_NewVisSprite();
+#ifdef HAVE_D3D12
+	vis->rollgeometry = NULL;
+#endif
 	vis->x1 = x1;
 	vis->x2 = x2;
 	vis->z1 = z1;

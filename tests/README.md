@@ -38,6 +38,34 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
 
+- **D3D12 rolled sprites:** `sprite_brightmap` also executes the geometry-only
+  helper and the extracted HLSL integer `RollSource` function. For all angles
+  1–71, both horizontal flips, asymmetric patches with holes, transparent
+  patches, and default/frame/default-slot pivots, compare canvas crop, dimensions,
+  offsets and pixels against production CPU rotation (itself checked against the
+  vanilla fixture). Check cache hits and zone owner clearing, and pixel-unit UVs
+  and padded base-texture texel scales. No rotated bitmap is needed by this path.
+  The geometry array costs 9 KiB per used sprite viewing-angle slot and uses
+  `PU_ROLL_GEOMETRY` (a level tag) with a zone owner pointer. Both level
+  teardown and rotated-patch purges on WAD reload clear the cache;
+  it must not use `PU_PATCH_ROTATED`, whose destructor expects a patch object.
+  A surface payload enters the existing immutable draw-constant ring, and batching
+  splits when that payload changes. Light and spring clipping interpolate the same
+  canvas-pixel coordinates. The existing software sprite pixel shader handles
+  rotation, so there are no additional PSOs to prewarm. Its base/brightmap
+  sampling uses the same mapped source texel and retains size-mismatch fallback.
+  CPU rotation remains for paper/floor sprites, linkdraw sprites, shaders off,
+  active custom sprite shaders, every non-nearest or mipmapped filter mode, and
+  art over 1024 pixels or pivots outside ±4096 pixels. Models, precipitation,
+  shadows and non-D3D12 builds retain their paths. The five-second D3D12 perf line
+  reports submitted shader/CPU rolled sprites and geometry computations.
+  Windows WARP's `roll-sprite` scene compares every target pixel with a CPU
+  inverse-mapped patch uploaded through the ordinary masked path, including a
+  brightmap, both flips, an off-centre pivot and 5/45/90/135/265/355-degree angles.
+  WARP, Xbox visuals and the performance improvement must be checked on Windows
+  and the device; native tests do not measure those.
+
+
 - **UDP send failures:** execute production `SOCK_Send` and `SOCK_SendToAddr`
   against a `sendto` mock, with host POSIX errors and the extracted production
   Winsock aliases (including raw 10065/10051). Check successful sends, would-block,

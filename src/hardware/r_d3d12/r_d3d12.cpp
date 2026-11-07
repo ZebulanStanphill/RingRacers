@@ -38,6 +38,7 @@
 #include "SDL.h"
 
 #include "../../doomdef.h"
+#include "../../r_patchrotation.h"
 #include "../../command.h"
 #include "../../i_system.h"
 #include "../../m_misc.h"
@@ -378,10 +379,12 @@ struct Constants
 	float fullscreenDepth, portalPad[3];
 	float postImageRect[4];
 	float postImageInfo[4];
+	INT32 roll[16];
 #endif
 };
 #ifdef _UWP
-static_assert(sizeof(Constants) == 336, "Constants must match DrawConstants in shaders.hlsl");
+static_assert(offsetof(Constants, roll) == 336, "Roll constants must follow post-image constants");
+static_assert(sizeof(Constants) == 400, "Constants must match DrawConstants in shaders.hlsl");
 #else
 static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
 #endif
@@ -1462,9 +1465,12 @@ void BindViewport()
 
 int ScreenTextureSize();
 
+INT32 g_roll[16] = {};
+
 bool ApplyConstants(bool custom)
 {
 	Constants c = {};
+	memcpy(c.roll, g_roll, sizeof(c.roll));
 	memcpy(c.projection, g_projection.m, sizeof c.projection);
 	memcpy(c.modelview, g_modelview.back().m, sizeof c.modelview);
 	memcpy(c.clipPlane, g_gl.clipPlane, sizeof c.clipPlane);
@@ -2267,6 +2273,8 @@ void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *
 		}
 	}
 
+	memset(g_roll, 0, sizeof(g_roll));
+	if (pSurf && (PolyFlags & PF_RollSprite)) memcpy(g_roll, pSurf->roll, sizeof(g_roll));
 	SetUniforms(pSurf, poly, tint, fade);
 	const FBITFIELD blend = PolyFlags & (PF_Blending & ~(PF_Masked | PF_Occlude));
 	const bool refractingBlend = blend == PF_Translucent || blend == PF_Additive
@@ -2319,6 +2327,7 @@ void D3D_DrawIndexedTriangles(FSurfaceInfo *surface, FOutVector *vertices, FUINT
 
 void D3D_SetBlend(FBITFIELD PolyFlags)
 {
+	memset(g_roll, 0, sizeof(g_roll));
 	g_waterRefraction = false;
 #ifdef _UWP
 	// Sky occluders and sprite silhouettes only write depth. Blend factors can
@@ -2745,6 +2754,15 @@ static PipelineKey CustomValidationKey(int type, Layout layout, bool refraction 
 	return key;
 }
 
+boolean CanRollSprite(void)
+{
+	// Reject custom sprite stages as a pair, including fragment-only overrides.
+	return g_allowShaders != HWD_SHADEROPTION_OFF && !g_mipmap
+		&& g_minFilter == FILTER_NEAREST && g_magFilter == FILTER_NEAREST
+		&& !(g_allowShaders == HWD_SHADEROPTION_ON &&
+			(g_customShaders[SHADER_SPRITE].valid || g_customShaders[SHADER_SPRITECLIPHACK].valid));
+}
+
 boolean D3D_CompileShaders(void)
 {
 	// A bad add-on must not disable the built-in shaders or palette rendering.
@@ -2970,6 +2988,8 @@ const struct
 #undef DRIVERFUNCTION
 
 } // namespace
+
+boolean D3D_CanRollSprite(void) { return CanRollSprite(); }
 
 void *D3D12_GetDriverFunction(const char *name)
 {
@@ -3331,6 +3351,9 @@ void D3D12_LogPerf(double seconds)
 			[](const auto &entry) { return !!entry.second.res; }),
 		g_srvIndices.Used() + 4, g_nextSampler, g_textureAllocatedBytes / 1048576.0, g_textureBytes / 1048576.0,
 		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
+	I_OutputMsg("UWP perf:   D3D12: roll sprites: %u shader, %u CPU patches, %u geometry computations\n",
+		hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry);
+	hwr_roll_shader = hwr_roll_cpu = hwr_roll_geometry = 0;
 	I_OutputMsg("UWP perf:   D3D12: screens: %.1f per frame (%.1f copies, %.1f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay\n",
 		s.screens / n, s.screenCopies / n, core.barriers / n, s.wipes, s.wipeFallbacks, s.postImages, s.fadeMaps, s.fadeMapFallbacks);
 	I_OutputMsg("UWP perf:   D3D12: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);

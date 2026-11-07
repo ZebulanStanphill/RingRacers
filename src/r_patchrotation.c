@@ -323,6 +323,83 @@ static void *RotatedPatch_Sample(patch_t *patch, INT32 dx, INT32 dy,
 	return Picture_GetPatchPixel(patch, PICFMT_PATCH, sx, sy, flip);
 }
 
+#if defined(HAVE_D3D12) && defined(HWRENDER)
+UINT32 hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry;
+
+void RotatedPatch_Geometry(rollgeometry_t *out, patch_t *patch,
+	INT32 angle, INT32 xpivot, INT32 ypivot, boolean flip)
+{
+	INT32 w = patch->width, h = patch->height, left = patch->leftoffset;
+	INT32 cw, ch, dx, dy, minx, miny, maxx = 0, maxy = 0;
+	size_t size;
+	patchrotation_t *t = &out->transform;
+	memset(out, 0, sizeof(*out));
+	t->ca = rollcosang[angle]; t->sa = rollsinang[angle];
+	if (flip) { xpivot = w - xpivot; left = w - left; }
+	RotatedPatch_CalculateDimensions(w, h, t->ca, t->sa, &cw, &ch);
+	t->xcenter = xpivot * FRACUNIT; t->ycenter = ypivot * FRACUNIT;
+	if (xpivot != w/2 || ypivot != h/2) { cw *= 2; ch *= 2; }
+	minx = cw; miny = ch;
+	size = cw * ch;
+	if (!size) size = w * h;
+	for (dy = 0; dy < ch; ++dy) for (dx = 0; dx < cw; ++dx)
+	{
+		if (RotatedPatch_Sample(patch, dx, dy, cw, ch, t->ca, t->sa,
+			t->xcenter, t->ycenter, flip ? PICFLAGS_XFLIP : 0))
+		{
+			if (dx < minx) minx = dx;
+			if (dy < miny) miny = dy;
+			if (dx > maxx) maxx = dx;
+			if (dy > maxy) maxy = dy;
+		}
+	}
+	out->leftoffset = cw/2 + left - xpivot;
+	out->topoffset = ch/2 + patch->topoffset - ypivot;
+	out->width = maxx - minx; out->height = maxy - miny;
+	// Preserve DoRotation's historical comparison, including empty patches.
+	if ((unsigned)(out->width * out->height) > size)
+	{
+		t->cropx = minx; t->cropy = miny;
+		out->leftoffset -= minx; out->topoffset -= miny;
+	}
+	else { out->width = cw; out->height = ch; }
+	t->width = w; t->height = h; t->canvaswidth = cw; t->canvasheight = ch;
+	t->flip = flip; t->valid = true;
+	++hwr_roll_geometry;
+}
+
+const rollgeometry_t *Patch_GetRollGeometry(spriteframe_t *sprite, size_t frame,
+	size_t slot, boolean flip, void *info, INT32 angle)
+{
+	rotsprite_t *cache;
+	rollgeometry_t *geometry;
+	spriteinfo_t *sprinfo = (spriteinfo_t *)info;
+	INT32 index = angle + (flip ? ROTANGLES : 0), xpivot, ypivot;
+	patch_t *patch;
+	if (angle < 1 || angle >= ROTANGLES || sprite->lumppat[slot] == LUMPERROR)
+		return NULL;
+	cache = sprite->rotated[0][slot];
+	if (!cache) sprite->rotated[0][slot] = cache = RotatedPatch_Create(ROTANGLES);
+	if (!cache->geometry)
+		Z_Calloc(2 * ROTANGLES * sizeof(rollgeometry_t), PU_ROLL_GEOMETRY, &cache->geometry);
+	geometry = (rollgeometry_t *)cache->geometry + index;
+	if (geometry->transform.valid) return geometry;
+	patch = W_CachePatchNum(sprite->lumppat[slot], PU_SPRITE);
+	if (in_bit_array(sprinfo->available, frame))
+	{ xpivot = sprinfo->pivot[frame].x; ypivot = sprinfo->pivot[frame].y; }
+	else if (in_bit_array(sprinfo->available, SPRINFO_DEFAULT_PIVOT))
+	{ xpivot = sprinfo->pivot[SPRINFO_DEFAULT_PIVOT].x; ypivot = sprinfo->pivot[SPRINFO_DEFAULT_PIVOT].y; }
+	else { xpivot = patch->leftoffset; ypivot = patch->height/2; }
+	// Bound every shader product and sum well inside signed 32-bit range.
+	// Unusually large add-on art/pivots retain the established CPU path.
+	if (patch->width < 1 || patch->height < 1 || patch->width > 1024
+		|| patch->height > 1024 || xpivot < -4096
+		|| xpivot > 4096 || ypivot < -4096 || ypivot > 4096) return NULL;
+	RotatedPatch_Geometry(geometry, patch, angle, xpivot, ypivot, flip);
+	return geometry;
+}
+#endif
+
 #ifdef HWRENDER
 static patch_t *rotatedbrightmaps;
 static patch_t *invalidatedbrightmaps;

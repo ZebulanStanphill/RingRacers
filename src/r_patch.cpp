@@ -101,6 +101,9 @@ static void Patch_FreeData(patch_t *patch)
 		}
 
 		Z_Free(rotsprite->patches);
+#ifdef HAVE_D3D12
+		Z_Free(rotsprite->geometry);
+#endif
 		Z_Free(rotsprite);
 	}
 #endif
@@ -150,6 +153,11 @@ static boolean Patch_FreeTagsCallback(void *mem)
 
 void Patch_FreeTags(INT32 lowtag, INT32 hightag)
 {
+#if defined(ROTSPRITE) && defined(HWRENDER) && defined(HAVE_D3D12)
+	// Geometry isn't a patch object. Purge it separately, including WAD reloads.
+	if (lowtag <= PU_PATCH_ROTATED && hightag >= PU_PATCH_ROTATED)
+		Z_FreeTag(PU_ROLL_GEOMETRY);
+#endif
 #if defined(ROTSPRITE) && defined(HWRENDER)
 	++patch_free_depth;
 #endif

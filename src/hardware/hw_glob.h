@@ -98,6 +98,9 @@ typedef struct gl_vissprite_s
 	UINT8 *colormap;
 	INT32 dispoffset; // copy of info->dispoffset, affects ordering but not drawing
 
+#ifdef HAVE_D3D12
+	const void *rollgeometry;
+#endif
 	patch_t *gpatch;
 	patch_t *gbright; // NULL without a compatible sprite brightmap
 	mobj_t *mobj; // NOTE: This is a precipmobj_t if precip is true !!! Watch out.

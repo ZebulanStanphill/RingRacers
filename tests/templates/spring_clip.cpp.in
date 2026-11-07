@@ -12,6 +12,7 @@
 #include <vector>
 #include "hardware/hw_defs.h"
 #include "r_defs.h"
+#include "r_patchrotation.h"
 #include "p_mobj.h"
 #include "hardware/hw_glob.h"
 #include "hardware/hw_batching.h"
@@ -20,6 +21,7 @@
 #undef min
 #undef max
 
+UINT32 hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry;
 using Quad=std::array<FOutVector,4>;
 struct Draw { std::vector<FOutVector> v; FBITFIELD flags; INT32 shader; FSurfaceInfo surf; };
 static std::vector<Draw> draws;

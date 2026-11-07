@@ -60,6 +60,9 @@ void Z_IterateTags(INT32 low, INT32 high, boolean (*callback)(void *)) {
         i = static_cast<size_t>(it - allocations.begin());
     }
 }
+void Z_FreeTags(INT32 low, INT32 high) {
+    Z_IterateTags(low,high,[](void *) -> boolean { return true; });
+}
 void *M_Memcpy(void *d, const void *s, size_t n) { return memcpy(d,s,n); }
 void I_Error(const char *, ...) { assert(false); abort(); }
 RGBA_t *pMasterPalette = nullptr;
@@ -76,7 +79,12 @@ using std::max;
 constexpr UINT8 TRANSPARENTPIXEL = 255;
 @@PATCHES@@
 @@PICTURES@@
+UINT32 hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry;
 @@ROTATION@@
+using int2 = int __attribute__((ext_vector_type(2)));
+using int4 = int __attribute__((ext_vector_type(4)));
+static int2 makeInt2(int x, int y) { return {x,y}; }
+@@ROLL_SHADER@@
 @@BASELINE@@
 
 // Dependency mocks stop at WAD lookup, GPU allocation and color translation.
@@ -108,10 +116,12 @@ char *sizeu1(size_t) { static char text[]="frame"; return text; }
 char *sizeu2(size_t) { static char text[]="count"; return text; }
 static spriteframe_t frames[2]{};
 static unsigned projectionCases;
+@@ROLL_SURFACE@@
 static gl_vissprite_t project(mobj_t *thing, patch_t *rotsprite = nullptr) {
     ++projectionCases;
     spritedef_t *sprdef = nullptr;
     spriteinfo_t *sprinfo = nullptr;
+    const rollgeometry_t *rollgeometry = nullptr;
     unsigned rot;
     gl_vissprite_t result{}, *vis = &result;
     vis->gbright = &specific; // Reused vissprite storage must not retain the previous map.
@@ -188,7 +198,6 @@ static void draw(gl_vissprite_t *spr) {
 @@DRAW@@
 }
 static std::array<FOutVector,4> coordinates(gl_vissprite_t *spr) {
-    auto *gpatch = spr->gpatch;
     FOutVector wallVerts[4]{};
 @@TEXTURE_COORDS@@
     return {wallVerts[0],wallVerts[1],wallVerts[2],wallVerts[3]};
@@ -217,11 +226,27 @@ int ps_hw_numtextures;
 static void replayNext(GLMipmap_t *&currentTexture, GLMipmap_t *&currentBrightmap) {
     auto *nextTexture = current_texture;
     auto *nextBrightmap = current_brightmap;
-    boolean changeTexture = false, changeState = false;
+    boolean changeTexture = false, changeState = false, changeSurfaceInfo = false;
+    FBITFIELD currentPolyFlags = 0, nextPolyFlags = 0;
+    FSurfaceInfo currentSurfaceInfo{}, nextSurfaceInfo{};
 @@BATCH_CHANGE@@
-    assert(changeState && changeTexture);
+    assert(changeState && changeTexture && !changeSurfaceInfo);
 @@BATCH_NEXT@@
     assert(!changeTexture);
+}
+
+static void rollBatches() {
+    for(int mode=0;mode<5;mode++) {
+        FBITFIELD currentPolyFlags=mode==1?0:PF_RollSprite;
+        FBITFIELD nextPolyFlags=mode==2?0:PF_RollSprite;
+        FSurfaceInfo currentSurfaceInfo{},nextSurfaceInfo{};
+        if(mode==3) nextSurfaceInfo.roll[0]=123;
+        if(mode==4) currentPolyFlags=nextPolyFlags=0;
+        boolean changeState=false,changeSurfaceInfo=false;
+@@BATCH_ROLL@@
+        assert(changeState==(mode>=1 && mode<=3));
+        assert(changeSurfaceInfo==changeState);
+    }
 }
 
 void HWR_FreeTexture(patch_t *patch) {
@@ -238,6 +263,7 @@ void HWR_FreeTexture(patch_t *patch) {
     patch->hardware = nullptr;
 }
 static int rotationCases();
+static void rollBatches();
 static void resetGPU() {
     for (patch_t *p : {&base, &specific, &fallback, &skinBright, &rotated}) p->hardware = nullptr;
     gpu.clear(); g_textures.clear(); uploads.clear(); binds.clear();
@@ -345,6 +371,7 @@ int main(int argc, char **argv) {
     }
     resetGPU();
     assert(projectionCases == 13);
+    rollBatches();
     if (rotationCases()) return 1;
     assert(allocations.empty());
     printf("sprite brightmaps: %u projection cases, resident-data upload and %u draw/batch transitions passed\n", projectionCases, cases);
@@ -464,6 +491,42 @@ static int rotationCases() {
             Baseline_DoRotation(&baseline,source,angle,xpivot,ypivot,flip);
             auto *original = static_cast<patch_t *>(baseline.patches[angle+(flip ? ROTANGLES : 0)]);
             assert(samePatch(rot,original)); Patch_Free(original);
+            rollgeometry_t eg{};
+            RotatedPatch_Geometry(&eg,empty,angle,xpivot,ypivot,flip);
+            rotsprite_t ec{}; std::vector<void *> es(2*ROTANGLES); ec.angles=ROTANGLES; ec.patches=es.data();
+            RotatedPatch_DoRotation(&ec,empty,angle,xpivot,ypivot,flip);
+            auto *ep=static_cast<patch_t *>(es[angle+(flip?ROTANGLES:0)]);
+            assert(ep->width==eg.width && ep->height==eg.height);
+            assert(ep->leftoffset==eg.leftoffset && ep->topoffset==eg.topoffset);
+            Patch_Free(ep);
+            auto *cachedGeometry=Patch_GetRollGeometry(&frames[0],0,0,flip,&info,angle);
+            UINT32 before=hwr_roll_geometry;
+            assert(cachedGeometry==Patch_GetRollGeometry(&frames[0],0,0,flip,&info,angle));
+            assert(before==hwr_roll_geometry);
+            rollgeometry_t g{};
+            RotatedPatch_Geometry(&g,source,angle,xpivot,ypivot,flip);
+            assert(cachedGeometry->width==g.width && cachedGeometry->height==g.height);
+            Patch_CreateGL(source);
+            gl_vissprite_t shaderVis{}; shaderVis.gpatch=source; shaderVis.rollgeometry=&g;
+            FSurfaceInfo shaderSurf{}; HWR_RollSurface(&shaderSurf,&shaderVis);
+            assert(HWR_SpriteUV(&shaderVis,false)==g.width && HWR_SpriteUV(&shaderVis,true)==g.height);
+            float scale[2]; memcpy(scale,shaderSurf.roll+12,sizeof(scale));
+            assert(scale[0]==1.0f/128 && scale[1]==1.0f/128);
+
+            assert(g.width == rot->width && g.height == rot->height);
+            assert(g.leftoffset == rot->leftoffset && g.topoffset == rot->topoffset);
+            assert(g.transform.cropx == rot->rotation.cropx && g.transform.cropy == rot->rotation.cropy);
+            for (int y=0; y<g.height; ++y) for (int x=0; x<g.width; ++x) {
+                auto &t = g.transform;
+                int2 d = {x+t.cropx-t.canvaswidth/2,y+t.cropy-t.canvasheight/2};
+                int4 transform = {t.ca,t.sa,t.xcenter,t.ycenter};
+                auto mapped = RollSource(d,transform);
+                auto *pixel = (UINT8 *)Picture_GetPatchPixel(source,PICFMT_PATCH,mapped.x,mapped.y,
+                    flip ? PICFLAGS_XFLIP : PICFLAGS_NONE);
+                auto *want = (UINT8 *)Picture_GetPatchPixel(rot,PICFMT_PATCH,x,y,PICFLAGS_NONE);
+                assert(bool(pixel) == bool(want));
+                if (want) assert(*pixel == *want);
+            }
             auto vis = project(&thing,rot);
             if (!verifyBright(vis.gbright,rot,source,bright,angle,xpivot,ypivot,flip)) {
                 fprintf(stderr,"rotated brightmap oracle rejected %s (geometry %d pivot %d angle %d flip %d)\n",
@@ -522,6 +585,7 @@ static int rotationCases() {
         // Sprite-frame caches aren't owned by source patches. Purge clears users,
         // including horizontally flipped slots, then reconstruct from live source.
         Patch_FreeTag(PU_PATCH_ROTATED);
+        assert(frames[0].rotated[0][0]->geometry==nullptr);
         for (void *slot : std::vector<void *>(frames[0].rotated[0][0]->patches,
                 frames[0].rotated[0][0]->patches+2*ROTANGLES)) assert(!slot);
         auto *rebuilt = Patch_GetRotatedSprite(&frames[0],0,0,false,false,&info,1);
@@ -544,6 +608,8 @@ static int rotationCases() {
             assert(gpu.size() == steadyGPU && g_textures.size() == steadyTextures);
         }
         Patch_FreeTag(PU_PATCH_ROTATED);
+        Z_Free(frames[0].rotated[0][0]->geometry);
+        assert(frames[0].rotated[0][0]->geometry==nullptr);
         Z_Free(frames[0].rotated[0][0]->patches); Z_Free(frames[0].rotated[0][0]);
         frames[0].rotated[0][0] = nullptr;
         Patch_Free(empty); Patch_Free(source);

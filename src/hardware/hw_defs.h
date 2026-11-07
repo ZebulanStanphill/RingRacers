@@ -246,6 +246,9 @@ enum EPolyFlags
 	PF_RemoveYWrap      = 0x00010000,   // Forces clamp texture on Y
 	PF_ForceWrapX       = 0x00020000,   // Forces repeat texture on X
 	PF_ForceWrapY       = 0x00040000,   // Forces repeat texture on Y
+#ifdef HAVE_D3D12
+	PF_RollSprite = 0x00800000,
+#endif
 	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
 	PF_FogPlane         = 0x00400000,   // Fog uses Software plane-distance lighting
 	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles
@@ -295,6 +298,9 @@ struct FSurfaceInfo
 	RGBA_t			TintColor;
 	RGBA_t			FadeColor;
 	FLightInfo		LightInfo;
+#ifdef HAVE_D3D12
+	INT32 roll[16]; // inverse transform, canvas/crop, source size/flip, UV texel scale
+#endif
 	UINT32			LightTableId; // [UWP]: the surface's light table for palette rendering (from SRB2), or 0
 };
 typedef struct FSurfaceInfo FSurfaceInfo;

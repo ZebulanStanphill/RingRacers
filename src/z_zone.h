@@ -66,6 +66,9 @@ enum
 	// Tags s.t. PU_LEVEL <= tag < PU_PURGELEVEL are purged at level start
 	PU_LEVEL                 = 50, // static until level exited
 	PU_LEVSPEC               = 51, // a special thinker in a level
+#ifdef HAVE_D3D12
+	PU_ROLL_GEOMETRY         = 53, // level data, also purged with rotated patches on WAD reload
+#endif
 	PU_HWRPLANE              = 52, // if ZPLANALLOC is enabled in hw_bsp.c, this is used to alloc polygons for OpenGL
 
 	// Tags >= PU_PURGELEVEL are purgable whenever needed

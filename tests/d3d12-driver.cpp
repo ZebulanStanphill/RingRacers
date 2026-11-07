@@ -46,6 +46,7 @@ static bool negativeRejected=false;
 static std::vector<UINT8> lumpBytes; // what the stubbed wipe mask lump holds
 static std::map<std::string,std::string> shaderLumps; // what the stubbed shaders.pk3 holds: the screen effects' sources
 extern "C" {
+UINT32 hwr_roll_shader=0, hwr_roll_cpu=0, hwr_roll_geometry=0;
 UINT8 g_wipemode=0, g_wipetype=0, g_wipeframe=0;
 boolean g_wipereverse=0, g_wipeencorewiggle=0;
 // The tests' wipe modes: 1 to black, 2 to white, 3 to invert, otherwise a crossfade
@@ -233,7 +234,7 @@ static const char *const kOracles[]={
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect",
     "texture", "texture-update", "texture-reuse", "mips",
-    "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "light-table-clear", "screen-palette", "palette-off",
+    "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
     "screen-copy", "final-screen", "screen-flush", "wipe-blend", "wipe-mode", "wipe-wiggle", "wipe-fallback", "wipe-after", "postimg-identity", "postimg-shift",
     "fade-map-off", "fade-map", "fade-map-row", "fade-map-clamp", "fade-map-remake", "fade-map-after", "fade-map-reuse", "resize-fade-map", "resize-screen",
@@ -646,6 +647,67 @@ int main(int argc,char **argv) {
         special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_TRILINEAR);
         reset(); texture(&tex); textured(-.125f,.125f,.125f); expect("mips",{72,72,72});
         deleteTexture(&tex); special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_POINTSAMPLED);
+        // Compare the integer inverse-map shader against a CPU-rasterized patch,
+        // drawn by the ordinary masked sprite path. Native tests independently
+        // compare this mapping and geometry against production DoRotation.
+        {
+            auto shader=function<void (*)(int)>("SetShader");
+            special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON); shader(SHADER_SPRITE);
+            require("roll-sprite",D3D_CanRollSprite()!=0,"nearest built-in sprite shader rejected");
+            special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_BILINEAR);
+            require("roll-sprite",!D3D_CanRollSprite(),"linear filtering must use CPU rotation");
+            special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_POINTSAMPLED);
+            constexpr int sw=9,sh=11,cw=32,ch=32;
+            std::vector<UINT8> base(sw*sh*4),bright(sw*sh*4),rot(cw*ch*4),rotbright(cw*ch*4);
+            for(int y=0;y<sh;y++) for(int x=0;x<sw;x++) {
+                int o=(y*sw+x)*4;
+                base[o]=(UINT8)(20+x*22); base[o+1]=(UINT8)(16+y*19); base[o+2]=160;
+                base[o+3]=(x+y)%4?255:0;
+                bright[o]=bright[o+1]=bright[o+2]=x%3?0:255; bright[o+3]=255;
+            }
+            auto mip=[](int w,int h,std::vector<UINT8> &bytes,bool bm) {
+                GLMipmap_t m={}; m.format=GL_TEXFMT_RGBA; m.width=(UINT16)w; m.height=(UINT16)h;
+                m.data=bytes.data(); m.flags=bm?TF_BRIGHTMAP:0; return m;
+            };
+            auto bm=mip(sw,sh,base,false),br=mip(sw,sh,bright,true);
+            auto rm=mip(cw,ch,rot,false),rr=mip(cw,ch,rotbright,true);
+            for(bool flip:{false,true}) for(int angle:{1,9,18,27,53,71}) {
+                double radians=-angle*5*3.14159265358979323846/180;
+                int ca=(int)(cos(radians)*65536),sa=(int)(sin(radians)*65536);
+                int xc=(flip?sw-2:2)*65536,yc=3*65536; // explicit off-centre pivot
+                std::fill(rot.begin(),rot.end(),0); std::fill(rotbright.begin(),rotbright.end(),0);
+                for(int y=0;y<ch;y++) for(int x=0;x<cw;x++) {
+                    // Software FixedMul's 64-bit intermediate, before the final shift.
+                    auto mul=[](int a,int b) { return (int)(((INT64)a*b)>>16); };
+                    int dx=(x-cw/2)*65536,dy=(y-ch/2)*65536;
+                    int sx=(mul(dx,ca)+mul(dy,sa)+xc)>>16;
+                    int sy=(-mul(dx,sa)+mul(dy,ca)+yc)>>16;
+                    if(sx<0 || sy<0 || sx>=sw || sy>=sh) continue;
+                    if(flip) sx=sw-1-sx;
+                    memcpy(&rot[(y*cw+x)*4],&base[(sy*sw+sx)*4],4);
+                    memcpy(&rotbright[(y*cw+x)*4],&bright[(sy*sw+sx)*4],4);
+                }
+                updateTexture(&rm); updateTexture(&rr);
+                auto surfaceInfo=surface({255,255,255}); surfaceInfo.LightInfo.light_level=96;
+                surfaceInfo.LightInfo.fade_end=31;
+                auto q=quad(128.125f);
+                q[1].s=q[2].s=1; q[2].t=q[3].t=1;
+                const FBITFIELD f=PF_Modulated|PF_ColorMapped|PF_NoDepthTest;
+                reset(); texture(&rm); texture(&rr); polygon(&surfaceInfo,q.data(),4,f);
+                auto expected=pixels();
+                INT32 parameters[16]={ca,sa,xc,yc,cw,ch,0,0,sw,sh,flip?1:0,1,0,0,0,0};
+                memcpy(surfaceInfo.roll,parameters,sizeof(parameters));
+                float scale[2]={1.0f/sw,1.0f/sh}; memcpy(surfaceInfo.roll+12,scale,sizeof(scale));
+                q[1].s=q[2].s=(float)cw; q[2].t=q[3].t=(float)ch;
+                reset(); texture(&bm); texture(&br); polygon(&surfaceInfo,q.data(),4,f|PF_RollSprite);
+                auto actual=pixels(); validate(validationQueue);
+                for(int y=0;y<H;y++) for(int x=0;x<W;x++)
+                    same("roll-sprite","pixel",x,y,at(actual,x,y),at(expected,x,y));
+                D3D12_FinishUpdate(0);
+            }
+            deleteTexture(&bm); deleteTexture(&br); deleteTexture(&rm); deleteTexture(&rr);
+            shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
+        }
         // Palette rendering. The lookup table maps a color to index 7 only when red is below 32 and green and blue aren't,
         // otherwise 19, so a lookup upload that swaps axes or misplaces rows or slices picks the wrong index.
         {
