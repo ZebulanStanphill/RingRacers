@@ -693,6 +693,17 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment; the user confirmed the revised position on Xbox. They do not verify background visibility through water.
 
+- **Camera-underground walls:** `void_wall` runs the production `HWR_WallFillsView` (`hw_main.c`) against an independent
+  model of Software's columns: the seg sampled, its visible run's ends bisected, and clipped to the screen's columns by angle, and
+  `R_StoreWallRange`'s `pixlow`/`pixhigh` at its first and last visible column from `R_SetupFreelook`'s shifted
+  `centery` and `R_ExecuteSetViewSize`'s projection, with Software's floor- and ceiling-plane conditions. Fixed cases
+  cover an underground step, the same step from above the front floor (never empty), no lower texture, both or only one
+  floor sky, a wall top still on screen and the mirrored ceiling case; a sweep of 128,967 cases varies distance, wall
+  height, pitch (-30 to 30 degrees), yaw, segs reaching past the screen's edges and a sloped back floor, and must decide
+  like the model in every case, lower and upper walls apart. Flipping the pitch term or dropping the below-the-floor
+  condition fails it. The black the rule draws, the clipper and the Xbox view are not covered; the decision and the
+  black wall were compared with Software on macOS (Legacy GL on OpenGL) at the Green Hills Zone pose of the user's
+  report and four others.
 - **Horizon visibility:** use all 23 horizon boundaries from vanilla 2.4 Water Palace's TEXTMAP, with source/archive identity recorded in `fixtures/water-palace-horizons.json`. Compare the actual hardware horizon draw condition and helper to Software's production line acceptance, fake-flat and empty-line functions. Check its 22 empty sky boundaries, the remaining real boundary, lighting/texture/colormap/tag/slope changes, camera side, fake-flat control sectors (a chase camera makes `R_FakeFlat` substitute the back sector's heights and flat, which flips the decision in both directions; a first-person camera leaves it unchanged), minisegs, one-sided horizons and ordinary non-sky horizons. The old unconditional horizon condition fails. This verifies the renderer's geometry decision; the user confirmed that the background cutoff is fixed on Xbox. Surface ripple artifacts are tracked separately.
 
 - **Internal FOF visibility:** extract Software's actual `R_DrawSinglePlane` rejection block, the hardware helper, and both face-admission conditions. Compare 945 decisions using real engine FOF structures, all CUTEXTRA/EXTRA/water/fog combinations, touching boundaries, moving control heights, and all 29 overlapping-water sectors recorded from vanilla 2.4 Water Palace in `fixtures/water-palace-water.json`. The old hardware height checks admit 15 internal water boundaries that Software suppresses. Removing the new condition from either face fails this test. This verifies the visibility decision; the reported scenery artifacts still require an Xbox retest.

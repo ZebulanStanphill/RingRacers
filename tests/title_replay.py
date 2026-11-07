@@ -95,6 +95,12 @@ def generate_title(engine, output, templates, render, function_section):
     parts["BSP_VISIBILITY"] = code
     code = ""
 
+    # The replay models the camera's map position only, not its height or projection, so the camera-underground
+    # rule HWR_AddLine calls (tested by void_wall) is off here.
+    code += (
+        "\nstatic UINT8 HWR_WallFillsView(seg_t *, sector_t *, sector_t *) { return 0; }"
+        "\nstatic void HWR_DrawVoidWall(seg_t *, sector_t *, UINT8) { abort(); }\n"
+    )
     for n in ["CheckClip", "HWR_AddLine", "HWR_CheckBBox"]:
         code += hw.function(n)
     code += (
