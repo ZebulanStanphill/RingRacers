@@ -507,6 +507,15 @@ def generate(engine, output):
         "FIXTURE": "\n".join(fixture_code),
     }, output / "horizon.cpp")
 
+    slopes = Source(engine / "src/p_slopes.c")
+    render(templates / "void_wall.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),
+        "SECTOR_FLOOR": slopes.function("P_GetSectorFloorZAt"),
+        "SECTOR_CEILING": slopes.function("P_GetSectorCeilingZAt"),
+        "WALL_FILLS": hardware.function("HWR_WallFillsView"),
+    }, output / "void_wall.cpp")
+
     render(templates / "batch_sort.cpp.in", {
         "SORT_KEYS": batching.section("typedef struct\n{\n\tINT32 shader;", "// This function organizes the geometry"),
     }, output / "batch_sort.cpp")

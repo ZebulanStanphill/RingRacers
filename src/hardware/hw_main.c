@@ -3321,6 +3321,104 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 	return false;
 }
 
+#ifdef HAVE_D3D12
+// [UWP]: Software's R_StoreWallRange marks a two-sided seg solid (R_AddLine's kSolidDontRender) when its lower wall's
+// top is above the top of the view at both ends of the seg's columns, or its upper wall's bottom is below the bottom,
+// assuming the wall and the floor (or ceiling) in front of it fill those columns. From above the front floor they
+// do. From below it, as when the chase camera is pushed underground in Green Hills Zone, the floor isn't drawn, and
+// those columns stay empty below the wall: black (or Software's HOM flash) instead of the level behind, the sky
+// included. Decided as Software does, with its projection and freelook shear (R_SetupFreelook), and only in that
+// case: from above the front floor the rule changes nothing visible.
+static boolean HWR_WallFillsView(seg_t *line, sector_t *front, sector_t *back)
+{
+	const float x1 = ((polyvertex_t *)line->pv1)->x, y1 = ((polyvertex_t *)line->pv1)->y;
+	const float x2 = ((polyvertex_t *)line->pv2)->x, y2 = ((polyvertex_t *)line->pv2)->y;
+	boolean lower = false, upper = false;
+	double fovtan, aim, toplimit, bottomlimit, t0 = 0, t1 = 1;
+	INT32 end, i;
+
+	if (line->polyseg || !gl_viewwidth || !gl_viewheight)
+		return false;
+
+	// Which walls Software draws on this side (its "check TOP/BOTTOM TEXTURE"), from the heights at the seg's ends.
+	// Only from below the front floor (which Software then doesn't draw: R_Subsector's floorplane), or above the front
+	// ceiling, do they leave the columns empty; otherwise the rule changes nothing visible.
+	if (front->floorpic != skyflatnum && P_GetSectorFloorZAt(front, viewx, viewy) >= viewz
+		&& !(back->floorpic == skyflatnum && front->floorpic == skyflatnum)
+		&& (P_GetSectorFloorZAt(back, FLOAT_TO_FIXED(x1), FLOAT_TO_FIXED(y1)) > P_GetSectorFloorZAt(front, FLOAT_TO_FIXED(x1), FLOAT_TO_FIXED(y1))
+			|| P_GetSectorFloorZAt(back, FLOAT_TO_FIXED(x2), FLOAT_TO_FIXED(y2)) > P_GetSectorFloorZAt(front, FLOAT_TO_FIXED(x2), FLOAT_TO_FIXED(y2))))
+		lower = R_GetTextureNum(line->sidedef->bottomtexture) != 0;
+	if (front->ceilingpic != skyflatnum && P_GetSectorCeilingZAt(front, viewx, viewy) <= viewz
+		&& !(back->ceilingpic == skyflatnum && front->ceilingpic == skyflatnum)
+		&& (P_GetSectorCeilingZAt(back, FLOAT_TO_FIXED(x1), FLOAT_TO_FIXED(y1)) < P_GetSectorCeilingZAt(front, FLOAT_TO_FIXED(x1), FLOAT_TO_FIXED(y1))
+			|| P_GetSectorCeilingZAt(back, FLOAT_TO_FIXED(x2), FLOAT_TO_FIXED(y2)) < P_GetSectorCeilingZAt(front, FLOAT_TO_FIXED(x2), FLOAT_TO_FIXED(y2))))
+		upper = R_GetTextureNum(line->sidedef->toptexture) != 0;
+	if (!lower && !upper)
+		return false;
+
+	// Software's projection (R_ExecuteSetViewSize) and freelook shear (R_SetupFreelook): a height h above the eye at
+	// depth d (along the view direction) is above the top of the view when h/d >= fovtan * (height/width + tan(aim)),
+	// and below the bottom when -h/d >= fovtan * (height/width - tan(aim)).
+	fovtan = tan(FIXED_TO_FLOAT(R_FOV(viewssnum)) * M_PI / 360.0);
+	if (r_splitscreen == 1)
+		fovtan *= 1.7;
+	aim = tan((double)(INT32)gl_aimingangle * (M_PI / 2147483648.0));
+	toplimit = fovtan * (gl_viewheight / gl_viewwidth + aim);
+	bottomlimit = fovtan * (gl_viewheight / gl_viewwidth - aim);
+
+	// The part of the seg within the view's columns: lateral offset within fovtan times depth on both sides
+	for (i = 0; i < 2; i++)
+	{
+		const double sign = i ? -1.0 : 1.0;
+		const double dx1 = x1 - gl_viewx, dy1 = y1 - gl_viewy, dx2 = x2 - gl_viewx, dy2 = y2 - gl_viewy;
+		const double a = (dx1 * gl_viewcos + dy1 * gl_viewsin) * fovtan + sign * (dx1 * gl_viewsin - dy1 * gl_viewcos);
+		const double b = (dx2 * gl_viewcos + dy2 * gl_viewsin) * fovtan + sign * (dx2 * gl_viewsin - dy2 * gl_viewcos);
+		if (a < 0 && b < 0)
+			return false;
+		if (a < 0)
+			t0 = fmax(t0, a / (a - b));
+		else if (b < 0)
+			t1 = fmin(t1, a / (a - b));
+	}
+	if (t0 >= t1)
+		return false;
+
+	for (end = 0; end < 2; end++)
+	{
+		const double t = end ? t1 : t0;
+		const double px = x1 + (x2 - x1) * t, py = y1 + (y2 - y1) * t;
+		const fixed_t fx = FLOAT_TO_FIXED(px), fy = FLOAT_TO_FIXED(py);
+		const double depth = fmax((px - gl_viewx) * gl_viewcos + (py - gl_viewy) * gl_viewsin, 1e-6);
+		if (lower && (FIXED_TO_FLOAT(P_GetSectorFloorZAt(back, fx, fy)) - gl_viewz) / depth < toplimit)
+			lower = false;
+		if (upper && (gl_viewz - FIXED_TO_FLOAT(P_GetSectorCeilingZAt(back, fx, fy))) / depth < bottomlimit)
+			upper = false;
+	}
+	return lower || upper;
+}
+
+// The columns HWR_WallFillsView found empty in Software: an opaque black wall along the seg through the whole height
+// of the map. The seg's own walls and anything nearer are in front of it; whatever is behind is hidden, as Software
+// never draws it there.
+static void HWR_DrawVoidWall(seg_t *line)
+{
+	FOutVector v[4];
+	FSurfaceInfo surf = {0};
+	const float top = FIXED_TO_FLOAT(INT32_MAX), bottom = FIXED_TO_FLOAT(INT32_MIN);
+	memset(v, 0, sizeof v);
+	v[0].x = v[3].x = ((polyvertex_t *)line->pv1)->x;
+	v[0].z = v[3].z = ((polyvertex_t *)line->pv1)->y;
+	v[1].x = v[2].x = ((polyvertex_t *)line->pv2)->x;
+	v[1].z = v[2].z = ((polyvertex_t *)line->pv2)->y;
+	v[0].y = v[1].y = bottom;
+	v[2].y = v[3].y = top;
+	surf.PolyColor.s.alpha = 255; // black
+	HWR_SetCurrentTexture(NULL);
+	D3D12_SurfaceProbeSource("void wall", (INT32)(line->linedef-lines));
+	HWR_ProcessPolygon(&surf, v, 4, PF_NoTexture|PF_Modulated|PF_Occlude, SHADER_DEFAULT, false);
+}
+#endif
+
 // -----------------+
 // HWR_AddLine      : Clips the given segment and adds any visible pieces to the line list.
 // Notes            : gl_cursectorlight is set to the current subsector -> sector -> light value
@@ -3442,6 +3540,16 @@ static void HWR_AddLine(seg_t * line)
 				gld_clipper_SafeAddClipRange(angle2, angle1);
 			checkforemptylines = false;
 		}
+#ifdef HAVE_D3D12
+		else if (portaloccludes && HWR_WallFillsView(line, gl_frontsector, gl_backsector))
+		{
+			// Software draws this seg, then treats it as solid and leaves the rest of its columns empty
+			gld_clipper_SafeAddClipRange(angle2, angle1);
+			checkforemptylines = false;
+			if (!hwr_portalsearch)
+				HWR_DrawVoidWall(line);
+		}
+#endif
 		// Reject empty lines used for triggers and special events.
 		// Identical floor and ceiling on both sides,
 		//  identical light levels on both sides,

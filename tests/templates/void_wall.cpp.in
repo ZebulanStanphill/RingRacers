@@ -1,0 +1,144 @@
+// The camera-underground rule: HWR_WallFillsView (hw_main.c) against an independent model of Software's columns.
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "r_main.h"
+#include "r_state.h"
+#include "r_textures.h"
+#include "p_slopes.h"
+#include "hardware/hw_glob.h"
+#undef min
+#undef max
+INT32 skyflatnum = 1;
+INT32 numtextures = 8;
+static INT32 translation[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+INT32 *texturetranslation = translation;
+fixed_t viewx, viewy, viewz;
+UINT8 viewssnum;
+INT32 r_splitscreen;
+static fixed_t fov = 100 * FRACUNIT;
+fixed_t R_FOV(int) { return fov; }
+float gl_viewcos = 1, gl_viewsin, gl_viewwidth = 1920, gl_viewheight = 1080;
+static float gl_viewx, gl_viewy, gl_viewz;
+static angle_t gl_aimingangle;
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SLOPE_HEIGHT@@
+@@SECTOR_FLOOR@@
+@@SECTOR_CEILING@@
+@@WALL_FILLS@@
+
+static polyvertex_t pv1, pv2;
+static side_t side;
+static seg_t seg;
+static sector_t front, back;
+
+static void Camera(float x, float y, float z, double yawdeg, double aimdeg)
+{
+    gl_viewx = x; gl_viewy = y; gl_viewz = z;
+    gl_viewcos = (float)std::cos(yawdeg * M_PI / 180); gl_viewsin = (float)std::sin(yawdeg * M_PI / 180);
+    viewx = FLOAT_TO_FIXED(x); viewy = FLOAT_TO_FIXED(y); viewz = FLOAT_TO_FIXED(z);
+    gl_aimingangle = (angle_t)(INT32)std::llround(aimdeg / 360.0 * 4294967296.0);
+}
+
+// Software's columns, modelled independently: the seg clipped to the screen's columns by angle, and R_StoreWallRange's
+// pixlow/pixhigh at its first and last column from R_SetupFreelook's centery and R_ExecuteSetViewSize's projection.
+static bool SoftwareEmpty()
+{
+    const double fovtan = std::tan(FIXED_TO_FLOAT(fov) * M_PI / 360), proj = gl_viewwidth / 2 / fovtan;
+    const double aim = (double)(INT32)gl_aimingangle * (2 * M_PI / 4294967296.0);
+    const double centery = gl_viewheight / 2 + std::tan(aim) * gl_viewwidth / 2;
+    const double yaw = std::atan2(gl_viewsin, gl_viewcos), edge = std::atan(fovtan);
+    auto angle = [&](double x, double y) { return std::remainder(std::atan2(y - gl_viewy, x - gl_viewx) - yaw, 2 * M_PI); };
+    // Sample the seg finely and keep the points inside the columns (enough for straight segs).
+    double first = -1, last = -1;
+    for (int i = 0; i <= 20000; ++i)
+    {
+        const double t = i / 20000.0, x = pv1.x + (pv2.x - pv1.x) * t, y = pv1.y + (pv2.y - pv1.y) * t;
+        const double depth = (x - gl_viewx) * gl_viewcos + (y - gl_viewy) * gl_viewsin;
+        if (depth > 0 && std::fabs(angle(x, y)) <= edge) { if (first < 0) first = t; last = t; }
+    }
+    if (first < 0)
+        return false;
+    const bool belowFloor = front.floorpic != skyflatnum && FIXED_TO_FLOAT(P_GetSectorFloorZAt(&front, viewx, viewy)) >= gl_viewz;
+    const bool aboveCeiling = front.ceilingpic != skyflatnum && FIXED_TO_FLOAT(P_GetSectorCeilingZAt(&front, viewx, viewy)) <= gl_viewz;
+    bool lower = belowFloor && side.bottomtexture && !(front.floorpic == skyflatnum && back.floorpic == skyflatnum);
+    bool upper = aboveCeiling && side.toptexture && !(front.ceilingpic == skyflatnum && back.ceilingpic == skyflatnum);
+    auto at = [](const sector_t *s, bool floor, double x, double y) {
+        return FIXED_TO_FLOAT((floor ? P_GetSectorFloorZAt : P_GetSectorCeilingZAt)(s, FLOAT_TO_FIXED(x), FLOAT_TO_FIXED(y)));
+    };
+    lower = lower && (at(&back, true, pv1.x, pv1.y) > at(&front, true, pv1.x, pv1.y) || at(&back, true, pv2.x, pv2.y) > at(&front, true, pv2.x, pv2.y));
+    upper = upper && (at(&back, false, pv1.x, pv1.y) < at(&front, false, pv1.x, pv1.y) || at(&back, false, pv2.x, pv2.y) < at(&front, false, pv2.x, pv2.y));
+    for (double t : {first, last})
+    {
+        const double x = pv1.x + (pv2.x - pv1.x) * t, y = pv1.y + (pv2.y - pv1.y) * t;
+        const double depth = (x - gl_viewx) * gl_viewcos + (y - gl_viewy) * gl_viewsin;
+        if (centery - (at(&back, true, x, y) - gl_viewz) * proj / depth > 0) lower = false;   // pixlow on screen
+        if (centery - (at(&back, false, x, y) - gl_viewz) * proj / depth < gl_viewheight) upper = false; // pixhigh
+    }
+    return lower || upper;
+}
+
+static void Reset()
+{
+    side = {}; seg = {}; front = {}; back = {};
+    seg.pv1 = &pv1; seg.pv2 = &pv2; seg.sidedef = &side;
+    side.bottomtexture = 3; side.toptexture = 4;
+    front.floorheight = 0; front.ceilingheight = 512 * FRACUNIT; front.floorpic = front.ceilingpic = 2;
+    back.floorheight = 0; back.ceilingheight = 512 * FRACUNIT; back.floorpic = back.ceilingpic = 2;
+}
+
+static int checked, empty;
+static void Check(const char *what)
+{
+    const bool expected = SoftwareEmpty(), actual = HWR_WallFillsView(&seg, &front, &back);
+    if (expected != actual)
+        std::printf("%s: Software %d, hardware %d (camera %.2f %.2f %.2f)\n", what, expected, actual, gl_viewx, gl_viewy, gl_viewz);
+    assert(expected == actual);
+    ++checked; empty += expected;
+}
+
+int main()
+{
+    // A step up across the view 64 units ahead: front floor 300, back floor 600 (both above a camera at 100).
+    Reset();
+    pv1 = {64, 200, 0}; pv2 = {64, -200, 0};
+    front.floorheight = 300 * FRACUNIT; back.floorheight = 600 * FRACUNIT;
+    Camera(0, 0, 100, 0, 0); Check("underground step"); assert(empty == 1);
+    Camera(0, 0, 400, 0, 0); Check("above the front floor"); assert(empty == 1); // never from above the floor
+    side.bottomtexture = 0; Camera(0, 0, 100, 0, 0); Check("no lower texture"); assert(empty == 1);
+    side.bottomtexture = 3; front.floorpic = back.floorpic = skyflatnum; Check("both floors sky"); assert(empty == 1);
+    front.floorpic = 2; back.floorpic = skyflatnum; Check("only the back floor sky"); assert(empty == 2);
+    back.floorpic = 2;
+    // A low step far away: the wall top is on screen.
+    pv1 = {2000, 2000, 0}; pv2 = {2000, -2000, 0}; back.floorheight = 320 * FRACUNIT; Check("wall top on screen"); assert(empty == 2);
+    // The ceiling case: camera above the front ceiling, upper wall's bottom below the screen.
+    Reset(); pv1 = {64, 200, 0}; pv2 = {64, -200, 0};
+    front.ceilingheight = 300 * FRACUNIT; back.ceilingheight = 0;
+    Camera(0, 0, 500, 0, 0); Check("over the ceiling"); assert(empty == 3);
+    // Sweeps: distances, heights, pitch (Software's shear), yaw, segs reaching past the columns, slopes.
+    pslope_t slope{};
+    slope.o = {0, 0, 300 * FRACUNIT}; slope.d = {FRACUNIT, 0}; slope.zdelta = FRACUNIT / 4;
+    for (int s = 0; s < 2; ++s)
+        for (int d = 1; d <= 40; ++d)
+            for (int h = 0; h <= 30; ++h)
+                for (int a = -6; a <= 6; ++a)
+                    for (int y = 0; y < 4; ++y)
+                    {
+                        Reset();
+                        const float dist = d * 25.f, half = 50.f + 150.f * y;
+                        pv1 = {dist, half, 0}; pv2 = {dist + 40.f * (y - 1), -half * 2, 0};
+                        front.floorheight = 150 * FRACUNIT;
+                        back.floorheight = (150 + h * 20) * FRACUNIT;
+                        back.f_slope = s ? &slope : nullptr;
+                        Camera(0, 0, 100, y * 7.5, a * 5.0);
+                        Check("sweep");
+                    }
+    std::printf("camera-underground walls: %d cases, %d leave Software's columns empty\n", checked, empty);
+    assert(empty > 100 && empty < checked - 100);
+    return 0;
+}
