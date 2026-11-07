@@ -186,6 +186,20 @@ add_test(NAME map_preview_cache COMMAND map_preview_cache)
 set_tests_properties(map_preview_cache PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
+# The startup lump header cache's file format and lookups are a header of their own, with no dependencies.
+add_executable(lump_header_cache lump-header-cache.cpp)
+target_compile_features(lump_header_cache PRIVATE cxx_std_17)
+target_include_directories(lump_header_cache PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(lump_header_cache PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(lump_header_cache PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(lump_header_cache PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME lump_header_cache COMMAND lump_header_cache)
+set_tests_properties(lump_header_cache PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
 # The record beside a copy of a game data file and the rule for using the copy are a header of their own, with no dependencies.
 add_executable(uwp_data_copy uwp-data-copy.cpp)
 target_compile_features(uwp_data_copy PRIVATE cxx_std_17)

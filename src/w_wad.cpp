@@ -50,6 +50,7 @@
 #include <chrono>
 #include "console.h"
 #include "i_uwpdata.h"
+#include "w_uwpheadercache.h"
 #endif
 
 #include "doomdef.h"
@@ -2343,7 +2344,26 @@ static void W_UWPSeekLumpData(UINT16 wad, lumpinfo_t *l, size_t offset)
   * \return Number of bytes read (should equal size).
   * \sa W_ReadLump, W_RawReadLumpHeader
   */
+#ifdef _UWP
+// [UWP]: At startup, small reads of PK3 lumps are answered from a cache (w_uwpheadercache.h) without touching the file
+static size_t W_ReadLumpHeaderPwadFile(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset);
+
 size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
+{
+	size_t result;
+
+	if (W_UWPHeaderCacheLookup(wad, lump, dest, size, offset, &result))
+		return result;
+
+	result = W_ReadLumpHeaderPwadFile(wad, lump, dest, size, offset);
+	W_UWPHeaderCacheStore(wad, lump, dest, size, offset, result);
+	return result;
+}
+
+static size_t W_ReadLumpHeaderPwadFile(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
+#else
+size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
+#endif
 {
 	size_t lumpsize;
 	lumpinfo_t *l;

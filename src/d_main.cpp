@@ -65,6 +65,9 @@
 #include "st_stuff.h"
 #include "v_video.h"
 #include "w_wad.h"
+#ifdef _UWP
+#include "w_uwpheadercache.h"
+#endif
 #include "z_zone.h"
 #include "d_main.h"
 #include "d_netfil.h"
@@ -1158,6 +1161,7 @@ void D_SRB2Loop(void)
 #ifdef _UWP
 	// [UWP]: The profiler started in D_SRB2Main; this ends its startup phase, however D_SRB2Main returned
 	i_uwpprofstartup = false;
+	W_UWPHeaderCacheFinish(); // saves the startup lump header cache and stops using it
 #endif
 
 	I_UpdateTime();

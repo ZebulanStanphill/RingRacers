@@ -366,6 +366,14 @@ untouched padding.
   misses. A file with the wrong magic, another format or parser version, trailing bytes, a count or a length that runs past
   the end, or any truncation (every length of a valid file) is rejected whole, without a read out of bounds. Pruning with
   `keep`, the stability of the pointers `Find` returns across later `Put`s, and when the cache is dirty are checked too.
+- **Lump header cache:** `lump_header_cache` compiles the production `src/lump_header_cache.hpp`, which the UWP build uses to
+  keep the bytes of the small lump reads made at startup (`W_ReadLumpHeaderPwad`) on disk between launches, under ASan and
+  UBSan with no engine. Check a round trip (including an empty read and the longest entry), that a change to any of the key's
+  name, CRC32, size, compressed size, offset or requested size misses, and that an over-long or null entry is not stored. A
+  file with the wrong magic or format version, trailing bytes, a count, name or data length that runs past the end, or any
+  truncation (every length of a valid file) is rejected whole, without a read out of bounds. Only the entries found or put
+  since loading are saved, the pointers `Find` returns stay valid across later `Put`s, and a save is needed exactly when
+  something was put or a loaded entry went unused. Hooking it into the engine's reads is untested here.
 - **UWP data copy record:** `uwp_data_copy` compiles the production `src/uwp_data_copy.hpp`, which decides whether the
   copy of a game data file in the app's internal storage can be loaded instead of the file on the USB drive, under ASan and
   UBSan with no engine. Check the one-line sidecar's round trip (including an empty file, the largest size and times, and a

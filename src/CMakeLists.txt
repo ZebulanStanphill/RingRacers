@@ -102,6 +102,7 @@ set(SRB2_MAIN_SOURCES
 	v_video.cpp
 	s_sound.c
 	sounds.c
+	w_uwpheadercache.cpp
 	w_wad.cpp
 	filesrch.c
 	mserv.c
