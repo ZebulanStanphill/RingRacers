@@ -158,8 +158,6 @@ void HWR_UWPPrecacheLevel(boolean players_only)
 		Z_Free(wallseen);
 	}
 	HWR_UWPPrecacheModels(players_only, &models, &modeltextures);
-	// Sprites follow the models, which tell it which sprites are drawn as models instead.
-	HWR_UWPPrecacheSprites(players_only);
 	// No batch is in progress during loading. Don't leave a warm-up texture
 	// selected for title-card drawing; subsequent draws select their own textures.
 	HWR_SetCurrentTexture(NULL);

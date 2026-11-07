@@ -17,8 +17,6 @@
 #include "hardware/hw_glob.h"
 #include "hardware/hw_drv.h"
 
-// The sprite warm-up's upload counter, which the extracted hw_cache.c patch paths increment on UWP
-static UINT32 hwr_uwp_patchuploads;
 static std::array<lighttable_t, COLORMAP_REMAPOFFSET + 256> maps{};
 lighttable_t *colormaps = maps.data();
 UINT8 *encoremap = nullptr;

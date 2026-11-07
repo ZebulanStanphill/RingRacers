@@ -66,8 +66,6 @@ RGBA_t *pMasterPalette = nullptr;
 #undef NearestColor
 UINT8 NearestColor(INT32, INT32, INT32) { assert(false); return 0; }
 patch_t *missingpat = nullptr;
-// The sprite warm-up's upload counter, which the extracted hw_cache.c patch paths increment on UWP
-static UINT32 hwr_uwp_patchuploads;
 static boolean g_patch_was_freed_this_frame;
 static INT32 patch_free_depth;
 static patch_t *rotatedbrightmaps, *invalidatedbrightmaps;
