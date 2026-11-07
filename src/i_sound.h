@@ -40,6 +40,13 @@ extern consvar_t cv_samplerate;
 */
 void *I_GetSfx(sfxinfo_t *sfx);
 
+#ifdef _UWP
+/** \brief [UWP]: Reads every lump of the main sounds.pk3 into memory, for I_GetSfx to decode from, so that no sound is read
+	from the USB drive when it is first played. Once, after the main files are loaded.
+*/
+void I_UWPPreloadSounds(void);
+#endif
+
 /**	\brief	The I_FreeSfx function
 
 	\param	sfx	sfx to be freed up

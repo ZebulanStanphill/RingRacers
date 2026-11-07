@@ -2320,6 +2320,11 @@ void D_SRB2Main(void)
 
 	if (!( sound_disabled && digital_disabled && g_voice_disabled ))
 	{
+#ifdef _UWP
+		// [UWP]: sounds.pk3 stays on the USB drive, so its lumps are read once now
+		if (!sound_disabled)
+			I_UWPPreloadSounds();
+#endif
 		CONS_Printf("S_InitSfxChannels(): Setting up sound channels.\n");
 		I_StartupSound();
 		I_InitMusic();

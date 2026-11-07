@@ -9,8 +9,10 @@
 //-----------------------------------------------------------------------------
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <memory>
+#include <vector>
 
 #include <SDL.h>
 #include <tracy/tracy/Tracy.hpp>
@@ -31,6 +33,7 @@
 
 #include "../doomdef.h"
 #include "../i_sound.h"
+#include "../i_system.h"
 #include "../m_misc.h"
 #include "../s_sound.h"
 #include "../sounds.h"
@@ -200,11 +203,134 @@ static void (*music_fade_callback)();
 static SDL_AudioDeviceID g_device_id;
 static SDL_AudioDeviceID g_input_device_id;
 
+#ifdef _UWP
+namespace
+{
+
+// [UWP]: The raw bytes of every lump of sounds.pk3, read once at startup. sounds.pk3 stays on the USB drive (the
+// internal storage is small and shared), where a first play of a sound in a race would stall on a read of ~18 MB/s.
+// Written once by I_UWPPreloadSounds, then only read, by the main thread that calls I_GetSfx.
+struct HeldSounds
+{
+	UINT16 wad = UINT16_MAX;
+	std::vector<std::byte> bytes;
+	std::vector<size_t> offset; // by lump number
+	std::vector<size_t> length; // by lump number; 0 if not held
+};
+
+HeldSounds g_held_sounds;
+
+// The held bytes of the lump, or an empty span if it is not one of sounds.pk3's that was read
+tcb::span<std::byte> held_sound(lumpnum_t lumpnum)
+{
+	const HeldSounds& held = g_held_sounds;
+	const UINT16 lump = LUMPNUM(lumpnum);
+	if (WADFILENUM(lumpnum) != held.wad || lump >= held.length.size() || held.length[lump] == 0)
+		return {};
+	// Not modified by loading a chunk from it
+	return {const_cast<std::byte*>(held.bytes.data()) + held.offset[lump], held.length[lump]};
+}
+
+} // namespace
+
+void I_UWPPreloadSounds(void)
+{
+	const auto start = std::chrono::steady_clock::now();
+	constexpr size_t kMaxBytes = 512u * 1024 * 1024;
+
+	UINT16 wad = UINT16_MAX;
+	for (UINT16 i = 0; i < numwadfiles && wad == UINT16_MAX; i++)
+	{
+		if (!wadfiles[i] || wadfiles[i]->type != RET_PK3)
+			continue;
+		const char* name = wadfiles[i]->filename;
+		for (const char* c = name; *c; c++)
+		{
+			if (*c == '/' || *c == '\\')
+				name = c + 1;
+		}
+		if (!stricmp(name, "sounds.pk3"))
+			wad = i;
+	}
+	if (wad == UINT16_MAX)
+	{
+		I_OutputMsg("UWP: sounds: sounds.pk3 is not loaded, so sounds are read as they are first played\n");
+		return;
+	}
+
+	const wadfile_t* file = wadfiles[wad];
+	struct Item
+	{
+		unsigned long position;
+		UINT16 lump;
+	};
+	std::vector<Item> items;
+	size_t total = 0;
+	for (UINT16 lump = 0; lump < file->numlumps; lump++)
+	{
+		const lumpinfo_t& info = file->lumpinfo[lump];
+		if (!info.fullname || info.size == 0)
+			continue; // a folder, or empty
+		items.push_back({info.position, lump});
+		total += info.size;
+	}
+	if (total > kMaxBytes)
+	{
+		I_OutputMsg("UWP: sounds: sounds.pk3 is %.1f MB, too much to hold in memory\n", total / (1024.0 * 1024.0));
+		return;
+	}
+	// So that the drive is read forward
+	std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.position < b.position; });
+
+	HeldSounds held;
+	held.bytes.resize(total);
+	held.offset.assign(file->numlumps, 0);
+	held.length.assign(file->numlumps, 0);
+	size_t used = 0;
+	size_t read = 0;
+	size_t failed = 0;
+	for (const Item& item : items)
+	{
+		const size_t size = file->lumpinfo[item.lump].size;
+		if (W_ReadLumpHeaderPwad(wad, item.lump, held.bytes.data() + used, 0, 0) == size)
+		{
+			held.offset[item.lump] = used;
+			held.length[item.lump] = size;
+			used += size;
+			read++;
+		}
+		else
+			failed++; // left to be read when it is played
+	}
+	held.bytes.resize(used);
+	held.wad = wad;
+	g_held_sounds = std::move(held);
+
+	I_OutputMsg("UWP: sounds: read %u lumps, %.1f MB into memory in %.1f s\n", (unsigned)read, used / (1024.0 * 1024.0),
+		std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+	if (failed)
+		I_OutputMsg("UWP: sounds: %u lumps could not be read, and are read when played\n", (unsigned)failed);
+}
+#endif
+
 void* I_GetSfx(sfxinfo_t* sfx)
 {
 	if (sfx->lumpnum == LUMPERROR)
 		sfx->lumpnum = S_GetSfxLumpNum(sfx);
 	sfx->length = W_LumpLength(sfx->lumpnum);
+
+#ifdef _UWP
+	// [UWP]: sounds.pk3's lumps are already in memory
+	if (tcb::span<std::byte> held = held_sound(sfx->lumpnum); !held.empty())
+	{
+		std::optional<SoundChunk> chunk = srb2::audio::try_load_chunk(held);
+
+		if (!chunk)
+			return nullptr;
+
+		return new SoundChunk {std::move(*chunk)};
+	}
+#endif
 
 	std::byte* lump = static_cast<std::byte*>(W_CacheLumpNum(sfx->lumpnum, PU_SOUND));
 	auto _ = srb2::finally([lump]() { Z_Free(lump); });
