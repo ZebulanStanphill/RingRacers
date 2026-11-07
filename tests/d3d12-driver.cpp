@@ -239,6 +239,7 @@ static const char *const kOracles[]={
     "fade-map-off", "fade-map", "fade-map-row", "fade-map-clamp", "fade-map-remake", "fade-map-after", "fade-map-reuse", "resize-fade-map", "resize-screen",
     "sky", "model-buffered", "model-lerped", "model-fallback", "rings", "growth",
     "blend-invisible", "blend-invisible-depth", "blend-invisible-restore", "blend-remap-mask", "blend-remap-restore",
+    "void-fill", "void-claim", "void-translucent", "void-depth", "void-viewport", "void-portal",
     "custom-none", "custom-layout-poly", "custom-layout-sky", "custom-layout-model", "custom-replace-invalid", "custom-replace-recover", "custom-sprite-clip", "custom-model-kept", "custom-model-lighting", "custom-water-refraction",
     "shutdown",
 };
@@ -1238,6 +1239,62 @@ int main(int argc,char **argv) {
                 draw(src,to.flags|PF_Occlude,.25f,128);
                 expectQuad("blend-invisible-restore",blended(to.flags,src,dst,128));
             }
+            D3D12_FinishUpdate(0);
+        }
+        // The void: Legacy GL draws the sky first, then the level, and Software draws what the level doesn't cover black.
+        // D3D12_FillVoid runs after the opaque geometry and the sky claims (depth-only surfaces): pixels with depth keep
+        // their color, the rest turn black, and the depth is left as it was.
+        {
+            const RGB sky=dst, red={200,40,20}, green={20,200,40}, blue={40,20,200}, black={0,0,0};
+            auto rect=[&](float x0,float x1,RGB c,FBITFIELD flags,float z=1,int alpha=255) {
+                std::vector<FOutVector> v={{x0*z,-.9f*z,z,0,0},{x1*z,-.9f*z,z,0,0},{x1*z,.9f*z,z,0,0},{x0*z,.9f*z,z,0,0}};
+                auto surf=surface(c,alpha); flags|=PF_Modulated|PF_NoTexture; blend(flags); polygon(&surf,v.data(),4,flags);
+            };
+            // Columns 0-16 opaque geometry, 16-32 a sky claim, 32-64 nothing
+            reset(sky);
+            rect(-1,-.5f,red,PF_Occlude);
+            rect(-.5f,0,{255,255,255},PF_Invisible|PF_Occlude);
+            { auto p=pixels(); validate(validationQueue); check("void-fill",p,10,32,red); check("void-claim",p,20,32,sky); check("void-fill",p,44,32,sky); }
+            D3D12_FillVoid();
+            { auto p=pixels(); validate(validationQueue);
+              check("void-fill",p,44,32,black); check("void-fill",p,60,32,black); check("void-fill",p,8,2,black); // above the rows the quads cover, the void is black too
+              check("void-claim",p,20,32,sky); check("void-claim",p,28,32,sky); check("void-fill",p,10,32,red); }
+            // Translucent geometry drawn afterwards blends with the black void, and with the sky where it was claimed
+            rect(-.25f,.75f,green,PF_Translucent,.5f,128);
+            { auto p=pixels(); validate(validationQueue);
+              check("void-translucent",p,28,32,blended(PF_Translucent,green,sky,128));
+              check("void-translucent",p,44,32,blended(PF_Translucent,green,black,128));
+              check("void-translucent",p,10,32,red); check("void-translucent",p,60,32,black); }
+            // The fill wrote no depth: a farther surface still shows over the void and is still hidden by the claim
+            rect(-.5f,1,blue,PF_Occlude,1.5f);
+            { auto p=pixels(); validate(validationQueue); check("void-depth",p,60,32,blue); check("void-depth",p,20,32,sky); check("void-depth",p,10,32,red); }
+            D3D12_FinishUpdate(0);
+        }
+        // The fill stays inside the viewport (split-screen), though the depth clear before it covers the whole target
+        {
+            auto gclip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
+            reset(dst); gclip(0,0,W/2,H,.1f); D3D12_FillVoid(); gclip(0,0,W,H,.1f);
+            { auto p=pixels(); validate(validationQueue); check("void-viewport",p,16,32,{0,0,0}); check("void-viewport",p,16,2,{0,0,0});
+              check("void-viewport",p,48,32,dst); check("void-viewport",p,48,2,dst); }
+            reset(dst); gclip(W/2,0,W,H,.1f); D3D12_FillVoid(); gclip(0,0,W,H,.1f);
+            { auto p=pixels(); validate(validationQueue); check("void-viewport",p,48,32,{0,0,0}); check("void-viewport",p,16,32,dst); }
+            D3D12_FinishUpdate(0);
+        }
+        // Inside a portal only the portal's pixels are filled: the child's far-depth reset and stencil level confine it
+        {
+            const RGB child={24,180,220};
+            auto aperture=std::array<FOutVector,4>{{{-.6f*.25f,-.6f*.25f,.25f,0,0},{.6f*.25f,-.6f*.25f,.25f,0,0},{.6f*.25f,.6f*.25f,.25f,0,0},{-.6f*.25f,.6f*.25f,.25f,0,0}}};
+            reset(dst);
+            if(!D3D12_DrawPortalAperture(aperture.data(),0,false)) throw std::runtime_error("portal aperture failed");
+            D3D12_ResetPortalDepth(1); D3D12_SetPortalStencil(1);
+            { std::vector<FOutVector> v={{-.2f,-.9f,1,0,0},{.2f,-.9f,1,0,0},{.2f,.9f,1,0,0},{-.2f,.9f,1,0,0}};
+              auto surf=surface(child); blend(PF_Modulated|PF_NoTexture|PF_Occlude); polygon(&surf,v.data(),4,PF_Modulated|PF_NoTexture|PF_Occlude); }
+            D3D12_FillVoid(); D3D12_SetPortalStencil(0);
+            { auto p=pixels(); validate(validationQueue);
+              check("void-portal",p,32,32,child);       // the child's geometry
+              check("void-portal",p,20,32,{0,0,0});     // the portal's void
+              check("void-portal",p,4,32,dst);          // outside the portal, the parent's sky is untouched
+              check("void-portal",p,60,32,dst); }
             D3D12_FinishUpdate(0);
         }
         // Fog and water composites write the final color themselves, so they disable blending but keep the write mask,

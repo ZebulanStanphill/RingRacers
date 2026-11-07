@@ -57,6 +57,7 @@ void D3D12_SetPortalStencil(INT32 level);
 boolean D3D12_PortalsSupported(void);
 boolean D3D12_DrawPortalAperture(const FOutVector *vertices, INT32 level, boolean restore);
 void D3D12_ResetPortalDepth(INT32 level);
+void D3D12_FillVoid(void);
 
 boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength);
 void D3D12_GetPresentTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);

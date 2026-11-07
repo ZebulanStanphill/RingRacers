@@ -963,6 +963,11 @@ typedef struct hwr_portal_s
 static INT32 *hwr_portalpartners; // PU_LEVEL; nulled by the zone allocator
 static boolean hwr_maphasportals, hwr_portalsearch;
 static INT32 hwr_portallevel;
+#ifdef HAVE_D3D12
+// Whether any sky (a skybox's view or a sky texture) has been drawn into the color buffer this frame for this player's
+// view: only then does the void need filling black.
+static boolean hwr_skydrawn;
+#endif
 static line_t *hwr_portalexit;
 static float hwr_portalplane[4]; // world (x, height, map y)
 static angle_t hwr_portalangle1, hwr_portalangle2;
@@ -1385,6 +1390,50 @@ static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
 }
 
 
+#ifdef HAVE_D3D12
+// [UWP]: Software shows the sky only through sky surfaces and draws everything the level doesn't cover black, while
+// Legacy GL draws the sky over the whole view first. A sky plane therefore writes depth without color (like
+// HWR_DrawSkyWall) at its real position, claiming its pixels for the sky; D3D12_FillVoid then blackens the pixels
+// that no surface claimed. The height is per vertex for a slope.
+static void HWR_RenderSkyClaim(extrasubsector_t *xsub, fixed_t fixedheight, pslope_t *slope)
+{
+	static FOutVector *skyVerts = NULL;
+	static UINT16 numAllocedSkyVerts = 0;
+	polyvertex_t *pv;
+	FSurfaceInfo Surf = {0};
+	INT32 nrPlaneVerts, i;
+	const float height = FIXED_TO_FLOAT(fixedheight);
+
+	if (!xsub->planepoly)
+		return;
+	pv = xsub->planepoly->pts;
+	nrPlaneVerts = xsub->planepoly->numpts;
+	if (nrPlaneVerts < 3)
+		return;
+	if (!skyVerts || nrPlaneVerts > numAllocedSkyVerts)
+	{
+		numAllocedSkyVerts = (UINT16)nrPlaneVerts;
+		Z_Free(skyVerts);
+		Z_Malloc(numAllocedSkyVerts * sizeof (FOutVector), PU_LEVEL, &skyVerts);
+	}
+	for (i = 0; i < nrPlaneVerts; i++, pv++)
+	{
+		skyVerts[i].s = skyVerts[i].t = 0.0f;
+		skyVerts[i].x = pv->x;
+		skyVerts[i].y = slope ? FIXED_TO_FLOAT(P_GetSlopeZAt(slope, FLOAT_TO_FIXED(pv->x), FLOAT_TO_FIXED(pv->y))) : height;
+		skyVerts[i].z = pv->y;
+	}
+	Surf.PolyColor.s.alpha = 255;
+	HWR_SetCurrentTexture(NULL);
+	D3D12_SurfaceProbeSource("sky plane", -1);
+	// The same state as HWR_DrawSkyWall, so the batcher keeps both together
+	HWR_ProcessPolygon(&Surf, skyVerts, nrPlaneVerts,
+		PF_Invisible|PF_NoTexture|PF_Modulated|PF_Occlude|(HWR_UseShader() ? PF_ColorMapped : 0),
+		HWR_UseShader() ? SHADER_WALL : SHADER_DEFAULT, false);
+	drawsky = true;
+}
+#endif
+
 // -----------------+
 // HWR_RenderPlane  : Render a floor or ceiling convex polygon
 // -----------------+
@@ -1442,6 +1491,16 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	if (nrPlaneVerts < 3)   //not even a triangle ?
 		return;
+
+#ifdef HAVE_D3D12
+	// [UWP]: A 3D floor plane with the sky flat is sky in Software. Only the opaque draws made while walking the BSP
+	// get here with a subsector; queued translucent ones draw after the void is filled.
+	if (subsector && levelflat == &levelflats[skyflatnum])
+	{
+		HWR_RenderSkyClaim(xsub, fixedheight, slope);
+		return;
+	}
+#endif
 
 	// Allocate plane-vertex buffer if we need to
 	if (!planeVerts || nrPlaneVerts > numAllocedPlaneVerts)
@@ -3842,6 +3901,18 @@ static void HWR_Subsector(size_t num)
 #endif
 		}
 	}
+
+#ifdef HAVE_D3D12
+	// [UWP]: Software draws a sky floor or ceiling as sky from either side of its plane (R_Subsector), so these
+	// claim their pixels whatever side the camera is on, unlike the culled planes above.
+	if (sub->validcount != validcount)
+	{
+		if (gl_frontsector->floorpic == skyflatnum)
+			HWR_RenderSkyClaim(&extrasubsectors[num], locFloorHeight, gl_frontsector->f_slope);
+		if (gl_frontsector->ceilingpic == skyflatnum)
+			HWR_RenderSkyClaim(&extrasubsectors[num], locCeilingHeight, gl_frontsector->c_slope);
+	}
+#endif
 
 #ifndef POLYSKY
 	// Moved here because before, when above the ceiling and the floor does not have the sky flat, it doesn't draw the sky
@@ -7563,7 +7634,12 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 #endif
 
 	if (drawSkyTexture)
+	{
 		HWR_DrawSkyBackground(player);
+#ifdef HAVE_D3D12
+		hwr_skydrawn = true;
+#endif
+	}
 	if (hwr_viewfog)
 		HWR_DrawViewFogSky();
 
@@ -7647,6 +7723,14 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 
 	if (cv_glbatching.value)
 		HWR_RenderBatches();
+
+#ifdef HAVE_D3D12
+	// [UWP]: The level's opaque geometry and the sky claims (depth-only sky surfaces) are done. Software draws what
+	// nothing covers black, but the sky was drawn over the whole view first, so blacken the pixels with no depth. This
+	// comes before the sprites and the sorted translucent draws, which Software draws over the void.
+	if (hwr_skydrawn)
+		D3D12_FillVoid();
+#endif
 
 #ifdef ALAM_LIGHTING
 	//14/11/99: Hurdler: moved here because it doesn't work with
@@ -7875,6 +7959,9 @@ void HWR_RenderSkyboxView(player_t *player)
 	gl_skyboxview = true;
 	HWR_RenderViewpoint(player, drawsky, false);
 	gl_skyboxview = false;
+#ifdef HAVE_D3D12
+	hwr_skydrawn = true; // the main view's sky surfaces show this view; the rest of its void is black
+#endif
 }
 
 // ==========================================================================
@@ -7928,6 +8015,9 @@ void HWR_RenderPlayerView(void)
 	if (viewssnum == 0) // Only do it if it's the first screen being rendered
 		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
 
+#ifdef HAVE_D3D12
+	hwr_skydrawn = false;
+#endif
 	ps_hw_skyboxtime = I_GetPreciseTime();
 	if (skybox && drawsky) // If there's a skybox and we should be drawing the sky, draw the skybox
 		HWR_RenderSkyboxView(player); // This is drawn before everything else so it is placed behind

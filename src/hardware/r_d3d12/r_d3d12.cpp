@@ -233,7 +233,11 @@ void MatRotate(float angle, float x, float y, float z)
 		g_modelview.pop_back();
 }
 
-constexpr float kFarClippingPlane = 32768.0f;
+// Beyond anything in a map (coordinates are within +-32768, so no two points are more than ~92700 apart), so no level
+// geometry is ever far-clipped: the void fill (D3D12_FillVoid) blackens what nothing drew, as Software does, and must not
+// blacken distant geometry. r_opengl.c's 32768 hid it, leaving the sky. Depth precision is set almost entirely by the
+// near plane, so this costs next to nothing.
+constexpr float kFarClippingPlane = 131072.0f;
 float g_nearClippingPlane = NZCLIP_PLANE;
 const float g_fov = 90.0f;
 
@@ -3233,6 +3237,45 @@ void D3D12_ResetPortalDepth(INT32 level)
 	}
 	g_gl = saved;
 	g_program = program;
+	// Restore root arguments, targets and viewport, and invalidate every dynamic binding cache.
+	BindRenderTarget();
+}
+
+// Paints black every pixel of the current viewport, inside the current portal stencil level, that nothing has drawn
+// depth to since the view's depth clear: Software draws the void black, and Legacy GL has drawn the sky over the whole
+// view first, so only the pixels that sky surfaces claimed (depth-only draws) keep it. Far depth with LESS_EQUAL passes
+// only where the stored depth is still the cleared 1.0; there is no depth write, so later draws see the depth as before.
+// Blend factors of zero make the color black without a shader of its own.
+void D3D12_FillVoid(void)
+{
+	if (!CanDraw())
+		return;
+	const GLState saved = g_gl;
+	const int program = g_program;
+	const bool refraction = g_waterRefraction, remap = g_fogRemap;
+	g_waterRefraction = g_fogRemap = false;
+	g_gl.depthTest = true;
+	g_gl.depthAlways = g_gl.depthMask = false;
+	g_gl.stencilFail = g_gl.stencilDepthFail = g_gl.stencilPass = D3D12_STENCIL_OP_KEEP;
+	g_gl.colorWriteMask = 7;
+	g_gl.fullscreenDepth = 1;
+	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = false;
+	g_gl.blend = true;
+	g_gl.blendSrc = g_gl.blendDst = BF_ZERO;
+	g_gl.blendEquation = BE_ADD;
+	g_program = -1;
+	if (ApplyState(LAYOUT_NONE, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
+		&& g_constantRing.Touch(g_constantAllocation, 512))
+	{
+		Core_FlushBarriers();
+		Core_List()->DrawInstanced(3, 1, 0, 0);
+		g_stats.draws++;
+		g_stats.vertices += 3;
+	}
+	g_gl = saved;
+	g_program = program;
+	g_waterRefraction = refraction;
+	g_fogRemap = remap;
 	// Restore root arguments, targets and viewport, and invalidate every dynamic binding cache.
 	BindRenderTarget();
 }

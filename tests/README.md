@@ -474,6 +474,14 @@ outside occlusion. `portal-plane` checks world-plane clipping and disabling the 
 These pixel scenes use production driver
 entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
 and fog/water portal interactions still require further testing.
+Void scenes cover `D3D12_FillVoid`, which turns black every pixel of the current viewport and portal stencil level
+that still has the depth clear's far value, the way Software draws what the level doesn't cover. Opaque geometry
+keeps its color (`void-fill`), a depth-only (Invisible) surface, standing in for a sky plane or wall, keeps what was
+drawn under it (`void-claim`), translucent geometry drawn afterwards blends with black over the void and with the sky over
+the claim (`void-translucent`), the fill writes no depth, so a farther surface still shows over the void and is still
+hidden by the claim (`void-depth`), the fill stays inside a split-screen viewport although the depth clear covers the
+whole target (`void-viewport`), and inside a portal only the portal's pixels are filled (`void-portal`). Which surfaces
+claim the sky is decided by `hw_main.c` (`HWR_RenderSkyClaim`, `HWR_DrawSkyWall`) and is not exercised here.
 Custom-shader scenes load an add-on fragment shader that outputs a fixed color, compile it
 through the production loader, and draw a quad textured with (200, 40, 16). `custom-shader`
 must show the fixed color (64, 128, 191). `custom-shader-clean` must show the built-in color
