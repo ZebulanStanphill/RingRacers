@@ -1214,13 +1214,18 @@ void R_Init(void)
 // level's BSP, and moving one mobj looks up the same few points several times (P_CheckPosition, P_SetThingPosition,
 // P_GetThingStepUp, P_MobjFloorZ), while walking the BSP from its root every time was 10% of game logic on Xbox.
 // Cleared whenever a level's BSP is loaded or freed. Only the main thread looks up points.
+//
+// Two-way set associative: 2048 sets of 2 entries, 64 KB. The 512 direct-mapped entries it replaces answered only
+// about 60% of lookups on Xbox; a set keeps the two most recently inserted points that hash to it, newest first.
 struct PointInSubsectorCacheEntry
 {
 	fixed_t x, y;
 	subsector_t *subsector; // null if unused
 };
 
-static PointInSubsectorCacheEntry g_pointinsubsector_cache[512];
+constexpr UINT32 POINTINSUBSECTOR_CACHE_BITS = 11;
+
+static PointInSubsectorCacheEntry g_pointinsubsector_cache[1u << POINTINSUBSECTOR_CACHE_BITS][2];
 
 UINT32 r_uwppointlookups, r_uwppointhits;
 
@@ -1236,14 +1241,17 @@ void R_ClearPointInSubsectorCache(void)
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 {
 #ifdef _UWP
-	PointInSubsectorCacheEntry& entry =
-		g_pointinsubsector_cache[(((UINT32)x * 0x9E3779B1u) ^ ((UINT32)y * 0x85EBCA77u)) >> 23];
+	PointInSubsectorCacheEntry *set =
+		g_pointinsubsector_cache[(((UINT32)x * 0x9E3779B1u) ^ ((UINT32)y * 0x85EBCA77u)) >> (32 - POINTINSUBSECTOR_CACHE_BITS)];
 
 	r_uwppointlookups++;
-	if (entry.subsector && entry.x == x && entry.y == y)
+	for (int way = 0; way < 2; way++)
 	{
-		r_uwppointhits++;
-		return entry.subsector;
+		if (set[way].subsector && set[way].x == x && set[way].y == y)
+		{
+			r_uwppointhits++;
+			return set[way].subsector;
+		}
 	}
 #endif
 
@@ -1253,10 +1261,11 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)];
 
 #ifdef _UWP
-	entry.x = x;
-	entry.y = y;
-	entry.subsector = &subsectors[nodenum & ~NF_SUBSECTOR];
-	return entry.subsector;
+	set[1] = set[0];
+	set[0].x = x;
+	set[0].y = y;
+	set[0].subsector = &subsectors[nodenum & ~NF_SUBSECTOR];
+	return set[0].subsector;
 #else
 	return &subsectors[nodenum & ~NF_SUBSECTOR];
 #endif

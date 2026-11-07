@@ -534,6 +534,12 @@ def generate(engine, output):
         "CONTEXT": fps.function("R_SetViewContext"),
     }, output / "view_interp.cpp")
 
+    render(templates / "point_subsector.cpp.in", {
+        "POINT_ON_SIDE": renderer.function("R_PointOnSide"),
+        "CACHE": renderer.section("#ifdef _UWP\n// [UWP]: The subsectors of points looked up recently",
+            "//\n// R_PointInSubsectorOrNull"),
+    }, output / "point_subsector.cpp")
+
     shader = Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):

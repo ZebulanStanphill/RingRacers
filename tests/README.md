@@ -400,6 +400,13 @@ untouched padding.
   past-the-end result on a miss: nested folders, case variations, prefixes that are not directories (`map/` against
   `maps/`) and high-bit bytes. The texture-id memo's key (the first 8 characters, uppercased) is checked to match
   exactly when the old memo scan's `strncasecmp` over 8 characters matched.
+- **Point-in-subsector cache:** `point_subsector_cache` compiles the production `R_PointOnSide` and the UWP
+  `R_PointInSubsector` with its 2-way set-associative cache against a randomly generated BSP (axis-aligned and
+  diagonal partitions), and compares every answer with an uncached walk of the tree: 400k lookups per BSP over
+  repeated and fresh points, from a hot pool smaller than the cache to one far larger than it, with immediate
+  repeats. It checks that the cache is empty after `R_ClearPointInSubsectorCache` on a new BSP, that two points
+  sharing a set are both kept and that a third evicts the oldest, and that the lookup and hit counters stay
+  consistent. Whether the real race hit rate improves is measured on Xbox, not here.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 

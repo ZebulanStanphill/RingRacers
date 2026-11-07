@@ -1,0 +1,142 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <random>
+#include <vector>
+#include "doomdef.h"
+#include "doomdata.h"
+#include "m_fixed.h"
+#include "r_defs.h"
+#include "r_state.h"
+#include "r_main.h"
+// A synthetic BSP stands in for a level's. R_PointOnSide and the cached R_PointInSubsector are production code.
+subsector_t *subsectors = nullptr;
+size_t numnodes = 0;
+node_t *nodes = nullptr;
+@@POINT_ON_SIDE@@
+@@CACHE@@
+
+static std::mt19937 rng(2024);
+static int32_t roll(int32_t lo, int32_t hi) { return lo + (int32_t)(rng() % (uint32_t)(hi - lo + 1)); }
+
+static std::vector<node_t> nodeStore;
+static std::vector<subsector_t> subStore;
+
+// Random partition lines (axis-aligned and diagonal) over a random tree; returns the child reference.
+static UINT16 Build(int depth)
+{
+	if (depth == 0 || (depth < 5 && roll(0, 3) == 0))
+	{
+		subStore.emplace_back();
+		return (UINT16)(NF_SUBSECTOR | (subStore.size() - 1));
+	}
+	node_t n{};
+	n.x = roll(-4096, 4096) * FRACUNIT;
+	n.y = roll(-4096, 4096) * FRACUNIT;
+	switch (roll(0, 3))
+	{
+		case 0: n.dx = 0; n.dy = roll(0, 1) ? FRACUNIT : -FRACUNIT; break;
+		case 1: n.dy = 0; n.dx = roll(0, 1) ? FRACUNIT : -FRACUNIT; break;
+		default: n.dx = roll(-64, 64) * FRACUNIT; n.dy = roll(-64, 64) * FRACUNIT; if (!n.dx && !n.dy) n.dx = FRACUNIT; break;
+	}
+	n.children[0] = Build(depth - 1);
+	n.children[1] = Build(depth - 1);
+	nodeStore.push_back(n);
+	return (UINT16)(nodeStore.size() - 1);
+}
+
+static subsector_t *Reference(fixed_t x, fixed_t y)
+{
+	size_t nodenum = numnodes - 1;
+	while (!(nodenum & NF_SUBSECTOR))
+		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes + nodenum)];
+	return &subsectors[nodenum & ~NF_SUBSECTOR];
+}
+
+static void NewBsp()
+{
+	nodeStore.clear();
+	subStore.clear();
+	nodeStore.reserve(1 << 14);
+	subStore.reserve(1 << 14);
+	Build(9);
+	// The root is the last node built.
+	assert(!nodeStore.empty());
+	nodes = nodeStore.data();
+	numnodes = nodeStore.size();
+	subsectors = subStore.data();
+	R_ClearPointInSubsectorCache();
+}
+
+static fixed_t RandCoord()
+{
+	// Mostly fractional coordinates inside the map, some extreme ones, some on whole units.
+	switch (roll(0, 5))
+	{
+		case 0: return (fixed_t)((int32_t)rng() >> 2); // far outside the map, but no overflow in R_PointOnSide's subtraction
+		case 1: return roll(-4096, 4096) * FRACUNIT;
+		default: return roll(-4200 * FRACUNIT / 64, 4200 * FRACUNIT / 64) * 64;
+	}
+}
+
+int main()
+{
+	for (int level = 0; level < 6; level++)
+	{
+		NewBsp();
+		r_uwppointlookups = r_uwppointhits = 0;
+		std::vector<std::pair<fixed_t, fixed_t>> pool;
+		const int poolSizes[] = {40, 1000, 3000, 20000, 100000, 1000};
+		for (int i = 0; i < poolSizes[level]; i++)
+			pool.push_back({RandCoord(), RandCoord()});
+		// Points are looked up again and again, interleaved with fresh ones, as a race's things do.
+		for (int i = 0; i < 400000; i++)
+		{
+			fixed_t x, y;
+			if (roll(0, 4) == 0)
+			{
+				x = RandCoord();
+				y = RandCoord();
+			}
+			else
+			{
+				auto &p = pool[(size_t)roll(0, (int32_t)pool.size() - 1)];
+				x = p.first;
+				y = p.second;
+			}
+			assert(R_PointInSubsector(x, y) == Reference(x, y));
+			if (roll(0, 2) == 0)
+				assert(R_PointInSubsector(x, y) == Reference(x, y)); // immediate repeat
+		}
+		assert(r_uwppointhits > 0 && r_uwppointhits <= r_uwppointlookups);
+		std::printf("level %d: %u lookups, %.1f%% cached\n", level, r_uwppointlookups, 100.0 * r_uwppointhits / r_uwppointlookups);
+	}
+
+	// A new BSP: entries from the old one must be gone after the clear.
+	NewBsp();
+	for (int i = 0; i < 1000; i++)
+	{
+		fixed_t px = RandCoord(), py = RandCoord();
+		assert(R_PointInSubsector(px, py) == Reference(px, py));
+	}
+	// Two points that share a set are both kept (the second way), and a third pushes out the oldest.
+	NewBsp();
+	fixed_t bx = 7 * FRACUNIT, by = 9 * FRACUNIT;
+	UINT32 want = (((UINT32)bx * 0x9E3779B1u) ^ ((UINT32)by * 0x85EBCA77u)) >> (32 - POINTINSUBSECTOR_CACHE_BITS);
+	std::vector<std::pair<fixed_t, fixed_t>> same;
+	for (fixed_t cx = 0; same.size() < 3; cx += 3)
+		if ((((UINT32)cx * 0x9E3779B1u) ^ ((UINT32)by * 0x85EBCA77u)) >> (32 - POINTINSUBSECTOR_CACHE_BITS) == want)
+			same.push_back({cx, by});
+	for (auto &p : same)
+		R_PointInSubsector(p.first, p.second);
+	UINT32 hits = r_uwppointhits;
+	R_PointInSubsector(same[2].first, same[2].second);
+	R_PointInSubsector(same[1].first, same[1].second);
+	assert(r_uwppointhits == hits + 2);
+	R_PointInSubsector(same[0].first, same[0].second); // evicted: a miss, still the right answer
+	assert(r_uwppointhits == hits + 2);
+	assert(R_PointInSubsector(same[0].first, same[0].second) == Reference(same[0].first, same[0].second));
+	std::puts("point_subsector: ok");
+	return 0;
+}
