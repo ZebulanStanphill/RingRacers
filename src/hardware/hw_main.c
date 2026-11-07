@@ -1397,7 +1397,15 @@ static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
 // Legacy GL draws the sky over the whole view first. A sky plane therefore writes depth without color (like
 // HWR_DrawSkyWall) at its real position, claiming its pixels for the sky; D3D12_FillVoid then blackens the pixels
 // that no surface claimed. The height is per vertex for a slope.
-static void HWR_RenderSkyClaim(extrasubsector_t *xsub, fixed_t fixedheight, pslope_t *slope)
+static void HWR_SkyClaimVert(FOutVector *vert, float vx, float vy, float height, pslope_t *slope)
+{
+	vert->s = vert->t = 0.0f;
+	vert->x = vx;
+	vert->y = slope ? FIXED_TO_FLOAT(P_GetSlopeZAt(slope, FLOAT_TO_FIXED(vx), FLOAT_TO_FIXED(vy))) : height;
+	vert->z = vy;
+}
+
+static void HWR_RenderSkyClaim(subsector_t *subsector, extrasubsector_t *xsub, fixed_t fixedheight, pslope_t *slope)
 {
 	static FOutVector *skyVerts = NULL;
 	static UINT16 numAllocedSkyVerts = 0;
@@ -1419,20 +1427,69 @@ static void HWR_RenderSkyClaim(extrasubsector_t *xsub, fixed_t fixedheight, pslo
 		Z_Malloc(numAllocedSkyVerts * sizeof (FOutVector), PU_LEVEL, &skyVerts);
 	}
 	for (i = 0; i < nrPlaneVerts; i++, pv++)
-	{
-		skyVerts[i].s = skyVerts[i].t = 0.0f;
-		skyVerts[i].x = pv->x;
-		skyVerts[i].y = slope ? FIXED_TO_FLOAT(P_GetSlopeZAt(slope, FLOAT_TO_FIXED(pv->x), FLOAT_TO_FIXED(pv->y))) : height;
-		skyVerts[i].z = pv->y;
-	}
+		HWR_SkyClaimVert(&skyVerts[i], pv->x, pv->y, height, slope);
 	Surf.PolyColor.s.alpha = 255;
 	HWR_SetCurrentTexture(NULL);
 	D3D12_SurfaceProbeSource("sky plane", -1);
 	// The same state as HWR_DrawSkyWall, so the batcher keeps both together
-	HWR_ProcessPolygon(&Surf, skyVerts, nrPlaneVerts,
-		PF_Invisible|PF_NoTexture|PF_Modulated|PF_Occlude|(HWR_UseShader() ? PF_ColorMapped : 0),
-		HWR_UseShader() ? SHADER_WALL : SHADER_DEFAULT, false);
+	const FBITFIELD flags = PF_Invisible|PF_NoTexture|PF_Modulated|PF_Occlude|(HWR_UseShader() ? PF_ColorMapped : 0);
+	const INT32 shader = HWR_UseShader() ? SHADER_WALL : SHADER_DEFAULT;
+	HWR_ProcessPolygon(&Surf, skyVerts, nrPlaneVerts, flags, shader, false);
 	drawsky = true;
+
+	// Software extends a plane past a horizon line (special 41) to the horizon, and a sky plane's extension is sky:
+	// Green Hills Zone's skies above its horizons. Claim the same extension that HWR_RenderPlane draws for other
+	// planes: out to 27000 units, then a strip raised to eye level at 32768.
+	if (subsector)
+	{
+		const float renderdist = 27000.0f, farrenderdist = 32768.0f;
+		seg_t *line = &segs[subsector->firstline];
+		for (i = 0; i < (INT32)subsector->numlines; i++, line++)
+		{
+			FOutVector horizonpts[6];
+			vertex_t v;
+			float dist, vx, vy, x1, y1, xd, yd;
+			UINT8 numplanes, j;
+
+			if (!HWR_ShouldExtendHorizon(line, gl_frontsector) || R_PointOnSegSide(dup_viewx, dup_viewy, line) != 0)
+				continue;
+			P_ClosestPointOnLine(viewx, viewy, line->linedef, &v);
+			dist = FIXED_TO_FLOAT(R_PointToDist(v.x, v.y));
+			x1 = ((polyvertex_t *)line->pv1)->x;
+			y1 = ((polyvertex_t *)line->pv1)->y;
+			xd = ((polyvertex_t *)line->pv2)->x - x1;
+			yd = ((polyvertex_t *)line->pv2)->y - y1;
+			// Split as HWR_RenderPlane does, so a sloped claim follows the slope as closely as the plane would
+			dist = sqrtf((xd*xd) + (yd*yd)) / dist / 16.0f;
+			numplanes = dist > 100.0f ? 100 : (UINT8)dist + 1;
+			for (j = 0; j < numplanes; j++)
+			{
+				vx = x1 + xd * j / numplanes;
+				vy = y1 + yd * j / numplanes;
+				HWR_SkyClaimVert(&horizonpts[1], vx, vy, height, slope);
+				dist = sqrtf(powf(vx - gl_viewx, 2) + powf(vy - gl_viewy, 2));
+				HWR_SkyClaimVert(&horizonpts[0], (vx - gl_viewx) * renderdist / dist + gl_viewx,
+					(vy - gl_viewy) * renderdist / dist + gl_viewy, height, slope);
+
+				vx = x1 + xd * (j+1) / numplanes;
+				vy = y1 + yd * (j+1) / numplanes;
+				HWR_SkyClaimVert(&horizonpts[2], vx, vy, height, slope);
+				dist = sqrtf(powf(vx - gl_viewx, 2) + powf(vy - gl_viewy, 2));
+				HWR_SkyClaimVert(&horizonpts[3], (vx - gl_viewx) * renderdist / dist + gl_viewx,
+					(vy - gl_viewy) * renderdist / dist + gl_viewy, height, slope);
+
+				HWR_SkyClaimVert(&horizonpts[5], (horizonpts[0].x - gl_viewx) * farrenderdist / renderdist + gl_viewx,
+					(horizonpts[0].z - gl_viewy) * farrenderdist / renderdist + gl_viewy, height, slope);
+				horizonpts[5].y = gl_viewz;
+				HWR_SkyClaimVert(&horizonpts[4], (horizonpts[3].x - gl_viewx) * farrenderdist / renderdist + gl_viewx,
+					(horizonpts[3].z - gl_viewy) * farrenderdist / renderdist + gl_viewy, height, slope);
+				horizonpts[4].y = gl_viewz;
+
+				D3D12_SurfaceProbeSource("sky horizon", (INT32)(line->linedef-lines));
+				HWR_ProcessPolygon(&Surf, horizonpts, 6, flags, shader, false);
+			}
+		}
+	}
 }
 #endif
 
@@ -1499,7 +1556,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	// get here with a subsector; queued translucent ones draw after the void is filled.
 	if (subsector && levelflat == &levelflats[skyflatnum])
 	{
-		HWR_RenderSkyClaim(xsub, fixedheight, slope);
+		HWR_RenderSkyClaim(subsector, xsub, fixedheight, slope);
 		return;
 	}
 #endif
@@ -3910,9 +3967,9 @@ static void HWR_Subsector(size_t num)
 	if (sub->validcount != validcount)
 	{
 		if (gl_frontsector->floorpic == skyflatnum)
-			HWR_RenderSkyClaim(&extrasubsectors[num], locFloorHeight, gl_frontsector->f_slope);
+			HWR_RenderSkyClaim(sub, &extrasubsectors[num], locFloorHeight, gl_frontsector->f_slope);
 		if (gl_frontsector->ceilingpic == skyflatnum)
-			HWR_RenderSkyClaim(&extrasubsectors[num], locCeilingHeight, gl_frontsector->c_slope);
+			HWR_RenderSkyClaim(sub, &extrasubsectors[num], locCeilingHeight, gl_frontsector->c_slope);
 	}
 #endif
 
