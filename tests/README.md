@@ -391,7 +391,9 @@ untouched padding.
   `HashPositions::FirstFrom` and `LastBelow` with the original forward (`W_CheckNumForNamePwad`) and backward
   (`R_CheckTextureNumForName`) scans over the same hash and `strncasecmp` predicate: real and forced-colliding hashes,
   entries whose stored hash is not that of their name, case variations, names shorter than, exactly and longer than 8
-  characters, high-bit bytes, nonzero start positions and misses. `FolderStarts` is compared with the original
+  characters, high-bit bytes, nonzero start positions and misses. `FirstFrom` is also compared with
+  `W_CheckNumForLongNamePwad`'s forward scan, whose predicate is a full-string `strcasecmp` of names that can be longer
+  than the 8 hashed characters (shared 8-char prefixes, forced collisions, case, past-the-end starts). `FolderStarts` is compared with the original
   `W_CheckNumForFolderStartPK3` prefix scan, including its SLADE single-directory-entry rule and the
   past-the-end result on a miss: nested folders, case variations, prefixes that are not directories (`map/` against
   `maps/`) and high-bit bytes. The texture-id memo's key (the first 8 characters, uppercased) is checked to match

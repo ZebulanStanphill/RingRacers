@@ -1771,6 +1771,17 @@ UINT16 W_CheckNumForLongNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 	if (startlump < wadfiles[wad]->numlumps)
 	{
 		lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
+
+		if (wad < g_lumpNameIndex.size())
+		{
+			const lumpinfo_t *lumps = wadfiles[wad]->lumpinfo;
+			const int64_t found = g_lumpNameIndex[wad].FirstFrom(hash, startlump, [&](UINT32 pos)
+			{
+				return !strcasecmp(lumps[pos].longname, name);
+			});
+			return found < 0 ? INT16_MAX : static_cast<UINT16>(found);
+		}
+
 		for (i = startlump; i < wadfiles[wad]->numlumps; i++, lump_p++)
 		{
 			if (lump_p->hash != hash)

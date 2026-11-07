@@ -174,6 +174,55 @@ static int testHashPositions()
 			CHECK(gotL == wantL);
 		}
 	}
+
+	// Differential: W_CheckNumForLongNamePwad. The stored hash covers only the first 8 chars, but the match is a
+	// full-string strcasecmp, so names longer than 8 that share a prefix are told apart by the predicate alone.
+	for (int round = 0; round < 3000; round++)
+	{
+		int mode = round % 2; // 0 real hash, 1 tiny hash (forced collisions)
+		size_t count = roll(40);
+		std::vector<std::string> longnames(count);
+		std::vector<uint32_t> hashes(count);
+		HashPositions index;
+		for (size_t i = 0; i < count; i++)
+		{
+			std::string n = randomName(8);
+			if (roll(2))
+				n += randomName(6); // longer than 8, often with an equal 8-char prefix
+			longnames[i] = n;
+			hashes[i] = hashFor(n, mode);
+			index.Add(hashes[i], (uint32_t)i);
+		}
+		for (int q = 0; q < 40; q++)
+		{
+			std::string query;
+			if (count && roll(2))
+			{
+				query = randomCase(longnames[roll((uint32_t)count)]);
+				if (roll(3) == 0)
+					query += randomName(2);
+			}
+			else
+				query = randomName(14);
+			uint32_t qhash = hashFor(query, mode);
+			uint32_t start = roll((uint32_t)count + 2);
+
+			int64_t want = -1;
+			for (uint32_t i = start; i < count; i++)
+			{
+				if (hashes[i] != qhash)
+					continue;
+				if (strcasecmp(longnames[i].c_str(), query.c_str()))
+					continue;
+				want = i;
+				break;
+			}
+			int64_t got = start < count
+				? index.FirstFrom(qhash, start, [&](uint32_t p) { return !strcasecmp(longnames[p].c_str(), query.c_str()); })
+				: -1;
+			CHECK(got == want);
+		}
+	}
 	return 0;
 }
 
