@@ -65,6 +65,8 @@ FBITFIELD HWR_SurfaceBlend(INT32,INT32,FSurfaceInfo *){return PF_Translucent;}
 FBITFIELD HWR_TranstableToAlpha(INT32,FSurfaceInfo *){return PF_Translucent;}
 void Z_Free2(void *p,const char *,int){free(p);}
 void *Z_Calloc2(size_t n,INT32,void **user,size_t,const char *,int){void *p=calloc(1,n);if(user)*user=p;return p;}
+// R_Prep3DFloors keeps a capacity header entry just before the light list it hands out.
+static void FreeLights(sector_t &s){if(s.lightlist)free(s.lightlist-1);s.lightlist=nullptr;}
 
 @@WALL_LIGHTING@@
 
@@ -155,7 +157,7 @@ static void CheckPreparationCases(){
  size_t n=prepCalls.size();call();assert(prepCalls.size()==n && real->moved);assert(lastFakeInput==real && lastFakeOutput==real);
  auto*back=seg->backsector;seg->backsector=nullptr;call();assert(prepCalls.size()==n);seg->backsector=back;
  auto *fofs=real->ffloors;auto lights=real->numlights;real->ffloors=nullptr;real->numlights=0;call();assert(prepCalls.size()==n);real->ffloors=fofs;real->numlights=lights;
- free(real->lightlist);real->lightlist=nullptr;real->numlights=0;real->moved=true;
+ FreeLights(*real);real->numlights=0;real->moved=true;
  hwr_portalsearch=true;call();assert(prepCalls.size()==n && real->numlights==0 && real->moved);hwr_portalsearch=false;
  fakeMode=true;call();fakeMode=false;
  assert(prepCalls.size()==n+1 && prepCalls.back()==real && real->numlights>0 && real->moved);
@@ -220,9 +222,16 @@ int main(){
  // outside the visited subsectors. Then restore the real cold map-load state.
  for(int i=0;i<fixtureSectors;++i)if(mapSectors[i].ffloors)R_Prep3DFloors(mapSectors+i);
  CheckPreparedLists();
+ // Callers zero numlights before re-preparing a moved sector: the allocation must be kept, with identical contents.
+ for(int i=0;i<fixtureSectors;++i)if(mapSectors[i].ffloors){
+  auto &s=mapSectors[i];auto *list=s.lightlist;INT32 n=s.numlights;std::vector<lightlist_t> before(list,list+n);
+  s.numlights=0;R_Prep3DFloors(&s);
+  assert(s.lightlist==list && s.numlights==n && !memcmp(before.data(),list,n*sizeof(lightlist_t)));
+ }
+ CheckPreparedLists();
  for(int i=0;i<fixtureSectors;++i)mapSectors[i].moved=false;
  auto reference=Traverse();
- for(int i=0;i<fixtureSectors;++i){free(mapSectors[i].lightlist);mapSectors[i].lightlist=nullptr;mapSectors[i].numlights=0;mapSectors[i].moved=true;}
+ for(int i=0;i<fixtureSectors;++i){FreeLights(mapSectors[i]);mapSectors[i].numlights=0;mapSectors[i].moved=true;}
  addLinePreps.clear();
  auto first=Traverse();
  // The replay must exercise the fix: walls whose back sector has FOFs but a cold light list are first
@@ -236,7 +245,7 @@ int main(){
  printf("58 title walls: cold/warm differences=%zu; first/second differences=%zu; slopes=%u\n",differences,secondDifferences,slopecount);
  if(!differences && !secondDifferences)CheckPreparationCases();
  gld_clipper_Clear();while(freelist){auto*n=freelist->next;free(freelist);freelist=n;}
- for(int i=0;i<fixtureSectors;i++)free(mapSectors[i].lightlist);
+ for(int i=0;i<fixtureSectors;i++)FreeLights(mapSectors[i]);
  while(slopelist){auto*n=slopelist->next;free(slopelist);slopelist=n;}
  // A mismatch was printed above; fail with an ordinary exit status.
  return differences || secondDifferences ? 1 : 0;

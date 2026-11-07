@@ -161,6 +161,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   solid and colormap-only FOFs). Focused cases cover NULL back sectors, absent FOFs, a valid list left
   untouched, portal-search exclusion, real-sector preparation before the fake-flat
   copy, preserved target/control moved flags, and the normal subsector refresh.
+  Re-preparing every FOF sector with `numlights` zeroed, as the subsector refresh does, must keep the same
+  light-list allocation and rebuild identical contents.
   The first traversal must also prepare at least one cold back sector from
   `HWR_AddLine` itself, so the replay cannot stop exercising the fix; without it the
   cold walls differ from the reference. Compact title-map JSON

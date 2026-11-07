@@ -1273,6 +1273,30 @@ void R_Prep3DFloors(sector_t *sector)
 		}
 	}
 
+#ifdef _UWP
+	// The early return below leaves numlights smaller than the allocation, and callers zero numlights before
+	// re-preparing a moved sector, so comparing counts reallocated on nearly every call. Keep the allocation while it
+	// is big enough. Its capacity is stored in a header entry just before the list, so that it travels with the
+	// pointer when R_FakeFlat's copy of the sector or a caller moves the pointer between sectors.
+	{
+		lightlist_t *list = sector->lightlist;
+		INT32 capacity = 0;
+		if (list != NULL)
+			memcpy(&capacity, list - 1, sizeof capacity);
+
+		if (list == NULL || capacity < count)
+		{
+			if (list != NULL)
+				Z_Free(list - 1);
+			list = static_cast<lightlist_t*>(Z_Calloc(sizeof (*list) * (count + 1), PU_LEVEL, NULL)) + 1;
+			memcpy(list - 1, &count, sizeof count);
+			sector->lightlist = list;
+		}
+		else
+			memset(list, 0, sizeof (lightlist_t) * count);
+		sector->numlights = count;
+	}
+#else
 	if (count != sector->numlights)
 	{
 		Z_Free(sector->lightlist);
@@ -1281,6 +1305,7 @@ void R_Prep3DFloors(sector_t *sector)
 	}
 	else
 		memset(sector->lightlist, 0, sizeof (lightlist_t) * count);
+#endif
 
 	heighttest = P_GetSectorCeilingZAt(sector, sector->soundorg.x, sector->soundorg.y);
 
