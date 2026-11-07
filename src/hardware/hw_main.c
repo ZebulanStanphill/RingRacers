@@ -629,13 +629,56 @@ static boolean HWR_SpringWallApplies(const hwr_springwall_t *wall, const hwr_spr
 		* ((bx - ax) * (view->originy - ay) - (by - ay) * (view->originx - ax)) < 0;
 }
 
+
+// Sine of the angle under which a silhouette counts as flat: about a tenth of a pixel at 1080p.
+#define HWR_SPRINGFLAT 1e-4
+
+// Whether every corner of a near-clipped silhouette lies within HWR_SPRINGFLAT of one plane through the camera.
+// A side whose top and bottom meet to within float rounding, such as the seam between two sloped floors on one
+// plane, which Software doesn't draw, makes such a silhouette. Its pyramid has two nearly coincident faces, and
+// orienting them by its own centre can turn both the same way, making a half-space that cuts every sprite on one
+// side of it. Measured by angle, not on screen: corners on the near plane magnify any sliver there.
+static boolean HWR_SpringFlatSilhouette(const FOutVector *v, INT32 n)
+{
+	double dir[HWR_SPRINGMAXNEAR][3], normal[3] = {0, 0, 0}, best = 0;
+	INT32 i, j;
+	for (i = 0; i < n; i++)
+	{
+		double x = v[i].x - gl_viewx, y = v[i].y - gl_viewz, z = v[i].z - gl_viewy;
+		double length = sqrt(x * x + y * y + z * z);
+		if (length < 1e-9)
+			return true; // A corner at the camera: no finite silhouette.
+		dir[i][0] = x / length; dir[i][1] = y / length; dir[i][2] = z / length;
+	}
+	// The plane through the camera and the two corners farthest apart in angle.
+	for (i = 0; i < n; i++)
+		for (j = i + 1; j < n; j++)
+		{
+			double cx = dir[i][1] * dir[j][2] - dir[i][2] * dir[j][1];
+			double cy = dir[i][2] * dir[j][0] - dir[i][0] * dir[j][2];
+			double cz = dir[i][0] * dir[j][1] - dir[i][1] * dir[j][0];
+			double length = sqrt(cx * cx + cy * cy + cz * cz);
+			if (length > best)
+			{
+				best = length;
+				normal[0] = cx / length; normal[1] = cy / length; normal[2] = cz / length;
+			}
+		}
+	if (best < HWR_SPRINGFLAT)
+		return true;
+	for (i = 0; i < n; i++)
+		if (fabs(normal[0] * dir[i][0] + normal[1] * dir[i][1] + normal[2] * dir[i][2]) > HWR_SPRINGFLAT)
+			return false;
+	return true;
+}
+
 // The pyramid from the camera through the side's silhouette, as inward-facing planes.
 static INT32 HWR_SpringWallPlanes(const hwr_springwall_t *wall, hwr_springplane_t *planes)
 {
 	FOutVector v[HWR_SPRINGMAXNEAR], center;
 	INT32 n = HWR_SpringClipNear(wall, v), i;
 	center.x = center.y = center.z = 0;
-	if (n < 3)
+	if (n < 3 || HWR_SpringFlatSilhouette(v, n))
 		return 0;
 	for (i = 0; i < n; i++)
 	{

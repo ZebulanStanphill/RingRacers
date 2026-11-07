@@ -348,7 +348,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   spring; hex-float literals copied into the test) must submit only triangles or the quad and still draw something, and
   3000 random views from a SplitMix64 generator (not `std::uniform_*_distribution`, which differs between
   standard libraries) of such planes and sides must all finish. Without the bounds both
-  fail with an AddressSanitizer stack-buffer-overflow in `HWR_SpringHalfPlane`. Seg traversal,
+  fail with an AddressSanitizer stack-buffer-overflow in `HWR_SpringHalfPlane`. A seam between two sloped floors
+  on one plane, which Software leaves undrawn, is replayed from a Green Hills Zone `gr_springprobe` capture: the
+  probed camera, a spring and the seam side passing beside the camera below eye level, with the side's two tops
+  raised by every combination of 0 to 24 float ulps and the camera jittered by up to 0.01 units (1,250 cases,
+  plain and 3D floor). The spring must stay the exact quad in every case; before flat silhouettes were rejected,
+  325 cases cut it away. Seg traversal,
   GPU depth/stencil and Xbox visuals still need separate validation.
 - **Palette brightmaps:** Direct3D 12 WARP executes the production SM5.1
   `PSSoftware` palette path. Brightmapped texels must use the base colormap's

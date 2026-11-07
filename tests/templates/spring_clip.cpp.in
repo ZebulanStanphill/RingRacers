@@ -188,6 +188,31 @@ static void ObliqueCamera(){
         gl_viewx=gl_viewy=gl_viewz=gl_viewsin=0;gl_viewcos=1;
     }
 }
+// Two sloped sectors whose floors meet along a line leave no lower wall in Software, but the float slope heights
+// can leave the recorded side a sliver of height. Green Hills Zone had such a seam passing beside the camera,
+// below eye level and crossing the near plane; its flat silhouette cut a whole row of springs out.
+static void FlatSlopeSeam(){
+    // The probed Green Hills frame: camera, spring (type 33) and seam (linedef 374) in GL coordinates. The seam's
+    // sides are flat to within float rounding; whichever way the rounding falls, it mustn't cut the spring.
+    int cases=0;
+    unsigned seed=12345;auto rnd=[&]{seed=seed*1103515245u+12345u;return ((seed>>8)&0xffff)/65536.0f-.5f;};
+    for(int top0=0;top0<=24;++top0)for(int top1=0;top1<=24;++top1)for(bool thick:{false,true}){
+        Begin();auto f=Solid();
+        gl_viewx=-1071.53f+rnd()*.02f;gl_viewy=-2101.64f+rnd()*.02f;gl_viewz=356.65f+rnd()*.02f;
+        gl_viewcos=(float)std::cos(341.14*M_PI/180);gl_viewsin=(float)std::sin(341.14*M_PI/180);
+        fixture={{{-803.1f,394.0f,-2195.5f,0,1},{-808.8f,394.0f,-2212.3f,1,1},{-804.4f,409.0f,-2213.8f,1,0},{-798.7f,409.0f,-2197.0f,0,0}}};
+        spr.gx=-806;spr.gy=-2204;thing.x=-806*FRACUNIT;thing.y=-2204*FRACUNIT;thing.z=394*FRACUNIT;
+        float t0=328,t1=320;
+        for(int k=0;k<top0;++k)t0=std::nextafter(t0,1e9f);
+        for(int k=0;k<top1;++k)t1=std::nextafter(t1,1e9f);
+        Quad seam={{{-1063,328,-2019,0,0},{-1068,320,-2120,0,0},{-1068,t1,-2120,0,0},{-1063,t0,-2019,0,0}}};
+        HWR_AddSpringWall(seam.data(),thick?&f:nullptr);DrawEntry();
+        if(!(draws.size()==1&&draws[0].v.size()==4))std::printf("seam cut the spring: top0 +%d ulp, top1 +%d ulp, thick %d\n",top0,top1,thick);
+        else ++cases;
+        gl_viewx=gl_viewy=gl_viewz=gl_viewsin=0;gl_viewcos=1;
+    }
+    assert(cases==25*25*2);
+}
 static void RunCases(){
     auto wall=Wall(8,-8,8,8);auto edge=Wall(8,-8,8,0);auto fof=Solid();
     // Inside an angled box: billboard crosses the front face but origin sorts behind.
@@ -740,6 +765,6 @@ static void Sweep(int views){
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return 2;
-    RunCases();ObliqueCamera();OracleRejectsInjectedErrors();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
+    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }
