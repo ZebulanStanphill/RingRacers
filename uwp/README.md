@@ -106,6 +106,7 @@ This builds the `RingRacers` submodule (initializing it if it's missing); builds
 - `RingRacers/`: the [ZebulanStanphill/RingRacers](https://github.com/ZebulanStanphill/RingRacers) submodule, Ring Racers v2.4 with this port's engine changes as one commit each, along with their tests and Direct3D 12 docs.
 - `patches/sdl-angle.patch`, `patches/sdl-controller-duplicates.patch` and `patches/sdl-egl-surface-handoff.patch`: build [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) for OpenGL ES, stop it from seeing each controller twice, and let Direct3D 12 take the window from ANGLE and give it back.
 - `uwp/`: the launcher app, which links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore).
+- [`tools/storage-probe/`](tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
 - `tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ringracers-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 
 ## Credits
