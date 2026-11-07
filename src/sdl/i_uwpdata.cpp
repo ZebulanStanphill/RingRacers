@@ -14,6 +14,11 @@
 /// X.pk3.src recording what it was copied from; later launches load the copy while the source is unchanged. The
 /// rule for that is in uwp_data_copy.hpp. Every file is written under a .tmp name and renamed once whole, so a copy
 /// that exists is complete, and the sidecar is written last, so a copy without a current sidecar is never used.
+///
+/// The internal storage is a ~3 GB volume shared by every sideloaded app's data, so the music, sound and staff ghost
+/// files are never copied (uwp_data_copy::kKeptOnDrive). The staff ghosts have an expected MD5 and would be checked from
+/// the drive every launch, so a check that passes leaves a record, X.pk3.verified, that spares the next launch's check
+/// while the file and the expected MD5 are unchanged. Copies and records the game no longer keeps are deleted at startup.
 
 #ifdef _UWP
 
@@ -59,7 +64,10 @@ struct Entry
 {
 	char source[MAX_WADPATH];
 	char dest[MAX_WADPATH]; // empty if there is nowhere to copy to
-	bool usable;
+	bool usable; // a usable copy in internal storage
+	bool kept; // never copied (uwp_data_copy::kKeptOnDrive)
+	bool hasMd5; // the game expects an MD5 of it
+	bool verified; // kept, and verified on an earlier launch: loads from the drive without being checked
 };
 
 Entry g_entries[kMaxEntries];
@@ -135,6 +143,76 @@ void DeleteTemporaryFiles(const std::wstring& dir)
 	for (const std::wstring& name : names)
 	{
 		DeleteFileW((dir + L"\\" + name).c_str());
+	}
+}
+
+// Deletes what is in the data folder that the game doesn't keep this launch: copies and records of files it no longer
+// copies, and anything left by an earlier version. Called once the list of files is complete.
+void DeleteUnwantedFiles()
+{
+	if (!g_dataDir[0] || g_numEntries == kMaxEntries)
+	{
+		return; // no folder, or a list that may be incomplete
+	}
+	std::vector<uwp_data_copy::ListedFile> listed;
+	for (size_t i = 0; i < g_numEntries; i++)
+	{
+		uwp_data_copy::ListedFile file;
+		file.name = BaseName(g_entries[i].source);
+		file.hasMd5 = g_entries[i].hasMd5;
+		listed.push_back(file);
+	}
+
+	const std::wstring dir = Widen(g_dataDir);
+	WIN32_FIND_DATAW found;
+	HANDLE find = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &found, FindExSearchNameMatch, nullptr, 0);
+	if (find == INVALID_HANDLE_VALUE)
+	{
+		return;
+	}
+	struct Unwanted
+	{
+		std::wstring name;
+		unsigned long long size;
+	};
+	std::vector<Unwanted> unwanted;
+	do
+	{
+		if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			continue;
+		}
+		char name[MAX_PATH * 3];
+		if (WideCharToMultiByte(CP_UTF8, 0, found.cFileName, -1, name, sizeof name, nullptr, nullptr) > 0 &&
+			uwp_data_copy::WantedInDataFolder(name, listed))
+		{
+			continue;
+		}
+		unwanted.push_back({found.cFileName,
+			(static_cast<unsigned long long>(found.nFileSizeHigh) << 32) | found.nFileSizeLow});
+	} while (FindNextFileW(find, &found));
+	FindClose(find);
+
+	unsigned long long freed = 0;
+	size_t deleted = 0;
+	for (const Unwanted& file : unwanted)
+	{
+		if (DeleteFileW((dir + L"\\" + file.name).c_str()))
+		{
+			I_OutputMsg("UWP: data: deleted %ls from internal storage (%.1f MB): no longer kept there\n", file.name.c_str(),
+				file.size / (1024.0 * 1024.0));
+			freed += file.size;
+			deleted++;
+		}
+		else
+		{
+			I_OutputMsg("UWP: data: cannot delete %ls from internal storage (error %lu)\n", file.name.c_str(), GetLastError());
+		}
+	}
+	if (deleted)
+	{
+		I_OutputMsg("UWP: data: freed %.1f MB of internal storage by deleting %u files\n", freed / (1024.0 * 1024.0),
+			static_cast<unsigned>(deleted));
 	}
 }
 
@@ -267,6 +345,19 @@ struct Copy
 
 Copy g_copy;
 
+// The verified record of the file being checked, if it gets one
+struct Verify
+{
+	bool open;
+	uint64_t size; // the source's, when the check began
+	int64_t modified; // likewise
+	char md5[33];
+	wchar_t source[kWidePath];
+	wchar_t record[kWidePath];
+};
+
+Verify g_verify;
+
 void SetError(char* error, size_t errorsize, const char* what, unsigned long code)
 {
 	snprintf(error, errorsize, "%s (error %lu)", what, code);
@@ -326,6 +417,7 @@ const char* I_UWPDataResolve(const char* source, const char* expectedmd5)
 	strlcpy(entry.source, source, sizeof entry.source);
 	entry.dest[0] = '\0';
 	entry.usable = false;
+	entry.verified = false;
 
 	PrepareDataFolder();
 
@@ -336,10 +428,35 @@ const char* I_UWPDataResolve(const char* source, const char* expectedmd5)
 	const bool expectedok = uwp_data_copy::NormalizeMd5(expectedmd5, expected);
 	const char* name = BaseName(entry.source);
 	const char* why = nullptr;
+	const char* keptwhy = uwp_data_copy::KeptReason(name);
+	entry.kept = keptwhy != nullptr;
+	entry.hasMd5 = expectedok && expected != "-";
 
 	if (!sourcestat.exists)
 	{
 		// Left to the caller to report if it needs the file
+	}
+	else if (entry.kept)
+	{
+		// Loads from the drive. One that is checked can have a record that it was, on an earlier launch.
+		if (entry.hasMd5 && g_dataDir[0] && strlen(g_dataDir) + 1 + strlen(name) + 16 < sizeof entry.dest)
+		{
+			char recordpath[MAX_WADPATH];
+			snprintf(recordpath, sizeof recordpath, "%s\\%s%s", g_dataDir, name, uwp_data_copy::kVerifiedSuffix);
+			uwp_data_copy::Record record;
+			const bool haverecord = ReadRecord(Widen(recordpath), record);
+			const uwp_data_copy::VerifiedVerdict verdict =
+				uwp_data_copy::DecideVerified(sourcestat, haverecord ? &record : nullptr, expected);
+			entry.verified = verdict == uwp_data_copy::VerifiedVerdict::Verified;
+			if (!entry.verified)
+			{
+				why = uwp_data_copy::VerifiedVerdictText(verdict);
+			}
+		}
+		else if (entry.hasMd5)
+		{
+			why = "no internal storage";
+		}
 	}
 	else if (!g_dataDir[0])
 	{
@@ -372,11 +489,29 @@ const char* I_UWPDataResolve(const char* source, const char* expectedmd5)
 	{
 		if (entry.usable)
 		{
-			I_OutputMsg("UWP: data: %s: internal storage\n", name);
+			I_OutputMsg("UWP: data: %s: internal storage (copy)\n", name);
+		}
+		else if (entry.verified)
+		{
+			I_OutputMsg("UWP: data: %s: USB drive (verified earlier, not checked)\n", name);
+		}
+		else if (entry.kept && entry.hasMd5)
+		{
+			I_OutputMsg("UWP: data: %s: USB drive (kept there, checked this launch: %s)\n", name, why ? why : "unknown");
+		}
+		else if (entry.kept)
+		{
+			I_OutputMsg("UWP: data: %s: USB drive (kept there, not checked: %s)\n", name, keptwhy);
+		}
+		else if (entry.dest[0])
+		{
+			I_OutputMsg("UWP: data: %s: USB drive (%s this launch: %s)\n", name,
+				entry.hasMd5 ? "checked and copied" : "copied", why ? why : "unknown");
 		}
 		else
 		{
-			I_OutputMsg("UWP: data: %s: USB drive (%s)\n", name, why ? why : "unknown");
+			I_OutputMsg("UWP: data: %s: USB drive (%s%s)\n", name, entry.hasMd5 ? "checked this launch: " : "",
+				why ? why : "unknown");
 		}
 	}
 
@@ -386,6 +521,7 @@ const char* I_UWPDataResolve(const char* source, const char* expectedmd5)
 
 void I_UWPDataLogStartup(void)
 {
+	DeleteUnwantedFiles();
 	I_OutputMsg("UWP: data: chose where to load from in %.3f s\n", g_decisionSeconds);
 
 	// How much room the copies have. Free for this app and free on the drive differ if the app has a quota.
@@ -416,11 +552,12 @@ void I_UWPDataLogStartup(void)
 	LogVolume("USB drive", "E:\\ringracers");
 }
 
-boolean I_UWPDataIsCopy(const char* path)
+boolean I_UWPDataIsVerified(const char* path)
 {
 	for (size_t i = 0; i < g_numEntries; i++)
 	{
-		if (g_entries[i].usable && SameFile(g_entries[i].dest, path))
+		const Entry& entry = g_entries[i];
+		if ((entry.usable && SameFile(entry.dest, path)) || (entry.verified && SameFile(entry.source, path)))
 		{
 			return true;
 		}
@@ -583,6 +720,59 @@ void I_UWPDataCopyAbort(void)
 		g_copy.file = nullptr;
 		DeleteFileW(g_copy.tmp);
 	}
+}
+
+boolean I_UWPDataVerifiedOpen(const char* source, const char* expectedmd5)
+{
+	g_verify.open = false;
+	std::string md5;
+	const char* name = BaseName(source);
+	if (!g_dataDir[0] || !uwp_data_copy::IsKeptOnDrive(name) || !uwp_data_copy::NormalizeMd5(expectedmd5, md5) || md5 == "-")
+	{
+		return false;
+	}
+	const std::wstring wideSource = Widen(source);
+	const std::wstring record = Widen(g_dataDir) + L"\\" + Widen(name) + Widen(uwp_data_copy::kVerifiedSuffix);
+	if (wideSource.empty() || wideSource.size() >= kWidePath || record.size() + 8 >= kWidePath)
+	{
+		return false;
+	}
+	if (!StatPath(wideSource.c_str(), g_verify.size, g_verify.modified))
+	{
+		return false;
+	}
+	wcscpy(g_verify.source, wideSource.c_str());
+	wcscpy(g_verify.record, record.c_str());
+	strlcpy(g_verify.md5, md5.c_str(), sizeof g_verify.md5);
+	// Whatever record there is described a file that is being checked again: it does not outlive this check unless
+	// the new one passes
+	DeleteFileW(g_verify.record);
+	g_verify.open = true;
+	return true;
+}
+
+boolean I_UWPDataVerifiedCommit(char* error, size_t errorsize)
+{
+	if (!g_verify.open)
+	{
+		snprintf(error, errorsize, "No verified record open");
+		return false;
+	}
+	g_verify.open = false;
+
+	uint64_t size = 0;
+	int64_t modified = 0;
+	if (!StatPath(g_verify.source, size, modified) || size != g_verify.size || modified != g_verify.modified)
+	{
+		snprintf(error, errorsize, "The source changed while it was checked");
+		return false;
+	}
+	uwp_data_copy::Record record;
+	record.size = g_verify.size;
+	record.modified = g_verify.modified;
+	record.md5 = g_verify.md5;
+	const std::wstring tmp = std::wstring(g_verify.record) + L".tmp";
+	return WriteSmallFile(g_verify.record, tmp.c_str(), uwp_data_copy::FormatRecord(record), error, errorsize);
 }
 
 } // extern "C"

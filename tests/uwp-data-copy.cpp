@@ -165,9 +165,77 @@ static int testDecide()
 	return 0;
 }
 
+static int testKeptOnDrive()
+{
+	CHECK(IsKeptOnDrive("music.pk3") && IsKeptOnDrive("altmusic.pk3") && IsKeptOnDrive("sounds.pk3") &&
+		IsKeptOnDrive("staffghosts.pk3"));
+	CHECK(IsKeptOnDrive("MUSIC.PK3") && IsKeptOnDrive("StaffGhosts.pk3")); // Windows ignores case
+	CHECK(!IsKeptOnDrive("chars.pk3") && !IsKeptOnDrive("maps.pk3") && !IsKeptOnDrive("music.pk3.src"));
+	CHECK(!IsKeptOnDrive("") && !IsKeptOnDrive("xmusic.pk3") && !IsKeptOnDrive("music.pk"));
+	CHECK(KeptReason("sounds.pk3") != nullptr && KeptReason("chars.pk3") == nullptr);
+	for (const KeptFile& kept : kKeptOnDrive)
+	{
+		CHECK(kept.why && *kept.why);
+	}
+
+	std::vector<ListedFile> listed;
+	listed.push_back({"chars.pk3", true});
+	listed.push_back({"staffghosts.pk3", true});
+	listed.push_back({"music.pk3", false});
+	listed.push_back({"sounds.pk3", false});
+
+	// A copied file keeps its copy and sidecar, and nothing else
+	CHECK(WantedInDataFolder("chars.pk3", listed) && WantedInDataFolder("chars.pk3.src", listed));
+	CHECK(WantedInDataFolder("CHARS.PK3.SRC", listed));
+	CHECK(!WantedInDataFolder("chars.pk3.verified", listed) && !WantedInDataFolder("chars.pk3.tmp", listed));
+	// A kept file with an expected MD5 keeps its verified record, and no copy
+	CHECK(WantedInDataFolder("staffghosts.pk3.verified", listed));
+	CHECK(!WantedInDataFolder("staffghosts.pk3", listed) && !WantedInDataFolder("staffghosts.pk3.src", listed));
+	// One with no expected MD5 keeps nothing
+	CHECK(!WantedInDataFolder("music.pk3", listed) && !WantedInDataFolder("music.pk3.src", listed) &&
+		!WantedInDataFolder("music.pk3.verified", listed) && !WantedInDataFolder("sounds.pk3", listed));
+	// Files of the game's list from an earlier version, or unknown, go
+	CHECK(!WantedInDataFolder("altmusic.pk3", listed) && !WantedInDataFolder("mapcache.bin", listed));
+	CHECK(!WantedInDataFolder("", listed) && !WantedInDataFolder("chars.pk3", std::vector<ListedFile>()));
+	return 0;
+}
+
+static int testDecideVerified()
+{
+	const std::string md5 = kMd5Lower;
+	const Record rec = record(1000, 77, kMd5Lower);
+
+	CHECK(DecideVerified(source(1000, 77), &rec, md5) == VerifiedVerdict::Verified);
+
+	SourceStat missing;
+	CHECK(DecideVerified(missing, &rec, md5) == VerifiedVerdict::SourceMissing);
+	CHECK(DecideVerified(source(1000, 77), nullptr, md5) == VerifiedVerdict::NoRecord);
+	CHECK(DecideVerified(source(1001, 77), &rec, md5) == VerifiedVerdict::SourceChanged);
+	CHECK(DecideVerified(source(1000, 78), &rec, md5) == VerifiedVerdict::SourceChanged);
+	CHECK(DecideVerified(source(1000, 76), &rec, md5) == VerifiedVerdict::SourceChanged);
+	CHECK(DecideVerified(source(1000, 77), &rec, std::string(kOtherMd5)) == VerifiedVerdict::Md5Changed);
+
+	// A file with no expected MD5 is not checked, so a record of it (which the engine never writes) does not count
+	const Record nomd5 = record(1000, 77, "-");
+	CHECK(DecideVerified(source(1000, 77), &nomd5, "-") == VerifiedVerdict::NoRecord);
+	CHECK(DecideVerified(source(1000, 77), &nomd5, md5) == VerifiedVerdict::Md5Changed);
+
+	// The source decides before the record's MD5
+	CHECK(DecideVerified(source(1001, 77), &rec, std::string(kOtherMd5)) == VerifiedVerdict::SourceChanged);
+
+	// A record survives its text form, which is the sidecar's
+	Record parsed;
+	CHECK(parse(FormatRecord(rec), parsed));
+	CHECK(DecideVerified(source(1000, 77), &parsed, md5) == VerifiedVerdict::Verified);
+
+	CHECK(std::strcmp(VerifiedVerdictText(VerifiedVerdict::Verified), "verified earlier") == 0);
+	return 0;
+}
+
 int main()
 {
-	if (testNormalize() || testRoundTrip() || testRejectedRecords() || testDecide())
+	if (testNormalize() || testRoundTrip() || testRejectedRecords() || testDecide() || testKeptOnDrive() ||
+		testDecideVerified())
 		return 1;
 	std::puts("uwp_data_copy: ok");
 	return 0;

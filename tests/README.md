@@ -381,7 +381,11 @@ untouched padding.
   short MD5s, extra lines, trailing text, embedded NULs and every truncation are rejected. Check the usability decision: a
   matching copy is usable, and a missing source or copy, a missing or invalid sidecar, a source whose size or last-write
   time changed, an expected MD5 that changed (or appeared for a file recorded without one), and a copy of the wrong size
-  each give their own verdict, in a fixed order. Copying, renaming and loading on Xbox are untested here.
+  each give their own verdict, in a fixed order. Check which files are never copied (music, alternate music, sounds and
+  staff ghosts, by name without regard to case), what the data folder keeps (a copied file's copy and sidecar, a kept file
+  with an expected MD5's `.verified` record, nothing else), and when a kept file's verified record spares its check (the
+  file's size, last-write time and expected MD5 unchanged). Copying, renaming, deleting and loading on Xbox are untested
+  here.
 - **Name indexes:** `name_index` compiles the production `src/name_index.hpp`, the hash indexes that replace the linear
   lump-name, PK3 folder and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
   `HashPositions::FirstFrom` and `LastBelow` with the original forward (`W_CheckNumForNamePwad`) and backward

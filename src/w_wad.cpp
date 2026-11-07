@@ -169,6 +169,7 @@ struct uwpcheckfile_t
 	char copydest[MAX_WADPATH]; // where to copy it to as it is checked, or empty
 	boolean copied;
 	double copyseconds;
+	boolean recorded; // it was never copied, and its check passed and was noted in a verified record
 };
 // Main files with no expected MD5 that are loaded from the USB drive: not checked, but copied once the files that are
 // have been
@@ -254,6 +255,7 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 		const auto filestart = std::chrono::steady_clock::now();
 		FILE *handle = NULL;
 		boolean copying = false;
+		boolean verifying = false;
 		char copyerror[128];
 		md5_ctx ctx;
 		alignas(md5_uint32) UINT8 digest[MD5_LEN];
@@ -276,6 +278,13 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 					copying = true;
 				else
 					W_UWPStopCopying(file.filename, copyerror);
+			}
+			else if (!file.copydest[0])
+			{
+				// Not copied: its pass may be noted instead, so that the next launch need not check it
+				char expectedtext[2*MD5_LEN+1];
+				PrintMD5String(file.expected, expectedtext);
+				verifying = I_UWPDataVerifiedOpen(file.filename, expectedtext);
 			}
 			for (;;)
 			{
@@ -330,6 +339,12 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 			}
 			else
 				W_UWPStopCopying(file.filename, copyerror);
+		}
+		if (verifying)
+		{
+			// Failing to write the record only means the next launch checks the file again
+			char recorderror[128];
+			file.recorded = I_UWPDataVerifiedCommit(recorderror, sizeof(recorderror));
 		}
 		uwpcheckverified++;
 	}
@@ -467,8 +482,8 @@ void W_UWPPollAssetCheck(void)
 	{
 		const uwpcheckfile_t &file = uwpcheckfiles[i];
 		if (file.seconds > 0)
-			I_OutputMsg("UWP: asset check %s: %.2f s, %.1f MB/s\n", file.filename, file.seconds,
-				file.bytes / (1024.0*1024.0) / file.seconds);
+			I_OutputMsg("UWP: asset check %s: %.2f s, %.1f MB/s%s\n", file.filename, file.seconds,
+				file.bytes / (1024.0*1024.0) / file.seconds, file.recorded ? " (verified record written)" : "");
 	}
 	if (state == UWPCHECK_VERIFIED)
 		I_OutputMsg("UWP: asset check verified all %u files in %.2f s\n", (unsigned)uwpcheckcount, uwpcheckseconds);
@@ -1329,8 +1344,8 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 		if (uwptrusted)
 		{
 			memcpy(md5sum, realmd5, MD5_LEN);
-			// A copy in internal storage was verified when it was made
-			if (!I_UWPDataIsCopy(filename))
+			// A copy in internal storage was verified when it was made, and a file kept on the drive when it was recorded
+			if (!I_UWPDataIsVerified(filename))
 				W_UWPQueueAssetCheck(filename, realmd5, I_UWPDataCopyDest(filename));
 		}
 #endif

@@ -16,6 +16,12 @@
 /// game expects of the file is the one it was verified against, so a game update that changes a file's expected MD5
 /// makes a fresh copy.
 ///
+/// The internal storage is a ~3 GB volume shared by the data of every sideloaded app, so the big files that are only
+/// read in small parts or once are not copied (kKeptOnDrive) and load from the USB drive. One of those with an
+/// expected MD5 would be checked from the drive on every launch, so after a check passes a "verified" record,
+/// X.pk3.verified, in the same format as the sidecar, notes the file's size, last-write time and MD5; while the file and
+/// the expected MD5 are as recorded, it loads from the drive without being checked again.
+///
 /// Header-only and free of engine and Windows types, so that the engine glue and the native tests share it.
 
 #ifndef __UWP_DATA_COPY_HPP__
@@ -26,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace uwp_data_copy
 {
@@ -41,6 +48,95 @@ struct Record
 	int64_t modified = 0; // the source's last-write time, in whatever unit the caller reads it in (it is only compared)
 	std::string md5 = "-";
 };
+
+// Files that are never copied to internal storage, and why
+struct KeptFile
+{
+	const char* name;
+	const char* why;
+};
+
+constexpr KeptFile kKeptOnDrive[] = {
+	// ~300 MB and ~90 MB, and a track is only read when it starts
+	{"music.pk3", "large, read only when a track starts"},
+	{"altmusic.pk3", "large, read only when a track starts"},
+	// ~40 MB, kept in RAM by the engine instead (sdl/new_sound.cpp), so it is read from the drive once, at startup
+	{"sounds.pk3", "held in memory"},
+	// ~50 MB, only read for Time Attack staff ghosts; the menus use the map cache
+	{"staffghosts.pk3", "read only for staff ghosts"},
+};
+
+inline char LowerAscii(char c)
+{
+	return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
+
+// File names on Windows compare without regard to case
+inline bool SameName(const std::string& a, const std::string& b)
+{
+	if (a.size() != b.size())
+	{
+		return false;
+	}
+	for (size_t i = 0; i < a.size(); i++)
+	{
+		if (LowerAscii(a[i]) != LowerAscii(b[i]))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// Why the file called `name` (no folder) is never copied, or null if it is one that is
+inline const char* KeptReason(const std::string& name)
+{
+	for (const KeptFile& kept : kKeptOnDrive)
+	{
+		if (SameName(name, kept.name))
+		{
+			return kept.why;
+		}
+	}
+	return nullptr;
+}
+
+inline bool IsKeptOnDrive(const std::string& name)
+{
+	return KeptReason(name) != nullptr;
+}
+
+// A file of the game's list this launch, for deciding what the data folder should hold
+struct ListedFile
+{
+	std::string name;
+	bool hasMd5 = false; // the game expects an MD5 of it
+};
+
+constexpr const char* kSidecarSuffix = ".src";
+constexpr const char* kVerifiedSuffix = ".verified";
+
+// Whether `fileName` in the data folder is the copy or sidecar of a listed file that is copied, or the verified record
+// of a listed file that is kept on the drive and has an expected MD5. Anything else is left over from an earlier
+// version, or from a file the game no longer keeps, and is deleted.
+inline bool WantedInDataFolder(const std::string& fileName, const std::vector<ListedFile>& listed)
+{
+	for (const ListedFile& file : listed)
+	{
+		if (IsKeptOnDrive(file.name))
+		{
+			if (file.hasMd5 && SameName(fileName, file.name + kVerifiedSuffix))
+			{
+				return true;
+			}
+		}
+		else if (SameName(fileName, file.name) || SameName(fileName, file.name + kSidecarSuffix))
+		{
+			return true;
+		}
+	}
+	return false;
+}
 
 // The source file as it is now
 struct SourceStat
@@ -258,6 +354,52 @@ inline Verdict Decide(const SourceStat& source, const CopyStat& copy, const Reco
 		return Verdict::CopyIncomplete;
 	}
 	return Verdict::Usable;
+}
+
+enum class VerifiedVerdict
+{
+	Verified, // checked on an earlier launch, and the file and the expected MD5 are as they were
+	SourceMissing,
+	NoRecord,
+	SourceChanged,
+	Md5Changed,
+};
+
+inline const char* VerifiedVerdictText(VerifiedVerdict v)
+{
+	switch (v)
+	{
+		case VerifiedVerdict::Verified: return "verified earlier";
+		case VerifiedVerdict::SourceMissing: return "source missing";
+		case VerifiedVerdict::NoRecord: return "no valid verified record";
+		case VerifiedVerdict::SourceChanged: return "source changed";
+		case VerifiedVerdict::Md5Changed: return "expected MD5 changed";
+	}
+	return "unknown";
+}
+
+// Whether a file kept on the drive can skip its check: `record` is its verified record (null if there is none or it did
+// not parse), and `expectedMd5` is NormalizeMd5's form of what the game expects of it. A file with no expected MD5
+// ("-") is never checked, so it has no record.
+inline VerifiedVerdict DecideVerified(const SourceStat& source, const Record* record, const std::string& expectedMd5)
+{
+	if (!source.exists)
+	{
+		return VerifiedVerdict::SourceMissing;
+	}
+	if (record == nullptr || expectedMd5 == "-")
+	{
+		return VerifiedVerdict::NoRecord;
+	}
+	if (record->size != source.size || record->modified != source.modified)
+	{
+		return VerifiedVerdict::SourceChanged;
+	}
+	if (record->md5 != expectedMd5)
+	{
+		return VerifiedVerdict::Md5Changed;
+	}
+	return VerifiedVerdict::Verified;
 }
 
 } // namespace uwp_data_copy
