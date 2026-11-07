@@ -200,7 +200,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
         desc.Width = 1280; desc.Height = 720; desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         desc.SampleDesc.Count = 1; desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         desc.BufferCount = 2; desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-        check_hresult(factory->CreateSwapChainForCoreWindow(device.get(), get_unknown(window), &desc, nullptr, swap.put()));
+        check_hresult(factory->CreateSwapChainForCoreWindow(device.get(), winrt::get_unknown(window), &desc, nullptr, swap.put()));
         com_ptr<ID3D11Texture2D> buffer;
         check_hresult(swap->GetBuffer(0, __uuidof(ID3D11Texture2D), buffer.put_void()));
         check_hresult(device->CreateRenderTargetView(buffer.get(), nullptr, target.put()));
