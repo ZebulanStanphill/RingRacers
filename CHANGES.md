@@ -123,7 +123,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 ### Game logic
 
 - **Arithmetic and references** *(works on Xbox)*. UWP inlines `FixedMul`, release-build `P_SetTarget`, and `P_MobjWasRemoved`, preserving collision callback reference order and `PARANOIA` checks.
-- **Subsector cache** *(works on Xbox)*. UWP caches `R_PointInSubsector` results for 512 recent points and clears them when the BSP loads or is freed.
+- **Subsector cache** *(works on Xbox; the larger cache is untested)*. UWP caches `R_PointInSubsector` results for 4096 recent points (2048 sets of two; 512 before, which answered only about 60% of lookups in races) and clears them when the BSP loads or is freed.
 - **Lua userdata** *(works on Xbox)*. Every platform tracks pointers with Lua userdata, letting frees skip Lua when none exists.
 - **State bookkeeping** *(works on Xbox)*. Every platform gives each `P_SetMobjState`/`P_SetPlayerMobjState` nesting depth its own table and clears only recorded states. Calls that remove an mobj balance the nesting count instead of making later calls look nested.
 - **Interpolation list** *(works on Xbox)*. Every platform records each mobj's interpolation-list slot so removal needs no search.
