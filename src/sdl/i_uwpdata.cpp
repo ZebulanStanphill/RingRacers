@@ -205,6 +205,51 @@ bool SameFile(const char* a, const char* b)
 	return _stricmp(a, b) == 0;
 }
 
+// Logs which volume the folder at `path` is on, for telling whether storage locations share one
+void LogVolume(const char* label, const char* path)
+{
+	const std::wstring wide = Widen(path);
+	CREATEFILE2_EXTENDED_PARAMETERS params = {};
+	params.dwSize = sizeof(params);
+	params.dwFileFlags = FILE_FLAG_BACKUP_SEMANTICS; // needed to open a directory
+	HANDLE h = CreateFile2(wide.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		OPEN_EXISTING, &params);
+	if (h == INVALID_HANDLE_VALUE)
+	{
+		I_OutputMsg("UWP: data: volume of %s (%s): failed: CreateFile2 error %lu\n", label, path, GetLastError());
+		return;
+	}
+
+	FILE_ID_INFO id = {};
+	if (!GetFileInformationByHandleEx(h, FileIdInfo, &id, sizeof id))
+	{
+		const unsigned long error = GetLastError();
+		CloseHandle(h);
+		I_OutputMsg("UWP: data: volume of %s (%s): failed: GetFileInformationByHandleEx error %lu\n", label, path, error);
+		return;
+	}
+	wchar_t nt[MAX_PATH * 2];
+	const DWORD ntlength = GetFinalPathNameByHandleW(h, nt, sizeof nt / sizeof nt[0], VOLUME_NAME_NT);
+	const unsigned long ntError = GetLastError();
+	CloseHandle(h);
+	if (ntlength == 0 || ntlength >= sizeof nt / sizeof nt[0])
+	{
+		I_OutputMsg("UWP: data: volume of %s (%s): failed: GetFinalPathNameByHandleW error %lu\n", label, path, ntError);
+		return;
+	}
+
+	ULARGE_INTEGER available, total, drivefree;
+	if (!GetDiskFreeSpaceExW(wide.c_str(), &available, &total, &drivefree))
+	{
+		I_OutputMsg("UWP: data: volume of %s (%s): failed: GetDiskFreeSpaceExW error %lu\n", label, path, GetLastError());
+		return;
+	}
+	I_OutputMsg("UWP: data: volume of %s (%s): serial 0x%016llX, %ls, %llu MB free of %llu MB\n", label, path,
+		static_cast<unsigned long long>(id.VolumeSerialNumber), nt,
+		static_cast<unsigned long long>(available.QuadPart / (1024 * 1024)),
+		static_cast<unsigned long long>(total.QuadPart / (1024 * 1024)));
+}
+
 // ---- The checking thread ----
 
 // Only the checking thread opens, writes and commits copies, one at a time
@@ -360,6 +405,15 @@ void I_UWPDataLogStartup(void)
 			I_OutputMsg("UWP: data: internal storage: cannot get its free space (error %lu)\n", GetLastError());
 		}
 	}
+
+	// Which volume each location is on, so that the app's LocalState can be told apart from a shared one
+	if (g_localRoot[0])
+	{
+		LogVolume("internal storage", g_localRoot);
+	}
+	const char* installed = SDL_WinRTGetFSPathUTF8(0); // SDL_WINRT_PATH_INSTALLED_LOCATION
+	LogVolume("install", installed ? installed : "");
+	LogVolume("USB drive", "E:\\ringracers");
 }
 
 boolean I_UWPDataIsCopy(const char* path)
