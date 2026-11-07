@@ -128,6 +128,10 @@ patch_t *HWR_GetCachedGLPatch(lumpnum_t lumpnum);
 
 void HWR_GetPatch(patch_t *patch);
 void HWR_GetSpriteBrightmap(patch_t *patch);
+#ifdef _UWP
+UINT32 HWR_UWPPatchUploads(void); // textures made by patch loads, to count what a warm-up created
+void HWR_UWPPrecacheSprites(boolean players_only); // hw_precache.c
+#endif
 void HWR_GetMappedPatch(patch_t *patch, const UINT8 *colormap);
 void HWR_GetFadeMask(lumpnum_t fademasklumpnum);
 patch_t *HWR_GetPic(lumpnum_t lumpnum);

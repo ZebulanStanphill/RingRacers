@@ -5,6 +5,7 @@ target_sources(SRB2SDL2 PRIVATE
 	hw_main.c
 	hw_clip.c
 	hw_md2.c
+	hw_precache.c
 	hw_cache.c
 	hw_md2load.c
 	hw_md3load.c

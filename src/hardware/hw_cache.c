@@ -1286,6 +1286,16 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 #endif
 }
 
+#ifdef _UWP
+// Textures the patch paths below have sent to the driver, for the sprite warm-up's count.
+static UINT32 hwr_uwp_patchuploads;
+
+UINT32 HWR_UWPPatchUploads(void)
+{
+	return hwr_uwp_patchuploads;
+}
+#endif
+
 // --------------------+
 // HWR_LoadPatchMipmap : Generates a patch into a mipmap, usually the mipmap inside the patch itself
 // --------------------+
@@ -1297,7 +1307,12 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 
 	// If hardware does not have the texture, then call pfnSetTexture to upload it
 	if (!grMipmap->downloaded)
+	{
+#ifdef _UWP
+		hwr_uwp_patchuploads++;
+#endif
 		HWD.pfnSetTexture(grMipmap);
+	}
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
@@ -1315,7 +1330,12 @@ static void HWR_UpdatePatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	// If hardware does not have the texture, then call pfnSetTexture to upload it
 	// If it does have the texture, then call pfnUpdateTexture to update it
 	if (!grMipmap->downloaded)
+	{
+#ifdef _UWP
+		hwr_uwp_patchuploads++;
+#endif
 		HWD.pfnSetTexture(grMipmap);
+	}
 	else
 		HWD.pfnUpdateTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
@@ -1351,7 +1371,12 @@ void HWR_GetSpriteBrightmap(patch_t *patch)
 	// on every path, so both the first upload and later binds select unit 1.
 	grMipmap->flags |= TF_BRIGHTMAP;
 	if (!grMipmap->downloaded)
+	{
+#ifdef _UWP
+		hwr_uwp_patchuploads++;
+#endif
 		HWD.pfnSetTexture(grMipmap);
+	}
 	HWR_SetCurrentTexture(grMipmap);
 	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
 }
