@@ -53,7 +53,7 @@ If Windows reports errors on the drive, copy `ringracers\ringracers` (your confi
 
   Levels preload their textures and models to reduce hitches during races. Options → Video → Advanced also has **Better transparency ordering** (off by default; sorts translucent sprites and models among water and other see-through surfaces, at some CPU cost) and **Batching** (resets to On at each launch). To go back to Software, change Options → Video → Advanced → Renderer, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`. A config saved by an earlier build keeps its renderer.
 - **Faster performance.** The Software renderer, the game logic and the hardware renderer are optimized for the Xbox's CPU. Game logic gives the same results as vanilla, so replays, ghosts and netplay with PC players work as usual.
-- **Startup file check in the background.** The game files are checked while the game loads instead of before; press B on the loading screen to skip it.
+- **Startup file check in the background.** The game files are checked while the game loads instead of before.
 - **Files on the USB drive.** Config and saves are in `E:\ringracers\ringracers\`.
 - **Voice chat** asks for microphone access. If you deny it, voice input stays off.
 - **Tip:** in Software, turning off Screen Tilting (Options → Profile Setup → your profile → Accessibility; the Guest profile can't be edited) saves some time each frame when the camera tilts.
