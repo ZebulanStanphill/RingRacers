@@ -2024,6 +2024,37 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 //
 // HWR_SplitWall
 //
+#ifdef HAVE_D3D12
+// [UWP]: Set by HWR_ProcessSeg around the light splits of the walls Software treats as solid: upper and lower walls
+// and one-sided walls. Software's column drawer leaves the part of such a wall inside a solid 3D floor's thickness
+// (FOF_CUTSOLIDS) undrawn, expecting the 3D floor to cover it, but the column is closed all the same: nothing
+// farther is drawn there. Where the 3D floor has holes, as Green Hills Zone's see-through grates do, that leaves
+// Software's empty pixels (black, or HOM's flash). Legacy GL cuts the wall the same way, then showed the level
+// behind through the holes. HWR_SplitWall fills each cut opaque black instead, in the wall's plane, so the 3D floor
+// and anything else nearer still draw in front of it. The cut goes through HWR_DrawWallLightSlice like the wall's
+// own pieces (hwr_voidslice), clipped to the original wall: a cut reaching below the wall, or below an earlier
+// cut that already took the rest of it, as with stacked 3D floors, must not draw outside the wall.
+static boolean hwr_splitvoid, hwr_voidslice;
+
+static void HWR_DrawCutVoid(const FOutVector *piece)
+{
+	FOutVector v[4];
+	FSurfaceInfo surf = {0};
+	INT32 i;
+	memset(v, 0, sizeof v);
+	for (i = 0; i < 4; ++i)
+	{
+		v[i].x = piece[i].x;
+		v[i].y = piece[i].y;
+		v[i].z = piece[i].z;
+	}
+	surf.PolyColor.s.alpha = 255; // black
+	HWR_SetCurrentTexture(NULL);
+	D3D12_SurfaceProbeSource("cut void", (INT32)(gl_curline->linedef-lines));
+	HWR_ProcessPolygon(&surf, v, 4, PF_NoTexture|PF_Modulated|PF_Occlude, SHADER_DEFAULT, false);
+}
+#endif
+
 #ifdef _UWP
 // Intersect each light band with the ORIGINAL wall. A band can miss one end
 // of a sloped wall entirely; drawing an inverted quad there fills a huge false
@@ -2085,6 +2116,11 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 			piece[lower].t = uvtop+(h[0]-piece[lower].y)*peg;
 		}
 		surf->PolyColor.s.alpha = alpha;
+#ifdef HAVE_D3D12
+		if (hwr_voidslice)
+			HWR_DrawCutVoid(piece);
+		else
+#endif
 		if (flags & PF_Fog)
 			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, lightnum, colormap);
 		else if (flags & PF_EnvironmentTrans)
@@ -2095,35 +2131,6 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 }
 #endif
 
-#ifdef HAVE_D3D12
-// [UWP]: Set by HWR_ProcessSeg around the light splits of the walls Software treats as solid: upper and lower walls
-// and one-sided walls. Software's column drawer leaves the part of such a wall inside a solid 3D floor's thickness
-// (FOF_CUTSOLIDS) undrawn, expecting the 3D floor to cover it, but the column is closed all the same: nothing
-// farther is drawn there. Where the 3D floor has holes, as Green Hills Zone's see-through grates do, that leaves
-// Software's empty pixels (black, or HOM's flash). Legacy GL cuts the wall the same way, then showed the level
-// behind through the holes. HWR_SplitWall fills each cut opaque black instead (HWR_DrawCutVoid), in the wall's
-// plane, so the 3D floor and anything else nearer still draw in front of it.
-static boolean hwr_splitvoid;
-
-static void HWR_DrawCutVoid(const FOutVector *wall, float bottom1, float bottom2, float top1, float top2)
-{
-	FOutVector v[4];
-	FSurfaceInfo surf = {0};
-	memset(v, 0, sizeof v);
-	v[0].x = v[3].x = wall[0].x;
-	v[0].z = v[3].z = wall[0].z;
-	v[1].x = v[2].x = wall[1].x;
-	v[1].z = v[2].z = wall[1].z;
-	v[0].y = bottom1;
-	v[1].y = bottom2;
-	v[3].y = top1;
-	v[2].y = top2;
-	surf.PolyColor.s.alpha = 255; // black
-	HWR_SetCurrentTexture(NULL);
-	D3D12_SurfaceProbeSource("cut void", (INT32)(gl_curline->linedef-lines));
-	HWR_ProcessPolygon(&surf, v, 4, PF_NoTexture|PF_Modulated|PF_Occlude, SHADER_DEFAULT, false);
-}
-#endif
 
 static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum, INT32 basetexnum, FSurfaceInfo* Surf, INT32 cutflag, ffloor_t *pfloor, FBITFIELD polyflags)
 {
@@ -2237,10 +2244,16 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		if (endheight >= endtop && height >= top)
 		{
 #ifdef HAVE_D3D12
-			// [UWP]: Fill the cut black, from the 3D floor's bottom (or the wall's) up to the wall that remains
+			// [UWP]: Fill the cut black, from the 3D floor's bottom up to the wall that remains, within the wall
 			if (hwr_splitvoid && solid && (top > bheight || endtop > endbheight))
-				HWR_DrawCutVoid(wallVerts, top > bheight ? max(bheight, realbot) : top,
-					endtop > endbheight ? max(endbheight, endrealbot) : endtop, top, endtop);
+			{
+				hwr_voidslice = true;
+				HWR_DrawWallLightSlice(original, top, endtop, min(bheight, top), min(endbheight, endtop),
+					Surf, texnum, basetexnum, polyflags, lightnum, colormap);
+				hwr_voidslice = false;
+				// The black unbound the wall's texture, which the rest of the wall's pieces draw with
+				HWR_GetTexture(texnum, basetexnum);
+			}
 #endif
 			if (solid && top > bheight)
 				top = bheight;

@@ -10,6 +10,7 @@
 #include "p_local.h"
 #include "p_slopes.h"
 #include "hardware/hw_defs.h"
+#include "hardware/hw_glob.h"
 #undef min
 #undef max
 #define min std::min
@@ -25,12 +26,18 @@ struct Draw {
     bool queued, fog;
 };
 static std::vector<Draw> draws;
+// The black fill HWR_SplitWall draws over a solid wall's cut (HWR_DrawCutVoid in hw_main.c) unbinds the wall's
+// texture; every textured piece after it must find it bound again (HWR_GetTexture).
+static bool textureBound=true;
+static int rebinds=0;
+GLMapTexture_t *HWR_GetTexture(INT32 tex,INT32 base) { assert(tex==43 && base==44);textureBound=true;++rebinds;return nullptr; }
 static seg_t segment{};
 static seg_t *gl_curline=&segment;
 static int wallLightCalls=0;
 static FUINT HWR_CalcWallLight(FUINT light,seg_t *seg) { assert(seg==gl_curline);++wallLightCalls;return light; }
 static void Submit(FOutVector *v,FSurfaceInfo *surf,FBITFIELD flags,INT32 light,
     extracolormap_t *color,bool queued,bool fog,INT32 texture=-1,INT32 base=-1) {
+    assert(textureBound);
     Draw d{};std::copy(v,v+4,d.v.begin());d.flags=flags;d.light=light;
     if(fog)assert(wallLightCalls==0);
     d.color=color;d.alpha=surf->PolyColor.s.alpha;d.queued=queued;d.fog=fog;
@@ -49,14 +56,15 @@ static void HWR_AddTransparentWall(FOutVector *v,FSurfaceInfo *s,INT32 t,INT32 b
 @@SLOPE_HEIGHT@@
 @@LIGHT_HEIGHT@@
 @@FOF_BOTTOM@@
-@@CLIP_SLICE@@
-// The black fill HWR_SplitWall draws over a solid wall's cut (HWR_DrawCutVoid in hw_main.c), recorded
-static boolean hwr_splitvoid;
+// The black fill's pieces, recorded; HWR_DrawWallLightSlice clips them to the wall
+static boolean hwr_splitvoid, hwr_voidslice;
 struct Band { float bottom1, bottom2, top1, top2; };
 static std::vector<Band> bands;
-static void HWR_DrawCutVoid(const FOutVector *wall,float bottom1,float bottom2,float top1,float top2) {
-    assert(wall[0].x==0 && wall[1].x==1024);bands.push_back({bottom1,bottom2,top1,top2});
+static void HWR_DrawCutVoid(const FOutVector *piece) {
+    assert(hwr_voidslice && piece[0].x==0 && piece[1].x==1024);
+    bands.push_back({piece[0].y,piece[1].y,piece[3].y,piece[2].y});textureBound=false;
 }
+@@CLIP_SLICE@@
 @@SPLIT_WALL@@
 
 using Wall=std::array<FOutVector,4>;
@@ -210,7 +218,7 @@ int main() {
         for(int i=0;i<3;++i) { lights[i].lightlevel=&levels[0];lights[i].extra_colormap=&colorPtrs[0]; }
         const bool cuts=cut!=INT32(FOF_EXTRA|FOF_FOG);
         for(bool solidWall:{false,true}) {
-            Wall copy=original;draws.clear();bands.clear();surf.PolyColor.s.alpha=77;hwr_splitvoid=solidWall;
+            Wall copy=original;draws.clear();bands.clear();rebinds=0;surf.PolyColor.s.alpha=77;hwr_splitvoid=solidWall;
             HWR_SplitWall(&sector,copy.data(),43,44,&surf,cut,nullptr,PF_Masked);
             hwr_splitvoid=false;
             CheckVertices(original,PF_Masked);
@@ -219,8 +227,30 @@ int main() {
             if(solidWall && cuts) {
                 assert(bands.size()==1);
                 assert(bands[0].bottom1==-10 && bands[0].bottom2==-10 && bands[0].top1==10 && bands[0].top2==10);
-            } else assert(bands.empty());
+                assert(rebinds==1);
+            } else assert(bands.empty() && rebinds==0);
         }
+    }
+    // Two solid 3D floors, the first reaching below the wall: the second's cut lies wholly below the wall, which
+    // the first already took the rest of. Nothing may be filled outside the wall.
+    {
+        Wall w=MakeWall(-20,-20,20,20);draws.clear();bands.clear();rebinds=0;
+        FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+        fixed_t bottomA=-30*FRACUNIT,bottomB=-60*FRACUNIT;pslope_t *noSlope=nullptr;
+        ffloor_t solidA{},solidB{};solidA.bottomheight=&bottomA;solidA.b_slope=&noSlope;
+        solidB.bottomheight=&bottomB;solidB.b_slope=&noSlope;
+        lightlist_t lights[3]{};sector_t sector{};sector.lightlevel=224;
+        sector.numlights=3;sector.lightlist=lights;
+        lights[0].height=100*FRACUNIT;lights[1].height=10*FRACUNIT;lights[2].height=-40*FRACUNIT;
+        lights[1].flags=lights[2].flags=FOF_CUTSOLIDS;lights[1].caster=&solidA;lights[2].caster=&solidB;
+        for(int i=0;i<3;++i) { lights[i].lightlevel=&levels[0];lights[i].extra_colormap=&colorPtrs[0]; }
+        hwr_splitvoid=true;
+        HWR_SplitWall(&sector,w.data(),43,44,&surf,FOF_CUTLEVEL,nullptr,PF_Masked);
+        hwr_splitvoid=false;
+        assert(bands.size()==1);
+        assert(bands[0].bottom1==-20 && bands[0].bottom2==-20 && bands[0].top1==10 && bands[0].top2==10);
+        for(const Draw &d:draws) for(const FOutVector &v:d.v) assert(v.y>=10-.002);
+        ++cases;
     }
     // A solid 3D floor reaching below the wall: the fill stops at the wall's bottom, where the wall itself ends.
     {

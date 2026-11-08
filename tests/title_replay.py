@@ -32,7 +32,7 @@ def generate_title(engine, output, templates, render, function_section):
     code += "\nstatic UINT8 HWR_FlatBleeds(const sector_t *, const sector_t *, fixed_t, fixed_t, fixed_t, fixed_t, boolean, boolean, boolean, INT32, fixed_t, fixed_t, fixed_t) { return 0; }\n"
     code += "\nstatic void HWR_DrawFlatBleed(boolean, fixed_t, fixed_t, fixed_t, fixed_t, const FOutVector *) {}\n"
     # The black fill of solid walls cut by 3D floors is covered by wall_light_slices.
-    code += "\nstatic boolean hwr_splitvoid;\nstatic void HWR_DrawCutVoid(const FOutVector *, float, float, float, float) {}\n"
+    code += "\nstatic boolean hwr_splitvoid, hwr_voidslice;\nstatic void HWR_DrawCutVoid(const FOutVector *) {}\n"
     for n in [
         "HWR_FogBlockAlpha",
         "HWR_DrawWallLightSlice",
