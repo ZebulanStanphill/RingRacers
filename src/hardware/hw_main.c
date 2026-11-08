@@ -2318,6 +2318,142 @@ static void HWR_DrawSkyWall(FOutVector *wallVerts, FSurfaceInfo *Surf)
 	// PF_Occlude is set in HWR_ProjectWall to draw into the depth buffer
 }
 
+#ifdef HAVE_D3D12
+// [UWP]: R_StoreWallRange leaves floorclip/ceilingclip at the front plane when a step has no
+// wall texture. Software's visible back visplane bleeds across it, including slope-rounding slivers.
+static UINT8 HWR_FlatBleeds(const sector_t *front, const sector_t *back,
+	fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2, boolean lowertexture, boolean uppertexture,
+	boolean polyseg, INT32 sky, fixed_t vx, fixed_t vy, fixed_t vz)
+{
+	UINT8 result = 0;
+	if (polyseg || !back)
+		return 0;
+	if (!lowertexture && front->floorpic != sky && back->floorpic != sky
+		&& P_GetSectorFloorZAt(back, vx, vy) < vz
+		&& (P_GetSectorFloorZAt(back, x1, y1) > P_GetSectorFloorZAt(front, x1, y1)
+			|| P_GetSectorFloorZAt(back, x2, y2) > P_GetSectorFloorZAt(front, x2, y2)))
+		result |= 1; // Lower; literals keep this independently extractable by the regression harness.
+	if (!uppertexture && front->ceilingpic != sky && back->ceilingpic != sky
+		&& P_GetSectorCeilingZAt(back, vx, vy) > vz
+		&& (P_GetSectorCeilingZAt(back, x1, y1) < P_GetSectorCeilingZAt(front, x1, y1)
+			|| P_GetSectorCeilingZAt(back, x2, y2) < P_GetSectorCeilingZAt(front, x2, y2)))
+		result |= 2; // Upper.
+	return result;
+}
+
+// [UWP]: Duplicate HWR_RenderPlane's reference/scroll/rotation and SETUP3DVERT UV math.
+// The first seg vertex substitutes for the polygon's first vertex (whole flat repeats only).
+static void HWR_FlatBleedUV(FOutVector *vert, float refx, float refy,
+	const levelflat_t *flat, const sector_t *sector, boolean ceiling)
+{
+	float width = 64.0f, height = 64.0f;
+	INT32 flatflag = 63;
+	boolean texflat = false;
+	float xr, yr, sx, sy, tmp, anglef;
+	double c = 1.0, s = 0.0;
+	angle_t angle = ceiling ? sector->ceilingpic_angle : sector->floorpic_angle;
+	if (flat->type == LEVELFLAT_FLAT)
+	{
+		size_t size = R_FlatDimensionsFromLumpSize(W_LumpLength(flat->u.flat.lumpnum));
+		width = height = (double)size;
+		flatflag = size - 1;
+	}
+	else
+	{
+		if (flat->type == LEVELFLAT_TEXTURE)
+		{
+			width = textures[flat->u.texture.num]->width;
+			height = textures[flat->u.texture.num]->height;
+		}
+		else if (flat->type == LEVELFLAT_PATCH || flat->type == LEVELFLAT_PNG)
+		{
+			width = flat->width;
+			height = flat->height;
+		}
+		texflat = true;
+	}
+	xr = (float)(((fixed_t)refx & ~flatflag) / width);
+	yr = (float)(((fixed_t)refy & ~flatflag) / height);
+	sx = FIXED_TO_FLOAT(ceiling ? sector->ceiling_xoffs : sector->floor_xoffs) / width;
+	sy = FIXED_TO_FLOAT(ceiling ? sector->ceiling_yoffs : sector->floor_yoffs) / height;
+	if (angle)
+	{
+		anglef = ANG2RAD(InvAngle(angle));
+		c = cos(anglef);
+		s = sin(anglef);
+		tmp = xr;
+		xr = tmp * c - yr * s;
+		yr = tmp * s + yr * c;
+	}
+	if (texflat)
+	{
+		vert->s = (float)(vert->x / width) + sx;
+		vert->t = -(float)(vert->z / height) + sy;
+	}
+	else
+	{
+		vert->s = (float)(vert->x / width - xr + sx);
+		vert->t = (float)(yr - vert->z / height + sy);
+	}
+	if (angle)
+	{
+		tmp = vert->s;
+		vert->s = tmp * c - vert->t * s;
+		vert->t = tmp * s + vert->t * c;
+	}
+}
+
+// [UWP]: A wall-plane continuation of the back flat, with its plane lighting and texel at each end.
+static void HWR_DrawFlatBleed(boolean ceiling, fixed_t front1, fixed_t front2,
+	fixed_t back1, fixed_t back2, const FOutVector *wall)
+{
+	sector_t *sector = gl_backsector;
+	levelflat_t *flat = &levelflats[ceiling ? sector->ceilingpic : sector->floorpic];
+	pslope_t *slope = ceiling ? sector->c_slope : sector->f_slope;
+	INT32 offset = ceiling ? sector->ceilinglightlevel : sector->floorlightlevel;
+	INT32 lightsec = ceiling ? sector->ceilinglightsec : sector->floorlightsec;
+	boolean absolute = ceiling ? sector->ceilinglightabsolute : sector->floorlightabsolute;
+	INT32 level = lightsec == -1 ? (absolute ? offset : max(0, min(255, sector->lightlevel + offset)))
+		: sectors[lightsec].lightlevel;
+	extracolormap_t *colormap = sector->extra_colormap;
+	FSurfaceInfo Surf;
+	FOutVector verts[4];
+	FBITFIELD flags = PF_Occlude|PF_Masked|PF_Modulated;
+	INT32 shader = SHADER_DEFAULT, i;
+	if (sector->numlights)
+	{
+		fixed_t mx = FLOAT_TO_FIXED((wall[0].x + wall[1].x) * 0.5f);
+		fixed_t my = FLOAT_TO_FIXED((wall[0].z + wall[1].z) * 0.5f);
+		fixed_t height = ceiling ? P_GetSectorCeilingZAt(sector, mx, my) : P_GetSectorFloorZAt(sector, mx, my);
+		INT32 light = R_GetPlaneLight(sector, height, false);
+		if (lightsec == -1 && !absolute)
+			level = max(0, min(255, *sector->lightlist[light].lightlevel + offset));
+		colormap = *sector->lightlist[light].extra_colormap;
+	}
+	level = HWR_CalcSlopeLight(level, slope, sector, false);
+	HWR_Lighting(&Surf, level, colormap, P_SectorUsesDirectionalLighting(sector));
+	HWR_GetLevelFlat(flat, R_NoEncore(sector, flat, ceiling));
+	memcpy(verts, wall, sizeof verts);
+	verts[0].y = FIXED_TO_FLOAT(ceiling ? min(back1, front1) : front1);
+	verts[1].y = FIXED_TO_FLOAT(ceiling ? min(back2, front2) : front2);
+	verts[2].y = FIXED_TO_FLOAT(ceiling ? front2 : max(back2, front2));
+	verts[3].y = FIXED_TO_FLOAT(ceiling ? front1 : max(back1, front1));
+	for (i = 0; i < 2; ++i)
+	{
+		HWR_FlatBleedUV(&verts[i], wall[0].x, wall[0].z, flat, sector, ceiling);
+		verts[3-i].s = verts[i].s;
+		verts[3-i].t = verts[i].t;
+	}
+	if (HWR_UseShader())
+	{
+		shader = SHADER_FLOOR;
+		flags |= PF_ColorMapped;
+	}
+	D3D12_SurfaceProbeSource("flat bleed", (INT32)(gl_linedef-lines));
+	HWR_ProcessPolygon(&Surf, verts, 4, flags, shader, false);
+}
+#endif
+
 //
 // HWR_ProcessSeg
 // A portion or all of a wall segment will be drawn, from startfrac to endfrac,
@@ -2435,6 +2571,19 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			gl_basebottomtexture = gl_sidedef->bottomtexture;
 			gl_bottomtexture = R_GetTextureNum(gl_basebottomtexture);
 		}
+
+#ifdef HAVE_D3D12
+		// [UWP]: Continue visible back flats across untextured steps, as Software does.
+		{
+			UINT8 bleed = HWR_FlatBleeds(gl_frontsector, gl_backsector, v1x, v1y, v2x, v2y,
+				gl_bottomtexture != 0, gl_toptexture != 0, gl_curline->polyseg != NULL,
+				skyflatnum, viewx, viewy, viewz);
+			if (bleed & 1)
+				HWR_DrawFlatBleed(false, worldbottom, worldbottomslope, worldlow, worldlowslope, wallVerts);
+			if (bleed & 2)
+				HWR_DrawFlatBleed(true, worldtop, worldtopslope, worldhigh, worldhighslope, wallVerts);
+		}
+#endif
 
 		// check TOP TEXTURE
 		if ((worldhighslope < worldtopslope || worldhigh < worldtop) && gl_toptexture)

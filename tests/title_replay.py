@@ -28,6 +28,9 @@ def generate_title(engine, output, templates, render, function_section):
         "P_GetLightZAt",
     ]:
         code += sl.function(n)
+    # Flat continuation is covered by flat_bleed; the title replay records wall submissions only.
+    code += "\nstatic UINT8 HWR_FlatBleeds(const sector_t *, const sector_t *, fixed_t, fixed_t, fixed_t, fixed_t, boolean, boolean, boolean, INT32, fixed_t, fixed_t, fixed_t) { return 0; }\n"
+    code += "\nstatic void HWR_DrawFlatBleed(boolean, fixed_t, fixed_t, fixed_t, fixed_t, const FOutVector *) {}\n"
     for n in [
         "HWR_FogBlockAlpha",
         "HWR_DrawWallLightSlice",

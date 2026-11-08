@@ -508,6 +508,17 @@ def generate(engine, output):
     }, output / "horizon.cpp")
 
     slopes = Source(engine / "src/p_slopes.c")
+    render(templates / "flat_bleed.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),
+        "SECTOR_FLOOR": slopes.function("P_GetSectorFloorZAt"),
+        "SECTOR_CEILING": slopes.function("P_GetSectorCeilingZAt"),
+        "FLAT_BLEEDS": hardware.function("HWR_FlatBleeds"),
+        "FLAT_UV": hardware.function("HWR_FlatBleedUV"),
+        "FLAT_DRAW": hardware.function("HWR_DrawFlatBleed"),
+        "FLAT_DIMENSIONS": Source(engine / "src/r_textures.cpp").function("R_FlatDimensionsFromLumpSize"),
+    }, output / "flat_bleed.cpp")
+
     render(templates / "void_wall.cpp.in", {
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
         "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),

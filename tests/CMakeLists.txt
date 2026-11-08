@@ -40,6 +40,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_bsp.cpp"
     "${RR_SOURCE_DIR}/src/r_sky.c"
     "${RR_SOURCE_DIR}/src/r_plane.cpp"
+    "${RR_SOURCE_DIR}/src/r_textures.cpp"
     "${RR_SOURCE_DIR}/src/p_slopes.c"
     "${RR_SOURCE_DIR}/src/taglist.c"
     "${RR_SOURCE_DIR}/src/tables.c"
@@ -109,6 +110,7 @@ regression(sky_offsets sky)
 regression(batch_sort_keys batch_sort HWRENDER)
 regression(horizon_visibility horizon HWRENDER)
 regression(void_wall void_wall _UWP HWRENDER)
+regression(flat_bleed flat_bleed _UWP HWRENDER)
 regression(sprite_brightmap sprite_brightmap _UWP HWRENDER HWPRECIP)
 regression(encore_brightmap encore_brightmap _UWP HWRENDER)
 regression(spring_clip spring_clip _UWP HWRENDER)

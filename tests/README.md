@@ -693,6 +693,19 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment; the user confirmed the revised position on Xbox. They do not verify background visibility through water.
 
+- **Untextured step flat bleeding:** `flat_bleed` runs the production D3D12 decision,
+  UV and draw helpers. Cover the Green Hills Zone linedef 757 slope-rounding sliver,
+  textured steps, reversed/equal heights, either sky flat, camera visibility (including
+  equality), polyobjects, mirrored ceilings and steps at only one endpoint. Compare
+  288 flat/texture/patch/PNG UV cases with a separate SETUP3DVERT model, including
+  negative map coordinates, scrolling and rotation. Submission stubs check exact
+  front-plane edges, degenerate endpoints, back-flat binding, paired UVs, ordinary,
+  absolute, transferred and light-list lighting, midpoint plane height, slope-light
+  inputs, shader flags and probe attribution. Visibility and step-direction mutations
+  must fail. The title replay stubs these draws because it records walls and does not
+  model camera height. These tests check geometry submission, not rendered pixels;
+  D3D12 compilation belongs to Windows CI and Xbox visuals remain untested.
+
 - **Camera-underground walls:** `void_wall` runs the production `HWR_WallFillsView` (`hw_main.c`) against an independent
   model of Software's columns: the seg sampled, its visible run's ends bisected, and clipped to the screen's columns by angle, and
   `R_StoreWallRange`'s `pixlow`/`pixhigh` at its first and last visible column from `R_SetupFreelook`'s shifted

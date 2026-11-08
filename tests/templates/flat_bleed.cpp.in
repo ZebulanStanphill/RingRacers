@@ -1,0 +1,173 @@
+// Production selection and seam UVs, without a GPU or game assets.
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "r_textures.h"
+#include "p_slopes.h"
+#include "p_setup.h"
+#include "r_plane.h"
+#include "r_state.h"
+#include "r_bsp.h"
+#include "hardware/hw_batching.h"
+#include "hardware/hw_glob.h"
+#undef min
+#undef max
+#define min std::min
+#define max std::max
+texture_t **textures;
+static size_t lumpSize = 4096;
+size_t W_LumpLength(lumpnum_t) { return lumpSize; }
+@@FLAT_DIMENSIONS@@
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+@@SLOPE_HEIGHT@@
+@@SECTOR_FLOOR@@
+@@SECTOR_CEILING@@
+@@FLAT_BLEEDS@@
+@@FLAT_UV@@
+static sector_t *gl_backsector;
+static line_t *gl_linedef;
+sector_t *sectors;
+line_t *lines;
+levelflat_t *levelflats;
+static FOutVector submitted[4];
+static INT32 submittedLevel, probeLine, selectedLight;
+static extracolormap_t *submittedMap;
+static levelflat_t *boundFlat;
+static bool useShader = true;
+static FBITFIELD submittedFlags;
+static int submittedShader;
+static fixed_t lightHeight;
+static pslope_t *litSlope;
+static const sector_t *litSector;
+static boolean litCeiling;
+static FUINT HWR_CalcSlopeLight(FUINT level, pslope_t *slope, const sector_t *sector, boolean fof)
+{ assert(!fof); litSlope = slope; litSector = sector; return level; }
+void HWR_Lighting(FSurfaceInfo *, INT32 level, extracolormap_t *map, boolean directional)
+{ assert(directional); submittedLevel = level; submittedMap = map; }
+boolean P_SectorUsesDirectionalLighting(const sector_t *) { return true; }
+boolean R_NoEncore(sector_t *, levelflat_t *, boolean ceiling) { litCeiling = ceiling; return true; }
+void HWR_GetLevelFlat(levelflat_t *flat, boolean noEncore) { assert(noEncore); boundFlat = flat; }
+INT32 R_GetPlaneLight(sector_t *, fixed_t height, boolean underside)
+{ assert(!underside); lightHeight = height; return selectedLight; }
+static boolean HWR_UseShader() { return useShader; }
+static void D3D12_SurfaceProbeSource(const char *kind, INT32 line)
+{ assert(std::strcmp(kind, "flat bleed") == 0); probeLine = line; }
+void HWR_ProcessPolygon(FSurfaceInfo *, FOutVector *verts, FUINT count, FBITFIELD flags, int shader, boolean horizon)
+{ assert(count == 4 && !horizon); std::memcpy(submitted, verts, sizeof submitted); submittedFlags = flags; submittedShader = shader; }
+@@FLAT_DRAW@@
+
+static fixed_t F(double n) { return (fixed_t)std::llround(n * FRACUNIT); }
+int main()
+{
+    sector_t front = {}, back = {};
+    pslope_t fs = {}, bs = {};
+    fs.d.x = bs.d.x = FRACUNIT;
+    fs.o.z = F(464); bs.o.z = F(464.003);
+    fs.zdelta = bs.zdelta = F(23.998);
+    front.f_slope = &fs; back.f_slope = &bs;
+    front.ceilingheight = back.ceilingheight = F(1024);
+    front.floorpic = back.floorpic = front.ceilingpic = back.ceilingpic = 2;
+    auto check = [&](int expected, bool lt=false, bool ut=false, bool poly=false, double vz=600) {
+        assert(HWR_FlatBleeds(&front, &back, 0, 0, FRACUNIT, 0, lt, ut, poly, 1, 0, 0, F(vz)) == expected);
+    };
+    check(1); // GHZ 757: 464/487.998 versus 464.003/488.001.
+    check(0, true); check(0, false, false, true);
+    check(0, false, false, false, 464); check(0, false, false, false, 464.003);
+    front.floorpic = 1; check(0); front.floorpic = 2;
+    back.floorpic = 1; check(0); back.floorpic = 2;
+    bs.o.z = F(463.997); check(0);
+    bs.o.z = F(464); check(0);
+    bs.zdelta += F(.003); check(1); // Only the far endpoint rises.
+    bs.o.z = F(464.003); bs.zdelta -= F(.006); check(1); // Only the near end rises.
+    front.f_slope = back.f_slope = nullptr;
+    front.floorheight = back.floorheight = 0;
+    front.c_slope = &fs; back.c_slope = &bs;
+    fs.o.z = F(488); fs.zdelta = F(-23.998);
+    bs = fs; bs.o.z -= F(.003);
+    check(2, false, false, false, 300);
+    check(0, false, true, false, 300); check(0, false, false, true, 300);
+    check(0, false, false, false, 488); check(0, false, false, false, 487.997);
+    front.ceilingpic = 1; check(0, false, false, false, 300); front.ceilingpic = 2;
+    back.ceilingpic = 1; check(0, false, false, false, 300); back.ceilingpic = 2;
+    bs.o.z = F(488.003); check(0, false, false, false, 300);
+    bs.o.z = fs.o.z; bs.zdelta -= F(.003); check(2, false, false, false, 300);
+    bs.o.z -= F(.003); bs.zdelta += F(.006); check(2, false, false, false, 300);
+
+    texture_t texture = {}; texture.width = 96; texture.height = 40;
+    texture_t *texptr = &texture; textures = &texptr;
+    int cases = 0;
+    for (int flatSize : {32, 64, 128})
+    for (auto type : {LEVELFLAT_FLAT, LEVELFLAT_TEXTURE, LEVELFLAT_PATCH, LEVELFLAT_PNG})
+    for (bool ceiling : {false, true})
+    for (angle_t angle : {angle_t(0), angle_t(ANGLE_45), angle_t(ANGLE_90), angle_t(ANGLE_270)})
+    for (float x : {-129.25f, 0.0f, 257.5f})
+    {
+        lumpSize = flatSize * flatSize;
+        levelflat_t flat = {}; flat.type = type; flat.width = 96; flat.height = 40;
+        back.floor_xoffs = F(13.5); back.floor_yoffs = F(-7.25);
+        back.ceiling_xoffs = F(-21.75); back.ceiling_yoffs = F(9.5);
+        back.floorpic_angle = back.ceilingpic_angle = angle;
+        FOutVector v = {}; v.x = x; v.z = -83.25f;
+        HWR_FlatBleedUV(&v, -129.25f, 65.5f, &flat, &back, ceiling);
+        // Independent SETUP3DVERT model: use normalized map coordinates, then rotate the
+        // scroll-adjusted coordinate relative to the rotated flat origin. Texture flats omit it.
+        double w = type == LEVELFLAT_FLAT ? flatSize : 96, h = type == LEVELFLAT_FLAT ? flatSize : 40;
+        float radians = ANG2RAD(InvAngle(angle));
+        double c = std::cos(radians), s = std::sin(radians);
+        double ox = 0, oy = 0;
+        if (type == LEVELFLAT_FLAT) { ox = std::floor(-129.0/w); oy = std::floor(65.0/h); }
+        float rx = (float)(ox*c-oy*s), ry = (float)(ox*s+oy*c);
+        float u = (float)(x/w - rx + (ceiling ? -21.75 : 13.5)/w);
+        float t = (float)(ry - v.z/h + (ceiling ? 9.5 : -7.25)/h);
+        double expectedS = u*c-t*s, expectedT = u*s+t*c;
+        assert(std::fabs(v.s-expectedS) < 2e-6 && std::fabs(v.t-expectedT) < 2e-6);
+        ++cases;
+    }
+    // Draw submission: exact front edges, degenerate crossing ends, back-flat binding and lighting.
+    lumpSize = 4096;
+    levelflat_t flats[3] = {}; flats[2].type = LEVELFLAT_FLAT; levelflats = flats;
+    line_t mapLines[4] = {}; lines = mapLines; gl_linedef = &lines[3];
+    sector_t lightSectors[2] = {}; sectors = lightSectors; sectors[1].lightlevel = 73;
+    extracolormap_t ordinary = {}, lightmap = {};
+    back.extra_colormap = &ordinary; back.lightlevel = 100;
+    back.floorlightsec = back.ceilinglightsec = -1;
+    back.floorlightlevel = 11; back.ceilinglightlevel = -13;
+    back.floorpic_angle = back.ceilingpic_angle = 0;
+    gl_backsector = &back;
+    FOutVector wall[4] = {};
+    wall[0].x = wall[3].x = 0; wall[1].x = wall[2].x = 1;
+    HWR_DrawFlatBleed(false, F(464), F(487.998), F(464.003), F(488.001), wall);
+    assert(submitted[0].y == FIXED_TO_FLOAT(F(464)) && submitted[1].y == FIXED_TO_FLOAT(F(487.998)));
+    assert(submitted[3].y == FIXED_TO_FLOAT(F(464.003)) && submitted[2].y == FIXED_TO_FLOAT(F(488.001)));
+    assert(boundFlat == &flats[2] && !litCeiling && probeLine == 3);
+    assert(submittedLevel == 111 && submittedMap == &ordinary && litSlope == back.f_slope && litSector == &back);
+    assert(submittedFlags == (PF_Occlude|PF_Masked|PF_Modulated|PF_ColorMapped) && submittedShader == SHADER_FLOOR);
+    assert(submitted[0].s == submitted[3].s && submitted[0].t == submitted[3].t);
+    assert(submitted[1].s == submitted[2].s && submitted[1].t == submitted[2].t);
+    HWR_DrawFlatBleed(false, F(464), F(488), F(463), F(489), wall);
+    assert(submitted[0].y == submitted[3].y && submitted[2].y == 489);
+    useShader = false;
+    HWR_DrawFlatBleed(true, F(488), F(464), F(489), F(463), wall);
+    assert(submitted[0].y == submitted[3].y && submitted[1].y == 463 && submitted[2].y == 464);
+    assert(litCeiling && submittedLevel == 87 && litSlope == back.c_slope);
+    assert(submittedFlags == (PF_Occlude|PF_Masked|PF_Modulated) && submittedShader == SHADER_DEFAULT);
+    back.floorlightabsolute = true; back.floorlightlevel = 52;
+    HWR_DrawFlatBleed(false, 0, 0, FRACUNIT, FRACUNIT, wall); assert(submittedLevel == 52);
+    back.floorlightsec = 1;
+    HWR_DrawFlatBleed(false, 0, 0, FRACUNIT, FRACUNIT, wall); assert(submittedLevel == 73);
+    lightlist_t list[1] = {}; INT16 level = 230; extracolormap_t *map = &lightmap;
+    list[0].lightlevel = &level; list[0].extra_colormap = &map;
+    back.numlights = 1; back.lightlist = list; back.floorlightsec = -1; back.floorlightabsolute = false;
+    HWR_DrawFlatBleed(false, 0, 0, FRACUNIT, FRACUNIT, wall);
+    assert(submittedLevel == 255 && submittedMap == &lightmap && lightHeight == back.floorheight);
+    HWR_DrawFlatBleed(true, 0, 0, -FRACUNIT, -FRACUNIT, wall);
+    assert(submittedLevel == 217 && submittedMap == &lightmap);
+    assert(lightHeight == P_GetSectorCeilingZAt(&back, FRACUNIT/2, 0));
+    std::printf("flat_bleed: decision, draw submission and %d UV cases passed\n", cases);
+}
