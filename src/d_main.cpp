@@ -1769,7 +1769,15 @@ static void IdentifyVersion(void)
 	// Load the IWAD
 	if (! AddIWAD())
 	{
+#ifdef _UWP
+		// [UWP]: Say what to check before the technical details (the error dialog adds the drives it can see)
+		I_Error("Couldn't find the game's data (\"bios.pk3\" isn't in %s).\n\n"
+			"Is the USB drive with the ringracers folder connected? The folder must be at the top of the drive "
+			"and hold the v2.4 assets, such as E:\\ringracers\\bios.pk3. See the README on GitHub for setup.\n",
+			srb2waddir);
+#else
 		I_Error("\"bios.pk3\" not found! Expected in %s\n", srb2waddir);
+#endif
 	}
 
 	// will be overwritten in case of -cdrom or unix/win home
