@@ -54,6 +54,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 
 ### Fixes to Legacy GL
 
+- **Untextured steps** *(untested on Xbox)*. Where a floor steps up, or a ceiling steps down, and the wall between has no texture, the farther floor's (or ceiling's) flat continues across the step with that flat's lighting, as Software lets it bleed, instead of leaving a gap that shows what is behind. Neighboring sloped floors in Green Hills Zone meet a few thousandths of a unit apart, which showed as thin crack lines across the grass. It applies only while that flat faces the camera; sky flats and polyobjects are unchanged.
 - **Wall light slices** *(works on Xbox, including split-screen)*. UWP clips each lighting band to its original wall and splits crossing slopes, preserving UVs, lighting, alpha, and solid-floor holes. This removes inverted slices that covered Water Palace scenery with brown wall pixels, without new GPU resources or copies.
 - **Missing floors and ceilings** *(works on Xbox)*. BSP cuts send unsplit polygons to their actual side, and a closed GL-seg loop supplies a fallback for subsectors missing a polygon. This fixes reported holes on Green Hills Zone and Storm Rig on every platform; some inherited oversized subsector polygons remain possible.
 - **Sprite-textured models** *(works on Xbox, including after video changes)*. Every platform prepares a model's selected sprite patch before reading hardware data and compares sprite dimensions when refitting UVs, preventing crashes with models such as item boxes after video changes.
