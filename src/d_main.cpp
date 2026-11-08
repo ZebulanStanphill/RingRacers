@@ -35,6 +35,7 @@
 #include <time.h>
 #ifdef _UWP
 #include <cstdarg>
+#include <cmath>
 #endif
 
 #include "doomdef.h"
@@ -52,6 +53,9 @@
 #include "i_sound.h"
 #include "i_system.h"
 #include "i_time.h"
+#ifdef _UWP
+#include "d_frame_schedule.h"
+#endif
 #include "i_threads.h"
 #include "i_video.h"
 #include "m_argv.h"
@@ -1201,7 +1205,7 @@ void D_SRB2Loop(void)
 
 	for (;;)
 	{
-		// capbudget is the minimum precise_t duration of a single loop iteration
+		// capbudget is the target frame interval in precise_t units.
 		precise_t capbudget;
 		precise_t enterprecise = I_GetPreciseTime();
 		precise_t finishprecise = enterprecise;
@@ -1212,8 +1216,16 @@ void D_SRB2Loop(void)
 
 		{
 			// Casting the return value of a function is bad practice (apparently)
+#ifdef _UWP
+			// [UWP]: Unlimited must not divide by zero or convert infinity to precise_t.
+			const double cap = R_GetFramerateCap();
+			const double budget = cap > 0 ? round(I_GetPrecisePrecision() / cap) : 0;
+			capbudget = std::isfinite(budget) && budget > 0 && budget < (double)(INT64_MAX / 4)
+				? (precise_t)budget : 0;
+#else
 			double budget = round((1.0 / R_GetFramerateCap()) * I_GetPrecisePrecision());
 			capbudget = (precise_t) budget;
+#endif
 		}
 
 		bool ranwipe = false;
@@ -1499,30 +1511,29 @@ void D_SRB2Loop(void)
 		const precise_t worktime = finishprecise - enterprecise;
 #endif
 
+#ifdef _UWP
+		// [UWP]: Carry slow-loop debt forward instead of padding each fast loop.
+		// Skipped catch-up frames advance the schedule but never sleep.
+		static precise_t deadline = 0;
+		static bool scheduled = false;
+		const precise_t sleep = D_FrameSchedule(enterprecise, finishprecise,
+			capbudget, !singletics, skippedframe, deadline, scheduled);
+		if (sleep)
+			I_SleepDuration(sleep);
+#else
 		if (!singletics)
 		{
 			INT64 elapsed = (INT64)(finishprecise - enterprecise);
 
-#ifndef _UWP
 			// in the case of "match refresh rate" + vsync, don't sleep at all
 			const boolean vsync_with_match_refresh = cv_vidwait.value && cv_fpscap.value == 0;
-#else
-			// [UWP]: This is usually a good idea but for some reason no sleep really screws up the frame timings on xbox
-			const boolean vsync_with_match_refresh = false;
-#endif
 
-			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh
-#ifdef _UWP
-				// [UWP]: A frame skipped to catch up on game logic gets no sleep, so the next one is drawn right away.
-				// Sleeping out the skipped frame's time left the game idle 16% of the time in Time Attack on Xbox,
-				// at 24 FPS.
-				&& !skippedframe
-#endif
-			)
+			if (elapsed > 0 && (INT64)capbudget > elapsed && !vsync_with_match_refresh)
 			{
 				I_SleepDuration(capbudget - (finishprecise - enterprecise));
 			}
 		}
+#endif
 		// Capture the time once more to get the real delta time.
 		finishprecise = I_GetPreciseTime();
 		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();

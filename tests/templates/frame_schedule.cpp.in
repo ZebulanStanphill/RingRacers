@@ -1,0 +1,34 @@
+#include <cassert>
+#include <cstdint>
+#include "d_frame_schedule.h"
+int main()
+{
+    constexpr precise_t budget = 16667;
+    precise_t deadline = 0, now = 0;
+    bool scheduled = false;
+    for (int i=0; i<120; ++i) {
+        precise_t sleep = D_FrameSchedule(now, now+10000, budget, true, false, deadline, scheduled);
+        assert(sleep == budget-10000);
+        now += 10000+sleep;
+        assert(now == (i+1)*budget);
+    }
+    scheduled=false; now=0;
+    // Remain inside the four-frame debt limit (long stalls reset below).
+    for (int i=0; i<12; ++i) {
+        precise_t finish=now+(i%2 ? 10000 : 30000);
+        assert(D_FrameSchedule(now, finish, budget, true, false, deadline, scheduled)==0);
+        now=finish;
+    }
+    assert(D_FrameSchedule(now, now+3000000, budget, true, false, deadline, scheduled)==0);
+    assert(deadline==now+3000000);
+    now=deadline;
+    assert(D_FrameSchedule(now, now+10000, budget, true, false, deadline, scheduled)==6667);
+    assert(D_FrameSchedule(now, now+1, 0, true, false, deadline, scheduled)==0 && !scheduled);
+    assert(D_FrameSchedule(now, now+1, budget, false, false, deadline, scheduled)==0 && !scheduled);
+    now=UINT64_MAX-5000;
+    assert(D_FrameSchedule(now, now+10000, budget, true, false, deadline, scheduled)==6667);
+    now=deadline;
+    assert(D_FrameSchedule(now, now+10000, budget, true, true, deadline, scheduled)==0);
+    now+=10000;
+    assert(D_FrameSchedule(now, now+1000, budget, true, false, deadline, scheduled)==22334);
+}

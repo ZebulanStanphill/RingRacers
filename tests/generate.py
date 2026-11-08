@@ -57,6 +57,7 @@ def generate(engine, output):
         "ADDED": sdlvideo.function("Impl_HandleControllerDeviceAddedEvent"),
         "OPEN": sdlvideo.function("I_OpenStartupGamepads"),
     }, output / "startup_gamepads.cpp")
+    render(templates / "frame_schedule.cpp.in", {}, output / "frame_schedule.cpp")
     tcp = Source(engine / "src/i_tcp.c")
     errors = Source(engine / "src/i_tcp_detail.h")
     render(templates / "udp_send.cpp.in", {

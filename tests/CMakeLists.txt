@@ -38,6 +38,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_captures.inc"
     "${RR_SOURCE_DIR}/src/menus/options-1.c"
     "${RR_SOURCE_DIR}/src/d_main.cpp"
+    "${RR_SOURCE_DIR}/src/d_frame_schedule.h"
     "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
     "${RR_SOURCE_DIR}/src/r_bsp.cpp"
     "${RR_SOURCE_DIR}/src/r_sky.c"
@@ -237,3 +238,5 @@ endif()
 add_test(NAME name_index COMMAND name_index)
 set_tests_properties(name_index PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
+regression(frame_schedule frame_schedule _UWP)

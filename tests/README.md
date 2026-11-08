@@ -759,3 +759,11 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   pixel oracle. The former SM4 WARP runner and its water, fog and brightmap
   sources were deleted because that shader profile is no longer shipped.
   Xbox gameplay visuals remain a separate device check.
+
+- **UWP frame schedule:** `frame_schedule` executes the production pure pacing
+  helper with fast 60 Hz loops, alternating 30/10 ms loops, a three-second load,
+  Unlimited, singletics, skipped catch-up frames and a wrapping precise clock.
+  Only render sleep changes; simulation remains untouched. Xbox pacing and actual
+  scheduler wake-up precision require device testing.
+  The alternating case stays within the four-frame debt limit: a sustained
+  overload eventually resets debt as specified, after which a fast loop can sleep.
