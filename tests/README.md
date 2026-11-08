@@ -773,3 +773,12 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   horizon lines, cache reuse, runtime changes, zone teardown and replacement
   levels. See [the writer audit](../docs/uwp-horizon-cache.md). These checks use
   ASan/UBSan and verify scan admission rather than GPU pixels or Xbox timings.
+
+- **UWP PGO capture lifecycle:** not part of ctest; run `python3 tests/check-pgo.py`
+  (needs `clang++` or `CXX`, no CMake or SDL). It compiles the production capture
+  helper with real engine headers and small SDL/compiler-rt mocks under ASan/UBSan,
+  and checks startup idempotence, USB directories, unique file names, rotation and
+  counter reset after a dump, keeping counters after a failed write, synchronous
+  suspend capture and unrelated-event filtering. It tests capture sequencing, not
+  compiler-rt itself; Windows linking, real profiles and PGO performance need the
+  Xbox. The app repository's `docs/pgo.md` describes capture and toolchain use.

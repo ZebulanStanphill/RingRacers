@@ -22,6 +22,11 @@
 extern "C" {
 #endif
 
+#if defined(_UWP) && defined(SRB2_PGO_GENERATE)
+void I_UWPPgoInit(void);
+void I_UWPPgoDump(void);
+#endif
+
 /**	\brief max quit functions
 */
 #define MAX_QUIT_FUNCS     16

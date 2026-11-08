@@ -411,6 +411,29 @@ if(SRB2_CONFIG_UWP)
 	# and since it has no FMA, floating point math gives the same results as other x64 builds.
 	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 		target_compile_options(SRB2SDL2 PRIVATE "/clang:-march=btver2")
+
+		option(SRB2_CONFIG_PGO_GENERATE "Instrument the UWP engine for PGO" OFF)
+		set(SRB2_CONFIG_PGO_USE "" CACHE FILEPATH "Merged LLVM instrumentation profile (.profdata)")
+		if(SRB2_CONFIG_PGO_GENERATE AND SRB2_CONFIG_PGO_USE)
+			message(FATAL_ERROR "PGO generation and use are mutually exclusive")
+		endif()
+		set(_pgo_prefix "")
+		if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+			set(_pgo_prefix "/clang:")
+		endif()
+		if(SRB2_CONFIG_PGO_GENERATE)
+			target_compile_options(SRB2SDL2 PRIVATE "${_pgo_prefix}-fprofile-instr-generate")
+			target_compile_definitions(SRB2SDL2 PRIVATE SRB2_PGO_GENERATE)
+			target_sources(SRB2SDL2 PRIVATE sdl/i_uwppgo.cpp)
+		elseif(SRB2_CONFIG_PGO_USE)
+			if(NOT EXISTS "${SRB2_CONFIG_PGO_USE}" OR NOT SRB2_CONFIG_PGO_USE MATCHES "[.]profdata$")
+				message(FATAL_ERROR "SRB2_CONFIG_PGO_USE must name an existing .profdata file")
+			endif()
+			target_compile_options(SRB2SDL2 PRIVATE
+				"${_pgo_prefix}-fprofile-instr-use=${SRB2_CONFIG_PGO_USE}"
+				"${_pgo_prefix}-Wno-profile-instr-unprofiled"
+				"${_pgo_prefix}-Wno-profile-instr-out-of-date")
+		endif()
 	endif()
 endif()
 

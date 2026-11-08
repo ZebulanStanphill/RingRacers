@@ -1934,6 +1934,9 @@ INT32 I_StartupSystem(void)
 
 	if (SDL_Init(0) < 0)
 		I_Error("Dr. Robotnik's Ring Racers: SDL System Error: %s", SDL_GetError()); //Alam: Oh no....
+#if defined(_UWP) && defined(SRB2_PGO_GENERATE)
+	I_UWPPgoInit();
+#endif
 #ifndef NOMUMBLE
 	I_SetupMumble();
 #endif
@@ -1977,6 +1980,9 @@ FUNCNORETURN void ATTRNORETURN I_Quit(void)
 	// use this for 1.28 19990220 by Kin
 	I_ShutdownGraphics();
 	I_ShutdownInput();
+#if defined(_UWP) && defined(SRB2_PGO_GENERATE)
+	I_UWPPgoDump();
+#endif
 	I_ShutdownSystem();
 	SDL_Quit();
 	/* if option -noendtxt is set, don't print the text */

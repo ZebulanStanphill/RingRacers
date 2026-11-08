@@ -2094,6 +2094,9 @@ void D_SRB2Main(void)
 
 	// Do this up here so that WADs loaded through the command line can use ExecCfg
 	COM_Init();
+#if defined(_UWP) && defined(SRB2_PGO_GENERATE)
+	COM_AddCommand("pgo_dump", I_UWPPgoDump);
+#endif
 
 	COM_AddDebugCommand("assert", Command_assert);
 #ifdef DEVELOP
