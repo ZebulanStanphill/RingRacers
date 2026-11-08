@@ -112,3 +112,8 @@ This builds the `RingRacers` submodule (initializing it if it's missing); builds
 ## Credits
 
 The port builds on [worleydl's UWP port](https://github.com/worleydl/ringracers-uwp). VibeRant D3D's portals are inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s.
+
+## Profile-guided optimisation
+
+See [collecting Xbox PGO training data](docs/pgo.md) to install an instrumented
+build, play a varied session, and send captures for future optimised builds.

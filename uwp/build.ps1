@@ -13,6 +13,10 @@ downloads ANGLE, then generates and builds the UWP launcher solution in build/.
 
 Run from an x64 Visual Studio 2022 developer shell with VCPKG_ROOT set.
 #>
+param(
+	[ValidateSet("auto", "off", "generate", "use")]
+	[string]$Pgo = $(if ($env:RR_PGO) { $env:RR_PGO } else { "auto" })
+)
 $ErrorActionPreference = "Stop"
 
 $Root = $PSScriptRoot
@@ -63,9 +67,54 @@ if (-not (Test-Path (Join-Path $Source "CMakeLists.txt"))) {
 	Exec { git -C $Root submodule update --init RingRacers }
 }
 
+# Use only committed training data, never stray captures from a local session.
+$RawProfiles = @(git -C $Root ls-files -- 'pgo/*.profraw' | ForEach-Object { Join-Path $Root $_ })
+if ($LASTEXITCODE -ne 0) { throw "Could not list committed PGO profiles" }
+if ($Pgo -eq "auto") { $Pgo = if ($RawProfiles.Count) { "use" } else { "off" } }
+Write-Host "PGO mode: $Pgo"
+$ClangCl = (Get-Command clang-cl -ErrorAction Stop).Source
+$EnginePgo = @("-DSRB2_CONFIG_PGO_GENERATE=OFF", "-DSRB2_CONFIG_PGO_USE=")
+$AppPgo = @("-DRR_PGO_GENERATE=OFF", "-DRR_PGO_CLANG_CL=$($ClangCl.Replace('\', '/'))")
+if ($Pgo -eq "generate") {
+	$EnginePgo = @("-DSRB2_CONFIG_PGO_GENERATE=ON", "-DSRB2_CONFIG_PGO_USE=")
+	$AppPgo[0] = "-DRR_PGO_GENERATE=ON"
+}
+if ($Pgo -eq "use") {
+	if (-not $RawProfiles.Count) { throw "PGO use needs committed pgo/*.profraw files" }
+	$ClangVersionText = & $ClangCl --version
+	if ($LASTEXITCODE -ne 0) { throw "Could not query clang-cl version" }
+	$VersionMatch = [regex]::Match(($ClangVersionText -join "`n"), 'clang version (\d+\.\d+\.\d+)')
+	if (-not $VersionMatch.Success) { throw "Could not parse clang-cl version: $ClangVersionText" }
+	$LlvmVersion = $VersionMatch.Groups[1].Value
+	$Profdata = Join-Path (Split-Path $ClangCl) "llvm-profdata.exe"
+	if (-not (Test-Path $Profdata)) {
+		# VS sometimes ships clang-cl without llvm-profdata. Extract only the tool
+		# from the identical upstream LLVM release; do not change the compiler.
+		$ToolDir = Join-Path $Deps "llvm-$LlvmVersion"
+		$Profdata = Join-Path $ToolDir "bin/llvm-profdata.exe"
+		if (-not (Test-Path $Profdata)) {
+			if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
+				throw "Install 7-Zip or put LLVM $LlvmVersion llvm-profdata.exe beside $ClangCl"
+			}
+			New-Item -ItemType Directory -Force $ToolDir | Out-Null
+			$Installer = Join-Path $ToolDir "LLVM-$LlvmVersion-win64.exe"
+			Invoke-WebRequest -UseBasicParsing "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LlvmVersion/LLVM-$LlvmVersion-win64.exe" -OutFile $Installer
+			Exec { 7z x -y "-o$ToolDir" $Installer 'bin/llvm-profdata.exe' }
+		}
+	}
+	$ProfdataVersion = & $Profdata --version
+	if ($LASTEXITCODE -ne 0 -or ($ProfdataVersion -join "`n") -notmatch "LLVM version $([regex]::Escape($LlvmVersion))(?![\d.])") {
+		throw "llvm-profdata must match clang-cl $LlvmVersion exactly: $Profdata"
+	}
+	New-Item -ItemType Directory -Force $UwpBuild | Out-Null
+	$MergedProfile = Join-Path $UwpBuild "ringracers.profdata"
+	Exec { & $Profdata merge -o $MergedProfile @RawProfiles }
+	$EnginePgo = @("-DSRB2_CONFIG_PGO_GENERATE=OFF", "-DSRB2_CONFIG_PGO_USE=$($MergedProfile.Replace('\', '/'))")
+}
+
 Push-Location $Source
 try {
-	Exec { cmake --preset $Preset }
+	Exec { cmake --preset $Preset "-DCMAKE_C_COMPILER=$ClangCl" "-DCMAKE_CXX_COMPILER=$ClangCl" @EnginePgo }
 	Exec { cmake --build --preset $Preset }
 }
 finally {
@@ -111,7 +160,7 @@ if (-not (Test-Path (Join-Path $Angle "bin/UAP/x64/libGLESv2.dll"))) {
 	Expand-Archive -Force $AnglePackage $Angle
 }
 
-Exec { cmake -S (Join-Path $Root "uwp") -B $UwpBuild -G "Visual Studio 17 2022" -A x64 "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
+Exec { cmake -S (Join-Path $Root "uwp") -B $UwpBuild -G "Visual Studio 17 2022" -A x64 @AppPgo "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
 Exec { cmake --build $UwpBuild --config Release }
 
 Write-Host ""

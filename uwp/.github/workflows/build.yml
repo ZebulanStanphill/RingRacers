@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      pgo_generate:
+        description: Build an instrumented package to collect PGO training data
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -58,6 +63,8 @@ jobs:
 
       - name: Build
         shell: pwsh
+        env:
+          RR_PGO: ${{ inputs.pgo_generate && 'generate' || 'auto' }}
         run: ./build.ps1
 
       # Sign with a throwaway certificate matching the manifest's Publisher.
@@ -96,7 +103,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ringracers-uwp
+          name: ${{ inputs.pgo_generate && 'ringracers-uwp-pgo-instrumented' || 'ringracers-uwp' }}
           path: out/
 
       # The linker map of this build, which maps the addresses in the game's profile (uwp-profile.txt) to functions
@@ -108,6 +115,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ringracers-uwp-symbols
+          name: ${{ inputs.pgo_generate && 'ringracers-uwp-pgo-instrumented-symbols' || 'ringracers-uwp-symbols' }}
           path: symbols/
           if-no-files-found: error

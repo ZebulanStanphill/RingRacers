@@ -130,6 +130,32 @@ set(BinLibs
 	WindowsApp.lib
 )
 
+# The engine is compiled with clang-cl, while this executable uses MSVC link.exe.
+# Resolve compiler-rt from that exact compiler, rather than another LLVM on PATH.
+option(RR_PGO_GENERATE "Link the engine's instrumentation runtime" OFF)
+set(RR_PGO_CLANG_CL "" CACHE FILEPATH "clang-cl used to build the engine")
+if(RR_PGO_GENERATE)
+	if(NOT EXISTS "${RR_PGO_CLANG_CL}")
+		message(FATAL_ERROR "PGO generation requires RR_PGO_CLANG_CL (build.ps1 sets it)")
+	endif()
+	execute_process(COMMAND "${RR_PGO_CLANG_CL}" /clang:-print-resource-dir
+		OUTPUT_VARIABLE _clang_resources OUTPUT_STRIP_TRAILING_WHITESPACE
+		RESULT_VARIABLE _clang_result)
+	if(NOT _clang_result EQUAL 0)
+		message(FATAL_ERROR "Cannot query the engine clang-cl resource directory")
+	endif()
+	file(GLOB_RECURSE _profile_runtimes "${_clang_resources}/lib/*clang_rt.profile-x86_64.lib")
+	list(LENGTH _profile_runtimes _runtime_count)
+	if(NOT _runtime_count EQUAL 1)
+		message(FATAL_ERROR "Expected one clang_rt.profile-x86_64.lib under ${_clang_resources}/lib; install compiler-rt for the engine's clang-cl")
+	endif()
+	message(STATUS "PGO runtime: ${_profile_runtimes}")
+	list(APPEND BinLibs ${_profile_runtimes})
+	# LLVM ships the runtime built against the static CRT, so it asks for libcmt.lib; its CRT calls resolve
+	# against the app CRT this executable already links.
+	target_link_options(${PROJECT_NAME} PRIVATE /NODEFAULTLIB:libcmt.lib)
+endif()
+
 target_link_libraries(${PROJECT_NAME} PRIVATE ${BinLibs})
 set_target_properties(${PROJECT_NAME} PROPERTIES VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION 10.0.19041.0)
 
