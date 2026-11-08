@@ -26,7 +26,7 @@ engine's normal CMake project or change its source files.
 
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
-builds. Those are `online_desktop_hw`, `menu_desktop` and `transparency_desktop`.
+builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop` and `transparency_desktop`.
 Where the preprocessed code is identical, a second executable would only repeat
 the first, so the test runs the cases for each runtime setting (for example both
 renderers) in one executable.
@@ -37,6 +37,15 @@ Assertions remain enabled in every build configuration, including Release.
 To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
+
+- **Startup intro input:** `intro_uwp` and `intro_desktop` execute the production
+  intro ticker/responder at immediate and 17/18-tic boundaries, preserving the
+  disclaimer visibility and progression guards, natural durations, key mapping
+  and event latch behavior. `startup_gamepads` executes the initial SDL
+  controller-added event drain and open handler against mocks, checking failed
+  opens, instance IDs, preserved buttons and no duplicate opens. The pre-fix
+  ticker fails the UWP immediate associates-card skip case. See
+  [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
 - **D3D12 rolled sprites:** `sprite_brightmap` also executes the geometry-only
   helper and the extracted HLSL integer `RollSource` function. For all angles

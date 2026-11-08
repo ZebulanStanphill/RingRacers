@@ -63,6 +63,10 @@ extern SDLJoyInfo_t JoyInfo[MAXSPLITSCREENPLAYERS];
 #undef SDL_JDEADZONE
 
 void I_GetConsoleEvents(void);
+#ifdef _UWP
+// [UWP]: Drain initial SDL controller-added notifications without dispatching input.
+void I_OpenStartupGamepads(void);
+#endif
 
 // Needed for some WIN32 functions
 extern SDL_Window *window;

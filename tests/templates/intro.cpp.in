@@ -1,0 +1,144 @@
+#include <cassert>
+#include <cstdlib>
+#include <cstdio>
+#include <initializer_list>
+#include "doomdef.h"
+#include "d_event.h"
+#include "g_input.h"
+#include "i_joy.h"
+#include "sounds.h"
+#include "d_player.h"
+// Map-changing cheat paths are stubbed; ordinary skips never enter them.
+constexpr int GT_RACE = 0, TOL_RACE = 1;
+
+@@TIMES@@
+@@DISCLAIMER_STATE@@
+static boolean keypressed, skippableallowed = true, started = true;
+static int finalecount, timetonext, animtimer, stoptimer, skiptype;
+static disclaimerstate dc_state;
+static int dc_textfade, dc_segaframe, dc_tics;
+static int titles, sequenceInputs;
+static struct { boolean playback; } demo;
+static struct { int value; } cv_kartencore;
+static int onlineMenu, raceMenu;
+static int *currentMenu;
+#define PLAY_MP_OptSelectDef onlineMenu
+#define PLAY_RaceGamemodesDef raceMenu
+static int cv_advertise, cv_kartbot, cv_maxplayers;
+static boolean D_IsDeferredStartTitle() { return false; }
+static void D_StartTitle() { ++titles; }
+static void ResetSkipSequences() { skiptype = 0; }
+static boolean M_MapLocked(int) { return false; }
+static void G_SetUsedCheats() {}
+static void D_MapChange(int, int, boolean, boolean, int, boolean, boolean) {}
+static void M_StartControlPanel() {}
+static void CV_StealthSetValue(int *, int) {}
+static int G_RandMap(int, int, boolean, boolean, void *) { return 0; }
+static void S_StartSound(void *, int) {}
+void COM_ImmedExecute(const char *) {}
+static void I_FadeOutStopSong(int) {}
+static void Music_Play(const char *) {}
+static boolean M_GameTrulyStarted() { return started; }
+static void F_WriteText() {}
+static void AdvanceSkipSequences(UINT8) { ++sequenceInputs; }
+static int wipegamestate;
+
+@@TICKER@@
+@@RESPONDER@@
+
+static void reset(int scene, int elapsed = 0) {
+    intro_scenenum = scene;
+    intro_curtime = elapsed;
+    timetonext = introscenetime[scene] - elapsed;
+    keypressed = false;
+    skippableallowed = true;
+    started = true;
+    dc_state = DISCLAIMER_SHINE;
+    dc_textfade = 9;
+    skiptype = titles = sequenceInputs = 0;
+}
+static boolean press(int key = KEY_JOY1, evtype_t type = ev_keydown) {
+    event_t ev = {};
+    ev.type = type;
+    ev.data1 = key;
+    ev.device = 1;
+    return F_IntroResponder(&ev);
+}
+int main() {
+    for (int scene : {0, 2, 3, 4}) {
+        for (int elapsed : {0, 1, 17, 18}) {
+            reset(scene, elapsed);
+            assert(press());
+            F_IntroTicker();
+#ifdef _UWP
+            const bool skip = true;
+#else
+            const bool skip = scene >= 2 && elapsed > 17;
+#endif
+            if (skip) {
+                if (scene >= 2) assert(titles == 1);
+                else assert(intro_scenenum == 1);
+            } else assert(intro_scenenum == scene && titles == 0);
+            assert(!keypressed);
+        }
+    }
+    reset(1);
+    assert(press());
+    F_IntroTicker();
+#ifdef _UWP
+    assert(dc_state == DISCLAIMER_SLIDE);
+#else
+    assert(dc_state == DISCLAIMER_SHINE);
+#endif
+    // Discard blocked presses; a later tic without a new event must not skip.
+    for (auto state : {DISCLAIMER_SLIDE, DISCLAIMER_FINAL}) {
+        reset(1, 50);
+        dc_state = state;
+        dc_textfade = 1;
+        assert(press());
+        F_IntroTicker();
+        assert(dc_state == state);
+        dc_textfade = 0;
+        F_IntroTicker();
+        assert(dc_state == state);
+    }
+    reset(1, 50);
+    dc_state = DISCLAIMER_FINAL;
+    dc_textfade = 0;
+    assert(press());
+    F_IntroTicker();
+    assert(dc_state == DISCLAIMER_OUT);
+    reset(1, 50);
+    assert(press());
+    F_IntroTicker();
+    assert(dc_state == DISCLAIMER_SLIDE && dc_segaframe == 23);
+    for (int scene : {0, 1, 2, 3, 4}) {
+        reset(scene, 18);
+        skippableallowed = false;
+        assert(press());
+        F_IntroTicker();
+        assert(intro_scenenum == scene && titles == 0);
+    }
+    // Xbox A/B/X work; Y, Start, sticks and key-up are not ordinary skips.
+    for (int key : {int(KEY_JOY1), KEY_JOY1+1, KEY_JOY1+2, KEY_ENTER, KEY_SPACE, KEY_BACKSPACE, 27}) {
+        reset(2);
+        assert(!press(key, ev_keyup));
+        assert(press(key));
+        assert(!press(key)); // one queued press per ticker
+    }
+    reset(2);
+    assert(!press(KEY_JOY1+3));
+    assert(!press(KEY_JOY1+6)); // SDL Start
+    // Natural scene durations are unchanged.
+    for (int scene : {0, 2, 3, 4}) {
+        reset(scene);
+        const int duration = introscenetime[scene];
+        for (int i = 1; i < duration; ++i) {
+            F_IntroTicker();
+            assert(intro_scenenum == scene && titles == 0);
+        }
+        F_IntroTicker();
+        assert(scene == 4 ? titles == 1 : intro_scenenum == scene+1);
+    }
+    std::puts("intro skip boundaries passed");
+}

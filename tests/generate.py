@@ -45,6 +45,18 @@ def generate(engine, output):
     templates = Path(__file__).parent / "templates"
     generate_fixture(templates.parent / "fixtures", output)
     generate_title(engine, output, templates, render, function_section)
+    finale = Source(engine / "src/f_finale.c")
+    render(templates / "intro.cpp.in", {
+        "TIMES": finale.section("#define NUMINTROSCENES", "// custom intros"),
+        "DISCLAIMER_STATE": finale.enum("disclaimerstate"),
+        "TICKER": finale.function("F_IntroTicker"),
+        "RESPONDER": finale.function("F_IntroResponder"),
+    }, output / "intro.cpp")
+    sdlvideo = Source(engine / "src/sdl/i_video.cpp")
+    render(templates / "startup_gamepads.cpp.in", {
+        "ADDED": sdlvideo.function("Impl_HandleControllerDeviceAddedEvent"),
+        "OPEN": sdlvideo.function("I_OpenStartupGamepads"),
+    }, output / "startup_gamepads.cpp")
     tcp = Source(engine / "src/i_tcp.c")
     errors = Source(engine / "src/i_tcp_detail.h")
     render(templates / "udp_send.cpp.in", {

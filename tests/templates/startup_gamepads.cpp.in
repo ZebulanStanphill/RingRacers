@@ -1,0 +1,51 @@
+#include <cassert>
+#include <cstdint>
+#include <deque>
+#include <vector>
+#include "d_event.h"
+using SDL_JoystickID = int;
+struct SDL_GameController { int id; };
+using SDL_Joystick = SDL_GameController;
+struct SDL_ControllerDeviceEvent { int which; };
+struct SDL_Event { unsigned type; SDL_ControllerDeviceEvent cdevice; };
+constexpr unsigned SDL_CONTROLLERDEVICEADDED = 1, SDL_CONTROLLERBUTTONDOWN = 2;
+constexpr int SDL_GETEVENT = 3;
+static std::deque<SDL_Event> queued;
+static std::vector<event_t> posted;
+static std::vector<int> opened;
+static SDL_GameController pads[] = {{10}, {20}};
+static SDL_GameController *SDL_GameControllerOpen(int index) {
+    opened.push_back(index);
+    return index < 2 ? &pads[index] : nullptr;
+}
+static SDL_Joystick *SDL_GameControllerGetJoystick(SDL_GameController *pad) { return pad; }
+static SDL_JoystickID SDL_JoystickInstanceID(SDL_Joystick *pad) { return pad->id; }
+static void D_PostEvent(event_t *ev) { posted.push_back(*ev); }
+static int SDL_PeepEvents(SDL_Event *out, int n, int action, unsigned first, unsigned last) {
+    assert(n == 1 && action == SDL_GETEVENT);
+    for (auto it = queued.begin(); it != queued.end(); ++it) {
+        if (it->type >= first && it->type <= last) {
+            *out = *it;
+            queued.erase(it);
+            return 1;
+        }
+    }
+    return 0;
+}
+@@ADDED@@
+@@OPEN@@
+int main() {
+    queued = {{SDL_CONTROLLERDEVICEADDED, {0}}, {SDL_CONTROLLERBUTTONDOWN, {0}},
+              {SDL_CONTROLLERDEVICEADDED, {1}}, {SDL_CONTROLLERDEVICEADDED, {2}}};
+    I_OpenStartupGamepads();
+    assert((opened == std::vector<int>{0, 1, 2}));
+    assert(posted.size() == 2);
+    assert(posted[0].type == ev_gamepad_device_added && posted[0].device == 11);
+    assert(posted[1].device == 21);
+    assert(queued.size() == 1 && queued.front().type == SDL_CONTROLLERBUTTONDOWN);
+    I_OpenStartupGamepads();
+    assert(opened.size() == 3 && posted.size() == 2); // no duplicate opens
+    queued.push_back({SDL_CONTROLLERDEVICEADDED, {1}});
+    I_OpenStartupGamepads(); // later hotplug still uses the same handler
+    assert(opened.size() == 4 && posted.back().device == 21);
+}

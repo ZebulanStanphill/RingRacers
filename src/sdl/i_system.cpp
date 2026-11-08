@@ -1517,6 +1517,10 @@ void I_StartupInput(void)
 
 	// Upon initialization, the gamecontroller subsystem will automatically dispatch controller device added events
 	// for controllers connected before initialization.
+#ifdef _UWP
+	// [UWP]: Begin receiving button events during loading, rather than after the first intro frames.
+	I_OpenStartupGamepads();
+#endif
 }
 
 static void I_ShutdownInput(void)

@@ -363,6 +363,11 @@ void F_StartIntro(void)
 	CON_ToggleOff();
 	//F_NewCutscene(introtext[0]);
 
+#ifdef _UWP
+	// [UWP]: Do not carry a pending press from the previous UI into the intro.
+	keypressed = false;
+	intro_curtime = 0;
+#endif
 	intro_scenenum = 0;
 	finalecount = animtimer = skullAnimCounter = stoptimer = 0;
 	timetonext = introscenetime[intro_scenenum];
@@ -881,8 +886,15 @@ void F_IntroTicker(void)
 	(
 		skippableallowed
 		&& keypressed
+#ifndef _UWP
 		&& (intro_curtime > TICRATE/2)
+#endif
 		&& (
+#ifdef _UWP
+			// [UWP]: Accept a press immediately on logo cards, including STARTUP.
+			// Keep the disclaimer's animation/text visibility guard.
+			intro_scenenum == 0 ||
+#endif
 			intro_scenenum >= INTROSCENE_KREW
 			|| disclaimerskippable
 		)

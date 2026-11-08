@@ -775,6 +775,20 @@ static void Impl_HandleControllerDeviceAddedEvent(SDL_ControllerDeviceEvent even
 	D_PostEvent(&engine_event);
 }
 
+#ifdef _UWP
+// [UWP]: Open already-attached pads before the first intro frame can block polling.
+// Consume only added events, so loading-screen buttons never reach responders here.
+void I_OpenStartupGamepads(void)
+{
+	SDL_Event event;
+	while (SDL_PeepEvents(&event, 1, SDL_GETEVENT,
+		SDL_CONTROLLERDEVICEADDED, SDL_CONTROLLERDEVICEADDED) == 1)
+	{
+		Impl_HandleControllerDeviceAddedEvent(event.cdevice);
+	}
+}
+#endif
+
 static void Impl_HandleControllerDeviceRemovedEvent(SDL_ControllerDeviceEvent event)
 {
 	// SDL only posts Device Removed events for controllers that have actually been opened.
