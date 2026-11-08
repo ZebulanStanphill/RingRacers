@@ -136,7 +136,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 
 ### Frame pacing and threads
 
-- **Pacing** *(works on Xbox)*. Frames skipped to catch up on simulation do not sleep; drawn frames still sleep to the cap with V-Sync and a matching-refresh cap, following worleydl's Xbox timing fix.
+- **Pacing** *(skipped frames work on Xbox; the schedule is untested)*. On UWP the frame cap sleeps to a running schedule instead of padding every loop to a whole frame on its own. A quick frame right after a slow one (one that ran game tics) is drawn straight away until the schedule catches up, and more than four frames of debt (after a load, say) is dropped. Scenes faster than the cap still run at an even rate. On tracks below 60 FPS, the old padding left the game idle 5–12% of the time on Xbox. Frames skipped to catch up on simulation never sleep, Unlimited never sleeps, and V-Sync with a matching-refresh cap still sleeps, following worleydl's Xbox timing fix.
 - **Thread pool** *(works on Xbox)*. The pool uses Xbox's allocated processor count, falling back to upstream's hardware count when no processors are marked.
 
 ## Diagnostics
