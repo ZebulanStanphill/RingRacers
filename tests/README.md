@@ -164,12 +164,16 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
   capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the
   water light plane at -52. The pre-fix splitter draws outside the original
-  wall and fails the vertex-bound assertion. Check 147 fixtures, including
+  wall and fails the vertex-bound assertion. Check 151 fixtures, including
   100 seeded sloped walls, reversed slopes, crossing light planes, zero-height
   endpoints, a tier that closes inside its span, a light boundary exactly at the
   wall's bottom with another light below (one piece, no zero-height one), the first
   capture's normal fence, NOSHADE, solid FOF holes and matching/nonmatching
-  CUTEXTRA kinds. An independent sampled polygon oracle checks exact coverage,
+  CUTEXTRA kinds. The solid FOF cases also run as one of the walls Software treats as
+  solid (`hwr_splitvoid`): exactly the cut part, the FOF's bottom up to its top, must
+  be filled black (`HWR_DrawCutVoid`), and nothing for other walls or kinds; a FOF
+  reaching below the wall fills only down to the wall's bottom. Dropping the solid-wall
+  condition or the clamp to the wall's bottom fails it. An independent sampled polygon oracle checks exact coverage,
   lighting, preserved UVs and no outside geometry, with the light plane evaluated
   in double precision from the slope's own origin, direction and gradient rather
   than by the engine's `P_GetLightZAt`; every submitted piece must have height; draw stubs check opaque/queued/fog

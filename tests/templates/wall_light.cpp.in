@@ -50,6 +50,13 @@ static void HWR_AddTransparentWall(FOutVector *v,FSurfaceInfo *s,INT32 t,INT32 b
 @@LIGHT_HEIGHT@@
 @@FOF_BOTTOM@@
 @@CLIP_SLICE@@
+// The black fill HWR_SplitWall draws over a solid wall's cut (HWR_DrawCutVoid in hw_main.c), recorded
+static boolean hwr_splitvoid;
+struct Band { float bottom1, bottom2, top1, top2; };
+static std::vector<Band> bands;
+static void HWR_DrawCutVoid(const FOutVector *wall,float bottom1,float bottom2,float top1,float top2) {
+    assert(wall[0].x==0 && wall[1].x==1024);bands.push_back({bottom1,bottom2,top1,top2});
+}
 @@SPLIT_WALL@@
 
 using Wall=std::array<FOutVector,4>;
@@ -201,10 +208,38 @@ int main() {
         lights[1].flags=(cut==INT32(FOF_CUTLEVEL)?FOF_CUTSOLIDS:FOF_CUTEXTRA|FOF_EXTRA|FOF_SWIMMABLE);
         lights[1].caster=&solid;
         for(int i=0;i<3;++i) { lights[i].lightlevel=&levels[0];lights[i].extra_colormap=&colorPtrs[0]; }
-        HWR_SplitWall(&sector,w.data(),43,44,&surf,cut,nullptr,PF_Masked);
-        CheckVertices(original,PF_Masked);
         const bool cuts=cut!=INT32(FOF_EXTRA|FOF_FOG);
-        CheckCoverage(original,0,0,224,224,cuts?10:-1e20,cuts?-10:-1e20);++cases;
+        for(bool solidWall:{false,true}) {
+            Wall copy=original;draws.clear();bands.clear();surf.PolyColor.s.alpha=77;hwr_splitvoid=solidWall;
+            HWR_SplitWall(&sector,copy.data(),43,44,&surf,cut,nullptr,PF_Masked);
+            hwr_splitvoid=false;
+            CheckVertices(original,PF_Masked);
+            CheckCoverage(original,0,0,224,224,cuts?10:-1e20,cuts?-10:-1e20);++cases;
+            // Only a solid wall's cut is filled, exactly the part left out: the 3D floor's bottom up to its top.
+            if(solidWall && cuts) {
+                assert(bands.size()==1);
+                assert(bands[0].bottom1==-10 && bands[0].bottom2==-10 && bands[0].top1==10 && bands[0].top2==10);
+            } else assert(bands.empty());
+        }
+    }
+    // A solid 3D floor reaching below the wall: the fill stops at the wall's bottom, where the wall itself ends.
+    {
+        Wall w=MakeWall(-20,-20,20,20);draws.clear();bands.clear();
+        FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+        fixed_t bottom=-50*FRACUNIT;pslope_t *noSlope=nullptr;
+        ffloor_t solid{};solid.bottomheight=&bottom;solid.b_slope=&noSlope;
+        lightlist_t lights[2]{};sector_t sector{};sector.lightlevel=224;
+        sector.numlights=2;sector.lightlist=lights;
+        lights[0].height=100*FRACUNIT;lights[1].height=10*FRACUNIT;
+        lights[1].flags=FOF_CUTSOLIDS;lights[1].caster=&solid;
+        for(int i=0;i<2;++i) { lights[i].lightlevel=&levels[0];lights[i].extra_colormap=&colorPtrs[0]; }
+        hwr_splitvoid=true;
+        HWR_SplitWall(&sector,w.data(),43,44,&surf,FOF_CUTLEVEL,nullptr,PF_Masked);
+        hwr_splitvoid=false;
+        assert(bands.size()==1);
+        assert(bands[0].bottom1==-20 && bands[0].bottom2==-20 && bands[0].top1==10 && bands[0].top2==10);
+        for(const Draw &d:draws) for(const FOutVector &v:d.v) assert(v.y>=10-.002);
+        ++cases;
     }
     // A light boundary exactly at the wall's bottom, with another light further below: nothing remains of the
     // wall below the first boundary, which must not be submitted as a zero-height piece.
@@ -220,5 +255,5 @@ int main() {
         CheckCoverage(original,-20,-20,224,128);
         assert(draws.size()==1);++cases;
     }
-    printf("%d wall light fixtures: clipped geometry, texture UVs, exact coverage, lighting, solid holes and queued modes\n",cases);
+    printf("%d wall light fixtures: clipped geometry, texture UVs, exact coverage, lighting, solid holes and their black fill, and queued modes\n",cases);
 }
