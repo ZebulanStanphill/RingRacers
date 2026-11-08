@@ -16,6 +16,7 @@
 ///        utility functions, etc.
 ///        Line Tag handling. Line and Sector triggers.
 
+#include "hardware/hw_horizon.h"
 #include "d_think.h"
 #include "dehacked.h"
 #include "doomdef.h"
@@ -2286,7 +2287,9 @@ static void P_LineSpecialWasActivated(line_t *line)
 {
 	if (!(line->activation & SPAC_REPEATSPECIAL))
 	{
+		const INT16 before = line->special;
 		line->special = 0;
+		HWR_LineSpecialChanged(before, 0);
 	}
 }
 
@@ -8000,7 +8003,9 @@ void P_SpawnSpecialsThatRequireObjects(boolean fromnetsave)
 		if (P_IsLineDisabled(&lines[i]))
 		{
 			/* remove the special so it can't even be found during the level */
+			const INT16 before = lines[i].special;
 			lines[i].special = 0;
+			HWR_LineSpecialChanged(before, 0);
 		}
 
 		switch (lines[i].special)

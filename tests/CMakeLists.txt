@@ -240,3 +240,5 @@ set_tests_properties(name_index PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
 regression(frame_schedule frame_schedule _UWP)
+
+regression(horizon_cache horizon_cache _UWP HWRENDER)

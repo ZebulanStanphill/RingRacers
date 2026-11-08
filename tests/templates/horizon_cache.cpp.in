@@ -1,0 +1,59 @@
+#include <cassert>
+#include <cstdlib>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "hardware/hw_horizon.h"
+subsector_t *subsectors;
+seg_t *segs;
+size_t numsubsectors;
+constexpr int PU_LEVEL=50;
+static void **owner;
+static int allocations;
+void Z_Free(void *p) { free(p); if(owner) *owner=nullptr; }
+void Z_Calloc(size_t size, int, void *user) {
+    owner=static_cast<void **>(user); *owner=calloc(1,size); ++allocations;
+}
+@@CACHE@@
+static int scans;
+void Plane(const subsector_t *subsector) {
+@@PLANE_GATE@@
+    { ++scans; }
+}
+void Sky(const subsector_t *subsector) {
+@@SKY_GATE@@
+    { ++scans; }
+}
+int main() {
+    subsector_t subs[3]{}; seg_t sg[4]{}; line_t lines[2]{};
+    subsectors=subs; segs=sg; numsubsectors=3;
+    subs[0].numlines=2; subs[1].firstline=2; subs[1].numlines=1;
+    subs[2].firstline=3; subs[2].numlines=1;
+    sg[0].glseg=true; sg[0].linedef=&lines[0];
+    // sg[1] is a null-linedef miniseg.
+    lines[0].special=HORIZONSPECIAL; sg[2].linedef=&lines[0];
+    sg[3].linedef=&lines[1];
+    Plane(&subs[0]); Sky(&subs[0]); Plane(&subs[2]); Sky(&subs[2]);
+    assert(scans==0 && allocations==1);
+    Plane(&subs[1]); Sky(&subs[1]); assert(scans==2 && allocations==1);
+    lines[1].special=HORIZONSPECIAL; HWR_InvalidateHorizonCache();
+    Plane(&subs[2]); Sky(&subs[2]); assert(scans==4 && allocations==2);
+    lines[0].special=0; HWR_InvalidateHorizonCache();
+    Plane(&subs[1]); Sky(&subs[1]); assert(scans==4 && allocations==3);
+    // Writers report changes: clearing a horizon special rebuilds the cache.
+    { const INT16 before=lines[1].special; lines[1].special=0; HWR_LineSpecialChanged(before, 0); }
+    Plane(&subs[2]); assert(scans==4 && allocations==4);
+    // A one-shot trigger setting or clearing another special keeps it.
+    lines[1].special=300; HWR_LineSpecialChanged(0, 300);
+    lines[1].special=0; HWR_LineSpecialChanged(300, 0);
+    Plane(&subs[2]); assert(scans==4 && allocations==4);
+    // Reported before the write (as savegame restoration does) still rebuilds after it.
+    HWR_LineSpecialChanged(lines[1].special, HORIZONSPECIAL); lines[1].special=HORIZONSPECIAL;
+    Plane(&subs[2]); assert(scans==5 && allocations==5);
+    // Zone teardown clears the owner, including same-sized replacement maps.
+    Z_Free(hwr_horizonflags); lines[0].special=HORIZONSPECIAL;
+    Plane(&subs[1]); assert(scans==6 && allocations==6);
+    // A different-sized level gets its own correctly sized allocation.
+    Z_Free(hwr_horizonflags); numsubsectors=1;
+    Plane(&subs[0]); assert(scans==6 && allocations==7);
+    Z_Free(hwr_horizonflags);
+}

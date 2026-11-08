@@ -11,6 +11,7 @@
 /// \file  call-funcs.cpp
 /// \brief Action Code Script: CallFunc instructions
 
+#include "../hardware/hw_horizon.h"
 #include <algorithm>
 #include <cctype>
 
@@ -844,7 +845,9 @@ bool CallFunc_ClearLineSpecial(ACSVM::Thread *thread, const ACSVM::Word *argV, A
 	if (info->line != NULL)
 	{
 		// One time only.
+		const INT16 before = info->line->special;
 		info->line->special = 0;
+		HWR_LineSpecialChanged(before, 0);
 	}
 
 	return false;
@@ -1208,7 +1211,9 @@ bool CallFunc_SetLineSpecial(ACSVM::Thread *thread, const ACSVM::Word *argV, ACS
 			continue;
 		}
 
+		const INT16 before = line->special;
 		line->special = spec;
+		HWR_LineSpecialChanged(before, line->special);
 
 		for (i = 0; i < numArgs; i++)
 		{
@@ -2708,7 +2713,13 @@ bool CallFunc_SetLineProperty(ACSVM::Thread *thread, const ACSVM::Word *argV, AC
 			PROP_INT(LINE_PROP_ALPHA, alpha)
 			PROP_INT(LINE_PROP_BLENDMODE, blendmode)
 			PROP_INT(LINE_PROP_ACTIVATION, activation)
-			PROP_INT(LINE_PROP_ACTION, special)
+			case LINE_PROP_ACTION:
+			{
+				const INT16 before = line->special;
+				line->special = static_cast<decltype(line->special)>(value);
+				HWR_LineSpecialChanged(before, line->special);
+				break;
+			}
 			PROP_INT(LINE_PROP_ARG0, args[0])
 			PROP_INT(LINE_PROP_ARG1, args[1])
 			PROP_INT(LINE_PROP_ARG2, args[2])

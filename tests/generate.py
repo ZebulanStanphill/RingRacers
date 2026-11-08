@@ -505,6 +505,11 @@ def generate(engine, output):
             "        bool extend=RenderHorizonCondition(&seg,&a);",
             "        assert(extend==SoftwareDrawsLine(&seg,&a));",
             "        ++cases;if(!extend)++skipped;", "    }"])
+    render(templates / "horizon_cache.cpp.in", {
+        "CACHE": hardware.section("static UINT8 *hwr_horizonflags;", "#endif\n\n#ifdef DOPLANES"),
+        "PLANE_GATE": function_section(hardware, "HWR_RenderPlane", "\tif (subsector\n#ifdef HAVE_D3D12", "\n\t{\n\t\t// Horizon lines"),
+        "SKY_GATE": function_section(hardware, "HWR_RenderSkyClaim", "\tif (subsector\n#ifdef HAVE_D3D12", "\n\t{\n\t\tconst float renderdist"),
+    }, output / "horizon_cache.cpp")
     decision = bsp.section("\tbacksector = R_FakeFlat(backsector, &tempsec, NULL, NULL, true);", "\nclippass:")
     render(templates / "horizon.cpp.in", {
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),

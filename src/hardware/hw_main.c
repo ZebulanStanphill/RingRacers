@@ -22,6 +22,7 @@
 
 #ifdef HWRENDER
 #include "hw_glob.h"
+#include "hw_horizon.h"
 #include "hw_light.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
@@ -1425,6 +1426,42 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t 
 //                                   FLOOR/CEILING GENERATION FROM SUBSECTORS
 // ==========================================================================
 
+#ifdef HAVE_D3D12
+// [UWP]: Almost all subsectors have no horizons; avoid scanning their linedefs
+// for every floor, ceiling and sky claim. PU_LEVEL clears the owner on teardown.
+static UINT8 *hwr_horizonflags;
+static boolean hwr_horizondirty = true;
+
+void HWR_InvalidateHorizonCache(void)
+{
+	hwr_horizondirty = true;
+}
+
+static boolean HWR_SubsectorHasHorizon(const subsector_t *subsector)
+{
+	size_t i;
+	INT32 j;
+	if (!hwr_horizonflags || hwr_horizondirty)
+	{
+		Z_Free(hwr_horizonflags);
+		Z_Calloc(numsubsectors * sizeof(*hwr_horizonflags), PU_LEVEL, &hwr_horizonflags);
+		for (i = 0; i < numsubsectors; ++i)
+		{
+			const subsector_t *sub = &subsectors[i];
+			const seg_t *seg = &segs[sub->firstline];
+			for (j = 0; j < sub->numlines; ++j, ++seg)
+				if (!seg->glseg && seg->linedef && seg->linedef->special == HORIZONSPECIAL)
+				{
+					hwr_horizonflags[i] = 1;
+					break;
+				}
+		}
+		hwr_horizondirty = false;
+	}
+	return hwr_horizonflags[subsector - subsectors] != 0;
+}
+#endif
+
 #ifdef DOPLANES
 
 // A two-sided line can be empty even when its sky ceiling heights differ.
@@ -1506,7 +1543,11 @@ static void HWR_RenderSkyClaim(subsector_t *subsector, extrasubsector_t *xsub, f
 	// Software extends a plane past a horizon line (special 41) to the horizon, and a sky plane's extension is sky:
 	// Green Hills Zone's skies above its horizons. Claim the same extension that HWR_RenderPlane draws for other
 	// planes: out to 27000 units, then a strip raised to eye level at 32768.
-	if (subsector)
+	if (subsector
+#ifdef HAVE_D3D12
+		&& HWR_SubsectorHasHorizon(subsector)
+#endif
+	)
 	{
 		const float renderdist = 27000.0f, farrenderdist = 32768.0f;
 		seg_t *line = &segs[subsector->firstline];
@@ -1784,7 +1825,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 #endif
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
 
-	if (subsector)
+	if (subsector
+#ifdef HAVE_D3D12
+		&& HWR_SubsectorHasHorizon(subsector)
+#endif
+	)
 	{
 		// Horizon lines
 		FOutVector horizonpts[6];
@@ -8570,6 +8615,10 @@ void HWR_RenderPlayerView(void)
 
 void HWR_LoadLevel(void)
 {
+#ifdef HAVE_D3D12
+	// [UWP]: Specials and BSP may have changed even when level sizes match.
+	HWR_InvalidateHorizonCache();
+#endif
 #ifdef _UWP
 	size_t i;
 	hwr_maphasportals=false;

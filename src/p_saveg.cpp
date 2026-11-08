@@ -12,6 +12,7 @@
 /// \file  p_saveg.cpp
 /// \brief Archiving: SaveGame I/O
 
+#include "hardware/hw_horizon.h"
 #include "d_think.h"
 #include "doomdef.h"
 #include "byteptr.h"
@@ -2845,7 +2846,11 @@ static void UnArchiveLines(savebuffer_t *save)
 		if (diff & LD_FLAG)
 			li->flags = READUINT32(save->p);
 		if (diff & LD_SPECIAL)
+		{
+			const INT16 before = li->special;
 			li->special = READINT16(save->p);
+			HWR_LineSpecialChanged(before, li->special);
+		}
 		if (diff & LD_TAG)
 		{
 			size_t ncount = READUINT32(save->p);
@@ -7201,6 +7206,7 @@ static boolean P_NetUnArchiveMisc(savebuffer_t *save, boolean reloading)
 		for (i = 0; i < numlines; i++, spawnli++, li++)
 		{
 			li->flags = spawnli->flags;
+			HWR_LineSpecialChanged(li->special, spawnli->special);
 			li->special = spawnli->special;
 			li->callcount = 0;
 

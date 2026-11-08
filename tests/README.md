@@ -767,3 +767,9 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   scheduler wake-up precision require device testing.
   The alternating case stays within the four-frame debt limit: a sustained
   overload eventually resets debt as specified, after which a fast loop can sleep.
+
+- **Horizon scan cache:** `horizon_cache` executes the production D3D12 cache
+  and both plane/sky admission gates. Cover minisegs, null linedefs, ordinary and
+  horizon lines, cache reuse, runtime changes, zone teardown and replacement
+  levels. See [the writer audit](../docs/uwp-horizon-cache.md). These checks use
+  ASan/UBSan and verify scan admission rather than GPU pixels or Xbox timings.
