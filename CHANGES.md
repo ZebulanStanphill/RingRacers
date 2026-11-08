@@ -104,6 +104,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 - **Folder lookups** *(untested on Xbox)*. On every platform, finding where a folder starts in a PK3 uses an index of the folder paths in each file, built when the file is added, instead of comparing every entry's path. Results are identical. On Xbox, looking up each map's staff ghost folder in every file took about 4 s of startup.
 - **Texture lookups** *(untested on Xbox)*. On every platform, finding a texture by name uses an index of the loaded textures and a hashed cache of earlier answers instead of scanning both. Results are identical, including newer textures taking precedence over older ones with the same name. On Xbox, the brightmap definitions' lookups took about 5.5 s of startup.
 - **Loading-to-intro transition** *(works on Xbox)*. The intro starts with the credits card instead of six blue tics, without changing timing. VibeRant D3D skips clear-only presentation before its first drawn frame, keeping the loading screen visible instead of flashing black.
+- **Skipping the intro** *(untested on Xbox)*. A press skips an intro logo as soon as it's on screen, instead of being ignored for the first half second of each scene; the opening credits card, which couldn't be skipped at all, now skips to the disclaimer. The disclaimer still has to slide in and finish fading in its text before it can be dismissed. Controllers already connected at startup are opened while the game loads, rather than once the intro's first frames have been drawn.
 
 ## Performance
 
