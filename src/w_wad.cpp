@@ -159,7 +159,7 @@ static void PrintMD5String(const UINT8 *md5, char *buf);
 // all result fields until the release store of its final state; the main thread
 // reads them only after an acquire load. No zone allocations or engine logging
 // occur on the worker. Static storage has no exit-time destructors.
-enum uwpcheckstate_t { UWPCHECK_IDLE, UWPCHECK_RUNNING, UWPCHECK_VERIFIED, UWPCHECK_SKIPPED, UWPCHECK_FAILED };
+enum uwpcheckstate_t { UWPCHECK_IDLE, UWPCHECK_RUNNING, UWPCHECK_VERIFIED, UWPCHECK_FAILED };
 struct uwpcheckfile_t
 {
 	char filename[MAX_WADPATH];
@@ -260,9 +260,7 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 		md5_ctx ctx;
 		alignas(md5_uint32) UINT8 digest[MD5_LEN];
 		md5_init_ctx(&ctx);
-		if (uwpcheckcancel.load(std::memory_order_relaxed) || I_UWPIsSkipButtonDown())
-			outcome = UWPCHECK_SKIPPED;
-		else if (!(handle = fopen(file.filename, "rb")))
+		if (!(handle = fopen(file.filename, "rb")))
 		{
 			snprintf(uwpcheckerror, sizeof(uwpcheckerror), "Cannot open file (errno %d)", errno);
 			outcome = UWPCHECK_FAILED;
@@ -288,11 +286,6 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 			}
 			for (;;)
 			{
-				if (uwpcheckcancel.load(std::memory_order_relaxed) || I_UWPIsSkipButtonDown())
-				{
-					outcome = UWPCHECK_SKIPPED;
-					break;
-				}
 				const size_t bytes = fread(buffer, 1, chunksize, handle);
 				file.bytes += bytes;
 				md5_process_bytes(buffer, bytes, &ctx);
@@ -351,8 +344,7 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 	uwpcheckseconds = W_UWPCheckElapsed(start);
 	uwpcheckstate.store(outcome, std::memory_order_release);
 
-	// Verification is published, so the main thread no longer waits: copy the files that have no MD5 to check. B,
-	// which skips the check, is not looked at: it is a game button by now.
+	// Verification is published, so the main thread no longer waits: copy the files that have no MD5 to check.
 	for (size_t i = 0; buffer && outcome == UWPCHECK_VERIFIED && i < uwpcopycount && !uwpcopystopped; i++)
 	{
 		uwpcopyfile_t &file = uwpcopyfiles[i];
@@ -465,8 +457,8 @@ static void W_UWPPollCopy(void)
 	if (uwpcopyerror[0])
 		I_OutputMsg("UWP: data: copying stopped, %u of %u copied: %s\n", (unsigned)copied, (unsigned)wanted, uwpcopyerror);
 	else if (copied < wanted)
-		I_OutputMsg("UWP: data: copying stopped, %u of %u copied: file check %s\n", (unsigned)copied, (unsigned)wanted,
-			uwpcheckstate.load(std::memory_order_acquire) == UWPCHECK_SKIPPED ? "skipped" : "did not finish");
+		I_OutputMsg("UWP: data: copying stopped, %u of %u copied: file check did not finish\n", (unsigned)copied,
+			(unsigned)wanted);
 	else if (wanted)
 		I_OutputMsg("UWP: data: all copies done\n");
 }
@@ -487,9 +479,6 @@ void W_UWPPollAssetCheck(void)
 	}
 	if (state == UWPCHECK_VERIFIED)
 		I_OutputMsg("UWP: asset check verified all %u files in %.2f s\n", (unsigned)uwpcheckcount, uwpcheckseconds);
-	else if (state == UWPCHECK_SKIPPED)
-		I_OutputMsg("UWP: asset check skipped by the user after %.2f s, %u of %u verified\n",
-			uwpcheckseconds, (unsigned)uwpcheckverified, (unsigned)uwpcheckcount);
 	else
 	{
 		uwpcheckcancel.store(true, std::memory_order_relaxed);
@@ -2323,7 +2312,7 @@ void zerr(int ret)
 
 #ifdef _UWP
 // [UWP]: Finds where a lump's data starts from its zip entry's local header, which ResGetLumpsZip doesn't read for main
-// files when the asset check is skipped, then seeks offset bytes into the data. Reading past the header instead of
+// files the background asset check verifies, then seeks offset bytes into the data. Reading past the header instead of
 // seeking keeps the start of the data in the file's buffer, so this costs little more than reading the data.
 static void W_UWPSeekLumpData(UINT16 wad, lumpinfo_t *l, size_t offset)
 {

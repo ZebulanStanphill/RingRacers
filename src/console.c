@@ -2014,7 +2014,7 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
 
 #ifdef _UWP
 // [UWP]: Redraw the loading screen during long startup steps (reading the map data takes 7-22 s on Xbox),
-// so the screen and the file check's skip text stay live between progress updates
+// so the screen stays live between progress updates
 void CON_UWPLoadingKeepAlive(void)
 {
 	static precise_t lastdraw = 0;
@@ -2058,10 +2058,6 @@ void CON_DrawLoadBar(void)
 
 	if (con_startup_loadprogress <= LOADED_ALLDONE)
 	{
-#ifdef _UWP
-		if (W_UWPAssetCheckRunning())
-			V_DrawString(4, BASEVIDHEIGHT - (barheight + 16 + 4), V_FORCEUPPERCASE, "Checking game files - press B to skip");
-#endif
 		V_DrawString(4, BASEVIDHEIGHT - (barheight + 8 + 4), V_FORCEUPPERCASE, CON_LoadingStrings[con_startup_loadprogress]);
 	}
 
