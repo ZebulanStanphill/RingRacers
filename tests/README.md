@@ -210,6 +210,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and `FixedDiv2`. ASan and all other UBSan checks remain enabled, including in
   traversal and lighting. No authored slope touches the affected FOF sectors;
   retaining the complete map still checks the other submitted sloped geometry.
+  The same replay also runs production `HWR_ProcessSeg` on one of the map's one-sided walls with its floor given
+  a slope (24 units up at the wall's start, rising along it) and a row offset, in all four pegging modes (top,
+  lower unpegged, and both with `NOSKEW`): every corner's texture row must be Software's `rw_midtexturemid` minus
+  its height, which for a lower-unpegged wall follows the floor's slope. Removing the fix for lower-unpegged
+  walls fails it by the floor's 24 units, the Green Hills Zone pit walls' misalignment.
 - **Pixel history diagnostic:** the Direct3D 12 WARP `surface-probe` scene (below)
   checks the driver side: command-ordered copies, logged pixel ownership and the
   inactive path. There is no native test of the `gr_surfaceprobe` console command's

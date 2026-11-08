@@ -3108,6 +3108,12 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					wallVerts[0].t += (gl_frontsector->floorheight - worldbottom) * grTex->scaleY;
 					wallVerts[1].t += (gl_frontsector->floorheight - worldbottomslope) * grTex->scaleY;
 				} else if (gl_linedef->flags & ML_DONTPEGBOTTOM) {
+					// The texture's bottom row is on the floor along its slope, as Software's
+					// rw_midtexturemid = worldbottom + texheight: texturevpeg is the row at the top of
+					// the wall's first end, whose height is worldtop - worldbottom, not the sector's
+					// ceilingheight - floorheight used above. On sloped sectors that shifted the texture.
+					if (!R_ShouldFlipTripWire(gl_linedef))
+						wallVerts[0].t = wallVerts[1].t = (texturevpeg + worldtop - worldbottom) * grTex->scaleY;
 					wallVerts[3].t = wallVerts[0].t + (worldbottom-worldtop) * grTex->scaleY;
 					wallVerts[2].t = wallVerts[1].t + (worldbottomslope-worldtopslope) * grTex->scaleY;
 				} else {

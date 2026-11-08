@@ -203,6 +203,44 @@ static std::vector<Draw> Traverse(){
  assert(draws.size()==58 && fogCount==5 && drawsky && visitedSky.size()==16);
  return draws;
 }
+// One-sided middle textures on a sloped floor, against Software's R_StoreWallRange: the row at height z is
+// mid - z, where mid is the wall's top (worldtop, the default), its floor plus the texture height (worldbottom +
+// texheight, lower unpegged, following the floor's slope), or with NOSKEW the sector's flat ceilingheight or
+// floorheight + texheight. Legacy GL put lower-unpegged textures off by the floor's slope at the wall's start.
+static void CheckOneSidedPegging(){
+ seg_t *seg=nullptr;
+ for(auto&sg:mapSegs)if(!sg.glseg && !sg.backsector && sg.sidedef && sg.sidedef->midtexture && !sg.linedef->special){seg=&sg;break;}
+ assert(seg);
+ sector_t *sec=seg->frontsector;const sector_t saved=*sec;const UINT32 savedFlags=seg->linedef->flags;const fixed_t savedRow=seg->sidedef->rowoffset;
+ const float x1=((polyvertex_t*)seg->pv1)->x,y1=((polyvertex_t*)seg->pv1)->y,x2=((polyvertex_t*)seg->pv2)->x,y2=((polyvertex_t*)seg->pv2)->y;
+ const double len=std::hypot(double(x2-x1),double(y2-y1));assert(len>8);
+ pslope_t slope{};slope.o.x=FLOAT_TO_FIXED(x1);slope.o.y=FLOAT_TO_FIXED(y1);slope.o.z=24*FRACUNIT; // 24 above floorheight at the start
+ slope.d.x=FLOAT_TO_FIXED((x2-x1)/len);slope.d.y=FLOAT_TO_FIXED((y2-y1)/len);slope.zdelta=FRACUNIT/4;
+ sec->floorheight=0;sec->ceilingheight=512*FRACUNIT;sec->floorpic=sec->ceilingpic=skyflatnum+1;sec->f_slope=&slope;sec->c_slope=nullptr;sec->numlights=0;sec->ffloors=nullptr;
+ seg->sidedef->rowoffset=5*FRACUNIT;
+ const double texh=64*FRACUNIT,ro=5*FRACUNIT,unit=64*FRACUNIT;
+ const double bottom[2]={double(P_GetZAt(&slope,FLOAT_TO_FIXED(x1),FLOAT_TO_FIXED(y1),0)),double(P_GetZAt(&slope,FLOAT_TO_FIXED(x2),FLOAT_TO_FIXED(y2),0))};
+ const double top=512*FRACUNIT;assert(bottom[1]>bottom[0]+FRACUNIT);
+ struct Mode{UINT32 flags;const char *name;};
+ for(Mode m:{Mode{0,"top"},Mode{ML_DONTPEGBOTTOM,"lower unpegged"},Mode{ML_NOSKEW,"noskew"},Mode{ML_NOSKEW|ML_DONTPEGBOTTOM,"noskew lower unpegged"}}){
+  seg->linedef->flags=(savedFlags&~(ML_DONTPEGBOTTOM|ML_NOSKEW|ML_DONTPEGTOP|ML_SKEWTD))|m.flags;
+  draws.clear();gl_curline=seg;gl_frontsector=sec;gl_backsector=nullptr;currentLine=int(seg->linedef-mapLines);currentSide=seg->side;
+  HWR_ProcessSeg();
+  if(draws.size()!=1)printf("one-sided %s: %zu draws\n",m.name,draws.size());
+  assert(draws.size()==1);const auto &v=draws[0].vertices;
+  for(int end=0;end<2;++end){
+   const double mid=!(m.flags&ML_NOSKEW)?((m.flags&ML_DONTPEGBOTTOM)?bottom[end]+texh:top)
+    :((m.flags&ML_DONTPEGBOTTOM)?0+texh:top);
+   const FOutVector &lo=v[end],&hi=v[3-end];
+   const double wantLo=(mid+ro-bottom[end])/unit,wantHi=(mid+ro-top)/unit;
+   if(std::fabs(lo.t-wantLo)>1e-4||std::fabs(hi.t-wantHi)>1e-4)
+    printf("one-sided %s end %d: rows %.5f..%.5f, Software %.5f..%.5f\n",m.name,end,hi.t,lo.t,wantHi,wantLo);
+   assert(std::fabs(lo.t-wantLo)<=1e-4 && std::fabs(hi.t-wantHi)<=1e-4);
+  }
+ }
+ *sec=saved;seg->linedef->flags=savedFlags;seg->sidedef->rowoffset=savedRow;draws.clear();
+ printf("one-sided middle textures on a sloped floor match Software in all four pegging modes\n");
+}
 static size_t Differences(const std::vector<Draw>&a,const std::vector<Draw>&b){
  assert(a.size()==b.size());size_t count=0;
  for(size_t i=0;i<a.size();++i)count+=!Same(a[i],b[i]);return count;
@@ -244,6 +282,7 @@ int main(){
  assert(Differences(second,reference)==0);
  printf("58 title walls: cold/warm differences=%zu; first/second differences=%zu; slopes=%u\n",differences,secondDifferences,slopecount);
  if(!differences && !secondDifferences)CheckPreparationCases();
+ CheckOneSidedPegging();
  gld_clipper_Clear();while(freelist){auto*n=freelist->next;free(freelist);freelist=n;}
  for(int i=0;i<fixtureSectors;i++)FreeLights(mapSectors[i]);
  while(slopelist){auto*n=slopelist->next;free(slopelist);slopelist=n;}
