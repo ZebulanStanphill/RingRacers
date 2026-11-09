@@ -1,2 +1,5 @@
 # git apply needs the patch byte-for-byte; keep autocrlf from converting it
 *.patch -text
+
+# llvm-profdata reads PGO captures byte-for-byte
+*.profraw binary
