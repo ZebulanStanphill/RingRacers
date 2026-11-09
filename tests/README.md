@@ -713,6 +713,17 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   working water effects and the separate wall light-slice fix. A controlled
   Xbox GPU comparison of bounded captures remains pending.
 
+- **Sky plane claims:** `sky_claim` extracts the D3D12 gate from `HWR_Subsector`.
+  Check floors from above and ceilings from below, rejection from the far side
+  and at equality, non-sky flats, both planes together and the validcount guard.
+  Cull heights represent the plane at the camera's x,y, independently of the
+  submitted local heights (including slopes). The old unconditional claims fail.
+  Software creates sky visplanes from either side, but from the far side only
+  fills beyond marking seg edges; hardware's sky walls reproduce that area.
+  Claiming the plane itself hid the lower skybox buildings on prison map 157
+  when the Xbox chase camera dipped below sky floors. This test checks claim
+  submission, not rendered pixels or Xbox output.
+
 - **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment; the user confirmed the revised position on Xbox. They do not verify background visibility through water.
 
 - **Untextured step flat bleeding:** `flat_bleed` runs the production D3D12 decision,

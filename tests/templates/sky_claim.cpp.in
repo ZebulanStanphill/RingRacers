@@ -1,0 +1,66 @@
+#include <cassert>
+#include <vector>
+#include "doomdef.h"
+#include "r_defs.h"
+
+struct extrasubsector_t {};
+struct Claim { fixed_t height; pslope_t *slope; };
+static std::vector<Claim> claims;
+static void HWR_RenderSkyClaim(subsector_t *, extrasubsector_t *, fixed_t height, pslope_t *slope)
+{
+    claims.push_back({height, slope});
+}
+static void Submit(subsector_t *sub, sector_t *gl_frontsector,
+    fixed_t cullFloorHeight, fixed_t cullCeilingHeight, fixed_t dup_viewz,
+    fixed_t locFloorHeight, fixed_t locCeilingHeight, size_t validcount)
+{
+    // Keep the pre-fix mutation buildable so its failure is an assertion.
+    (void)cullFloorHeight; (void)cullCeilingHeight; (void)dup_viewz;
+    constexpr int skyflatnum = 1;
+    constexpr int num = 0;
+    extrasubsector_t extrasubsectors[1];
+@@SKY_GATE@@
+}
+int main()
+{
+    sector_t sector{};
+    subsector_t sub{};
+    pslope_t floorSlope{}, ceilingSlope{};
+    sector.f_slope = &floorSlope;
+    sector.c_slope = &ceilingSlope;
+    sub.validcount = 6;
+    // Sloped planes at the camera's x,y: floor 0, ceiling 8. Their local
+    // submission heights differ, so using those for culling fails these cases.
+    constexpr fixed_t unit = FRACUNIT;
+    const auto check = [&](int floorpic, int ceilingpic, fixed_t camera,
+                           bool floor, bool ceiling, size_t validcount = 7)
+    {
+        sector.floorpic = floorpic;
+        sector.ceilingpic = ceilingpic;
+        claims.clear();
+        Submit(&sub, &sector, 0, 8*unit, camera, 4*unit, 4*unit, validcount);
+        assert(claims.size() == static_cast<size_t>(floor + ceiling));
+        size_t i = 0;
+        if (floor) {
+            assert(claims[i].height == 4*unit && claims[i].slope == &floorSlope);
+            ++i;
+        }
+        if (ceiling)
+            assert(claims[i].height == 4*unit && claims[i].slope == &ceilingSlope);
+    };
+    check(1, 0, unit, true, false);
+    check(1, 0, -unit, false, false);
+    check(1, 0, 0, false, false);
+    check(0, 1, 7*unit, false, true);
+    check(0, 1, 9*unit, false, false);
+    check(0, 1, 8*unit, false, false);
+    check(0, 0, unit, false, false);
+    check(0, 0, 9*unit, false, false);
+    check(1, 1, unit, true, true);
+    check(1, 1, -unit, false, true);
+    check(1, 1, 9*unit, true, false);
+    check(1, 1, 0, false, true);
+    check(1, 1, 8*unit, true, false);
+    check(1, 1, unit, false, false, 6);
+    check(1, 1, unit, true, true, 8);
+}

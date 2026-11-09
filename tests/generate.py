@@ -505,6 +505,11 @@ def generate(engine, output):
             "        bool extend=RenderHorizonCondition(&seg,&a);",
             "        assert(extend==SoftwareDrawsLine(&seg,&a));",
             "        ++cases;if(!extend)++skipped;", "    }"])
+    render(templates / "sky_claim.cpp.in", {
+        "SKY_GATE": function_section(hardware, "HWR_Subsector",
+            "\tif (sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",
+            "\n#endif"),
+    }, output / "sky_claim.cpp")
     render(templates / "horizon_cache.cpp.in", {
         "CACHE": hardware.section("static UINT8 *hwr_horizonflags;", "#endif\n\n#ifdef DOPLANES"),
         "PLANE_GATE": function_section(hardware, "HWR_RenderPlane", "\tif (subsector\n#ifdef HAVE_D3D12", "\n\t{\n\t\t// Horizon lines"),

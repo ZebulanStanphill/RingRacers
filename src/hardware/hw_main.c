@@ -4456,13 +4456,13 @@ static void HWR_Subsector(size_t num)
 	}
 
 #ifdef HAVE_D3D12
-	// [UWP]: Software draws a sky floor or ceiling as sky from either side of its plane (R_Subsector), so these
-	// claim their pixels whatever side the camera is on, unlike the culled planes above.
+	// [UWP]: Claim sky planes only from the side they face. From the far side, Software fills only beyond
+	// the marking segs' edges, which our sky walls reproduce; a claimed plane would occlude what is behind it.
 	if (sub->validcount != validcount)
 	{
-		if (gl_frontsector->floorpic == skyflatnum)
+		if (gl_frontsector->floorpic == skyflatnum && cullFloorHeight < dup_viewz)
 			HWR_RenderSkyClaim(sub, &extrasubsectors[num], locFloorHeight, gl_frontsector->f_slope);
-		if (gl_frontsector->ceilingpic == skyflatnum)
+		if (gl_frontsector->ceilingpic == skyflatnum && cullCeilingHeight > dup_viewz)
 			HWR_RenderSkyClaim(sub, &extrasubsectors[num], locCeilingHeight, gl_frontsector->c_slope);
 	}
 #endif
