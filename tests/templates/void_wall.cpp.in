@@ -1,9 +1,11 @@
 // The camera-underground rule: HWR_WallFillsView (hw_main.c) against an independent model of Software's columns.
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include "doomdef.h"
+#include "v_video.h"
 #include "r_defs.h"
 #include "r_main.h"
 #include "r_state.h"
@@ -18,6 +20,10 @@ static INT32 translation[8] = {0, 1, 2, 3, 4, 5, 6, 7};
 INT32 *texturetranslation = translation;
 fixed_t viewx, viewy, viewz;
 UINT8 viewssnum;
+angle_t viewroll;
+viddef_t vid;
+#include "t_fsin.c"
+fixed_t *finecosine = &finesine[FINEANGLES/4];
 INT32 r_splitscreen;
 static fixed_t fov = 100 * FRACUNIT;
 fixed_t R_FOV(int) { return fov; }
@@ -30,6 +36,8 @@ static angle_t gl_aimingangle;
 @@SLOPE_HEIGHT@@
 @@SECTOR_FLOOR@@
 @@SECTOR_CEILING@@
+@@CLIP_AIM@@
+@@ROLL_ZOOM@@
 @@WALL_FILLS@@
 
 static polyvertex_t pv1, pv2;
@@ -49,9 +57,19 @@ static void Camera(float x, float y, float z, double yawdeg, double aimdeg)
 // pixlow/pixhigh at its first and last column from R_SetupFreelook's centery and R_ExecuteSetViewSize's projection.
 static int SoftwareEmpty()
 {
-    const double fovtan = std::tan(FIXED_TO_FLOAT(fov) * M_PI / 360), proj = gl_viewwidth / 2 / fovtan;
+    // Quantized roll and fixed-point zoom buckets from Software's view-morph definition,
+    // evaluated independently in doubles rather than calling the hardware helper.
+    const unsigned rollindex = (((viewroll >> ANGLETOFINESHIFT) + 2) / 4 * 4) % FINEANGLES;
+    const double roll = rollindex * (2 * M_PI / FINEANGLES);
+    const double w = vid.width / (r_splitscreen > 1 ? 2.0 : 1.0);
+    const double h = vid.height / (r_splitscreen > 0 ? 2.0 : 1.0);
+    const double extent = std::fabs(std::cos(roll)) + std::max(h / w, w / h) * std::fabs(std::sin(roll));
+    const double zoom = !rollindex ? 1 : (std::floor(extent * 4) + 1) / 4 - 1.0 / FRACUNIT;
+    const double fovtan = std::tan(FIXED_TO_FLOAT(fov) * M_PI / 360) * zoom * (r_splitscreen == 1 ? 1.7 : 1);
+    const double proj = gl_viewwidth / 2 / fovtan;
     const double aim = (double)(INT32)gl_aimingangle * (2 * M_PI / 4294967296.0);
-    const double centery = gl_viewheight / 2 + std::tan(aim) * gl_viewwidth / 2;
+    const double clampedaim = std::max(-80.0 * M_PI / 180, std::min(80.0 * M_PI / 180, aim));
+    const double centery = gl_viewheight / 2 + std::tan(clampedaim) * proj;
     const double yaw = std::atan2(gl_viewsin, gl_viewcos), edge = std::atan(fovtan);
     auto angle = [&](double x, double y) { return std::remainder(std::atan2(y - gl_viewy, x - gl_viewx) - yaw, 2 * M_PI); };
     // Sample the seg and keep the points inside the columns, then bisect each end of that run to its exact edge
@@ -95,6 +113,7 @@ static int SoftwareEmpty()
 static void Reset()
 {
     side = {}; seg = {}; front = {}; back = {};
+    viewroll = 0; r_splitscreen = 0; fov = 100 * FRACUNIT;
     seg.pv1 = &pv1; seg.pv2 = &pv2; seg.sidedef = &side;
     side.bottomtexture = 3; side.toptexture = 4;
     front.floorheight = 0; front.ceilingheight = 512 * FRACUNIT; front.floorpic = front.ceilingpic = 2;
@@ -107,12 +126,14 @@ static void Check(const char *what)
     const int expected = SoftwareEmpty(), actual = HWR_WallFillsView(&seg, &front, &back);
     if (expected != actual)
         std::printf("%s: Software %d, hardware %d (camera %.2f %.2f %.2f)\n", what, expected, actual, gl_viewx, gl_viewy, gl_viewz);
+    std::fflush(stdout);
     assert(expected == actual);
     ++checked; empty += expected != 0;
 }
 
 int main()
 {
+    vid.width = 1920; vid.height = 1080;
     // A step up across the view 64 units ahead: front floor 300, back floor 600 (both above a camera at 100).
     Reset();
     pv1 = {64, 200, 0}; pv2 = {64, -200, 0};
@@ -129,24 +150,46 @@ int main()
     Reset(); pv1 = {64, 200, 0}; pv2 = {64, -200, 0};
     front.ceilingheight = 300 * FRACUNIT; back.ceilingheight = 0;
     Camera(0, 0, 500, 0, 0); Check("over the ceiling"); assert(empty == 3);
+    Reset(); pv1 = {2600, 1000, 0}; pv2 = {2600, -1000, 0};
+    front.floorheight = 576 * FRACUNIT; back.floorheight = 768 * FRACUNIT;
+    Camera(0, 0, 476, 0, -28);
+    viewroll = (angle_t)std::llround(19.33 / 360 * 4294967296.0);
+    assert(SoftwareEmpty() == 0); Check("Xbox Green Hills FOV 100 tilted view");
     // Sweeps: distances, heights, pitch (Software's shear), yaw, segs reaching past the columns, slopes.
     pslope_t slope{};
     slope.o = {0, 0, 300 * FRACUNIT}; slope.d = {FRACUNIT, 0}; slope.zdelta = FRACUNIT / 4;
     for (int s = 0; s < 2; ++s)
         for (int d = 1; d <= 40; ++d)
             for (int h = 0; h <= 30; ++h)
-                for (int a = -6; a <= 6; ++a)
-                    for (int y = 0; y < 4; ++y)
-                    {
-                        Reset();
-                        const float dist = d * 25.f, half = 50.f + 150.f * y;
-                        pv1 = {dist, half, 0}; pv2 = {dist + 40.f * (y - 1), -half * 2, 0};
-                        front.floorheight = 150 * FRACUNIT;
-                        back.floorheight = (150 + h * 20) * FRACUNIT;
-                        back.f_slope = s ? &slope : nullptr;
-                        Camera(0, 0, 100, y * 7.5, a * 5.0);
-                        Check("sweep");
-                    }
+                for (double pitch : {-89., -81., -80., -30., -15., 0., 15., 30., 80., 81., 89.})
+                    for (double roll : {0., 19.33, 45., -27.})
+                        for (int y = 0; y < 4; ++y)
+                        {
+                            Reset();
+                            const float dist = d * 25.f, half = 50.f + 150.f * y;
+                            pv1 = {dist, half, 0}; pv2 = {dist + 40.f * (y - 1), -half * 2, 0};
+                            front.floorheight = 150 * FRACUNIT;
+                            back.floorheight = (150 + h * 20) * FRACUNIT;
+                            back.f_slope = s ? &slope : nullptr;
+                            Camera(0, 0, 100, y * 7.5, pitch);
+                            viewroll = (angle_t)(INT32)std::llround(roll / 360 * 4294967296.0);
+                            Check("sweep");
+                        }
+    // Split-screen changes both the roll aspect ratio and (for two players) horizontal FOV.
+    for (int splits : {0, 1, 2})
+        for (int degrees : {70, 90, 100, 120})
+            for (double roll : {0., 19.33, 45., -27.})
+                for (int height = 0; height <= 20; ++height)
+                {
+                    Reset(); r_splitscreen = splits; fov = degrees * FRACUNIT;
+                    gl_viewwidth = vid.width / (splits > 1 ? 2.f : 1.f);
+                    gl_viewheight = vid.height / (splits > 0 ? 2.f : 1.f);
+                    pv1 = {500, 1600, 0}; pv2 = {700, -1600, 0};
+                    front.floorheight = 150 * FRACUNIT; back.floorheight = (150 + height * 30) * FRACUNIT;
+                    Camera(0, 0, 100, 0, -28);
+                    viewroll = (angle_t)(INT32)std::llround(roll / 360 * 4294967296.0);
+                    Check("FOV and split-screen roll");
+                }
     std::printf("camera-underground walls: %d cases, %d leave Software's columns empty\n", checked, empty);
     assert(empty > 100 && empty < checked - 100);
     return 0;

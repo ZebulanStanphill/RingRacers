@@ -731,10 +731,14 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 - **Camera-underground walls:** `void_wall` runs the production `HWR_WallFillsView` (`hw_main.c`) against an independent
   model of Software's columns: the seg sampled, its visible run's ends bisected, and clipped to the screen's columns by angle, and
   `R_StoreWallRange`'s `pixlow`/`pixhigh` at its first and last visible column from `R_SetupFreelook`'s shifted
-  `centery` and `R_ExecuteSetViewSize`'s projection, with Software's floor- and ceiling-plane conditions. Fixed cases
+  `centery` and `R_ExecuteSetViewSize`'s projection, with Software's floor- and ceiling-plane conditions.
+  The model includes FOV, the ±80-degree Software aim clamp, the FOV-divided freelook shear, and
+  independently computed, quantized roll zoom (including split-screen dimensions and the two-player FOV scale). Fixed cases
   cover an underground step, the same step from above the front floor (never empty), no lower texture, both or only one
-  floor sky, a wall top still on screen and the mirrored ceiling case; a sweep of 128,967 cases varies distance, wall
-  height, pitch (-30 to 30 degrees), yaw, segs reaching past the screen's edges and a sloped back floor, and must decide
+  floor sky, a wall top still on screen, the mirrored ceiling case and the Xbox Green Hills regression
+  (FOV 100, pitch -28 degrees, roll 19.33 degrees, camera below the front floor with the lower wall top
+  still on screen). Sweeps vary distance, wall height, pitch (including beyond ±80 degrees), yaw,
+  roll (0, 19.33, 45 and -27 degrees), FOV, split-screen, segs reaching past the screen's edges and a sloped back floor, and must decide
   like the model in every case, lower and upper walls apart. Flipping the pitch term or dropping the below-the-floor
   condition fails it. The black the rule draws, the clipper and the Xbox view are not covered; the decision and the
   black wall were compared with Software on macOS (Legacy GL on OpenGL) at the Green Hills Zone pose of the user's

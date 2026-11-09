@@ -3638,6 +3638,31 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 }
 
 #ifdef HAVE_D3D12
+// Mirror R_CheckViewMorph's roll zoom: viewmorph[].zoomneeded is stale in hardware mode.
+static fixed_t HWR_SoftwareRollZoom(void)
+{
+	INT32 width = vid.width, height = vid.height;
+	angle_t rollangle = viewroll >> ANGLETOFINESHIFT;
+	float rollcos, rollsin, x, y;
+	fixed_t temp;
+
+	rollangle = ((rollangle + 2) & ~3) & FINEMASK;
+	if (!rollangle)
+		return FRACUNIT;
+	if (r_splitscreen > 0)
+	{
+		height /= 2;
+		if (r_splitscreen > 1)
+			width /= 2;
+	}
+	rollcos = FIXED_TO_FLOAT(FINECOSINE(rollangle));
+	rollsin = FIXED_TO_FLOAT(FINESINE(rollangle));
+	x = (width * fabsf(rollcos) + height * fabsf(rollsin)) / width;
+	y = (height * fabsf(rollcos) + width * fabsf(rollsin)) / height;
+	temp = (x > y ? x : y) * FRACUNIT;
+	return temp < FRACUNIT ? FRACUNIT : temp | 0x3FFF;
+}
+
 // [UWP]: Software's R_StoreWallRange marks a two-sided seg solid (R_AddLine's kSolidDontRender) when its lower wall's
 // top is above the top of the view at both ends of the seg's columns, or its upper wall's bottom is below the bottom,
 // assuming the wall and the floor (or ceiling) in front of it fill those columns. From above the front floor they
@@ -3652,7 +3677,7 @@ static UINT8 HWR_WallFillsView(seg_t *line, sector_t *front, sector_t *back)
 	const float x2 = ((polyvertex_t *)line->pv2)->x, y2 = ((polyvertex_t *)line->pv2)->y;
 	boolean lower = false, upper = false;
 	double fovtan, aim, toplimit, bottomlimit, t0 = 0, t1 = 1;
-	INT32 end, i;
+	INT32 end, i, clippedaim = (INT32)gl_aimingangle;
 
 	if (line->polyseg || !gl_viewwidth || !gl_viewheight)
 		return false;
@@ -3674,14 +3699,15 @@ static UINT8 HWR_WallFillsView(seg_t *line, sector_t *front, sector_t *back)
 		return false;
 
 	// Software's projection (R_ExecuteSetViewSize) and freelook shear (R_SetupFreelook): a height h above the eye at
-	// depth d (along the view direction) is above the top of the view when h/d >= fovtan * (height/width + tan(aim)),
-	// and below the bottom when -h/d >= fovtan * (height/width - tan(aim)).
-	fovtan = tan(FIXED_TO_FLOAT(R_FOV(viewssnum)) * M_PI / 360.0);
+	// depth d (along the view direction) is above the top of the view when h/d >= fovtan * height/width + tan(clampedaim),
+	// and below the bottom when -h/d >= fovtan * height/width - tan(clampedaim).
+	fovtan = tan(FIXED_TO_FLOAT(R_FOV(viewssnum)) * M_PI / 360.0) * FIXED_TO_FLOAT(HWR_SoftwareRollZoom());
 	if (r_splitscreen == 1)
 		fovtan *= 1.7;
-	aim = tan((double)(INT32)gl_aimingangle * (M_PI / 2147483648.0));
-	toplimit = fovtan * (gl_viewheight / gl_viewwidth + aim);
-	bottomlimit = fovtan * (gl_viewheight / gl_viewwidth - aim);
+	G_SoftwareClipAimingPitch(&clippedaim);
+	aim = tan((double)clippedaim * (M_PI / 2147483648.0));
+	toplimit = fovtan * gl_viewheight / gl_viewwidth + aim;
+	bottomlimit = fovtan * gl_viewheight / gl_viewwidth - aim;
 
 	// The part of the seg within the view's columns: lateral offset within fovtan times depth on both sides
 	for (i = 0; i < 2; i++)

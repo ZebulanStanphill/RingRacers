@@ -47,6 +47,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/p_slopes.c"
     "${RR_SOURCE_DIR}/src/taglist.c"
     "${RR_SOURCE_DIR}/src/tables.c"
+    "${RR_SOURCE_DIR}/src/t_fsin.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_clip.c"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/r_things.cpp"

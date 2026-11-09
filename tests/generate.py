@@ -542,6 +542,8 @@ def generate(engine, output):
         "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),
         "SECTOR_FLOOR": slopes.function("P_GetSectorFloorZAt"),
         "SECTOR_CEILING": slopes.function("P_GetSectorCeilingZAt"),
+        "ROLL_ZOOM": hardware.function("HWR_SoftwareRollZoom"),
+        "CLIP_AIM": Source(engine / "src/g_game.c").function("G_SoftwareClipAimingPitch"),
         "WALL_FILLS": hardware.function("HWR_WallFillsView"),
     }, output / "void_wall.cpp")
 
