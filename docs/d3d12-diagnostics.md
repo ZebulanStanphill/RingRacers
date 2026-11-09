@@ -3,6 +3,18 @@
 The Direct3D 12 driver has the former Direct3D 11 driver's pixel history,
 plus two tools of its own for presenting and GPU hangs.
 
+## Camera position in screenshots (UWP)
+
+Every screenshot taken in a level also writes one line to the log, in any renderer:
+
+```
+UWP screenshot camera: ringracers0028.png map=N lt=N renderer=hardware camera=(x,y,z) yaw=Y pitch=P roll=R fov=F sector=N
+```
+
+The values are those of the last view drawn (the last player's in split-screen), so a screenshot of a rendering
+bug can be drawn again from the same spot on a PC. Unlike `gr_surfaceprobe`, this needs no console, which matters
+when the kart can't be kept still while it is open.
+
 ## Pixel history: `gr_surfaceprobe`
 
 `gr_surfaceprobe [x_percent y_percent]` (default `15 35`) works as it did under the former Direct3D 11 driver and

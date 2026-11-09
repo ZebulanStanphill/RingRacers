@@ -51,6 +51,11 @@
 #include "m_argv.h"
 #include "i_system.h"
 #include "command.h" // cv_execversion
+#ifdef _UWP
+#include "r_main.h" // R_FOV
+#include "p_tick.h" // leveltime
+#include "r_state.h" // view position for screenshot logs
+#endif
 
 #include "m_anigif.h"
 #ifdef SRB2_CONFIG_ENABLE_WEBM_MOVIES
@@ -1863,6 +1868,18 @@ failure:
 	{
 		if (moviemode != MM_SCREENSHOT)
 			CONS_Printf(M_GetText("Screen shot %s saved in %s\n"), freename, pathname);
+#ifdef _UWP
+		// [UWP]: Log where the last view drawn was, so a screenshot of a rendering bug can be rendered again on a PC
+		// without holding still for the console. In split-screen this is the last player's view.
+		if (gamestate == GS_LEVEL)
+			I_OutputMsg("UWP screenshot camera: %s map=%d lt=%u renderer=%s camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f sector=%d\n",
+				freename, gamemap, (unsigned)leveltime, rendermode == render_opengl ? "hardware" : "software",
+				FIXED_TO_FLOAT(viewx), FIXED_TO_FLOAT(viewy), FIXED_TO_FLOAT(viewz),
+				(double)viewangle*(360.0/4294967296.0), (double)(INT32)aimingangle*(360.0/4294967296.0),
+				(double)(INT32)viewroll*(360.0/4294967296.0),
+				FIXED_TO_FLOAT(R_FOV(r_splitscreen) + players[displayplayers[r_splitscreen]].fovadd),
+				viewsector ? (INT32)(viewsector - sectors) : -1);
+#endif
 	}
 	else
 	{
