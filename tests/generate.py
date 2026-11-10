@@ -505,6 +505,9 @@ def generate(engine, output):
             "        bool extend=RenderHorizonCondition(&seg,&a);",
             "        assert(extend==SoftwareDrawsLine(&seg,&a));",
             "        ++cases;if(!extend)++skipped;", "    }"])
+    render(templates / "front_bbox.cpp.in", {
+        "BSP_WALK": hardware.function("HWR_RenderBSPNode"),
+    }, output / "front_bbox.cpp")
     render(templates / "sky_claim.cpp.in", {
         "SKY_GATE": function_section(hardware, "HWR_Subsector",
             "\tif (sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",

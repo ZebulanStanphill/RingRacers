@@ -4742,7 +4742,9 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 
 	// Recursively divide front space.
 #ifdef _UWP
-	if (HWR_PortalBBox(bsp->bbox[side]))
+	// [UWP]: Software clips all segs of a hidden front subsector and draws nothing.
+	// Hardware draws its planes whole; a horizon line has no wall to cover them.
+	if (HWR_CheckBBox(bsp->bbox[side]) && HWR_PortalBBox(bsp->bbox[side]))
 #endif
 		HWR_RenderBSPNode(bsp->children[side]);
 

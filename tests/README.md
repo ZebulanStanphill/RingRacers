@@ -26,7 +26,7 @@ engine's normal CMake project or change its source files.
 
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
-builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop` and `transparency_desktop`.
+builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop` and `front_bbox_desktop`.
 Where the preprocessed code is identical, a second executable would only repeat
 the first, so the test runs the cases for each runtime setting (for example both
 renderers) in one executable.
@@ -797,3 +797,10 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   suspend capture and unrelated-event filtering. It tests capture sequencing, not
   compiler-rt itself; Windows linking, real profiles and PGO performance need the
   Xbox. The app repository's `docs/pgo.md` describes capture and toolchain use.
+
+- **Hidden front BSP children:** `front_bbox_uwp` and `front_bbox_desktop` execute
+  production `HWR_RenderBSPNode` on a two-level tree. Check hidden front-subtree
+  rejection, visible back siblings, front-to-back order, portal rejection and each
+  visited leaf's own `hwbbox`. Desktop retains unconditional front traversal. The
+  pre-fix UWP walk fails the hidden-subtree case. These checks cover traversal,
+  not rendered pixels or Xbox output.
