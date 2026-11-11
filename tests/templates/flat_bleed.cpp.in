@@ -6,6 +6,7 @@
 #include <cstring>
 #include "doomdef.h"
 #include "r_defs.h"
+#include "r_main.h"
 #include "r_textures.h"
 #include "p_slopes.h"
 #include "p_setup.h"
@@ -48,6 +49,7 @@ static const sector_t *litSector;
 static boolean litCeiling;
 static FUINT HWR_CalcSlopeLight(FUINT level, pslope_t *slope, const sector_t *sector, boolean fof)
 { assert(!fof); litSlope = slope; litSector = sector; return level; }
+INT32 R_AdjustLightLevel(INT32 level) { return level; }
 void HWR_Lighting(FSurfaceInfo *, INT32 level, extracolormap_t *map, boolean directional)
 { assert(directional); submittedLevel = level; submittedMap = map; }
 boolean P_SectorUsesDirectionalLighting(const sector_t *) { return true; }

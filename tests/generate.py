@@ -151,7 +151,7 @@ def generate(engine, output):
         name = "Capture" + kind + "Scene"
         # Expected constants and boxes are literal (see the tables in capture_d3d12.cpp.in), not recomputed.
         expected_constants = ("WaterBytes(p.waterViewport[0],p.waterViewport[1],p.waterViewport[2],"
-            "p.waterViewport[3],c.waterMode)" if kind == "Water" else "FogBytes(c.fogPlane,28,.5f)")
+            "p.waterViewport[3],c.waterMode)" if kind == "Water" else "FogBytes(c.fogPlane,30,.5f)")
         bind_checks = (f"assert(bound[{srv}]==&Scene&&bound[13]==&g_waterSine);" if kind == "Water"
             else f"assert(bound[{srv}]==&Scene);")
         clear_binds = (f"bound[{srv}]=bound[13]=nullptr;" if kind == "Water" else f"bound[{srv}]=nullptr;")
@@ -172,11 +172,11 @@ def generate(engine, output):
     size_t count=copies.size();
     for(int i=0;i<2;++i)assert(Capture(&surface,PF_Fog,poly,4));
     assert(copies.size()==count+2);
-    // The light number is the light level >> 3, clamped to 0..31, less the engine's two-step adjustment
-    // (R_AdjustLightLevel, stubbed here as max(0, n-2)); the view ratio is the viewport width over the 128 pixel screen.
+    // The surface light already includes darkness; only quantize and clamp it.
+    // The view ratio is the viewport width over the 128 pixel screen.
     struct LightCase { int light, lightnum; };
     struct WidthCase { int width; float ratio; };
-    for(const LightCase &c:std::vector<LightCase>{{0,0},{8,0},{16,0},{24,1},{240,28},{255,29},{400,29}})
+    for(const LightCase &c:std::vector<LightCase>{{0,0},{8,1},{16,2},{24,3},{240,30},{255,31},{400,31}})
         for(const WidthCase &w:std::vector<WidthCase>{{128,1.f},{64,.5f},{32,.25f}}){
             g_gl.viewport[2]=w.width;surface.LightInfo.light_level=c.light;constants[16].clear();
             assert(Capture(&surface,PF_Fog,poly,4));
@@ -508,6 +508,14 @@ def generate(engine, output):
     render(templates / "front_bbox.cpp.in", {
         "BSP_WALK": hardware.function("HWR_RenderBSPNode"),
     }, output / "front_bbox.cpp")
+    for name in ("HWR_RenderPlane", "HWR_ProjectWall", "HWR_DrawFlatBleed",
+                 "HWR_RenderPolyObjectPlane", "HWR_RenderWall"):
+        assert hardware.function(name).count("HWR_AdjustLevelLight(") == 1
+    assert hardware.text.count("HWR_AdjustLevelLight(") == 6
+    render(templates / "level_darkness.cpp.in", {
+        "SOFTWARE": Source(engine / "src/r_debug.cpp").function("R_AdjustLightLevel"),
+        "ADJUST": hardware.function("HWR_AdjustLevelLight"),
+    }, output / "level_darkness.cpp")
     assert hardware.function("HWR_ProcessSeg").count("HWR_MidtextureSkyCuts(") == 2
     render(templates / "midtexture_sky.cpp.in", {
         "CUTS": hardware.function("HWR_MidtextureSkyCuts"),
@@ -545,7 +553,7 @@ def generate(engine, output):
         "SECTOR_CEILING": slopes.function("P_GetSectorCeilingZAt"),
         "FLAT_BLEEDS": hardware.function("HWR_FlatBleeds"),
         "FLAT_UV": hardware.function("HWR_FlatBleedUV"),
-        "FLAT_DRAW": hardware.function("HWR_DrawFlatBleed"),
+        "FLAT_DRAW": hardware.function("HWR_AdjustLevelLight") + hardware.function("HWR_DrawFlatBleed"),
         "FLAT_DIMENSIONS": Source(engine / "src/r_textures.cpp").function("R_FlatDimensionsFromLumpSize"),
     }, output / "flat_bleed.cpp")
 
@@ -609,7 +617,7 @@ def generate(engine, output):
     render(templates / "ripples.cpp.in", {
         "RIPPLE_PLANE": bsp.function("R_IsRipplePlane"),
         "USE_SHADER": hardware.function("HWR_UseShader"),
-        "POLYOBJECT_PLANE": hardware.function("HWR_RenderPolyObjectPlane"),
+        "POLYOBJECT_PLANE": hardware.function("HWR_AdjustLevelLight") + hardware.function("HWR_RenderPolyObjectPlane"),
         "RIPPLE_BLEND": hardware.function("HWR_RippleBlend"),
     }, output / "ripples.cpp")
     hardware = Source(engine / "src/hardware/hw_main.c")

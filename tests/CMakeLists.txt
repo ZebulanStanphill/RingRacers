@@ -26,6 +26,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/i_tcp_detail.h"
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
     "${RR_SOURCE_DIR}/src/g_game.c"
+    "${RR_SOURCE_DIR}/src/r_debug.cpp"
     "${RR_SOURCE_DIR}/src/r_main.cpp"
     "${RR_SOURCE_DIR}/src/r_fps.cpp"
     "${RR_SOURCE_DIR}/src/v_video.cpp"
@@ -117,6 +118,7 @@ regression(water_capture_d3d12 water_capture_d3d12 _UWP)
 regression(sky_offsets sky)
 regression(sky_claim sky_claim _UWP HWRENDER)
 regression(midtexture_sky midtexture_sky _UWP HWRENDER)
+regression(level_darkness level_darkness)
 regression(front_bbox_uwp front_bbox _UWP HWRENDER)
 regression(front_bbox_desktop front_bbox HWRENDER)
 regression(batch_sort_keys batch_sort HWRENDER)

@@ -1281,6 +1281,13 @@ static float HWR_ViewFogGain(void)
 	return colormap ? max(0.0f, 1.0f - R_GetRgbaA(colormap->rgba) / 24.0f) : 1.0f;
 }
 
+// [UWP]: Match Software's level darkness after contrast, retaining fine light steps.
+static INT32 HWR_AdjustLevelLight(INT32 level)
+{
+	const INT32 coarse = min(max(level, 0), 255) >> LIGHTSEGSHIFT;
+	return level - (coarse - R_AdjustLightLevel(coarse)) * (1 << LIGHTSEGSHIFT);
+}
+
 // [UWP]: Software leaves masked midtextures unclipped between matching skies.
 static void HWR_MidtextureSkyCuts(boolean polyobject, const sector_t *front,
 	const sector_t *back, fixed_t polytop, fixed_t polybottom,
@@ -1312,6 +1319,9 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	fade_color.rgba = (colormap != NULL) ? (UINT32)colormap->fadergba : GL_DEFAULTFOG;
 	if (viewfog && !palette)
 		tint_color.rgba = 0; // the neutral tint is applied once through modulation below
+
+	// [UWP]: Clamp adjusted light before the shaderless square root too.
+	light_level = min(max(light_level, 0), 255);
 
 	// Crappy backup coloring if you can't do shaders
 	if (!HWR_UseShader())
@@ -1349,9 +1359,6 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 		poly_color.s.green = (UINT8)green;
 		poly_color.s.blue = (UINT8)blue;
 	}
-
-	// Clamp the light level, since it can sometimes go out of the 0-255 range from animations
-	light_level = min(max(light_level, 0), 255);
 
 	if (viewfog && !palette)
 	{
@@ -1805,7 +1812,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	if (!(PolyFlags & PF_Fog))
 		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL));
-	HWR_Lighting(&Surf, lightlevel, planecolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
+	HWR_Lighting(&Surf, HWR_AdjustLevelLight(lightlevel), planecolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
 
 	if (PolyFlags & PF_EnvironmentTrans)
 	{
@@ -2060,7 +2067,7 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 {
 	INT32 shader = SHADER_DEFAULT;
 
-	HWR_Lighting(pSurf, lightlevel, wallcolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
+	HWR_Lighting(pSurf, HWR_AdjustLevelLight(lightlevel), wallcolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
 
 	if (HWR_UseShader())
 	{
@@ -2538,7 +2545,7 @@ static void HWR_DrawFlatBleed(boolean ceiling, fixed_t front1, fixed_t front2,
 		colormap = *sector->lightlist[light].extra_colormap;
 	}
 	level = HWR_CalcSlopeLight(level, slope, sector, false);
-	HWR_Lighting(&Surf, level, colormap, P_SectorUsesDirectionalLighting(sector));
+	HWR_Lighting(&Surf, HWR_AdjustLevelLight(level), colormap, P_SectorUsesDirectionalLighting(sector));
 	HWR_GetLevelFlat(flat, R_NoEncore(sector, flat, ceiling));
 	memcpy(verts, wall, sizeof verts);
 	verts[0].y = FIXED_TO_FLOAT(ceiling ? min(back1, front1) : front1);
@@ -4188,7 +4195,7 @@ static void HWR_RenderPolyObjectPlane(polyobj_t *polysector, boolean isceiling, 
 		v3d->z = FIXED_TO_FLOAT(polysector->vertices[i]->y);
 	}
 
-	HWR_Lighting(&Surf, lightlevel, planecolormap, P_SectorUsesDirectionalLighting((FOFsector != NULL) ? FOFsector : gl_frontsector));
+	HWR_Lighting(&Surf, HWR_AdjustLevelLight(lightlevel), planecolormap, P_SectorUsesDirectionalLighting((FOFsector != NULL) ? FOFsector : gl_frontsector));
 
 	if (blendmode & PF_Translucent)
 	{
@@ -8941,7 +8948,7 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
 	INT32 shader = SHADER_DEFAULT;
 
 	// Lighting is done here instead so that fog isn't drawn incorrectly on transparent walls after sorting
-	HWR_Lighting(pSurf, lightlevel, wallcolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
+	HWR_Lighting(pSurf, HWR_AdjustLevelLight(lightlevel), wallcolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
 
 	pSurf->PolyColor.s.alpha = alpha; // put the alpha back after lighting
 

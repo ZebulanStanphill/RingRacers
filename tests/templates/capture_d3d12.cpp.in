@@ -14,6 +14,7 @@
 #include <vector>
 #include "hardware/hw_defs.h"
 #include "r_defs.h"
+#include "r_main.h"
 @@CAPTURE_KIND@@
 #undef min
 #undef max
@@ -35,7 +36,7 @@ struct {int texturesCreated=0,screens=0,waterCopies=0,fogCaptures=0;UINT64 water
 UINT64 g_textureBytes=0;
 bool drawable=true,failTexture=false,failConstants=false,failSine=false;
 bool CanDraw(){return drawable;}
-int R_AdjustLightLevel(int light){return std::max(0,light-2);}
+// Surface payloads already contain level darkness.
 GpuTexture *bound[19]={};
 std::vector<unsigned char> constants[19];
 std::vector<D3D12_BOX> copies;

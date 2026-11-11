@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,11 @@
 #include "r_textures.h"
 #include "z_zone.h"
 #include "d_netcmd.h"
+#include "r_main.h"
+#undef min
+#undef max
+#define min std::min
+#define max std::max
 
 consvar_t cv_glshaders{}, cv_reducevfx{};
 boolean gl_shadersavailable = true;
@@ -39,6 +45,7 @@ char *sizeu1(size_t) { static char text[] = "oversized"; return text; }
 size_t W_LumpLength(lumpnum_t) { return 4096; }
 size_t R_FlatDimensionsFromLumpSize(size_t) { return 64; }
 boolean P_SectorUsesDirectionalLighting(const sector_t *) { return false; }
+INT32 R_AdjustLightLevel(INT32 level) { return level; }
 void HWR_Lighting(FSurfaceInfo *surf, INT32, extracolormap_t *, boolean) {
     memset(surf, 0, sizeof(*surf));
     surf->PolyColor.s.alpha = 255;

@@ -1,0 +1,48 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <cstddef>
+using INT32 = int32_t;
+using fixed_t = int32_t;
+constexpr int FRACUNIT = 65536, LIGHTLEVELS = 32, LIGHTSEGSHIFT = 3;
+#define SRB2_ASSERT assert
+using std::min;
+using std::max;
+static fixed_t FixedMul(fixed_t a, fixed_t b) { return (int64_t(a)*b) >> 16; }
+static fixed_t FixedDiv(fixed_t a, fixed_t b) { return int64_t(a)*FRACUNIT/b; }
+static int debugrender_highlight;
+static struct { int value; } cv_debugrender_contrast;
+static struct { fixed_t value[4]; } g_darkness;
+static struct Header { fixed_t darkness; } header;
+static Header *mapheaderinfo[] = { &header };
+static int gamemap = 1, view;
+static int R_GetViewNumber() { return view; }
+@@SOFTWARE@@
+@@ADJUST@@
+int main()
+{
+    header.darkness = FRACUNIT;
+    for (int level = 0; level <= 255; ++level)
+        assert(HWR_AdjustLevelLight(level) == level);
+    g_darkness.value[0] = FRACUNIT;
+    assert(HWR_AdjustLevelLight(248) == 0);
+    assert(HWR_AdjustLevelLight(128) == 104);
+    assert(HWR_AdjustLevelLight(64) == 56);
+    // Every sub-step survives the conversion, including full darkness.
+    for (int coarse = 0; coarse < 32; ++coarse)
+        for (int fraction = 0; fraction < 8; ++fraction)
+            assert(HWR_AdjustLevelLight(coarse*8+fraction)
+                == R_AdjustLightLevel(coarse)*8+fraction);
+    // Independent views, with a map's darkness multiplier and the cheat path.
+    view = 1;
+    assert(HWR_AdjustLevelLight(255) == 255);
+    g_darkness.value[1] = FRACUNIT/2;
+    header.darkness = FRACUNIT/2;
+    assert(HWR_AdjustLevelLight(255) == 191);
+    cv_debugrender_contrast.value = FRACUNIT/8;
+    assert(HWR_AdjustLevelLight(135) == 103);
+    cv_debugrender_contrast.value = -FRACUNIT/8;
+    assert(HWR_AdjustLevelLight(135) == 159);
+    debugrender_highlight = 1;
+    assert(HWR_AdjustLevelLight(135) == 143);
+}

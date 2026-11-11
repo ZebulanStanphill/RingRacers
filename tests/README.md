@@ -809,3 +809,15 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   helper for Municipal Meadow's MIDPEG trees, one matching sky plane, ordinary
   openings, polyobjects and the sloped second endpoint. Generation checks both
   endpoint computations call it. This tests clipping decisions, not GPU pixels.
+
+- **Level darkness:** `level_darkness` executes Software's `R_AdjustLightLevel`
+  and the hardware adapter for no darkness, bright/dark weighting, all fine
+  fractions, separate views, map darkness and contrast/highlight cheats. Generation
+  checks all five wall/plane lighting sinks and excludes all other lighting sinks.
+  Plane, polyobject/FOF plane, opaque/split wall, flat-bleed and sorted translucent
+  wall paths adjust after their existing slope/seg contrast. Sprites, models,
+  shadows and sky remain unchanged. Fog capture consumes the adjusted payload
+  without applying darkness again; its native mock checks the constant bytes.
+  `R_SetupFrame` and `R_SkyboxFrame` select player/sky contexts before traversal;
+  `R_GetViewNumber` maps both context groups to the same four player slots.
+  These checks cover light arithmetic/submission, not gameplay or GPU pixels.
