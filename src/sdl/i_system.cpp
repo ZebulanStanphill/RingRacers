@@ -2184,7 +2184,6 @@ static void Shittycopyerror(const char *name)
 
 static void Shittylogcopy(void)
 {
-#ifdef LOGMESSAGES
 	char buf[8192];
 	FILE *fp;
 	size_t r;
@@ -2212,7 +2211,6 @@ static void Shittylogcopy(void)
 	{
 		Shittycopyerror(logfilename);
 	}
-#endif // LOGMESSAGES
 }
 #endif/*!(defined (__unix__) || defined(__APPLE__) || defined (UNIXCOMMON))*/
 
