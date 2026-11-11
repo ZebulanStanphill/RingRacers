@@ -176,4 +176,3 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 
 - **Old hardware driver** *(untested on Xbox)*. The Direct3D 11 driver, Shader Model 4 built-ins/tests, and `gr_d3d12` Off/Once/On selector are removed; an old config line reports `Unknown command` once. A saved `renderer VibeRant D3D11` is rejected as an invalid value and keeps the VibeRant D3D default. The old sharing/shader probes no longer run, and VibeRant D3D replaces `r_opengl.c` only in builds with `SRB2_CONFIG_D3D12` (UWP by default).
 - **App-incompatible crash handlers.** DbgHelp minidumps, cpptrace, and `exchndl` are disabled for UWP; [Diagnostics](#diagnostics) describes their replacement.
-- **Master server debug output.** Verbose `masterserver_debug` curl output and the Windows log-copy helper compile only with `LOGMESSAGES`, which defaults to on.
