@@ -256,15 +256,13 @@ void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
 void CountSubmission(const char *reason)
 {
 	g_stats.submissions++;
-	if (!strcmp(reason, "present"))
-		g_stats.presentSubmissions++;
-	else if (!strcmp(reason, "ring"))
+	if (!strcmp(reason, "ring"))
 		g_stats.ringSubmissions++;
 	else if (!strcmp(reason, "readback"))
 		g_stats.readbackSubmissions++;
 	else if (!strcmp(reason, "upload"))
 		g_stats.uploadSubmissions++;
-	else
+	else if (strcmp(reason, "present"))
 		g_stats.otherSubmissions++;
 }
 

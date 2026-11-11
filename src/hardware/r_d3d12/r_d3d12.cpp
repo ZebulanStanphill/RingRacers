@@ -95,7 +95,6 @@ struct Stats
 	int screens; // screen textures, wipes, postimg, the intermission background and the final screen
 	int screenCopies, wipes, wipeFallbacks, postImages, fadeMapFallbacks;
 	UINT64 waterCopies, waterPixels, fogCaptures;
-	int states; // blending, clipping, transforms, special states, shaders, palettes and light tables
 	int portalApertures, portalDepthResets, portalStencilLevels, portalMaxLevel, fadeMaps;
 	int lightTablesCreated, lightTablesUpdated, paletteUploads, paletteSteps;
 	precise_t paletteTime;
@@ -2152,7 +2151,6 @@ boolean D3D_Init(void)
 
 void D3D_SetPalette(RGBA_t *palette)
 {
-	g_stats.states++;
 	if (palette && memcmp(g_palette, palette, sizeof g_palette))
 	{
 		memcpy(g_palette, palette, sizeof g_palette);

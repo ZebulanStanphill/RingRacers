@@ -129,7 +129,6 @@ D3D12_CPU_DESCRIPTOR_HANDLE Core_Dsv(UINT index);
 struct CoreStats
 {
 	int submissions; // all of them
-	int presentSubmissions;
 	int ringSubmissions, readbackSubmissions, uploadSubmissions, otherSubmissions;
 	int barriers;
 	int waits, waitTimeouts;
