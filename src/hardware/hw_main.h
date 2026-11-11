@@ -86,6 +86,7 @@ UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap); // Let's see if
 
 UINT8 HWR_GetTranstableAlpha(INT32 transtablenum);
 FBITFIELD HWR_GetBlendModeFlag(INT32 ast);
+FBITFIELD HWR_GetBlendModeFlagWithAlpha(INT32 style, INT32 alpha);
 FBITFIELD HWR_SurfaceBlend(INT32 style, INT32 transtablenum, FSurfaceInfo *pSurf);
 FBITFIELD HWR_TranstableToAlpha(INT32 transtablenum, FSurfaceInfo *pSurf);
 

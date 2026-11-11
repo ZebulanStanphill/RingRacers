@@ -49,6 +49,9 @@ def generate(engine, output):
         "TRANSFORM": Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp").function("D3D_SetTransform"),
         "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),
     }, output / "split_projection.cpp")
+    render(templates / "overlay_blend.cpp.in", {
+        "BLEND": Source(engine / "src/hardware/hw_main.c").section("FBITFIELD HWR_GetBlendModeFlag(INT32 ast)", "FBITFIELD HWR_TranstableToAlpha"),
+    }, output / "overlay_blend.cpp")
     finale = Source(engine / "src/f_finale.c")
     render(templates / "intro.cpp.in", {
         "TIMES": finale.section("#define NUMINTROSCENES", "// custom intros"),

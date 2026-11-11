@@ -61,6 +61,7 @@ boolean P_IsLineTripWire(line_t *){return false;}
 boolean R_ShouldFlipTripWire(line_t *){return false;}
 INT32 R_GetLinedefTransTable(fixed_t){return 1;}
 FBITFIELD HWR_GetBlendModeFlag(INT32){return PF_Translucent;}
+FBITFIELD HWR_GetBlendModeFlagWithAlpha(INT32,INT32){return PF_Translucent;}
 FBITFIELD HWR_SurfaceBlend(INT32,INT32,FSurfaceInfo *){return PF_Translucent;}
 FBITFIELD HWR_TranstableToAlpha(INT32,FSurfaceInfo *){return PF_Translucent;}
 void Z_Free2(void *p,const char *,int){free(p);}

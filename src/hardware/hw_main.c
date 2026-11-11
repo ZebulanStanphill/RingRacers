@@ -1999,6 +1999,14 @@ FBITFIELD HWR_GetBlendModeFlag(INT32 ast)
 	return 0;
 }
 
+// [UWP]: Software falls back to normal translucency for overlay with alpha.
+FBITFIELD HWR_GetBlendModeFlagWithAlpha(INT32 style, INT32 alpha)
+{
+	if (style == AST_OVERLAY && alpha < 255)
+		return PF_Translucent;
+	return HWR_GetBlendModeFlag(style);
+}
+
 UINT8 HWR_GetTranstableAlpha(INT32 transtablenum)
 {
 	transtablenum = max(min(transtablenum, tr_trans90), 0);
@@ -2031,7 +2039,7 @@ FBITFIELD HWR_SurfaceBlend(INT32 style, INT32 transtablenum, FSurfaceInfo *pSurf
 		return PF_Masked;
 
 	pSurf->PolyColor.s.alpha = HWR_GetTranstableAlpha(transtablenum);
-	return HWR_GetBlendModeFlag(style);
+	return HWR_GetBlendModeFlagWithAlpha(style, pSurf->PolyColor.s.alpha);
 }
 
 FBITFIELD HWR_TranstableToAlpha(INT32 transtablenum, FSurfaceInfo *pSurf)
@@ -3432,7 +3440,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					{
 						if (rover->alpha < 256 || rover->blend)
 						{
-							blendmode = HWR_GetBlendModeFlag(rover->blend);
+							blendmode = HWR_GetBlendModeFlagWithAlpha(rover->blend, rover->alpha);
 							Surf.PolyColor.s.alpha = max(0, min(rover->alpha, 255));
 						}
 					}
@@ -3568,7 +3576,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					{
 						if (rover->alpha < 256 || rover->blend)
 						{
-							blendmode = HWR_GetBlendModeFlag(rover->blend);
+							blendmode = HWR_GetBlendModeFlagWithAlpha(rover->blend, rover->alpha);
 							Surf.PolyColor.s.alpha = max(0, min(rover->alpha, 255));
 						}
 					}
@@ -4562,7 +4570,7 @@ static void HWR_Subsector(size_t num)
 				else if (rover->fofflags & FOF_TRANSLUCENT
 					&& (rover->alpha < 256 || rover->blend)) // SoM: Flags are more efficient
 				{
-					FBITFIELD blendmode = HWR_GetBlendModeFlag(rover->blend) | HWR_RippleBlend(gl_frontsector, rover, false);
+					FBITFIELD blendmode = HWR_GetBlendModeFlagWithAlpha(rover->blend, rover->alpha) | HWR_RippleBlend(gl_frontsector, rover, false);
 
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, dup_viewz < cullHeight ? true : false);
 
@@ -4612,7 +4620,7 @@ static void HWR_Subsector(size_t num)
 				else if (rover->fofflags & FOF_TRANSLUCENT
 					&& (rover->alpha < 256 || rover->blend)) // SoM: Flags are more efficient
 				{
-					FBITFIELD blendmode = HWR_GetBlendModeFlag(rover->blend) | HWR_RippleBlend(gl_frontsector, rover, false);
+					FBITFIELD blendmode = HWR_GetBlendModeFlagWithAlpha(rover->blend, rover->alpha) | HWR_RippleBlend(gl_frontsector, rover, false);
 
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, dup_viewz < cullHeight ? true : false);
 

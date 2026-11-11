@@ -1,0 +1,38 @@
+#include <cassert>
+#include <cstdio>
+#include <initializer_list>
+#include "doomdef.h"
+#include "hardware/hw_glob.h"
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
+@@BLEND@@
+int main()
+{
+    const FBITFIELD opaque[] = {PF_Masked, PF_Translucent, PF_Additive,
+        PF_ReverseSubtract, PF_Subtractive, PF_Multiplicative, PF_Masked, PF_Translucent};
+    const FBITFIELD translucent[] = {PF_Translucent, PF_Translucent, PF_Additive,
+        PF_ReverseSubtract, PF_Subtractive, PF_Multiplicative, PF_Translucent, PF_Translucent};
+    unsigned cases = 0;
+    for (int style = AST_COPY; style <= AST_FOG; ++style)
+    for (int trans : {0, 1, 5, 9})
+    {
+        FSurfaceInfo surf{};
+        auto flags = HWR_SurfaceBlend(style, trans, &surf);
+        assert(flags == (trans ? translucent[style] : opaque[style]));
+        assert(surf.PolyColor.s.alpha == (style == AST_MODULATE ? 255 :
+            trans == 0 ? 255 : trans == 1 ? 230 : trans == 5 ? 128 : 25));
+        ++cases;
+    }
+    for (int style = AST_COPY; style <= AST_FOG; ++style)
+    for (int alpha : {-1, 0, 1, 128, 254, 255, 256})
+    {
+        // Raw-alpha FOFs retain their old mode except translucent overlay.
+        auto expected = style == AST_OVERLAY && alpha < 255
+            ? PF_Translucent : HWR_GetBlendModeFlag(style);
+        assert(HWR_GetBlendModeFlagWithAlpha(style, alpha) == expected);
+        ++cases;
+    }
+    // The old masked overlay specifically fails the background-contribution oracle.
+    assert(HWR_GetBlendModeFlag(AST_OVERLAY) != translucent[AST_OVERLAY]);
+    printf("overlay blend: %u decisions passed\n", cases);
+}

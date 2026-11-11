@@ -843,3 +843,11 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   height/aim doubling describes the half-height viewport, not a zoom factor.
   These extracted functions compile natively; the full Windows D3D12 driver,
   WARP and Xbox visuals cannot be checked on macOS.
+
+- **Translucent overlay:** `overlay_blend` executes production surface blending
+  for every style at four translucency levels and the raw-alpha helper at seven
+  alpha boundaries (88 decisions). Only overlay with partial alpha changes mode;
+  opaque overlay stays masked and other styles retain their flags and alpha.
+  Linedefs with partial alpha and models already use `HWR_SurfaceBlend`; both
+  FOF wall sides and both FOF plane faces now use the same raw-alpha rule.
+  This checks blend selection, not GPU pixels or Xbox visuals.
