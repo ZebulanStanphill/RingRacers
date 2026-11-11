@@ -302,6 +302,34 @@ def generate(engine, output):
     }, output / "wall_light.cpp")
     things = Source(engine / "src/r_things.cpp")
     batching = Source(engine / "src/hardware/hw_batching.c")
+    batch_helper = batching.function("HWR_SetBatchTextures")
+    batch_code = batching.section("// The texture for the next polygon", "\n\n#endif // HWRENDER")
+    # C allocation conversions only; all collection, sorting and draw logic stays production code.
+    for lhs, typ in [("finalVertexArray", "FOutVector"), ("finalVertexIndexArray", "UINT32"),
+                     ("polygonArray", "PolygonArrayEntry"), ("polygonIndexArray", "UINT32"),
+                     ("unsortedVertexArray", "FOutVector"), ("polygonSortKeys", "PolygonSortKey"),
+                     ("new_index_array", "unsigned int")]:
+        batch_code = batch_code.replace(lhs + " = malloc(", lhs + " = (" + typ + " *)malloc(")
+    # The three local new_array declarations have distinct pointer types.
+    batch_code = batch_code.replace("new_array = malloc(polygon", "new_array = (PolygonArrayEntry *)malloc(polygon")
+    batch_code = batch_code.replace("new_array = malloc(", "new_array = (FOutVector *)malloc(")
+    cache_code = "\n".join(cache.function(n) for n in ["HWR_LoadPatchMipmap", "HWR_GetPatch", "HWR_GetSpriteBrightmap", "HWR_GetTexture", "HWR_GetLevelFlat"])
+    cache_code = cache_code.replace("grPatch = patch->hardware;", "grPatch = (GLPatch_t *)patch->hardware;")
+    cache_code = cache_code.replace("patch_t *patch = W_CachePatchNum", "patch_t *patch = (patch_t *)W_CachePatchNum")
+    render(templates / "shared_brightmap.cpp.in", {"BATCHING": batch_code, "CACHE": cache_code}, output / "shared_brightmap.cpp")
+    opengl = Source(engine / "src/hardware/r_opengl/r_opengl.c")
+    # Normalize only the exported macro signatures so Source.function can parse them.
+    opengl.text = re.sub(r"EXPORT void HWRAPI\((\w+)\) ", r"void \1", opengl.text)
+    from source import syntax
+    opengl.code = syntax(opengl.text)
+    gl_code = "\n".join(opengl.function(n) for n in ["SetNoTexture", "UpdateTexture", "SetTexture"])
+    gl_code = gl_code.replace("FTextureInfo *newTex = calloc(", "FTextureInfo *newTex = (FTextureInfo *)calloc(")
+    constants = sorted(set(re.findall(r"\bGL_[A-Z0-9_]+", gl_code)) - {"GL_TEXTURE0", "GL_TEXTURE1", "GL_MSG_W"})
+    constants = [n for n in constants if not n.startswith("GL_TEXFMT_")]
+    render(templates / "shared_brightmap_gl.cpp.in", {
+        "CONSTANTS": "enum { GL_TEXTURE0=0, GL_TEXTURE1=1, " + ", ".join(constants) + " };",
+        "FUNCTIONS": gl_code,
+    }, output / "shared_brightmap_gl.cpp")
     encore_parts = {
         "SELECT": function_section(hardware, "HWR_ProjectSprite",
             "\tINT32 skinnum = TC_DEFAULT;", "\n\t// set top/bottom coords"),
@@ -370,7 +398,7 @@ def generate(engine, output):
             "\tvis->gpatch =", "\n\tvis->flip ="),
         "LINKDRAW": function_section(hardware, "HWR_LinkDrawHackFinish",
             "\t\tHWR_GetPatch(linkdrawlist[i].spr->gpatch);", "\n\t\tHWR_DrawSpringPolygon"),
-        "CURRENT_TEXTURE": batching.function("HWR_SetCurrentTexture"),
+        "CURRENT_TEXTURE": batching.function("HWR_SetCurrentTexture") + batch_helper,
         "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
             "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
         "BATCH_ROLL": function_section(batching, "HWR_RenderBatches",
@@ -613,7 +641,7 @@ def generate(engine, output):
     }, output / "void_wall.cpp")
 
     render(templates / "batch_sort.cpp.in", {
-        "SORT_KEYS": batching.section("typedef struct\n{\n\tINT32 shader;", "// This function organizes the geometry"),
+        "SORT_KEYS": batching.section("typedef struct\n{\n\tINT32 shader;", "// [UWP]: Binds a batch"),
     }, output / "batch_sort.cpp")
 
     postimg_mobj = Source(engine / "src/p_mobj.c")

@@ -1010,6 +1010,11 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 	if (!grtex->mipmap.data && !grtex->mipmap.downloaded)
 		HWR_GenerateTexture(grtex, tex, !R_TextureCanRemap(basetex));
 
+	// [UWP]: A texture can also be another's brightmap, which left TF_BRIGHTMAP set for good: the fullbright
+	// palette textures (~B000 to ~B255) all use ~000. HWR_SetCurrentTexture and the driver go by the flag, so
+	// as a surface's own texture it then bound as a brightmap and the surface kept whatever texture came before
+	grtex->mipmap.flags &= ~TF_BRIGHTMAP;
+
 	// If hardware does not have the texture, then call pfnSetTexture to upload it
 	if (!grtex->mipmap.downloaded)
 		HWD.pfnSetTexture(&grtex->mipmap);
@@ -1196,6 +1201,8 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 			HWR_CacheTextureAsFlat(&grtex->mipmap, texturenum, noencoremap);
 		}
 
+		grtex->mipmap.flags &= ~TF_BRIGHTMAP; // [UWP]: as in HWR_GetTexture
+
 		// If hardware does not have the texture, then call pfnSetTexture to upload it
 		if (!grtex->mipmap.downloaded)
 			HWD.pfnSetTexture(&grtex->mipmap);
@@ -1294,6 +1301,8 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	GLPatch_t *grPatch = patch->hardware;
 	if (!grMipmap->downloaded && !grMipmap->data)
 		HWR_MakePatch(patch, grPatch, grMipmap, true);
+
+	grMipmap->flags &= ~TF_BRIGHTMAP; // [UWP]: as in HWR_GetTexture, for a patch HWR_GetSpriteBrightmap used
 
 	// If hardware does not have the texture, then call pfnSetTexture to upload it
 	if (!grMipmap->downloaded)

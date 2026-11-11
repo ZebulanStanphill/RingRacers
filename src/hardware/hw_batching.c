@@ -238,6 +238,20 @@ static void buildPolygonSortKeys(boolean shaders)
 	}
 }
 
+// [UWP]: Binds a batch's texture and brightmap. The driver picks the texture unit from TF_BRIGHTMAP, and by now
+// the flag says how the texture was last collected, which can be the other use (see HWR_GetTexture).
+static void HWR_SetBatchTextures(GLMipmap_t *texture, GLMipmap_t *brightmap)
+{
+	if (texture)
+		texture->flags &= ~TF_BRIGHTMAP;
+	HWD.pfnSetTexture(texture);
+	if (brightmap)
+	{
+		brightmap->flags |= TF_BRIGHTMAP;
+		HWD.pfnSetTexture(brightmap);
+	}
+}
+
 // This function organizes the geometry collected by HWR_ProcessPolygon calls into batches and uses
 // the rendering backend to draw them.
 void HWR_RenderBatches(void)
@@ -325,9 +339,7 @@ void HWR_RenderBatches(void)
 	}
 	else
 	{
-		HWD.pfnSetTexture(currentTexture);
-		if (currentBrightmap)
-			HWD.pfnSetTexture(currentBrightmap);
+		HWR_SetBatchTextures(currentTexture, currentBrightmap);
 	}
 
 	while (1)// note: remember handling notexture polyflag as having texture number 0 (also in comparePolygons)
@@ -477,11 +489,8 @@ void HWR_RenderBatches(void)
 		if (changeTexture)
 		{
 			// texture should be already ready for use from calls to SetTexture during batch collection
-			HWD.pfnSetTexture(nextTexture);
+			HWR_SetBatchTextures(nextTexture, nextBrightmap);
 			currentTexture = nextTexture;
-
-			if (nextBrightmap)
-				HWD.pfnSetTexture(nextBrightmap);
 			currentBrightmap = nextBrightmap;
 
 			changeTexture = false;

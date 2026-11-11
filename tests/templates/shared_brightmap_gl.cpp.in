@@ -1,0 +1,52 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include "hardware/hw_defs.h"
+#include "hardware/hw_data.h"
+using GLuint = unsigned; using GLenum = unsigned; using GLubyte = unsigned char; using GLvoid = void;
+@@CONSTANTS@@
+static GLuint tex_downloaded, NOTEXTURE_NUM;
+static GLuint units[2], active, nextName=10;
+static void pglActiveTexture(GLenum unit) { assert(unit<2); active=unit; }
+static void pglBindTexture(GLenum, GLuint name) { units[active]=name; }
+static void pglGenTextures(int n, GLuint *out) { assert(n==1); *out=nextName++; }
+static void pglTexParameteri(GLenum, GLenum, int) {}
+template<class... T> static void pglTexImage2D(T...) {}
+template<class... T> static void pglTexSubImage2D(T...) {}
+template<class... T> static void pgluBuild2DMipmaps(T...) {}
+static void Clamp2D(GLenum) {}
+static void GL_MSG_Warning(const char *, int) { std::abort(); }
+static RGBA_t myPaletteData[256], buffer[4], *textureBuffer=buffer;
+static void AllocTextureBuffer(GLMipmap_t *m) { assert(m->width*m->height<=4); }
+static int mag_filter, min_filter, textureformatGL, maximumAnisotropy, anisotropic_filter;
+static boolean MipMap=false;
+static FTextureInfo *TexCacheTail, *TexCacheHead;
+@@FUNCTIONS@@
+int main(int argc, char **argv) {
+    assert(argc<=2);
+    const char *scenario=argc==2?argv[1]:"resident";
+    UINT8 pixel[4]={32,200,80,255};
+    GLMipmap_t a{}, m{};
+    a.downloaded=1; m.downloaded=2;
+    m.data=pixel; m.width=m.height=1; m.format=GL_TEXFMT_RGBA;
+    // An untextured draw made the driver's no-texture name, as one has in any running game;
+    // until then SetNoTexture cannot clear a unit.
+    SetTexture(&a);
+    SetTexture(nullptr);
+    assert(NOTEXTURE_NUM && units[0]==NOTEXTURE_NUM);
+    SetTexture(&a);
+    m.flags |= TF_BRIGHTMAP;
+    if (!std::strcmp(scenario,"update")) UpdateTexture(&m);
+    else { assert(!std::strcmp(scenario,"resident")); SetTexture(&m); }
+    assert(units[0]==a.downloaded && units[1]==m.downloaded);
+    m.flags &= ~TF_BRIGHTMAP;
+    SetTexture(&m);
+    assert(units[0]==m.downloaded);
+    assert(units[1]==NOTEXTURE_NUM);
+    // Same object used first as a base, then as a brightmap, must still bind unit 1.
+    m.flags |= TF_BRIGHTMAP;
+    SetTexture(&m);
+    assert(units[0]==m.downloaded && units[1]==m.downloaded);
+    puts("OpenGL shared brightmap binding passed");
+}

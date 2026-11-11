@@ -386,6 +386,25 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   plain and 3D floor). The spring must stay the exact quad in every case; before flat silhouettes were rejected,
   325 cases cut it away. Seg traversal,
   GPU depth/stencil and Xbox visuals still need separate validation.
+- **Shared brightmap textures:** `shared_brightmap_texture`, `shared_brightmap_flat`
+  and `shared_brightmap_patch` execute production texture/texture-flat and patch
+  collection after the same mipmap was used as a brightmap. Its flag must be clear
+  and the next polygon must record it as its own texture with no brightmap.
+  The pre-fix loaders leave the flag set and retain the preceding base texture.
+  `shared_brightmap_batches` executes full production polygon collection, sorting
+  and rendering for A+M, M alone, A+M and A alone, using distinct shader IDs to
+  preserve that order. A fake driver selects the unit from the flag at each bind;
+  every draw checks both units. Before the fix, M alone binds on unit 1.
+  `shared_brightmap_gl` and `shared_brightmap_gl_update` execute OpenGL's complete
+  `SetTexture`, `UpdateTexture` and `SetNoTexture` with mocked GL calls, checking
+  resident and updated brightmap-to-base transitions and base-to-brightmap reuse.
+  The pre-fix cache skips M's unit-0 bind. Allocation/conversion dependencies in
+  the collection harness are stubs; its mipmaps are already resident.
+  WARP's `shared-brightmap` scene checks the second surface's M color after A+M
+  in the same frame, for both a resident bind and an in-place brightmap update.
+  These native paths have no `_UWP`-dependent extracted code, so there is no
+  duplicate desktop variant.
+
 - **Palette brightmaps:** Direct3D 12 WARP executes the production SM5.1
   `PSSoftware` palette path. Brightmapped texels must use the base colormap's
   full-bright row at their palette index; other texels keep the surface colormap

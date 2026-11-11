@@ -233,7 +233,7 @@ static const char *const kOracles[]={
     "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect",
-    "texture", "texture-update", "texture-reuse", "mips",
+    "texture", "texture-update", "texture-reuse", "mips", "shared-brightmap",
     "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
     "screen-copy", "final-screen", "screen-flush", "wipe-blend", "wipe-mode", "wipe-wiggle", "wipe-fallback", "wipe-after", "postimg-identity", "postimg-shift",
@@ -437,6 +437,37 @@ int main(int argc,char **argv) {
             auto white=surface({255,255,255}); const FBITFIELD flags=PF_Modulated|PF_NoDepthTest;
             blend(flags); polygon(&white,q.data(),4,flags);
         };
+        // M is both A's brightmap and the next surface's own texture. No reset,
+        // readback or unrelated bind may repair the unit-0 cache between the draws.
+        {
+            std::array<UINT8,4> basePixel={216,48,24,255}, mapPixel={32,200,80,255};
+            GLMipmap_t a={}, m={};
+            for(auto *t:{&a,&m}) { t->format=GL_TEXFMT_RGBA; t->width=t->height=1; }
+            a.data=basePixel.data(); m.data=mapPixel.data();
+            texture(&a); texture(&m); // Make both resident before the cache transition.
+            auto shader=function<void (*)(int)>("SetShader");
+            special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON); shader(SHADER_SPRITE);
+            auto sharedDraw=[&](float left,float right) {
+                constexpr float depth=128.125f;
+                auto q=quad(depth); q[0].x=q[3].x=left*depth; q[1].x=q[2].x=right*depth;
+                auto white=surface({255,255,255}); white.LightInfo.light_level=255; white.LightInfo.fade_end=31;
+                polygon(&white,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
+            };
+            for(bool upload:{false,true}) {
+                reset();
+                texture(&a);
+                m.flags|=TF_BRIGHTMAP;
+                if(upload) updateTexture(&m); else texture(&m);
+                sharedDraw(-.8f,-.1f);
+                m.flags&=~TF_BRIGHTMAP;
+                texture(&m); sharedDraw(.1f,.8f);
+                expect("shared-brightmap",{216,48,24},18,32);
+                expect("shared-brightmap",{32,200,80},46,32);
+                D3D12_FinishUpdate(0);
+            }
+            deleteTexture(&a); deleteTexture(&m);
+            function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
+        }
         // Query production placements only after ordinary SetTexture creation/upload.
         // Each block must contain its own complete blind guard, including mixed alignments.
         struct Placement { UINT32 heap; UINT64 offset, block, reported, alignment; };

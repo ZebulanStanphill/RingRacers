@@ -1260,7 +1260,7 @@ void UpdateTextureInternal(GLMipmap_t *pTexInfo)
 
 	const int unit = (pTexInfo->flags & TF_BRIGHTMAP) ? 1 : 0;
 	BindTexture(unit, num);
-	g_texDownloaded = num;
+	g_texDownloaded = unit ? 0 : num; // see SetTextureInternal
 
 	Texture *texture = FindTexture(num);
 
@@ -1318,16 +1318,19 @@ void SetTextureInternal(GLMipmap_t *pTexInfo)
 	}
 	else if (pTexInfo->downloaded)
 	{
-		if (pTexInfo->downloaded != g_texDownloaded)
+		// g_texDownloaded is the texture on unit 0. A brightmap goes on unit 1, so it always binds and is not
+		// remembered: the same texture may be the next surface's own, which must then bind on unit 0
+		const bool brightmap = (pTexInfo->flags & TF_BRIGHTMAP) != 0;
+		if (brightmap || pTexInfo->downloaded != g_texDownloaded)
 		{
-			if (!(pTexInfo->flags & TF_BRIGHTMAP))
+			if (!brightmap)
 			{
 				g_texDownloaded = 0; // force update
 				SetNoTexture(1); // will be assigned later, if needed
 			}
 
-			BindTexture((pTexInfo->flags & TF_BRIGHTMAP) ? 1 : 0, pTexInfo->downloaded);
-			g_texDownloaded = pTexInfo->downloaded;
+			BindTexture(brightmap ? 1 : 0, pTexInfo->downloaded);
+			g_texDownloaded = brightmap ? 0 : pTexInfo->downloaded;
 		}
 	}
 	else

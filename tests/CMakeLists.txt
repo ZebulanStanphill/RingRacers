@@ -32,6 +32,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_fps.cpp"
     "${RR_SOURCE_DIR}/src/v_video.cpp"
     "${RR_SOURCE_DIR}/src/hardware/hw_draw.c"
+    "${RR_SOURCE_DIR}/src/hardware/r_opengl/r_opengl.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_batching.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/r_d3d12.cpp"
@@ -90,6 +91,16 @@ function(regression name source)
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 endfunction()
 
+regression(shared_brightmap_gl shared_brightmap_gl HWRENDER)
+add_test(NAME shared_brightmap_gl_update COMMAND shared_brightmap_gl update)
+regression(shared_brightmap_batches shared_brightmap HWRENDER)
+# Separate invocations keep each collection entry point independently observable.
+foreach(scenario texture flat patch)
+    add_test(NAME shared_brightmap_${scenario} COMMAND shared_brightmap_batches ${scenario})
+endforeach()
+set_tests_properties(shared_brightmap_gl_update shared_brightmap_texture
+    shared_brightmap_flat shared_brightmap_patch PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 regression(sprite_fade sprite_fade)
 regression(shadow_draw shadow_draw)
 regression(overlay_blend overlay_blend)

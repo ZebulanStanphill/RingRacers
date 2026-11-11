@@ -1,0 +1,106 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <array>
+#include "hardware/hw_glob.h"
+#include "hardware/hw_batching.h"
+#include "r_data.h"
+#include "r_state.h"
+#include "p_setup.h"
+#include "z_zone.h"
+#undef min
+#undef max
+hwdriver_s hwdriver{};
+consvar_t cv_glshaders{};
+boolean gl_shadersavailable = true;
+int ps_hw_numpolys, ps_hw_numverts, ps_hw_numcalls, ps_hw_numshaders, ps_hw_numtextures, ps_hw_numpolyflags, ps_hw_numcolors;
+precise_t ps_hw_batchsorttime, ps_hw_batchdrawtime;
+precise_t I_GetPreciseTime() { return 0; }
+void I_Error(const char *, ...) { std::abort(); }
+@@BATCHING@@
+static unsigned gl_numtextures=3;
+static GLMapTexture_t storage[3]{}, flats[3]{};
+static GLMapTexture_t *gl_textures = storage, *gl_flats = flats;
+boolean R_TextureCanRemap(INT32) { return false; }
+INT32 R_GetTextureBrightmap(INT32 n) { return n == 1 ? 2 : 0; }
+static void HWR_GenerateTexture(GLMapTexture_t *, INT32, boolean) { std::abort(); }
+static void HWR_CacheTextureAsFlat(GLMipmap_t *, INT32, boolean) { std::abort(); }
+void HWR_GetRawFlat(lumpnum_t, boolean) { std::abort(); }
+void *W_CachePatchNum(lumpnum_t, INT32) { std::abort(); }
+void *Patch_CreateGL(patch_t *) { std::abort(); }
+static void HWR_MakePatch(patch_t *, GLPatch_t *, GLMipmap_t *, boolean) { std::abort(); }
+#undef Z_ChangeTag
+#define Z_ChangeTag(p,t) ((void)(p), (void)(t))
+@@CACHE@@
+static FOutVector triangle[3]{};
+static FSurfaceInfo surface{};
+static void collect() { HWR_ProcessPolygon(&surface, triangle, 3, PF_Masked, 0, false); }
+static void check(GLMipmap_t *m) {
+    assert(!(m->flags & TF_BRIGHTMAP));
+    collect();
+    assert(polygonArray[polygonArraySize-1].texture == m);
+    assert(polygonArray[polygonArraySize-1].brightmap == nullptr);
+}
+static GLMipmap_t *units[2]{};
+static GLMipmap_t a{}, m{};
+static unsigned draws;
+static void bind(GLMipmap_t *tex) {
+    if (tex && (tex->flags & TF_BRIGHTMAP)) units[1] = tex;
+    else { units[0] = tex; units[1] = nullptr; }
+}
+static void draw(FSurfaceInfo *s, FOutVector *, FUINT count, FBITFIELD, UINT32 *) {
+    const unsigned id = s->PolyColor.s.red;
+    assert(id < 4 && count == 3);
+    assert(units[0] == (id == 1 ? &m : &a));
+    assert(units[1] == (id == 0 || id == 2 ? &m : nullptr));
+    ++draws;
+}
+int main(int argc, char **argv) {
+    assert(argc <= 2);
+    const char *scenario = argc==2 ? argv[1] : "batches";
+    hwdriver.pfnSetTexture = bind;
+    HWR_StartBatching();
+    for (auto *array : {storage, flats}) for (unsigned i=1;i<3;++i) array[i].mipmap.downloaded=i;
+    if (!std::strcmp(scenario, "texture")) {
+        HWR_GetTexture(1,1); collect();
+        assert(polygonArray[0].texture==&storage[1].mipmap && polygonArray[0].brightmap==&storage[2].mipmap);
+        HWR_GetTexture(2,2); check(&storage[2].mipmap);
+    } else if (!std::strcmp(scenario, "flat")) {
+        levelflat_t flat{}; flat.type=LEVELFLAT_TEXTURE; flat.u.texture.num=1;
+        HWR_GetLevelFlat(&flat,true); collect();
+        assert(polygonArray[0].texture==&flats[1].mipmap && polygonArray[0].brightmap==&flats[2].mipmap);
+        flat.u.texture.num=2;
+        HWR_GetLevelFlat(&flat,true); check(&flats[2].mipmap);
+    } else if (!std::strcmp(scenario, "patch")) {
+        GLMipmap_t mip{}; mip.downloaded=3; GLPatch_t gl{}; gl.mipmap=&mip;
+        patch_t patch{}; patch.hardware=&gl;
+        HWR_GetSpriteBrightmap(&patch); assert(mip.flags & TF_BRIGHTMAP);
+        HWR_GetPatch(&patch); check(&mip);
+    } else {
+        assert(!std::strcmp(scenario, "batches"));
+        a.downloaded=1; m.downloaded=2;
+        // Increasing shaders preserve this order through the production sort.
+        cv_glshaders.value=1;
+        for (bool lastUseBright : {true,false}) {
+        if (!currently_batching) HWR_StartBatching();
+        draws=0; units[0]=units[1]=nullptr;
+        for (unsigned i=0;i<4;++i) {
+            a.flags &= ~TF_BRIGHTMAP; HWR_SetCurrentTexture(i==1?&m:&a);
+            if(i==0 || i==2) { m.flags |= TF_BRIGHTMAP; HWR_SetCurrentTexture(&m); }
+            surface.PolyColor.s.red=i;
+            HWR_ProcessPolygon(&surface,triangle,3,PF_Masked,i,false);
+            // Collection of M alone must clear its role, as the cache does.
+            if(i==0) m.flags &= ~TF_BRIGHTMAP;
+        }
+        // Both possible final roles must be corrected again at render time.
+        if (!lastUseBright) m.flags &= ~TF_BRIGHTMAP;
+        hwdriver.pfnSetShader = [](int) {};
+        hwdriver.pfnDrawIndexedTriangles = draw;
+        HWR_RenderBatches(); assert(draws==4);
+        }
+    }
+    free(finalVertexArray); free(finalVertexIndexArray); free(polygonArray);
+    free(polygonIndexArray); free(unsortedVertexArray); free(polygonSortKeys);
+    puts("shared brightmap passed");
+}
