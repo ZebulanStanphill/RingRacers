@@ -1205,7 +1205,7 @@ void D_SRB2Loop(void)
 
 	for (;;)
 	{
-		// capbudget is the target frame interval in precise_t units.
+		// capbudget is the minimum precise_t duration of a single loop iteration
 		precise_t capbudget;
 		precise_t enterprecise = I_GetPreciseTime();
 		precise_t finishprecise = enterprecise;

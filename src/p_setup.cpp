@@ -8527,7 +8527,6 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	boolean fade_shortcircuit = false;
 
-
 #ifdef _UWP
 	UWPTraceLevelLoad(false);
 #endif

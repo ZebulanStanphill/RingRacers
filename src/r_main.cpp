@@ -600,13 +600,19 @@ static inline void R_InitLightTables(void)
 //#define WOUGHMP_WOUGHMP // I got a fish-eye lens - I'll make a rap video with a couple of friends
 // it's kinda laggy sometimes
 
+#ifdef WOUGHMP_WOUGHMP
+#define AHHHH_IM_SO_MAAAAD { 0U, 0, FRACUNIT, NULL, 0, 0, {0}, {0}, false }
+#else
+#define AHHHH_IM_SO_MAAAAD { 0U,    FRACUNIT, NULL, 0, 0, {0}, {0}, false }
+#endif
+
 static struct viewmorph {
 	angle_t rollangle; // pre-shifted by fineshift
 #ifdef WOUGHMP_WOUGHMP
 	fixed_t fisheye;
 #endif
 
-	fixed_t zoomneeded = FRACUNIT;
+	fixed_t zoomneeded;
 	INT32 *scrmap;
 	INT32 scrmapsize;
 
@@ -622,7 +628,14 @@ static struct viewmorph {
 	float mapcos, mapsin;
 	INT32 mapend, maprealend;
 	INT32 mapwidth, mapheight, mappitch;
-} viewmorph[MAXSPLITSCREENPLAYERS] = {};
+} viewmorph[MAXSPLITSCREENPLAYERS] = {
+	AHHHH_IM_SO_MAAAAD,
+	AHHHH_IM_SO_MAAAAD,
+	AHHHH_IM_SO_MAAAAD,
+	AHHHH_IM_SO_MAAAAD,
+};
+
+#undef AHHHH_IM_SO_MAAAAD
 
 void R_CheckViewMorph(int s)
 {

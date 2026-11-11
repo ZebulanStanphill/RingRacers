@@ -6042,7 +6042,6 @@ INT32 G_FindMapByNameOrCode(const char *mapname, char **realmapnamep)
 //
 void G_SetGamestate(gamestate_t newstate)
 {
-
 #ifdef _UWP
 	UWPTraceGamestate((INT32)gamestate, (INT32)newstate);
 #endif
