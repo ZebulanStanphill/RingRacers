@@ -863,3 +863,16 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   cannot copy Software's integer-column rounding or global freelook shear;
   hardware retains true perspective. Native tests check geometry, not pixels,
   model rasterization or Xbox output.
+
+- **Split fullbright colormap fading:** `sprite_fade` executes the production
+  split-sprite lighting block and fade helper with real engine types and
+  brightness predicates. Check fullbright/ordinary sprites, flagged/unflagged
+  colormaps, above/below boundaries, RF_NOCOLORMAPS, object light offsets and
+  overrides, semibright, paper sprites, missing colormaps, boundary equality and
+  NOSHADE. Software only fades newly split lower fullbright pieces; projection
+  keeps the original piece fullbright and drawing suppresses its colormap tint.
+  Hardware uses the entry's light without object offsets or directional light,
+  retaining shader distance diminishing and suppressing tint. Fullbright and
+  semibright are mutually exclusive; existing semibright lighting is unchanged.
+  The harness stubs boundary heights and ordinary post-lighting dependencies;
+  it checks lighting decisions, not shader pixels or Xbox output.

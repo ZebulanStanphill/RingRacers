@@ -52,6 +52,17 @@ def generate(engine, output):
     render(templates / "overlay_blend.cpp.in", {
         "BLEND": Source(engine / "src/hardware/hw_main.c").section("FBITFIELD HWR_GetBlendModeFlag(INT32 ast)", "FBITFIELD HWR_TranstableToAlpha"),
     }, output / "overlay_blend.cpp")
+    fade = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "sprite_fade.cpp.in", {
+        "HELPER": fade.function("HWR_FadeSplitSprite"),
+        "OVERRIDE": fade.function("HWR_OverrideObjectLightLevel"),
+        "FULLBRIGHT": Source(engine / "src/r_things.cpp").function("R_ThingIsFullBright"),
+        "SEMIBRIGHT": Source(engine / "src/r_things.cpp").function("R_ThingIsSemiBright"),
+        "FULLDARK": Source(engine / "src/r_things.cpp").function("R_ThingIsFullDark"),
+        "PAPER": Source(engine / "src/r_things.cpp").function("R_ThingIsPaperSprite"),
+        "LOOP": function_section(fade, "HWR_SplitSprite",
+            "\t\t// even if we aren't changing colormap", "\n\t\tif (i + 1 < sector->numlights)"),
+    }, output / "sprite_fade.cpp")
     shadow_hardware = Source(engine / "src/hardware/hw_main.c")
     shadow_software = Source(engine / "src/r_things.cpp")
     render(templates / "shadow_draw.cpp.in", {

@@ -1,0 +1,109 @@
+#include <cassert>
+#include <cstdio>
+#include <initializer_list>
+#include "doomdef.h"
+#include "hardware/hw_glob.h"
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
+@@FULLBRIGHT@@
+@@SEMIBRIGHT@@
+@@FULLDARK@@
+@@PAPER@@
+INT32 R_ThingLightLevel(mobj_t *thing) { return thing->lightlevel; }
+@@OVERRIDE@@
+@@HELPER@@
+static int postcalls;
+void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *, INT32 *level, boolean)
+{
+    ++postcalls;
+    *level += R_ThingLightLevel(spr->mobj);
+    if (R_ThingIsSemiBright(spr->mobj)) *level = 192 + (*level >> 1);
+}
+static fixed_t boundary;
+static fixed_t P_GetLightZAt(const lightlist_t *, fixed_t, fixed_t) { return boundary; }
+static void piece(gl_vissprite_t *spr, lightlist_t *list, int i,
+    INT32 &lightlevel, extracolormap_t *&colormap)
+{
+    sector_t sec{};
+    const sector_t *sector = &sec;
+    fixed_t temp;
+    float realtop = 100, realbot = 0;
+    boolean lightset = HWR_OverrideObjectLightLevel(spr->mobj, &lightlevel);
+@@LOOP@@
+}
+int main()
+{
+    unsigned cases = 0;
+    for (bool full : {false, true})
+    for (bool flag : {false, true})
+    for (bool below : {false, true})
+    for (bool nocolor : {false, true})
+    for (int offset : {-32, 0, 48})
+    {
+        mobj_t obj{}; gl_vissprite_t spr{}; spr.mobj = &obj;
+        obj.frame = full ? FF_FULLBRIGHT : 0;
+        obj.renderflags = nocolor ? RF_NOCOLORMAPS : 0;
+        obj.lightlevel = offset;
+        extracolormap_t map{}; map.flags = flag ? CMF_FADEFULLBRIGHTSPRITES : 0;
+        extracolormap_t *mapping = &map, *color = nullptr;
+        INT16 entrylight = 80;
+        lightlist_t list[2]{};
+        for (auto &entry : list) {
+            entry.lightlevel = &entrylight; entry.extra_colormap = &mapping;
+            entry.flags = FOF_CUTSPRITES;
+        }
+        boundary = below ? 50 * FRACUNIT : 120 * FRACUNIT;
+        INT32 level = 100; postcalls = 0;
+        piece(&spr, list, below ? 1 : 0, level, color);
+        assert(level == (full ? (flag && below ? 80 : 255) : 80 + offset));
+        assert(color == (full || nocolor ? nullptr : &map));
+        assert(postcalls == (full ? 0 : 1));
+        ++cases;
+    }
+    mobj_t obj{}; gl_vissprite_t spr{}; spr.mobj = &obj;
+    extracolormap_t map{}; map.flags = CMF_FADEFULLBRIGHTSPRITES;
+    extracolormap_t *mapping = &map, *color = nullptr;
+    INT16 entrylight = 80; lightlist_t list[2]{};
+    for (auto &entry : list) { entry.lightlevel = &entrylight;
+        entry.extra_colormap = &mapping; entry.flags = FOF_CUTSPRITES; }
+    boundary = 50 * FRACUNIT;
+    for (bool flag : {false, true})
+    for (auto overrideflag : {RF_FULLDARK, RF_ABSOLUTELIGHTLEVEL, RF_SEMIBRIGHT}) {
+        map.flags = flag ? CMF_FADEFULLBRIGHTSPRITES : 0;
+        obj.frame = 0; obj.renderflags = overrideflag; obj.lightlevel = 24;
+        INT32 level = 100; piece(&spr, list, 1, level, color);
+        assert(level == (overrideflag == RF_FULLDARK ? 0 :
+            overrideflag == RF_ABSOLUTELIGHTLEVEL ? 24 : 244));
+        ++cases;
+    }
+    map.flags = CMF_FADEFULLBRIGHTSPRITES;
+    obj.frame = FF_FULLBRIGHT;
+    for (auto flags : {RF_PAPERSPRITE, (renderflags_t)0}) {
+        obj.renderflags = flags;
+        INT32 level = 255;
+        HWR_FadeSplitSprite(&spr, &list[1], true, &level);
+        assert(level == (flags ? 255 : 80));
+        ++cases;
+    }
+    obj.renderflags = 0;
+    for (int light : {-32, 0, 255, 300}) {
+        entrylight = light; INT32 level = 255;
+        HWR_FadeSplitSprite(&spr, &list[1], true, &level);
+        assert(level == (light < 0 ? 0 : light > 255 ? 255 : light));
+        ++cases;
+    }
+    entrylight = 80;
+    // Missing colormaps, out-of-sprite boundaries, and NOSHADE keep fullbright.
+    obj.renderflags = 0;
+    for (int mode : {0, 1, 2, 3}) {
+        mapping = mode == 0 ? nullptr : &map;
+        boundary = (mode == 1 ? 100 : mode == 2 ? 0 : 50) * FRACUNIT;
+        list[1].flags = FOF_CUTSPRITES | (mode == 3 ? FOF_NOSHADE : 0);
+        INT32 level = 100; piece(&spr, list, 1, level, color);
+        assert(level == 255); ++cases;
+    }
+    // A pre-fix fullbright override fails the lower-piece light oracle.
+    INT32 oldlevel = 0; HWR_OverrideObjectLightLevel(&obj, &oldlevel);
+    assert(oldlevel != 80);
+    printf("sprite fade: %u decisions passed\n", cases);
+}

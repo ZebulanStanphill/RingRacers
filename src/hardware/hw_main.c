@@ -5277,6 +5277,17 @@ static float HWR_SpriteUV(gl_vissprite_t *spr, boolean vertical)
 		: ((GLPatch_t *)spr->gpatch->hardware)->max_s;
 }
 
+// [UWP]: Software only fades newly split fullbright pieces, without tint or object lighting.
+static void HWR_FadeSplitSprite(gl_vissprite_t *spr, const lightlist_t *light,
+	boolean belowboundary, INT32 *lightlevel)
+{
+	if (belowboundary && R_ThingIsFullBright(spr->mobj)
+		&& !R_ThingIsPaperSprite(spr->mobj)
+		&& *light->extra_colormap
+		&& ((*light->extra_colormap)->flags & CMF_FADEFULLBRIGHTSPRITES))
+		*lightlevel = min(max(*light->lightlevel, 0), 255);
+}
+
 static void HWR_SplitSprite(gl_vissprite_t *spr)
 {
 	FOutVector wallVerts[4];
@@ -5468,6 +5479,10 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 
 			if (!R_ThingIsFullBright(spr->mobj) && !(spr->mobj->renderflags & RF_NOCOLORMAPS))
 				colormap = *list[i].extra_colormap;
+
+			temp = P_GetLightZAt(&list[i], spr->mobj->x, spr->mobj->y);
+			HWR_FadeSplitSprite(spr, &list[i], i > 0
+				&& temp < FLOAT_TO_FIXED(realtop) && temp > FLOAT_TO_FIXED(realbot), &lightlevel);
 		}
 
 		if (i + 1 < sector->numlights)
