@@ -1,0 +1,117 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+#include "doomdef.h"
+#include "d_event.h"
+
+event_t events[MAXEVENTS];
+INT32 eventhead, eventtail;
+static boolean netgame;
+static struct { boolean playback; } demo;
+static std::vector<INT32> registered, unregistered;
+static INT32 playerdevice[MAXSPLITSCREENPLAYERS];
+static unsigned panels;
+void I_Error(const char *, ...) { std::abort(); }
+static bool postfromalert;
+void D_PostEvent(const event_t *ev);
+void HandleGamepadDeviceEvents(event_t *ev);
+static void G_RegisterAvailableGamepad(INT32 device) { registered.push_back(device); }
+static void G_UnregisterAvailableGamepad(INT32 device) { unregistered.push_back(device); }
+static void I_GetGamepadGuid(INT32, char *out, int) { *out = 0; }
+static void I_GetGamepadName(INT32, char *out, int) { *out = 0; }
+static INT32 G_GetDeviceForPlayer(INT32 player) { return playerdevice[player]; }
+static void G_SetDeviceForPlayer(INT32 player, INT32 device) { playerdevice[player] = device; }
+static boolean Playing(void) { return true; }
+static void M_StartControlPanel(void) { ++panels; }
+void CONS_Alert(alerttype_t, const char *, ...)
+{
+    // Startup logging can poll input, which posts events from inside the bookkeeping.
+    if (postfromalert)
+    {
+        event_t nested{};
+        nested.type = ev_keydown;
+        nested.data1 = -1;
+        D_PostEvent(&nested);
+    }
+}
+@@ADDED@@
+@@REMOVED@@
+@@DEVICE@@
+@@POST@@
+static void post(evtype_t type, INT32 device, INT32 data1)
+{
+    event_t ev{};
+    ev.type = type;
+    ev.device = device;
+    ev.data1 = data1;
+    D_PostEvent(&ev);
+}
+// D_ProcessEvents' walk of the queue, keeping what its responders would see.
+static std::vector<INT32> drain()
+{
+    std::vector<INT32> seen;
+    for (; eventtail != eventhead; eventtail = (eventtail+1) & (MAXEVENTS-1))
+    {
+        HandleGamepadDeviceEvents(&events[eventtail]);
+        if (events[eventtail].type == ev_gamepad_axis)
+            seen.push_back(events[eventtail].data1);
+    }
+    return seen;
+}
+static void reset()
+{
+    eventhead = eventtail = 0;
+    registered.clear();
+    unregistered.clear();
+    panels = 0;
+    postfromalert = false;
+    for (INT32 &device : playerdevice)
+        device = -1;
+}
+int main()
+{
+    // A pad opened at startup, then stick movement through the loading screen with nothing
+    // reading the queue. Every count around one and two laps of the ring keeps the pad.
+    for (int moves : {0, 1, MAXEVENTS-3, MAXEVENTS-2, MAXEVENTS-1, MAXEVENTS, MAXEVENTS+1,
+        2*MAXEVENTS-1, 2*MAXEVENTS, 2*MAXEVENTS+1, 1000})
+    {
+        reset();
+        post(ev_gamepad_device_added, 1, 0);
+        for (int i = 0; i < moves; ++i)
+            post(ev_gamepad_axis, 1, i);
+        const std::vector<INT32> seen = drain();
+        assert(registered == std::vector<INT32>{1});
+        // The newest movement survives, in order, up to the queue's capacity.
+        const int kept = moves < MAXEVENTS-1 ? moves : MAXEVENTS-1;
+        assert((int)seen.size() == kept);
+        for (size_t i = 0; i < seen.size(); ++i)
+            assert(seen[i] == moves - (int)seen.size() + (int)i);
+    }
+
+    // A pad removed and another added while the queue overflows: each is handled once, in order.
+    reset();
+    playerdevice[0] = 1;
+    post(ev_gamepad_device_added, 1, 0);
+    post(ev_gamepad_device_removed, 1, 0);
+    post(ev_gamepad_device_added, 2, 0);
+    for (int i = 0; i < 3*MAXEVENTS; ++i)
+        post(ev_gamepad_axis, 2, i);
+    assert((registered == std::vector<INT32>{1, 2}) && (unregistered == std::vector<INT32>{1}));
+    assert(playerdevice[0] == -1 && panels == 1);
+    drain();
+    assert(registered.size() == 2 && unregistered.size() == 1);
+
+    // Bookkeeping that posts an event of its own must not make the queue look empty.
+    reset();
+    postfromalert = true;
+    post(ev_gamepad_device_added, 1, 0);
+    for (int i = 0; i < MAXEVENTS+5; ++i)
+        post(ev_gamepad_axis, 1, i);
+    assert(registered == std::vector<INT32>{1});
+    assert(((eventhead - eventtail) & (MAXEVENTS-1)) == MAXEVENTS-1);
+    const std::vector<INT32> seen = drain();
+    assert(!seen.empty() && seen.back() == MAXEVENTS+4);
+
+    puts("event queue: overflow keeps device events and the newest input");
+}

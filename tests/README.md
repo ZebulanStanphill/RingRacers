@@ -52,6 +52,14 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   ticker fails the UWP immediate associates-card skip case. See
   [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
+- **Input queue overflow:** `event_queue` executes the production `D_PostEvent` and
+  gamepad device bookkeeping. A pad's added event followed by 0 to 1000 axis
+  events with nothing reading the queue (stick movement during the loading
+  screen) must still register the pad once, and the newest 127 events must
+  survive in order. The pre-fix queue wrapped at 128 events and lost the added
+  event, so the pad's input was ignored. Also checks a removal and a second pad
+  across an overflow, and bookkeeping that posts an event of its own.
+
 - **Renderer setting at startup:** `renderer_setting` executes the production
   `SCR_ChangeRenderer` through the UWP startup order: the setting's default,
   VibeRant D3D, queues a switch while Software runs, then the config sets

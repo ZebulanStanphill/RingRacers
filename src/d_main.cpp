@@ -220,6 +220,17 @@ boolean dedicated = false;
 //
 void D_PostEvent(const event_t *ev)
 {
+	// [UWP]: A full queue used to wrap around, which lost everything in it. Startup opens pads early and polls them
+	// all through the loading screen while nothing reads the queue, so stick movement there could push out the pad's
+	// own added event, and its input was then ignored for the whole session. Drop the oldest event instead, after
+	// the device bookkeeping it may carry. That can post events itself, hence the loop.
+	while (((eventhead+1) & (MAXEVENTS-1)) == eventtail)
+	{
+		event_t oldest = events[eventtail];
+		eventtail = (eventtail+1) & (MAXEVENTS-1);
+		HandleGamepadDeviceEvents(&oldest);
+	}
+
 	events[eventhead] = *ev;
 	eventhead = (eventhead+1) & (MAXEVENTS-1);
 }

@@ -49,6 +49,13 @@ def generate(engine, output):
         "TRANSFORM": Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp").function("D3D_SetTransform"),
         "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),
     }, output / "split_projection.cpp")
+    events = Source(engine / "src/d_main.cpp")
+    render(templates / "event_queue.cpp.in", {
+        "ADDED": events.function("HandleGamepadDeviceAdded"),
+        "REMOVED": events.function("HandleGamepadDeviceRemoved"),
+        "DEVICE": events.function("HandleGamepadDeviceEvents"),
+        "POST": events.function("D_PostEvent"),
+    }, output / "event_queue.cpp")
     render(templates / "renderer_setting.cpp.in", {
         "CHANGE": Source(engine / "src/screen.c").function("SCR_ChangeRenderer"),
     }, output / "renderer_setting.cpp")
