@@ -870,7 +870,8 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Two-player view width:** `split_projection` extracts the D3D12 transform
   and shared frustum helper. Check 20 projections (five FOVs, all view layouts)
-  against Software's 1.7x horizontal half-tangent and 25 pitched split-view corner bounds.
+  against Software's 1.7x horizontal half-tangent, 100 literal frustum angles
+  (five pitches in every layout), and 25 pitched two-player corner bounds.
   Single, three- and four-player projections stay unchanged. The sky dome uses
   the same driver transform; `HWR_WallFillsView` already uses 1.7. Both normal
   rendering and portal searches use the widened frustum. The legacy sky quad's

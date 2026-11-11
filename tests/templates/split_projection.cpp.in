@@ -23,9 +23,21 @@ static fixed_t R_FOV(int) { return fov; }
 @@FRUSTUM@@
 int main()
 {
-    for (int degrees : {40, 60, 90, 100, 120})
+    // Literal clip angles in whole degrees for pitches 0, 15, 30 and 45.
+    // The shared clipper conservatively rounds its historical pitch envelope down;
+    // only the two-player layout feeds it a FOV widened by 1.7 in half-tangent space.
+    struct FrustumCase { int degrees; int ordinary[4], twoPlayer[4]; };
+    const FrustumCase cases[] = {
+        {40, {30,35,40,45}, {47,55,63,71}},
+        {60, {45,52,60,67}, {66,77,88,99}},
+        {90, {66,78,89,100}, {87,102,117,132}},
+        {100, {74,86,99,111}, {93,109,125,142}},
+        {120, {88,103,118,133}, {104,122,140,158}},
+    };
+    for (const auto &test : cases)
     for (int split = 0; split < 4; ++split)
     {
+        const int degrees = test.degrees;
         FTransform transform{};
         transform.fovxangle = degrees;
         transform.splitscreen = split;
@@ -33,13 +45,17 @@ int main()
         double half = tan(projected_fov*M_PI/360)*projected_aspect;
         double expected = tan(degrees*M_PI/360)*(split == 1 ? 1.7 : 1.0);
         assert(fabs(half-expected) < 1e-6);
-        // The former 1.6x projection must fail this independent width oracle.
-        if (split == 1) assert(fabs(tan(degrees*M_PI/360)*1.6-expected) > .01);
+        assert(projected_aspect == (split == 1 ? 2.0f : 1.0f));
         r_splitscreen = split;
         fov = degrees*FRACUNIT;
+        int pitchIndex = 0;
         for (int pitch : {0, 15, 30, 45, 47})
         {
             angle_t clip = gld_FrustumAngle(pitch*ANG1);
+            const angle_t expectedClip = pitch == 47 ? 0xffffffffu
+                : ANG1 * (split == 1 ? test.twoPlayer[pitchIndex] : test.ordinary[pitchIndex]);
+            assert(clip == expectedClip);
+            ++pitchIndex;
             double bound = clip == 0xffffffff ? 180 : double(clip)/ANG1;
             // Horizontal corner extent under true pitch: y/z <= vertical half-tangent.
             double vertical = expected*BASEVIDHEIGHT/BASEVIDWIDTH/(split == 1 ? 2 : 1);
@@ -48,5 +64,5 @@ int main()
             if (split == 1) assert(bound >= edge);
         }
     }
-    puts("split projection: 20 projections, 25 split frustum bounds passed");
+    puts("split projection: 20 projections, 100 frustum angles and 25 split corner bounds passed");
 }
