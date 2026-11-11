@@ -17,8 +17,9 @@
 #include "w_wad.h"
 #include "map_preview_cache.hpp"
 
-// One P_InitMapData call's use of <srb2home>/mapcache.bin: reads it at the first PK3 map or ghost (a later call for an
-// add-on without any reads nothing) and saves it, if anything was added, on destruction. A cache that cannot be read or written is only logged, and the game reads its files as usual.
+// One P_InitMapData call's use of mapcache.bin in the app's local folder (srb2home if no local folder is available).
+// Reads it at the first PK3 map or ghost; a call without either reads nothing. Saves changes on destruction.
+// A cache that cannot be read or written is only logged, and the game reads its files as usual.
 class UWPMapCache
 {
 public:

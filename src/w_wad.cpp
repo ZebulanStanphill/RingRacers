@@ -155,8 +155,9 @@ static void PrintMD5String(const UINT8 *md5, char *buf);
 #endif
 
 #ifdef _UWP
-// Only the main thread queues files, before starting the worker. The worker owns
-// all result fields until the release store of its final state; the main thread
+// Only the main thread queues main files with expected MD5s, before starting the worker, for checking and optional
+// copying to internal storage. Check results are published by the release store of the check state; copy results
+// are published by the release store of uwpcopydone. The main thread
 // reads them only after an acquire load. No zone allocations or engine logging
 // occur on the worker. Static storage has no exit-time destructors.
 enum uwpcheckstate_t { UWPCHECK_IDLE, UWPCHECK_RUNNING, UWPCHECK_VERIFIED, UWPCHECK_FAILED };

@@ -9341,7 +9341,7 @@ UINT8 P_InitMapData(void)
 	virtlump_t *minimap, *thumbnailPic;
 	char *name;
 #ifdef _UWP
-	UWPMapCache mapcache; // [UWP]: reads mapcache.bin now and saves it when this returns
+	UWPMapCache mapcache; // [UWP]: reads the local cache on the first PK3 map or ghost; saves changes on return
 #endif
 
 	for (i = 0; i < nummapheaders; ++i)

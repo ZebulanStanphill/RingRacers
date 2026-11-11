@@ -1228,8 +1228,8 @@ void R_Init(void)
 // P_GetThingStepUp, P_MobjFloorZ), while walking the BSP from its root every time was 10% of game logic on Xbox.
 // Cleared whenever a level's BSP is loaded or freed. Only the main thread looks up points.
 //
-// Two-way set associative: 2048 sets of 2 entries, 64 KB. The 512 direct-mapped entries it replaces answered only
-// about 60% of lookups on Xbox; a set keeps the two most recently inserted points that hash to it, newest first.
+// Two-way set associative: 2048 sets of 2 entries, 64 KB. A set keeps the two most recently inserted points that
+// hash to it, newest first. Hits leave that insertion order unchanged.
 struct PointInSubsectorCacheEntry
 {
 	fixed_t x, y;
