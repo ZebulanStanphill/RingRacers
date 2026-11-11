@@ -1,0 +1,27 @@
+#include <cassert>
+#include <algorithm>
+#include "doomdef.h"
+#include "r_defs.h"
+static int skyflatnum = 1;
+@@CUTS@@
+int main()
+{
+    sector_t front{}, back{};
+    const auto check = [&](bool ceilings, bool floors, bool poly,
+                           int top, int bottom, int high, int low,
+                           int expectedHigh, int expectedLow) {
+        front.ceilingpic = back.ceilingpic = ceilings ? 1 : 0;
+        front.floorpic = floors ? 1 : 0; back.floorpic = 1;
+        fixed_t h = high, l = low;
+        HWR_MidtextureSkyCuts(poly, &front, &back, top, bottom, &h, &l);
+        assert(std::min(h, top) == expectedHigh);
+        assert(std::max(l, bottom) == expectedLow);
+    };
+    // Municipal Meadow MIDPEG: front 0..382, back -2..-2, 128-high art.
+    check(true, true, false, 128, 0, -2, 0, 128, 0);
+    check(true, false, false, 128, -8, -2, 0, 128, 0);
+    check(false, false, false, 128, -8, 64, 0, 64, 0);
+    check(true, true, true, 128, 0, 64, 8, 64, 8);
+    // Second endpoint: texture rises 32 while the opening falls 16.
+    check(true, true, false, 160, 32, 112, -16, 160, 32);
+}

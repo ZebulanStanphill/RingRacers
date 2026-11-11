@@ -1281,6 +1281,19 @@ static float HWR_ViewFogGain(void)
 	return colormap ? max(0.0f, 1.0f - R_GetRgbaA(colormap->rgba) / 24.0f) : 1.0f;
 }
 
+// [UWP]: Software leaves masked midtextures unclipped between matching skies.
+static void HWR_MidtextureSkyCuts(boolean polyobject, const sector_t *front,
+	const sector_t *back, fixed_t polytop, fixed_t polybottom,
+	fixed_t *highcut, fixed_t *lowcut)
+{
+	if (polyobject)
+		return;
+	if (front->ceilingpic == skyflatnum && back->ceilingpic == skyflatnum)
+		*highcut = polytop;
+	if (front->floorpic == skyflatnum && back->floorpic == skyflatnum)
+		*lowcut = polybottom;
+}
+
 void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap, boolean directional)
 {
 	RGBA_t poly_color, tint_color, fade_color;
@@ -2944,6 +2957,9 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 				highcut = popentop;
 			}
 
+			HWR_MidtextureSkyCuts(gl_curline->polyseg != NULL, gl_frontsector,
+				gl_backsector, polytop, polybottom, &highcut, &lowcut);
+
 			h = min(highcut, polytop);
 			l = max(polybottom, lowcut);
 
@@ -3004,6 +3020,9 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 						: worldlowslope-worldlow;
 
 				// Texture stuff
+				HWR_MidtextureSkyCuts(gl_curline->polyseg != NULL, gl_frontsector,
+					gl_backsector, polytop, polybottom, &highcut, &lowcut);
+
 				h = min(highcut, polytop);
 				l = max(polybottom, lowcut);
 

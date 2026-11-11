@@ -508,6 +508,10 @@ def generate(engine, output):
     render(templates / "front_bbox.cpp.in", {
         "BSP_WALK": hardware.function("HWR_RenderBSPNode"),
     }, output / "front_bbox.cpp")
+    assert hardware.function("HWR_ProcessSeg").count("HWR_MidtextureSkyCuts(") == 2
+    render(templates / "midtexture_sky.cpp.in", {
+        "CUTS": hardware.function("HWR_MidtextureSkyCuts"),
+    }, output / "midtexture_sky.cpp")
     render(templates / "sky_claim.cpp.in", {
         "SKY_GATE": function_section(hardware, "HWR_Subsector",
             "\tif (sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",

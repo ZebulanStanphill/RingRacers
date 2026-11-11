@@ -804,3 +804,8 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   visited leaf's own `hwbbox`. Desktop retains unconditional front traversal. The
   pre-fix UWP walk fails the hidden-subtree case. These checks cover traversal,
   not rendered pixels or Xbox output.
+
+- **Midtextures between skies:** `midtexture_sky` executes the production cut
+  helper for Municipal Meadow's MIDPEG trees, one matching sky plane, ordinary
+  openings, polyobjects and the sloped second endpoint. Generation checks both
+  endpoint computations call it. This tests clipping decisions, not GPU pixels.
