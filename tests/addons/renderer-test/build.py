@@ -51,6 +51,8 @@ ENCORE_REMAP = bytes.fromhex(
 # Editor numbers (MapThingNum) for the add-on's own scenery objects.
 THING_TRANS = 3900
 THING_GLOW = 3901
+THING_PARITY = 3902
+DARK_PAD_TAG = 85
 
 # Polyobject thing editor numbers: the engine's, and the ones ZDBSP knows.
 PO_ANCHOR, PO_SPAWN = 760, 761
@@ -359,6 +361,61 @@ def sprite_glow_brightmap():
     return render(48, 48, palette, pixel, offsets=(24, 48))
 
 
+# Parity wing assets: deliberately saturated, with fine detail behind blends.
+def texture_pattern():
+    return render(128, 128, [(255, 240, 160, 255), (40, 80, 200, 255),
+                             (255, 60, 100, 255), (40, 240, 160, 255)],
+                  lambda x, y: ((x // 8) + (y // 8)) % 4)
+
+
+def texture_label(number):
+    """One large room/band number, repeated vertically on a coloured panel."""
+    digits = ("111101101101111", "010110010010111", "111001111100111",
+              "111001111001111", "101101111001001", "111100111001111",
+              "111100111101111", "111001001001001", "111101111101111",
+              "111101111001111")
+    colours = [(220, 70, 60, 255), (60, 200, 100, 255), (70, 130, 240, 255),
+               (230, 180, 50, 255), (180, 80, 220, 255), (40, 210, 210, 255),
+               (240, 130, 60, 255)]
+    text = str(number)
+
+    def pixel(x, y):
+        if x < 3 or x >= 125:
+            return 0
+        xx, yy = x - (128 - len(text) * 32) // 2, y % 128 - 40
+        if 0 <= xx < len(text) * 32 and 0 <= yy < 40:
+            n, gx = divmod(xx, 32)
+            if gx < 24 and digits[int(text[n])][(yy // 8) * 3 + gx // 8] == "1":
+                return 2
+        return 1
+
+    return render(128, 128, [(12, 16, 24, 255), colours[number % 7],
+                             (255, 255, 255, 255)], pixel)
+
+
+def texture_fogpanel():
+    return render(128, 256, [(40, 180, 220, 255), (255, 255, 255, 255),
+                             (20, 60, 100, 255)],
+                  lambda x, y: 2 if x % 64 < 4 or y % 64 < 4 else (1 if (x-y) % 64 < 4 else 0))
+
+
+def texture_treeline():
+    def pixel(x, y):
+        # 512-high patch, with its opaque tips at z=352, below the front sky
+        # ceiling (382). The zero-height back must not clip any of it.
+        top = 160 + abs(x % 128 - 64) * 3
+        return 0 if y < top else (1 if (x // 8 + y // 16) % 2 else 2)
+    return render(256, 512, [(0, 0, 0, 0), (20, 90, 40, 255),
+                             (70, 180, 70, 255)], pixel)
+
+
+def sprite_parity():
+    return render(64, 192, [(0, 0, 0, 0), (255, 240, 80, 255),
+                            (240, 60, 120, 255), (60, 230, 250, 255)],
+                  lambda x, y: 0 if x < 4 or x >= 60 or y < 4 else 1 + (y // 24) % 3,
+                  offsets=(32, 192))
+
+
 # Ordered so that every folder's entries are contiguous: the engine finds a
 # PK3 folder as a run of consecutive entries.
 IMAGES = [
@@ -370,11 +427,16 @@ IMAGES = [
     ("Textures/RTWATER.png", texture_water),
     ("Textures/RTFOG.png", texture_fog),
     ("Textures/RTGLASS.png", texture_glass),
+    ("Textures/RTPATT.png", texture_pattern),
+    ("Textures/RTTREE.png", texture_treeline),
+    ("Textures/RTPANE.png", texture_fogpanel),
+    *[(f"Textures/RTN{n:02}.png", lambda n=n: texture_label(n)) for n in range(40)],
     ("Flats/RTFLOOR.png", flat_floor),
     ("Flats/RTCEIL.png", flat_ceiling),
     ("Flats/RTSKYF.png", flat_skyfloor),
     ("Sprites/RTTRA0.png", sprite_crystal),
     ("Sprites/RTGLA0.png", sprite_glow),
+    ("Sprites/RTPRA0.png", sprite_parity),
     # Not in Sprites/: that folder's lumps are all read as frames of whichever
     # sprite their first four letters name, and this one starts with RTGL.
     ("Graphics/RTGLBRA0.png", sprite_glow_brightmap),
@@ -388,6 +450,9 @@ IMAGES = [
 SOC = f"""Freeslot
 MT_RTTRANS
 MT_RTGLOW
+MT_RTPARITY
+S_RTPARITY
+SPR_RTPR
 S_RTTRANS
 S_RTGLOW
 SPR_RTTR
@@ -408,6 +473,20 @@ SpawnHealth = 1000
 Radius = 24*FRACUNIT
 Height = 48*FRACUNIT
 Flags = MF_SCENERY|MF_NOBLOCKMAP|MF_NOGRAVITY
+
+Object MT_RTPARITY
+MapThingNum = {THING_PARITY}
+SpawnState = S_RTPARITY
+SpawnHealth = 1000
+Radius = 48*FRACUNIT
+Height = 192*FRACUNIT
+Flags = MF_SCENERY|MF_NOBLOCKMAP|MF_NOGRAVITY
+
+State S_RTPARITY
+SpriteName = RTPR
+SpriteFrame = FF_FULLBRIGHT|A
+Duration = -1
+Next = S_NULL
 
 State S_RTTRANS
 SpriteName = RTTR
@@ -819,6 +898,73 @@ def build_geometry():
              lightlevel=200)
     g.edge((SKY_PIT[0], SKY_PIT[1]), (SKY_PIT[0], SKY_PIT[3]), blocking=True)
 
+    # 10. Software parity wing. Enter through Brightmaps, then turn east.
+    # All adjoining floors meet at zero; the race/checkpoint loop stays in the hall.
+    g.sector("parity_entry", rect(576, -1792, 1088, -1472), wall="RTN00", lightlevel=200)
+    g.sector("parity_hall", rect(448, -2048, 9472, -1792), wall="RTN00", lightlevel=200)
+
+    # 1: two equal windows, fog on the west, ordinary translucency on the east.
+    g.sector("fogline_front", rect(1408, -2560, 2432, -2048), wall="RTN01",
+             lightlevel=160, lightcolor=color(255, 60, 20), lightalpha=12)
+    for n, (a, b) in enumerate(((1408, 1920), (1920, 2432))):
+        g.sector(f"fogline_back{n}", rect(a, -3072, b, -2560), wall="RTPATT", lightlevel=255)
+        g.edge((a, -2560), (b, -2560), midtexture="RTPANE", midpeg=True,
+               renderstyle="fog" if n == 0 else "translucent", alpha=0.5, sides=({}, {}))
+
+    # 2: identical colormaps above AND below a sprite-cutting light boundary.
+    for n, (a, b) in enumerate(((2560, 3200), (3328, 3968))):
+        cm = dict(fadecolor=color(20, 40, 120), fadestart=0, fadeend=20,
+                  lightcolor=color(255, 255, 255), lightalpha=0)
+        if n == 0:
+            cm["colormapfadesprites"] = True
+        g.sector(f"fade_room{n}", rect(a, -5632, b, -2048), wall="RTN02", id=81+n,
+                 heightceiling=384, lightlevel=160, **cm)
+        control(f"fade_slice{n}", 80, 96, 200, [81+n, 0], lightlevel=128, **cm)
+        for y in range(-2432, -5505, -512):
+            g.thing(THING_PARITY, (a+b)//2, y)
+
+    # 3: flat pair, then a pair on a gentle ramp. P_TryMove assigns standingslope.
+    g.sector("shadow_flat", rect(4096, -2560, 5120, -2048), wall="RTN03", lightlevel=200)
+    g.sector("shadow_slope", rect(4096, -3072, 5120, -2560), wall="RTN03", lightlevel=200,
+             heightceiling=384, floorplane_a=0, floorplane_b=0.25, floorplane_c=1, floorplane_d=640)
+    for y in (-2368, -2880):
+        for x, variant in ((4352, 1), (4864, 0)):
+            g.thing(THING_PARITY, x, y, thingarg0=variant)
+
+    # 4: frame overlay/trans50, renderflags overlay/trans50, plain trans50, opaque overlay.
+    g.sector("overlay_room", rect(5248, -3072, 6272, -2048), wall="RTPATT", lightlevel=255)
+    g.edge((5248, -2048), (6272, -2048), sides=({"texturetop": "RTN04"}, {"texturetop": "RTN04"}))
+    g.edge((5248, -3072), (5248, -2048), sides=({"texturemiddle": "RTN04"},))
+    for x, variant in zip((5376, 5632, 5888, 6144), (2, 3, 4, 5)):
+        g.thing(THING_PARITY, x, -2880, thingarg0=variant)
+
+    # 5: marked pad, looking south at three identical bays with different light.
+    pad = rect(6848, -2304, 7104, -2112)
+    g.sector("dark_front", rect(6400, -2560, 7552, -2048), holes=[pad], wall="RTN05", lightlevel=200)
+    g.sector("dark_pad", pad, id=DARK_PAD_TAG, texturefloor="RTN05", lightlevel=200)
+    for n, light in enumerate((255, 160, 96)):
+        a = 6400 + n * 384
+        g.sector(f"dark_bay{n}", rect(a, -3072, a+384, -2560), wall="RTPATT", lightlevel=light)
+        g.thing(THING_PARITY, a+192, -2880)
+
+    # 6: Municipal Meadow's two-sky edge, with a masked midtexture taller than the back.
+    g.sector("skyedge_walk", rect(7680, -3072, 8704, -2048), wall="RTN06",
+             heightceiling=382, textureceiling="F_SKY1", lightlevel=255)
+    g.sector("skyedge_back", rect(7680, -3136, 8704, -3072), heightfloor=-2, heightceiling=-2,
+             texturefloor="F_SKY1", textureceiling="F_SKY1", lightlevel=255)
+    g.edge((7680, -3072), (8704, -3072), midtexture="RTTREE", midpeg=True,
+           blocking=True, sides=({}, {}))
+
+    # 7: forty numbered 128-unit bands facing a spot 1024 units from the wall.
+    g.sector("ruler_passage", rect(9216, -5888, 9472, -2048), wall="RTN07", lightlevel=200)
+    spot = rect(6848, -7488, 6976, -7360)
+    outline = [(4352, -8448)] + [(4352+n*128, -8448) for n in range(1, 41)] + [(9472, -5888), (4352, -5888)]
+    g.sector("ruler_room", outline, holes=[spot], wall="RTN07", heightceiling=512, lightlevel=255)
+    g.sector("ruler_spot", spot, texturefloor="RTN07", heightceiling=512, lightlevel=255)
+    for n in range(40):
+        a = 4352+n*128
+        g.edge((a, -8448), (a+128, -8448), sides=({"texturemiddle": f"RTN{n:02}"},))
+
     # The control sectors, one 64x64 square each.
     for n, (name, bottom, top, special, args, wall, props) in enumerate(controls):
         x = 3328 + 128 * n
@@ -1147,7 +1293,7 @@ def validate_map(tm, image_names):
     # reaches a pit and the skybox picture in it is rain-free unless the renderer draws precipitation there),
     # and the hall and the skybox room still have their sky ceilings and their rain. A line between a pit and
     # ordinary floor blocks karts.
-    sky_floors = [i for i, s in enumerate(sectors) if s["texturefloor"] == "F_SKY1"]
+    sky_floors = [i for i, s in enumerate(sectors) if s["texturefloor"] == "F_SKY1" and s["heightfloor"] != s["heightceiling"]]
     assert sky_floors, "the map needs a sky pit"
     assert all(sectors[i]["textureceiling"] != "F_SKY1" for i in sky_floors), "a sky floor under a sky ceiling gets rain"
     assert all(sectors[i]["heightceiling"] - sectors[i]["heightfloor"] >= 256 for i in sky_floors), "a pit is too shallow to see into"
@@ -1156,6 +1302,71 @@ def validate_map(tm, image_names):
         pair = [sides[line[k]]["sector"] for k in ("sidefront", "sideback") if k in line]
         if len(pair) == 2 and (pair[0] in sky_floors) != (pair[1] in sky_floors):
             assert line.get("blocking") is True, f"line {n} lets karts drive into a sky pit"
+    # The parity rooms depend on these exact UDMF and Lua-facing fields.
+    geometry = build_geometry()
+    def named(name):
+        return sectors[geometry.index(name)]
+
+    foglines = [l for l in lines if l.get("renderstyle") == "fog"]
+    assert len(foglines) == 1
+    fogline = foglines[0]
+    assert fogline.get("twosided") and fogline.get("midpeg")
+    assert sides[fogline["sidefront"]]["texturemiddle"] == "RTPANE"
+    front = sectors[sides[fogline["sidefront"]]["sector"]]
+    assert front["lightlevel"] == 160 and front["lightalpha"] == 12
+    assert front["lightcolor"] == color(255, 60, 20)
+    fades = [named(f"fade_room{n}") for n in range(2)]
+    assert fades[0].get("colormapfadesprites") is True
+    assert "colormapfadesprites" not in fades[1]
+    assert {k: v for k, v in fades[0].items() if k not in ("id", "colormapfadesprites")} == \
+           {k: v for k, v in fades[1].items() if k != "id"}
+    for n, room in enumerate(fades):
+        ctl = named(f"ctl_fade_slice{n}")
+        assert (ctl["heightfloor"], ctl["heightceiling"]) == (80, 96)
+        masters = [l for l in lines if sides[l["sidefront"]]["sector"] == geometry.index(f"ctl_fade_slice{n}")
+                   and l.get("special") == 200]
+        assert len(masters) == 1 and masters[0]["arg0"] == room["id"]
+        assert room["fadestart"] == 0 and room["fadeend"] == 20 and room["fadecolor"] != 0
+        for key in ("fadecolor", "fadestart", "fadeend", "colormapfadesprites"):
+            assert ctl.get(key) == room.get(key)
+        assert sum(t["type"] == THING_PARITY and 2560+n*768 < t["x"] < 3200+n*768
+                   and -5632 < t["y"] < -2048 for t in things) == 7
+    assert named("dark_pad")["id"] == DARK_PAD_TAG
+    assert named("dark_pad")["texturefloor"] == "RTN05"
+    assert _in_sector(geometry.index("dark_pad"), 6976, -2240, lines, sides, vertices)
+    assert _in_sector(geometry.index("ruler_spot"), 6912, -7424, lines, sides, vertices)
+    assert [named(f"dark_bay{n}")["lightlevel"] for n in range(3)] == [255, 160, 96]
+    back = named("skyedge_back")
+    assert back["heightfloor"] == back["heightceiling"] == -2
+    assert back["texturefloor"] == back["textureceiling"] == "F_SKY1"
+    assert [i for i, sector in enumerate(sectors) if sector["texturefloor"] == "F_SKY1"
+            and sector["heightfloor"] == sector["heightceiling"]] == [geometry.index("skyedge_back")]
+    skyedges = [l for l in lines if sides[l["sidefront"]].get("texturemiddle") == "RTTREE"]
+    assert len(skyedges) == 1
+    edge = skyedges[0]
+    assert all(edge.get(k) is True for k in ("twosided", "midpeg", "blocking"))
+    assert sectors[sides[edge["sideback"]]["sector"]] == back
+    assert {t.get("thingarg0", 0) for t in things if t["type"] == THING_PARITY} == set(range(6))
+    bands = [l for l in lines if vertices[l["v1"]]["y"] == vertices[l["v2"]]["y"] == -8448]
+    assert len(bands) == 40
+    assert all(abs(vertices[l["v1"]]["x"] - vertices[l["v2"]]["x"]) == 128 for l in bands)
+    assert {sides[l["sidefront"]]["texturemiddle"] for l in bands} == {f"RTN{n:02}" for n in range(40)}
+    # Every parity room remains accessible from the hall through unblocked
+    # shared edges; the sky back and control sectors deliberately do not.
+    reached = {geometry.index("hall")}
+    while True:
+        before = len(reached)
+        for line in lines:
+            if "sideback" not in line or line.get("blocking"):
+                continue
+            pair = {sides[line[k]]["sector"] for k in ("sidefront", "sideback")}
+            if pair & reached:
+                reached |= pair
+        if len(reached) == before:
+            break
+    assert all(geometry.index(name) in reached for name in
+               ("fogline_front", "fade_room0", "fade_room1", "shadow_flat", "shadow_slope",
+                "overlay_room", "dark_pad", "skyedge_walk", "ruler_spot"))
     # Everything the map names ships in the PK3 (or comes with the game).
     shipped = {Path(n).stem.upper() for n in image_names}
     used = {s[k] for s in sectors for k in ("texturefloor", "textureceiling")}
@@ -1217,11 +1428,19 @@ def validate_brightmaps(entries):
 
 def validate_scenery_script(source):
     """scenery.lua must use the editor numbers the SOC and the map use."""
-    for name, number in (("THING_TRANS", THING_TRANS), ("THING_GLOW", THING_GLOW)):
+    for name, number in (("THING_TRANS", THING_TRANS), ("THING_GLOW", THING_GLOW),
+                         ("THING_PARITY", THING_PARITY), ("DARK_PAD_TAG", DARK_PAD_TAG)):
         found = re.findall(rf"^local {name} = (\d+)$", source, re.M)
         assert found == [str(number)], f"scenery.lua has {name} = {found}, but build.py uses {number}"
-    for object_type in ("MT_RTTRANS", "MT_RTGLOW"):
+    for object_type in ("MT_RTTRANS", "MT_RTGLOW", "MT_RTPARITY"):
         assert object_type in source and f"Object {object_type}" in SOC, f"{object_type} is not used by both"
+
+    for required in ("mt.args[0]", "RF_SHADOWDRAW", "P_TryMove", "FF_FULLBRIGHT",
+                     "FF_OVERLAY|FF_TRANS50", "RF_OVERLAY|RF_TRANS50",
+                     'COM_AddCommand("rendertest_darkness"', "player.darkness_start",
+                     "player.darkness_end", "mo.subsector.sector.tag == DARK_PAD_TAG"):
+        assert required in source, f"scenery.lua lacks {required}"
+    assert "SpriteFrame = FF_FULLBRIGHT|A" in SOC
 
 
 def encore_remap(playpal):
@@ -1238,6 +1457,12 @@ def encore_remap(playpal):
 def validate_package(entries, models, rewritten=None):
     """The checks behind --validate. Returns a one-line summary."""
     validate_brightmaps(entries)
+    for asset, size in (("Sprites/RTPRA0.png", (64, 192)), ("Textures/RTTREE.png", (256, 512)),
+                        ("Textures/RTPANE.png", (128, 256))):
+        width, height, opaque = png_opaque_mask(entries[asset])
+        assert (width, height) == size
+        if asset != "Textures/RTPANE.png":
+            assert any(opaque) and not all(opaque), f"{asset} needs a transparent silhouette"
     validate_scenery_script(entries["Lua/scenery.lua"].decode("utf-8"))
     wad = read_wad(entries[MAP_WAD])
     assert [name for name, _ in wad] == [MARKER, "TEXTMAP", "ZNODES", "ENCORE", "ENDMAP"]
