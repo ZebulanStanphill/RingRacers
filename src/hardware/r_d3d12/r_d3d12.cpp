@@ -287,7 +287,6 @@ struct GLState
 	bool depthTest = false;
 	bool depthAlways = false; // GL_ALWAYS rather than GL_LEQUAL
 	bool depthMask = true;
-#ifdef _UWP
 	bool stencil = false;
 	UINT8 stencilFunc = D3D12_COMPARISON_FUNC_EQUAL, stencilRef = 0;
 	UINT8 stencilFail = D3D12_STENCIL_OP_KEEP, stencilDepthFail = D3D12_STENCIL_OP_KEEP;
@@ -295,7 +294,6 @@ struct GLState
 	UINT8 colorWriteMask = 7; // RGB; preserve the target's opaque alpha
 	float clipPlane[4] = {0, 0, 0, 1}; // camera space, or an always-positive disabled plane
 	float fullscreenDepth = 0;
-#endif
 	int texEnv = TE_MODULATE; // of texture unit 0
 	bool texture2D = false; // texturing enabled on unit 0
 	bool cullFace = false;
@@ -371,20 +369,14 @@ struct Constants
 	INT32 texMode;
 	INT32 palette; // palette rendering, with a light table
 	INT32 pad[2];
-#ifdef _UWP
 	float clipPlane[4];
 	float fullscreenDepth, portalPad[3];
 	float postImageRect[4];
 	float postImageInfo[4];
 	INT32 roll[16];
-#endif
 };
-#ifdef _UWP
 static_assert(offsetof(Constants, roll) == 336, "Roll constants must follow post-image constants");
 static_assert(sizeof(Constants) == 400, "Constants must match DrawConstants in shaders.hlsl");
-#else
-static_assert(sizeof(Constants) == 272, "Constants must match DrawConstants in shaders.hlsl");
-#endif
 
 
 bool ProgramExists(int type)
@@ -2306,11 +2298,9 @@ void D3D_SetBlend(FBITFIELD PolyFlags)
 {
 	memset(g_roll, 0, sizeof(g_roll));
 	g_waterRefraction = false;
-#ifdef _UWP
 	// Sky occluders and sprite silhouettes only write depth. Blend factors can
 	// change while both draws are Invisible, so they cannot enforce this mask.
 	g_gl.colorWriteMask = (PolyFlags & PF_Invisible) ? 0 : 7;
-#endif
 	g_fogRemap = false;
 	const FBITFIELD Xor = g_currentPolyFlags ^ PolyFlags;
 
@@ -2343,22 +2333,6 @@ void D3D_SetBlend(FBITFIELD PolyFlags)
 		if (Xor & PF_Occlude) // depth test but (no) depth write
 			g_gl.depthMask = (PolyFlags & PF_Occlude) != 0;
 
-#ifndef _UWP
-		if (Xor & PF_Invisible)
-		{
-			if (PolyFlags & PF_Invisible)
-			{
-				g_gl.blendSrc = BF_ZERO; // transparent blending
-				g_gl.blendDst = BF_ONE;
-			}
-			else if ((PolyFlags & PF_Blending) == PF_Masked)
-			{
-				g_gl.blendSrc = BF_SRC_ALPHA;
-				g_gl.blendDst = BF_ZERO;
-			}
-		}
-
-#endif
 
 		if (PolyFlags & PF_NoTexture)
 			SetNoTexture(0);
@@ -2520,11 +2494,9 @@ void D3D_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 {
 	switch (IdState)
 	{
-#ifdef _UWP
 		case HWD_SET_WATER_SURFACE:
 			SetWaterSurface(Value);
 			break;
-#endif
 		case HWD_SET_MODEL_LIGHTING:
 			// Set around each model, so not logged
 			g_modelLighting = Value;
@@ -2819,9 +2791,7 @@ void D3D_CleanShaders(void)
 void D3D_SetShader(int type)
 {
 	g_waterRefraction = false;
-#ifdef _UWP
 	if (type == SHADER_WATER && cv_reducevfx.value) type = SHADER_FLOOR;
-#endif
 	g_fogRemap = false;
 	if (type == SHADER_NONE)
 	{
@@ -3346,9 +3316,7 @@ void D3D12_LogPerf(double seconds)
 		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
 		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
 		(unsigned)g_staticDedicated, (unsigned long long)s.mipsGenerated, s.mipMs);
-#ifdef _UWP
 	I_OutputMsg("UWP perf:   D3D12: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
-#endif
 	I_OutputMsg("UWP perf:   D3D12: texture heaps: %llu placed, %llu dedicated, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
 		(unsigned long long)g_placedCreated, (unsigned long long)g_dedicatedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
 		g_textureHeapUsed / 1048576.0, g_textureHeaps.size() * kTextureHeapBytes / 1048576.0, g_textureHeapPeak / 1048576.0,

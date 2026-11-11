@@ -24,6 +24,11 @@ templates change. Variants built with `_UWP` also define `HAVE_D3D12`, as UWP
 builds have the Direct3D 12 driver by default. The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
+The Direct3D 12 driver has no desktop variant: engine CMake enables it only
+with `SRB2_CONFIG_UWP`, which defines `_UWP`. All built-in shader compilation
+commands define `_UWP` and `RR_D3D12`; the driver and HLSL therefore keep only
+those active branches. The Windows WARP harness uses the same definitions.
+
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
 builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop` and `front_bbox_desktop`.

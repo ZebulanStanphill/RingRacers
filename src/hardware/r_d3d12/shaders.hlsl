@@ -15,7 +15,6 @@
 /// point is compiled by fxc at build time (see ../CMakeLists.txt).
 
 // [UWP]: Shared 25-DWORD root signature; b4 reserves the custom view constants.
-#ifdef RR_D3D12
 #define RR_ROOT_SIGNATURE "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_HULL_SHADER_ROOT_ACCESS | DENY_DOMAIN_SHADER_ROOT_ACCESS | DENY_GEOMETRY_SHADER_ROOT_ACCESS), " \
 	"CBV(b0), " \
 	"DescriptorTable(SRV(t0), visibility=SHADER_VISIBILITY_PIXEL), " \
@@ -37,9 +36,6 @@
 	"CBV(b4), " \
 	"CBV(b5, visibility=SHADER_VISIBILITY_PIXEL)"
 #define RR_RS [RootSignature(RR_ROOT_SIGNATURE)]
-#else
-#define RR_RS
-#endif
 
 // Must match Constants in r_d3d12.cpp
 cbuffer DrawConstants : register(b0)
@@ -63,7 +59,6 @@ cbuffer DrawConstants : register(b0)
 	int u_tex_mode; // fixed-function texturing: 0: none (the vertex color), 1: GL_MODULATE, 2: GL_REPLACE
 	int u_palette; // palette rendering, with a light table
 	int2 u_pad;
-#ifdef _UWP
 	float4 u_clip_plane; // camera space, evaluated after the full modelview
 	float u_fullscreen_depth;
 	float3 u_portal_pad;
@@ -73,7 +68,6 @@ cbuffer DrawConstants : register(b0)
 	int4 u_roll_canvas;
 	int4 u_roll_source;
 	float4 u_roll_scale;
-#endif
 };
 
 Texture2D t_tex : register(t0);
@@ -106,7 +100,6 @@ cbuffer FadeMapConstants : register(b2)
 	int3 u_fade_map_pad;
 };
 
-#ifdef _UWP
 Texture2D t_fog_scene : register(t8);
 cbuffer FogConstants : register(b3)
 {
@@ -115,7 +108,6 @@ cbuffer FogConstants : register(b3)
 	float u_fog_view_ratio;
 	int u_fog_pad;
 };
-#endif
 
 struct VSOut
 {
@@ -126,9 +118,7 @@ struct VSOut
 	// gl_FragCoord.z / gl_FragCoord.w: window depth times clip w, which is (z + w) / 2 of the clip position,
 	// interpolated with perspective
 	float fragz : TEXCOORD2;
-#ifdef _UWP
 	float clipDistance : SV_ClipDistance0;
-#endif
 };
 
 float4 Transform(float3 pos)
@@ -146,22 +136,16 @@ VSOut Finish(float4 clip, float4 color, float2 uv)
 	o.uv = uv;
 	o.uv1 = float2(0.0, 0.0);
 	o.fragz = z;
-#ifdef _UWP
 	o.clipDistance = 1.0;
-#endif
 	return o;
 }
 
-#ifdef _UWP
 VSOut FinishWorld(float3 pos, float4 clip, float4 color, float2 uv)
 {
 	VSOut o = Finish(clip, color, uv);
 	o.clipDistance = dot(mul(u_modelview, float4(pos, 1.0)), u_clip_plane);
 	return o;
 }
-#else
-#define FinishWorld(pos, clip, color, uv) Finish(clip, color, uv)
-#endif
 
 // ================
 //  Vertex shaders
@@ -233,10 +217,8 @@ VSOut VSFullscreen(uint id : SV_VertexID)
 {
 	VSOut o;
 	o.pos = float4(id == 2 ? 3.0 : -1.0, id == 1 ? 3.0 : -1.0, 0.0, 1.0);
-#ifdef _UWP
 	o.pos.z = u_fullscreen_depth;
 	o.clipDistance = 1.0;
-#endif
 	o.color = float4(1.0, 1.0, 1.0, 1.0);
 	o.uv = float2(0.0, 0.0);
 	o.uv1 = float2(0.0, 0.0);
@@ -415,7 +397,6 @@ RR_RS
 float4 PSSoftware(VSOut i) : SV_Target
 {
 	float2 uv = i.uv;
-#ifdef _UWP
 	if (u_roll_source.w)
 	{
 		int2 d = int2(floor(uv)) + u_roll_canvas.zw - u_roll_canvas.xy / 2;
@@ -425,7 +406,6 @@ float4 PSSoftware(VSOut i) : SV_Target
 		if (u_roll_source.z) sx = u_roll_source.x - 1 - sx;
 		uv = (float2(sx, sy) + 0.5) * u_roll_scale.xy;
 	}
-#endif
 	float4 texel = t_tex.Sample(s_tex, uv);
 	float4 base_color = texel * u_poly_color;
 	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, uv).r);
@@ -483,7 +463,6 @@ float4 PSWater(VSOut i) : SV_Target
 	return AlphaTest(final_color);
 }
 
-#ifdef _UWP
 Texture2D t_water_scene : register(t9);
 Texture2D<int> t_water_sine : register(t10);
 cbuffer WaterConstants : register(b5)
@@ -531,7 +510,6 @@ float4 PSWaterRefraction(VSOut i) : SV_Target
 	// blend against the undistorted framebuffer. Depth and stencil remain active.
 	return BlendWaterScene(water, background, u_water_blend);
 }
-#endif
 
 // GLSL_FOG_FRAGMENT_SHADER
 RR_RS
@@ -567,7 +545,6 @@ float FogColormap(float distance, int lightnum, int plane, float viewRatio)
 RR_RS
 float4 PSFogRemap(VSOut i) : SV_Target
 {
-#ifdef _UWP
 	float4 scene = t_fog_scene.Load(int3(i.pos.xy, 0));
 	if (u_palette)
 	{
@@ -577,9 +554,6 @@ float4 PSFogRemap(VSOut i) : SV_Target
 	// Smooth rendering retains its tint/fade equation, now applied to the scene.
 	float4 color = SoftwareFade(SoftwareTint(scene, 0.0), u_lighting, i.fragz);
 	return float4(color.rgb, 1.0);
-#else
-	return PSFog(i);
-#endif
 }
 
 // GLSL_SKY_FRAGMENT_SHADER
