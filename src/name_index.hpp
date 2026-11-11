@@ -100,8 +100,6 @@ public:
 		}
 	}
 
-	void Clear() { map_.clear(); }
-
 	/// The first position whose full name starts, ignoring ASCII case, with name. Only for a name that is non-empty
 	/// and ends with '/'.
 	std::optional<uint32_t> First(const char* name) const

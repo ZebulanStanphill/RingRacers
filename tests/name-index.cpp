@@ -262,8 +262,6 @@ static int testFolderStarts()
 		CHECK(f.First("mapsx/") == std::optional<uint32_t>(2));
 		CHECK(!f.First("map/"));
 		CHECK(!f.First("top/"));
-		f.Clear();
-		CHECK(!f.First("maps/"));
 	}
 
 	for (int round = 0; round < 3000; round++)
