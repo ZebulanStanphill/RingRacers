@@ -261,8 +261,8 @@ struct Presenter
 	bool placementFailed = false; // the driver couldn't place a frame, so Screen Scaling is Fit from then on
 };
 Presenter g_present;
-INT32 g_traceCopied = -1, g_traceShown = -1;
-UINT32 g_traceCopyFrame, g_traceShowFrame;
+INT32 g_traceSlot = -1;
+UINT32 g_traceFrame;
 
 struct PresentStats
 {
@@ -791,8 +791,8 @@ bool Present_TakeWindow()
 
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
 {
-	g_traceCopied = g_traceShown = -1;
-	g_traceCopyFrame = g_traceShowFrame = 0;
+	g_traceSlot = -1;
+	g_traceFrame = 0;
 	const bool trace = Present_Tracing();
 
 	if (g_present.stopped || !source)
@@ -877,8 +877,8 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			Core_Transition(back, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 		}
 	}
-	g_traceCopied = g_traceShown = (INT32)index;
-	g_traceCopyFrame = g_traceShowFrame = UWPTraceFrameId();
+	g_traceSlot = (INT32)index;
+	g_traceFrame = UWPTraceFrameId();
 	const UINT64 fence = list ? Core_Submit("present") : 0;
 	if (!list)
 		SubmitWithoutPresenting(); // reopens the list
@@ -942,10 +942,10 @@ void Present_Shutdown(bool idle)
 
 void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
 {
-	*copied = g_traceCopied;
-	*shown = g_traceShown;
-	*copyframe = g_traceCopyFrame;
-	*showframe = g_traceShowFrame;
+	*copied = g_traceSlot;
+	*shown = g_traceSlot;
+	*copyframe = g_traceFrame;
+	*showframe = g_traceFrame;
 }
 
 void Present_LogPerf(double frames)
