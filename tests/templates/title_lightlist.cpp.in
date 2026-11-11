@@ -142,12 +142,6 @@ static bool Same(const Draw&a,const Draw&b){
 }
 
 
-static void Dump(const Draw&d,size_t i){
- auto*c=d.colormap;
- printf("SUBMISSION %zu line=%d side=%d light=%d flags=%08lx alpha=%u queued=%d fog=%d cmap=%d:%08x:%08x:%u:%u:%u",i,d.line,d.side,d.light,static_cast<unsigned long>(d.flags),d.alpha,d.queued,d.fog,c!=nullptr,c?unsigned(c->rgba):0,c?unsigned(c->fadergba):0,c?c->fadestart:0,c?c->fadeend:0,c?c->flags:0);
- for(auto&v:d.vertices)printf(" (%a,%a,%a,%a,%a)",double(v.x),double(v.y),double(v.z),double(v.s),double(v.t));
- printf("\n");
-}
 static void CheckPreparationCases(){
  seg_t *seg=nullptr;
  for(auto&s:mapSegs)if(!s.glseg && s.linedef==mapLines+22 && s.side==1 && s.backsector){seg=&s;break;}

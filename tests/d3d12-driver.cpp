@@ -70,10 +70,7 @@ boolean W_ReadShader(const char *name, size_t *size, void *dest) {
     return true;
 }
 CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nullptr}};
-INT32 R_AdjustLightLevel(INT32 light) { return light; }
 void HWR_Startup() {}
-void CV_StealthSet(consvar_t *, const char *) {}
-void M_SaveConfig(const char *) {}
 UINT32 HWR_UWPTakeLazyModelLoads(void) { return 0; }
 precise_t I_GetPreciseTime() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 UINT64 I_GetPrecisePrecision() { LARGE_INTEGER n; QueryPerformanceFrequency(&n); return n.QuadPart; }
