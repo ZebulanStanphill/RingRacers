@@ -7,6 +7,8 @@ on:
 
 jobs:
   regressions:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: Native regression tests (ASan + UBSan)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -14,12 +16,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Record the native toolchain image
+        run: echo "RR_IMAGE_VERSION=$ImageOS-$ImageVersion" >> "$GITHUB_ENV"
+
+      - name: Cache native shader tools
+        id: native-tools-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/regression/_deps
+            build/regression/legacy-shader-libs
+          key: native-shader-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/CMakeLists.txt', '.github/workflows/tests.yml') }}
+
       - name: Configure
         run: >-
           cmake -S tests -B build/regression
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DRR_SANITIZERS=ON
+          -DFETCHCONTENT_FULLY_DISCONNECTED=${{ steps.native-tools-cache.outputs.cache-hit == 'true' && 'ON' || 'OFF' }}
 
       - name: Build tests
         run: cmake --build build/regression --parallel 4
@@ -27,7 +42,15 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 
+      - name: Cache ZDBSP
+        id: zdbsp-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/zdbsp-build/zdbsp
+          key: zdbsp-5d4fb9c-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('.github/workflows/tests.yml') }}
+
       - name: Build ZDBSP for the renderer test map
+        if: steps.zdbsp-cache.outputs.cache-hit != 'true'
         run: |
           git clone https://github.com/ZDoom/zdbsp "$RUNNER_TEMP/zdbsp"
           git -C "$RUNNER_TEMP/zdbsp" checkout 5d4fb9c
@@ -71,6 +94,8 @@ jobs:
           if-no-files-found: warn
 
   warp:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: Direct3D 12 driver on WARP (debug layer + GPU-based validation)
     needs: regressions
     runs-on: windows-2022
@@ -131,6 +156,8 @@ jobs:
         run: ./tests/run-d3d12.ps1
 
   linux:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: Linux build (no Direct3D 12)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -160,6 +187,8 @@ jobs:
         run: cmake --build build/ninja-release --parallel 4
 
   macos:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     name: macOS build (no Direct3D 12)
     runs-on: macos-15
     timeout-minutes: 40

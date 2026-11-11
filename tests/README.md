@@ -707,8 +707,13 @@ do not change that lifecycle. They do not cover Xbox rendering or performance.
 ## CI and adding cases
 
 `.github/workflows/tests.yml` runs this suite with ASan and UBSan (the
-`regressions` job) on every push, pull request, and manual workflow dispatch. The
-Windows `warp` job, which compiles the translated add-on shader fixtures and runs
+`regressions` job) on every pushed commit and manual workflow dispatch. Fork pull
+requests run on `pull_request`; same-repository PR events skip the jobs because
+push already covers those commits, including `master` and branches without a PR.
+The native job caches the pinned glslang/SPIRV-Cross build and ZDBSP executable
+by runner image, pins and build definitions. A hit keeps FetchContent disconnected
+and skips the ZDBSP build; a miss fetches and builds them normally.
+The Windows `warp` job, which compiles the translated add-on shader fixtures and runs
 the Direct3D 12 WARP regressions, depends on it passing. CTest's JUnit report and
 detailed run log are uploaded as `regression-results`, including when a test fails.
 
