@@ -170,6 +170,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 
 - **Options button slide** *(works on Xbox)*. Submenu title buttons start their slide once and finish at or after the final tic, preventing repeated bouncing when low frame rates skip a menu tic.
 - **Console slide** *(works on Xbox)*. On every platform, opening and closing use elapsed time since the last movement, keeping the intended speed through skipped frames and stalls.
+- **Controller ignored after loading** *(untested on Xbox)*. Moving a stick or pressing buttons a lot during the loading screen could leave the controller dead for the whole session: the title screen reacted to a press, then every menu ignored it. The game's input queue holds 128 events and lost all of them when it filled, including the one that registers the controller, and nothing reads the queue while the game loads. A full queue now drops only its oldest event, and still registers or removes a controller when it does. The same loss was possible on every platform during any long load.
 - **Duplicate controllers** *(works on Xbox)*. `patches/sdl-controller-duplicates.patch` stops each controller from appearing twice, and each press from counting twice, in Game mode.
 
 ## Removed or disabled
