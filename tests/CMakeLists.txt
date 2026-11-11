@@ -43,6 +43,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/d_main.cpp"
     "${RR_SOURCE_DIR}/src/d_frame_schedule.h"
     "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
+    "${RR_SOURCE_DIR}/src/p_spec.c"
+    "${RR_SOURCE_DIR}/src/r_segs.cpp"
     "${RR_SOURCE_DIR}/src/r_bsp.cpp"
     "${RR_SOURCE_DIR}/src/r_sky.c"
     "${RR_SOURCE_DIR}/src/r_plane.cpp"
