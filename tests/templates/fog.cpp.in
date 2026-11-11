@@ -28,10 +28,6 @@ static void InitScale() {
 @@SOFTWARE_SCALE@@
 }
 @@FOG_ROW@@
-using UINT=unsigned;
-struct Mat4 { float m[16]; };
-struct D3D12_BOX { UINT left,top,front,right,bottom,back; };
-@@BOUNDS@@
 using float2 = float __attribute__((ext_vector_type(2)));
 using float3 = float __attribute__((ext_vector_type(3)));
 using float4 = float __attribute__((ext_vector_type(4)));
@@ -71,27 +67,6 @@ int main() {
             assert(FogColormap(d,light,0,1.0f/splits)==expected); ++cases;
         }
     }
-    const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
-    for(unsigned vx : {0u,640u}) for(unsigned vy : {0u,360u}) {
-        int vp[]={(int)vx,(int)vy,640,360};
-        FOutVector vertices[4] = {{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
-        D3D12_BOX box; FogCaptureBounds(vertices,4,identity,vp,720,box);
-        assert(box.left==vx+160 && box.right==vx+480);
-        assert(box.top==720-vy-360+90 && box.bottom==720-vy-90);
-        assert(box.front==0 && box.back==1);
-        for(auto &v : vertices) { v.x*=10; v.y*=10; }
-        FogCaptureBounds(vertices,4,identity,vp,720,box);
-        assert(box.left==vx && box.right==vx+640 && box.top==720-vy-360 && box.bottom==720-vy);
-        Mat4 near=identity; near.m[15]=0;
-        FogCaptureBounds(vertices,4,near,vp,720,box);
-        assert(box.left==box.right && box.top==box.bottom);
-        vertices[0].z=1; near.m[11]=1;
-        FogCaptureBounds(vertices,4,near,vp,720,box);
-        assert(box.left==vx && box.right==vx+640 && box.top==720-vy-360 && box.bottom==720-vy);
-        for(auto &v : vertices) { v.x=10; v.y=10; }
-        FogCaptureBounds(vertices,4,identity,vp,720,box);
-        assert(box.left==box.right && box.top==box.bottom);
-    }
     for(int plane : {0,1}) for(int light=0;light<32;++light)
     for(int split : {1,2}) for(int bucket=0;bucket<128;++bucket) {
         float distance=bucket*16.f+8;
@@ -107,5 +82,5 @@ int main() {
         assert(fabsf(out.r-44/255.f)<0.000001f);
     }
     assert(sceneLoads==16384);
-    printf("%d fog rows match production Software tables; capture bounds passed\n",cases);
+    printf("%d fog rows match production Software tables\n",cases);
 }

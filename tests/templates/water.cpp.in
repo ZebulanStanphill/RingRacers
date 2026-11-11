@@ -25,10 +25,6 @@ void I_Error(const char *, ...) { abort(); }
 @@FIXED_MUL@@
 #endif
 @@SOFTWARE_OFFSET@@
-using UINT=unsigned;
-struct Mat4 { float m[16]; };
-struct D3D12_BOX { UINT left,top,front,right,bottom,back; };
-@@BOUNDS@@
 using float2 = float __attribute__((ext_vector_type(2)));
 using float3 = float __attribute__((ext_vector_type(3)));
 using float4 = float __attribute__((ext_vector_type(4)));
@@ -73,22 +69,9 @@ int main() {
         int expected=R_CalculateRippleOffset(&ds,0)>>FRACBITS;
         assert((int)WaterBackgroundOffset(distance,tick/35.f)==expected); ++offsets;
     }
-    const Mat4 identity={{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}};
     int pixels=0;
     for(int vx : {0,640}) for(int vy : {0,360}) {
-        int vp[]={vx,vy,640,360};
-        FOutVector vertices[4]={{-.5f,-.5f,0,0,0},{.5f,-.5f,0,0,0},{.5f,.5f,0,0,0},{-.5f,.5f,0,0,0}};
-        D3D12_BOX box; WaterCaptureBounds(vertices,4,identity,vp,720,box);
         int top=720-vy-360;
-        assert(box.left==(unsigned)vx+160 && box.right==(unsigned)vx+480);
-        assert(box.top==(unsigned)top+90-16 && box.bottom==(unsigned)top+270+16);
-        Mat4 near=identity; near.m[15]=0;
-        WaterCaptureBounds(vertices,4,near,vp,720,box);
-        assert(box.left==box.right && box.top==box.bottom); // all behind eye
-        near.m[3]=1; // half the polygon crosses the eye plane
-        WaterCaptureBounds(vertices,4,near,vp,720,box);
-        assert(box.left==(unsigned)vx && box.right==(unsigned)vx+640);
-        assert(box.top==(unsigned)top && box.bottom==(unsigned)top+360);
         u_water_viewport={(float)vx,(float)top,(float)vx+639,(float)top+359};
         for(int mode=0;mode<6;++mode) for(float alpha : {0.f,.1f,.5f,1.f})
         for(int tick : {0,1,6,41,128,2047}) for(float d : {0.125f,64.125f,512.125f,100.0234f,7.3f})
@@ -114,5 +97,5 @@ int main() {
             assert(out.a==1); ++pixels;
         }
     }
-    printf("%d offsets match Software; %d refraction composites, split-view clamps and capture bounds passed\n",offsets,pixels);
+    printf("%d offsets match Software; %d refraction composites, split-view clamps passed\n",offsets,pixels);
 }

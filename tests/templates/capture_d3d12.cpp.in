@@ -159,6 +159,12 @@ int main(){
         CaptureBounds(poly,4,behind,g_gl.viewport,g_rtHeight,box);SameBox(box,D3D12_BOX{0,0,0,0,0,1});
         Mat4 crossing=identity;crossing.m[3]=1;crossing.m[15]=0; // w = x: half the face is behind the eye
         CaptureBounds(poly,4,crossing,g_gl.viewport,g_rtHeight,box);SameBox(box,p.whole);
+#ifndef RR_TEST_WATER_CAPTURE
+        // A face extending past all four edges must clamp to the viewport.
+        FOutVector oversized[4];
+        for(int i=0;i<4;++i){oversized[i]=poly[i];oversized[i].x*=10;oversized[i].y*=10;}
+        CaptureBounds(oversized,4,identity,g_gl.viewport,g_rtHeight,box);SameBox(box,p.whole);
+#endif
 @@SPLIT_TEST@@
     }
     std::copy(std::begin(identity.m),std::end(identity.m),g_projection.m);

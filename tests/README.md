@@ -311,8 +311,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   selections with the actual Software zlight/scalelight tables and 16,384
   palette-remap samples. Extract bounds from `r_d3d12/d3d12_captures.inc` and
   exercise full/split viewports, eye-plane crossings and behind-camera/offscreen
-  faces. `fog_capture_d3d12` checks capture copies, failure, resizing, bindings and
-  constants against literal expected boxes (including fractional vertices, which
+  faces in `fog_capture_d3d12`, including oversized-face clamping. Shader-only
+  checks stay in `fog_boundaries`. `fog_capture_d3d12` checks capture copies,
+  failure, resizing, bindings and constants against literal expected boxes (including fractional vertices, which
   pin the floor/ceil edge rounding) and literal constant bytes for each viewport,
   poly flag, light level and view width. Wall-slice tests reject directional light
   adjustment on fog. Windows WARP executes the shipped SM5.1 path and rejects
@@ -726,9 +727,9 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   calculation and sine table, compare 262,144 offsets (distances both on and off
   multiples of 1/8, so the shader's `floor` calls matter), and exercise 8,640 shader
   composites across blend modes, alpha values, distances, times and split-view
-  edges. Extract projected bounds from `r_d3d12/d3d12_captures.inc`.
-  `water_capture_d3d12` checks bounded copies, disjoint rectangle growth, grouping,
-  allocation failures, resize and clipped faces. Its expected bounds
+  edges. `water_capture_d3d12` extracts projected bounds from
+  `r_d3d12/d3d12_captures.inc` and checks bounded copies, disjoint rectangle
+  growth, grouping, allocation failures, resize and clipped faces. Its expected bounds
   (including fractional vertices), constant bytes, scene and sine texture bindings
   are literal values, and the growth strips must cover exactly the union of the
   pieces' bounds. Engine-side water-plane continuation and transparent-node dispatch

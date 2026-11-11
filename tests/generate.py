@@ -179,7 +179,6 @@ def generate(engine, output):
         "FOG_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("FogColormap")),
         "SOFTWARE_Z": renderer.function("R_InitLightTables"),
         "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
-        "BOUNDS": captures.function("FogCaptureBounds"),
     }, output / "fog.cpp")
 
     for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
@@ -503,7 +502,6 @@ def generate(engine, output):
         "OFFSET": native_water("WaterBackgroundOffset"),
         "BLEND": native_water("BlendWaterScene"),
         "WATER_SHADER": native_water("PSWaterRefraction"),
-        "BOUNDS": captures.function("WaterCaptureBounds"),
         "SOFTWARE_OFFSET": Source(engine / "src/r_plane.cpp").function("R_CalculateRippleOffset"),
         "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
