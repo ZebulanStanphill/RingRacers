@@ -131,6 +131,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr) {
 @@MOBJ_FLIP@@
 @@TRANSFORM@@
 @@BILLBOARD@@
+@@SHADOW_SHEAR@@
 @@SPRITE_VERTICES@@
 @@LINK_ADD@@
 #define ABS(x) ((x) < 0 ? -(x) : (x))

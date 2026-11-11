@@ -851,3 +851,15 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   Linedefs with partial alpha and models already use `HWR_SurfaceBlend`; both
   FOF wall sides and both FOF plane faces now use the same raw-alpha rule.
   This checks blend selection, not GPU pixels or Xbox visuals.
+
+- **RF_SHADOWDRAW:** `shadow_draw` compares production hardware scale, flattening,
+  slope adjustment and position with Software's extracted projection block and
+  `R_SkewShadowSprite` in 960 cases (flat/sloped, five directions, four camera
+  heights, two depths, gravity flips, stretching and object scaling). Check literal flat numbers,
+  paper/floor exclusions, unchanged unflagged inputs and zero-shear vertices,
+  and the quad's shear with and without camera billboarding. Shadow-draw sprites
+  skip light-list splitting as in Software. Models keep their original object
+  transforms; only a sprite fallback is flattened. A continuous hardware quad
+  cannot copy Software's integer-column rounding or global freelook shear;
+  hardware retains true perspective. Native tests check geometry, not pixels,
+  model rasterization or Xbox output.

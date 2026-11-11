@@ -89,6 +89,7 @@ function(regression name source)
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 endfunction()
 
+regression(shadow_draw shadow_draw)
 regression(overlay_blend overlay_blend)
 regression(split_projection split_projection)
 regression(intro_uwp intro _UWP)

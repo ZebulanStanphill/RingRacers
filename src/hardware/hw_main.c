@@ -5631,6 +5631,27 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
 //                  : (monsters, bonuses, weapons, lights, ...)
 // Returns          :
 // -----------------+
+// [UWP]: Carry Software's per-screen-column shadow shear onto the quad.
+static void HWR_ShadowDrawShear(FOutVector *vertices, float skew, boolean billboard)
+{
+	float width, offset;
+	INT32 i;
+	if (!skew)
+		return;
+	width = hypotf(vertices[1].x - vertices[0].x, vertices[1].z - vertices[0].z);
+	offset = width * skew / 2;
+	for (i = 0; i < 4; i++)
+	{
+		float delta = (i == 0 || i == 3) ? offset : -offset;
+		vertices[i].y += delta * (billboard ? gl_viewludsin : 1);
+		if (billboard)
+		{
+			vertices[i].x += delta * gl_viewludcos * gl_viewcos;
+			vertices[i].z += delta * gl_viewludcos * gl_viewsin;
+		}
+	}
+}
+
 // Geometry shared by drawing and transparent-node overlap checks.
 static void HWR_SpriteVertices(gl_vissprite_t *spr, FOutVector *wallVerts)
 {
@@ -5767,6 +5788,9 @@ static void HWR_SpriteVertices(gl_vissprite_t *spr, FOutVector *wallVerts)
 
 		// Let dispoffset work first since this adjust each vertex
 		HWR_RotateSpritePolyToAim(spr, wallVerts, spr->precip);
+		if (!spr->precip)
+			HWR_ShadowDrawShear(wallVerts, spr->shadowskew, cv_glspritebillboarding.value
+				&& !R_ThingIsPaperSprite(spr->mobj));
 	}
 
 }
@@ -5791,7 +5815,8 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 	if (spr->mobj->subsector->sector->numlights
 		&& (spr->mobj->renderflags & RF_ABSOLUTELIGHTLEVEL) == 0
-		&& !splat)
+		&& !splat
+		&& (!(spr->renderflags & RF_SHADOWDRAW) || R_ThingIsPaperSprite(spr->mobj)))
 	{
 		HWR_SplitSprite(spr);
 		return;
@@ -7007,6 +7032,54 @@ static void HWR_AddPrecipitationSprites(void)
 //  Generates a vissprite for a thing if it might be visible.
 // --------------------------------------------------------------------------
 // BP why not use xtoviexangle/viewangletox like in bsp ?....
+// [UWP]: Use Software's radius, view-height flattening and slope components.
+static boolean HWR_ShadowDrawScale(mobj_t *thing, const interpmobjstate_t *interp,
+	float depth, INT32 width, INT32 height, float *xscale, float *yscale, float *skew)
+{
+	fixed_t x, y, groundz;
+	if (!(thing->renderflags & RF_SHADOWDRAW) || R_ThingIsPaperSprite(thing)
+		|| R_ThingIsFloorSprite(thing) || depth <= 0 || width <= 0 || height <= 0)
+		return false;
+
+	groundz = R_GetShadowZ(thing, NULL);
+	x = FixedMul(thing->radius * 2, interp->spritexscale);
+	y = FixedMul(thing->radius * 2, interp->spriteyscale);
+	y = FixedMul(y, FixedDiv(abs(groundz - viewz), FLOAT_TO_FIXED(depth)));
+	y = min(y, x) / height;
+	x /= width;
+	*skew = 0;
+	if (thing->standingslope)
+	{
+		interpmobjstate_t slopeinterp = {0};
+		angle_t relative;
+		R_InterpolateMobjState(thing, R_UsingFrameInterpolation() && !paused
+			? rendertimefrac : FRACUNIT, &slopeinterp);
+		relative = (R_PointToAngle(slopeinterp.x, slopeinterp.y)
+			- thing->standingslope->xydirection) >> ANGLETOFINESHIFT;
+		fixed_t xslope = FixedMul(FINESINE(relative), thing->standingslope->zdelta);
+		fixed_t zslope = FixedMul(FINECOSINE(relative), thing->standingslope->zdelta);
+		fixed_t adjustment = FixedMul(thing->radius * 2 / height, zslope);
+		y += viewz < groundz ? adjustment : -adjustment;
+		y = abs(y);
+		*skew = FIXED_TO_FLOAT(xslope);
+	}
+	*xscale = FIXED_TO_FLOAT(x);
+	*yscale = FIXED_TO_FLOAT(y);
+	return true;
+}
+
+// [UWP]: Software centres a sloped shadow on the object's gravity-side origin.
+static void HWR_ShadowDrawPosition(mobj_t *thing, const interpmobjstate_t *interp,
+	INT32 height, float yscale, float scale, float *bottom, float *top)
+{
+	if (!thing->standingslope)
+		return;
+	*top = FIXED_TO_FLOAT(interp->z + ((thing->eflags & MFE_VERTICALFLIP) ? thing->height : 0))
+		+ height * yscale / 2;
+	// Software applies thingscale to the drawn height after setting texturemid.
+	*bottom = *top - height * yscale * scale;
+}
+
 static void HWR_ProjectSprite(mobj_t *thing)
 {
 #ifdef HAVE_D3D12
@@ -7020,7 +7093,8 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	float rightsin, rightcos;
 	float this_scale, this_xscale, this_yscale;
 	float spritexscale, spriteyscale;
-	float shadowheight = 1.0f, shadowscale = 1.0f;
+	float shadowheight = 1.0f, shadowscale = 1.0f, shadowskew = 0;
+	boolean shadowdraw;
 	float gz, gzt;
 	spritedef_t *sprdef;
 	spriteframe_t *sprframe;
@@ -7346,6 +7420,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		}
 	}
 
+	shadowdraw = HWR_ShadowDrawScale(thing, &interp, tz,
+		spr_width / FRACUNIT, spr_height / FRACUNIT, &spritexscale, &spriteyscale, &shadowskew);
+
 	this_xscale = spritexscale * this_scale;
 	this_yscale = spriteyscale * this_scale;
 
@@ -7410,6 +7487,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 			gz = gzt - (FIXED_TO_FLOAT(spr_height) * this_yscale);
 		}
 	}
+
+	if (shadowdraw)
+		HWR_ShadowDrawPosition(thing, &interp, spr_height / FRACUNIT, spriteyscale, this_scale, &gz, &gzt);
 
 	if (thing->subsector->sector->cullheight)
 	{
@@ -7487,6 +7567,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->renderflags = thing->renderflags;
 	vis->rotateflags = sprframe->rotate;
 
+	vis->shadowskew = shadowskew;
 	vis->shadowheight = shadowheight;
 	vis->shadowscale = shadowscale;
 	vis->dispoffset = dispoffset; // Monster Iestyn: 23/11/15: HARDWARE SUPPORT AT LAST

@@ -79,6 +79,7 @@ typedef struct gl_vissprite_s
 
 	float scale;
 	float shadowheight, shadowscale;
+	float shadowskew; // [UWP]: RF_SHADOWDRAW shear; zero for ordinary sprites.
 
 	float spritexscale, spriteyscale;
 	float spritexoffset, spriteyoffset;

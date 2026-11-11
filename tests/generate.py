@@ -52,6 +52,20 @@ def generate(engine, output):
     render(templates / "overlay_blend.cpp.in", {
         "BLEND": Source(engine / "src/hardware/hw_main.c").section("FBITFIELD HWR_GetBlendModeFlag(INT32 ast)", "FBITFIELD HWR_TranstableToAlpha"),
     }, output / "overlay_blend.cpp")
+    shadow_hardware = Source(engine / "src/hardware/hw_main.c")
+    shadow_software = Source(engine / "src/r_things.cpp")
+    render(templates / "shadow_draw.cpp.in", {
+        "PAPER": shadow_software.function("R_ThingIsPaperSprite"),
+        "FLOOR": shadow_software.function("R_ThingIsFloorSprite"),
+        "SCALE": shadow_hardware.function("HWR_ShadowDrawScale"),
+        "POSITION": shadow_hardware.function("HWR_ShadowDrawPosition"),
+        "SHEAR": shadow_hardware.function("HWR_ShadowDrawShear"),
+        "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
+        "SOFTWARE_SKEW": shadow_software.function("R_SkewShadowSprite"),
+        "SOFTWARE_SCALE": function_section(shadow_software, "R_ProjectSprite",
+            "\t// Check if this sprite needs to be rendered like a shadow", "\tif (!shadowskew)"),
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+    }, output / "shadow_draw.cpp")
     finale = Source(engine / "src/f_finale.c")
     render(templates / "intro.cpp.in", {
         "TIMES": finale.section("#define NUMINTROSCENES", "// custom intros"),
@@ -646,6 +660,7 @@ def generate(engine, output):
         "MOBJ_FLIP": Source(engine / "src/p_mobj.c").function("P_MobjFlip"),
         "TRANSFORM": hardware.function("transform"),
         "BILLBOARD": hardware.function("HWR_RotateSpritePolyToAim"),
+        "SHADOW_SHEAR": hardware.function("HWR_ShadowDrawShear"),
         "SPRITE_VERTICES": hardware.function("HWR_SpriteVertices"),
         "DRAW_NODES": hardware.section("// A drawnode is something", "//\n// HWR_CreateDrawNodes\n"),
         "ADD_WALL": hardware.function("HWR_AddTransparentWall"),

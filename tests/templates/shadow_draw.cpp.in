@@ -1,0 +1,131 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <initializer_list>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "r_things.h"
+#include "r_fps.h"
+#include "p_slopes.h"
+#include "hardware/hw_glob.h"
+#undef min
+#undef max
+using std::min;
+fixed_t viewz;
+UINT8 paused;
+fixed_t rendertimefrac;
+static fixed_t ground;
+static angle_t objectangle;
+static interpmobjstate_t state;
+boolean R_UsingFrameInterpolation() { return false; }
+void R_InterpolateMobjState(mobj_t *, fixed_t, interpmobjstate_t *out) { *out = state; }
+angle_t R_PointToAngle(fixed_t, fixed_t) { return objectangle; }
+fixed_t R_GetShadowZ(mobj_t *, pslope_t **) { return ground; }
+@@PAPER@@
+@@FLOOR@@
+#include "t_fsin.c"
+fixed_t *finecosine = &finesine[FINEANGLES/4];
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
+void I_Error(const char *, ...) { abort(); }
+@@FIXED_DIV@@
+static float gl_viewludsin = 1, gl_viewludcos;
+float gl_viewcos = 1, gl_viewsin;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-field-initializers"
+@@SCALE@@
+#pragma clang diagnostic pop
+@@POSITION@@
+@@SHEAR@@
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-field-initializers"
+@@SOFTWARE_SKEW@@
+#pragma clang diagnostic pop
+static void Software(mobj_t *thing, INT32 width, INT32 height, fixed_t tz,
+    fixed_t &spritexscale, fixed_t &spriteyscale, fixed_t &sheartan, fixed_t &gz, fixed_t &gzt)
+{
+    const boolean papersprite = R_ThingIsPaperSprite(thing), splat = R_ThingIsFloorSprite(thing);
+    boolean shadowdraw, shadoweffects, shadowskew;
+    fixed_t shadowscale = FRACUNIT;
+    interpmobjstate_t interp = state;
+    struct { INT32 width, height; } patchdata{width, height};
+    auto *patch = &patchdata;
+    spritecut_e cut = static_cast<spritecut_e>(0);
+@@SOFTWARE_SCALE@@
+    (void)cut;
+}
+int main()
+{
+    mobj_t thing{};
+    pslope_t slope{};
+    slope.zdelta = FRACUNIT / 4;
+    state.z = 5*FRACUNIT;
+    thing.radius = 24*FRACUNIT;
+    thing.height = 32*FRACUNIT;
+    ground = 0;
+    unsigned cases = 0;
+    for (bool sloped : {false, true})
+    for (int angle : {0, 45, 90, 180, 270})
+    for (int camera : {-64, 0, 16, 128})
+    for (int depth : {32, 128})
+    for (int flip : {0, 1})
+    for (int stretch : {1, 2})
+    for (float objectscale : {.5f, 1.f, 2.f})
+    {
+        thing.renderflags = RF_SHADOWDRAW;
+        thing.eflags = flip ? MFE_VERTICALFLIP : 0;
+        thing.standingslope = sloped ? &slope : nullptr;
+        objectangle = angle_t(ANG1)*angle_t(angle);
+        viewz = camera*FRACUNIT;
+        state.spritexscale = FRACUNIT;
+        state.spriteyscale = stretch*FRACUNIT;
+        fixed_t swx = state.spritexscale, swy = state.spriteyscale, swskew = 0, swbottom = 0, swtop = 0;
+        Software(&thing, 64, 48, depth*FRACUNIT, swx, swy, swskew, swbottom, swtop);
+        float x = 1, y = stretch, skew = 0, bottom = 0, top = 0;
+        assert(HWR_ShadowDrawScale(&thing, &state, depth, 64, 48, &x, &y, &skew));
+        HWR_ShadowDrawPosition(&thing, &state, 48, y, objectscale, &bottom, &top);
+        assert(x == FIXED_TO_FLOAT(swx));
+        assert(y == FIXED_TO_FLOAT(swy));
+        assert(skew == FIXED_TO_FLOAT(swskew));
+        // Software scales the drawn patch height after choosing its top from texturemid.
+        double expectedbottom = sloped ? FIXED_TO_FLOAT(swtop)-48*FIXED_TO_FLOAT(swy)*objectscale : 0;
+        assert(fabs(bottom-expectedbottom) <= 1.0/FRACUNIT);
+        assert(fabs(top-FIXED_TO_FLOAT(swtop)) <= 1.0/FRACUNIT);
+        ++cases;
+    }
+    // Literal Software flat numbers: diameter 48, 64x48 patch, height/depth 16/128.
+    thing.renderflags = RF_SHADOWDRAW; thing.standingslope = nullptr;
+    state.spritexscale = state.spriteyscale = FRACUNIT; viewz = 16*FRACUNIT;
+    float x = 1, y = 1, skew = 0;
+    assert(HWR_ShadowDrawScale(&thing, &state, 128, 64, 48, &x, &y, &skew));
+    assert(x == .75f && y == .125f && skew == 0);
+    for (auto flags : {0u, UINT32(RF_SHADOWEFFECTS), UINT32(RF_SHADOWDRAW|RF_PAPERSPRITE), UINT32(RF_SHADOWDRAW|RF_FLOORSPRITE)})
+    {
+        thing.renderflags = flags;
+        x = 2; y = 3; skew = 4;
+        assert(!HWR_ShadowDrawScale(&thing, &state, 128, 64, 48, &x, &y, &skew));
+        assert(x == 2 && y == 3 && skew == 4);
+    }
+    // A positive screen slope lowers the right edge, about the quad centre.
+    FOutVector vertices[4]{};
+    vertices[1].x = vertices[2].x = 48;
+    vertices[2].y = vertices[3].y = 6;
+    HWR_ShadowDrawShear(vertices, .25f, false);
+    assert(vertices[0].y == 6 && vertices[1].y == -6);
+    assert(vertices[2].y == 0 && vertices[3].y == 12);
+    FOutVector saved[4]; memcpy(saved, vertices, sizeof vertices);
+    HWR_ShadowDrawShear(vertices, 0, true);
+    assert(memcmp(saved, vertices, sizeof vertices) == 0);
+    // Under camera billboarding the shear follows camera-up without changing UVs.
+    memset(vertices, 0, sizeof vertices);
+    vertices[1].z = vertices[2].z = 48;
+    gl_viewcos = 0; gl_viewsin = 1; gl_viewludsin = .8f; gl_viewludcos = .6f;
+    HWR_ShadowDrawShear(vertices, .25f, true);
+    assert(fabs(vertices[0].y-4.8f) < 1e-6 && fabs(vertices[0].z-3.6f) < 1e-6);
+    assert(fabs(vertices[1].y+4.8f) < 1e-6 && fabs(vertices[1].z-44.4f) < 1e-5);
+    printf("shadow draw: %u Software comparisons, exclusions and quad shear passed\n", cases);
+}
