@@ -12,7 +12,6 @@
 ///
 /// GL-state emulation and textured polygon/line draws ported from the former Direct3D 11 driver, using fence-retired
 /// upload rings, persistent texture descriptors and cached pipeline states. Advanced passes arrive in later steps.
-/// The S1 diagnostic hue is retained, disabled, for future presentation diagnostics.
 
 #include "d3d12_core.h"
 #include "d3d12_present.h"
@@ -111,9 +110,7 @@ double PreciseToMs(precise_t t)
 	return t * 1000.0 / I_GetPrecisePrecision();
 }
 
-// S1 presentation diagnostic, retained for S10.
-constexpr bool kDiagnosticHue = false;
-UINT64 g_hueFrame = 0;
+UINT64 g_frameCounter = 0;
 
 bool g_deviceLost = false;
 bool g_shutdown = false;
@@ -1513,7 +1510,7 @@ bool ApplyConstants(bool custom)
 	c.texMode = g_gl.texture2D && g_units[0] && g_units[0]->res
 		? (g_gl.texEnv == TE_MODULATE ? 1 : 2) : 0;
 	c.palette = (g_paletteRendering && g_paletteLookup.res && g_currentLightTable) ? 1 : 0;
-	const bool updateView = custom && (!g_customViewConstants || g_customViewFrame != g_hueFrame
+	const bool updateView = custom && (!g_customViewConstants || g_customViewFrame != g_frameCounter
 		|| g_customViewHeight != g_rtHeight || g_customViewConstants.generation != g_constantRing.Generation());
 	if (updateView || g_waterRefraction || g_fogRemap || !g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()
 		|| memcmp(&c, &g_lastConstants, sizeof c) != 0)
@@ -1538,7 +1535,7 @@ bool ApplyConstants(bool custom)
 			const float view[4] = {(float)g_rtHeight, 0, 0, 0};
 			memset(g_customViewConstants.cpu, 0, 256);
 			memcpy(g_customViewConstants.cpu, view, sizeof view);
-			g_customViewFrame = g_hueFrame; g_customViewHeight = g_rtHeight;
+			g_customViewFrame = g_frameCounter; g_customViewHeight = g_rtHeight;
 			g_stats.constantUpdates++;
 		}
 		g_constantAllocation = slot;
@@ -2015,22 +2012,6 @@ void BindRenderTarget()
 ComPtr<ID3D12Resource> g_placeTestTarget; // D3D12_ReadPlacedRectForTest's
 UINT g_placeTestWidth = 0, g_placeTestHeight = 0;
 
-// A full turn every 240 frames, about 1.5 degrees a frame
-void DiagnosticHue(float rgb[3])
-{
-	const float hue = (float)(g_hueFrame % 240) / 40.0f; // 0 to 6
-	const float x = 1.0f - fabsf(fmodf(hue, 2.0f) - 1.0f);
-	switch ((int)hue)
-	{
-		case 0: rgb[0] = 1.0f; rgb[1] = x; rgb[2] = 0.0f; break;
-		case 1: rgb[0] = x; rgb[1] = 1.0f; rgb[2] = 0.0f; break;
-		case 2: rgb[0] = 0.0f; rgb[1] = 1.0f; rgb[2] = x; break;
-		case 3: rgb[0] = 0.0f; rgb[1] = x; rgb[2] = 1.0f; break;
-		case 4: rgb[0] = x; rgb[1] = 0.0f; rgb[2] = 1.0f; break;
-		default: rgb[0] = 1.0f; rgb[1] = 0.0f; rgb[2] = x; break;
-	}
-}
-
 void ClearScreenColor()
 {
 	ID3D12GraphicsCommandList *list = Core_List();
@@ -2038,13 +2019,6 @@ void ClearScreenColor()
 		return;
 	// The screen's alpha stays 1, as in the former Direct3D 11 driver
 	float color[4] = {g_gl.clearColor[0], g_gl.clearColor[1], g_gl.clearColor[2], 1.0f};
-	if (kDiagnosticHue)
-	{
-		float hue[3];
-		DiagnosticHue(hue);
-		for (int i = 0; i < 3; i++)
-			color[i] = 0.5f * color[i] + 0.5f * hue[i];
-	}
 	Core_FlushBarriers();
 	list->ClearRenderTargetView(Core_Rtv(kRtvScreen), color, 0, nullptr);
 	g_stats.clears++;
@@ -3071,7 +3045,7 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 	IDXGIAdapter3 *adapter = Core_MemoryAdapter();
 	g_localMemoryValid = adapter && SUCCEEDED(adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &g_localMemory));
 	if (g_localMemoryValid && g_localMemory.CurrentUsage > g_localMemory.Budget) g_textureFlushRequested = true;
-	g_hueFrame++;
+	g_frameCounter++;
 
 	if (trace)
 	{
@@ -3088,10 +3062,6 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 		I_Error("Legacy GL's Direct3D 12 device stopped working (0x%08X).\nSet Renderer to Software in Video Options > Advanced if it keeps happening.",
 			(unsigned)removed);
 	}
-
-	// The next frame starts at the new hue, whether or not the game clears it
-	if (kDiagnosticHue)
-		ClearScreenColor();
 }
 
 boolean D3D12_TakeTextureFlushRequest(void)
