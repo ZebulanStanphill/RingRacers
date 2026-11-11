@@ -8685,10 +8685,6 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 	hwr_portalexit=NULL;
 	hwr_portallist=NULL;
 	hwr_portalsearch=false;
-#ifdef HAVE_D3D12
-	D3D12_SetPortalPlane(NULL);
-	D3D12_SetPortalStencil(0);
-#endif
 #endif
 	HWR_RenderViewPass(player,drawSkyTexture,timing);
 }
