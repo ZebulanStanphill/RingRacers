@@ -47,6 +47,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   ticker fails the UWP immediate associates-card skip case. See
   [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
+- **Renderer setting at startup:** `renderer_setting` executes the production
+  `SCR_ChangeRenderer` through the UWP startup order: the setting's default,
+  VibeRant D3D, queues a switch while Software runs, then the config sets
+  Software. The queued switch must be dropped; the pre-fix function keeps it and
+  starts the hardware renderer with the setting reading Software. Also checks
+  that a saved VibeRant D3D keeps the switch, two changes before the next frame,
+  a renderer named on the command line and a hardware renderer that failed to
+  load.
+
 - **D3D12 rolled sprites:** `sprite_brightmap` also executes the geometry-only
   helper and the extracted HLSL integer `RollSource` function. For all angles
   1–71, both horizontal flips, asymmetric patches with holes, transparent

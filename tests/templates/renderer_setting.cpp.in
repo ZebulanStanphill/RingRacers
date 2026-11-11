@@ -1,0 +1,64 @@
+#include <cassert>
+#include <cstdio>
+#include "doomdef.h"
+#include "command.h"
+#include "console.h"
+#include "i_video.h"
+#include "m_argv.h"
+#include "screen.h"
+
+rendermode_t rendermode, chosenrendermode;
+viddef_t vid;
+consvar_t cv_renderer;
+UINT8 setrenderneeded;
+static unsigned cleared, alerts;
+INT32 M_CheckParm(const char *) { return 0; }
+void CONS_Alert(alerttype_t, const char *, ...) { ++alerts; }
+static void HWR_ClearAllTextures(void) { ++cleared; }
+@@CHANGE@@
+static void boot(rendermode_t running, rendermode_t chosen, INT32 glstate)
+{
+    rendermode = running;
+    chosenrendermode = chosen;
+    vid.glstate = glstate;
+    setrenderneeded = 0;
+    cleared = alerts = 0;
+}
+static UINT8 set(INT32 value)
+{
+    cv_renderer.value = value;
+    SCR_ChangeRenderer();
+    return setrenderneeded;
+}
+int main()
+{
+    // UWP startup with Software saved: registering the setting applies its default, VibeRant D3D,
+    // and the config then names the renderer that is already running.
+    boot(render_soft, render_none, VID_GL_LIBRARY_NOTLOADED);
+    assert(set(render_opengl) == render_opengl);
+    assert(set(render_soft) == 0);
+
+    // The same startup with VibeRant D3D saved keeps the switch.
+    boot(render_soft, render_none, VID_GL_LIBRARY_NOTLOADED);
+    assert(set(render_opengl) == render_opengl);
+    assert(set(render_opengl) == render_opengl);
+
+    // Changing the setting twice before the next frame, while hardware runs.
+    boot(render_opengl, render_none, VID_GL_LIBRARY_LOADED);
+    assert(set(render_soft) == render_soft && cleared == 1);
+    assert(set(render_opengl) == 0 && cleared == 1);
+    assert(set(render_soft) == render_soft && cleared == 2);
+
+    // A renderer named on the command line ignores the setting and leaves the queue alone.
+    boot(render_soft, render_soft, VID_GL_LIBRARY_NOTLOADED);
+    assert(set(render_opengl) == 0);
+    setrenderneeded = render_opengl;
+    assert(set(render_soft) == render_opengl);
+
+    // A hardware renderer that failed to load is refused.
+    boot(render_soft, render_none, VID_GL_LIBRARY_ERROR);
+    assert(set(render_opengl) == 0 && alerts == 1);
+    assert(set(render_soft) == 0 && alerts == 1);
+
+    puts("renderer setting: 11 decisions passed");
+}

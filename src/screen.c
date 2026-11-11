@@ -448,6 +448,11 @@ void SCR_ChangeFullscreen(void)
 
 void SCR_ChangeRenderer(void)
 {
+	// [UWP]: The setting is back at the running renderer, so a queued switch is stale. Startup queues
+	// one for the default, VibeRant D3D, before the config's Software is read
+	if (chosenrendermode == render_none && (signed)rendermode == cv_renderer.value)
+		setrenderneeded = 0;
+
 	if (chosenrendermode != render_none
 	|| (signed)rendermode == cv_renderer.value)
 		return;
