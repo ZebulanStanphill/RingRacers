@@ -9146,7 +9146,7 @@ void HWR_DoPostProcessor(player_t *player)
 	if (cv_reducevfx.value) // Match Software's accessibility gating for water and heat.
 		return;
 #else
-	if (r_splitscreen) // The OpenGL driver still only supports a whole-screen grid.
+	if (r_splitscreen) // Not supported in splitscreen - someone want to add support?
 		return;
 #endif
 
@@ -9156,9 +9156,7 @@ void HWR_DoPostProcessor(player_t *player)
 		// 10 by 10 grid. 2 coordinates (xy)
 		float v[SCREENVERTS][SCREENVERTS][2];
 #ifndef _UWP
-		// Each view advances independently; drawing four views must not quadruple speed.
-		static double disStart[MAXSPLITSCREENPLAYERS] = {0};
-		const INT32 view = R_GetViewNumber();
+		static double disStart = 0;
 
 		UINT8 x, y;
 		INT32 WAVELENGTH;
@@ -9184,7 +9182,7 @@ void HWR_DoPostProcessor(player_t *player)
 			for (y = 0; y < SCREENVERTS; y++)
 			{
 				// Change X position based on its Y position.
-				v[x][y][0] = (x/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f + (float)sin((disStart[view]+(y*WAVELENGTH))/FREQUENCY)/AMPLITUDE;
+				v[x][y][0] = (x/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f + (float)sin((disStart+(y*WAVELENGTH))/FREQUENCY)/AMPLITUDE;
 				v[x][y][1] = (y/((float)(SCREENVERTS-1.0f)/9.0f))-4.5f;
 			}
 		}
@@ -9202,7 +9200,7 @@ void HWR_DoPostProcessor(player_t *player)
 #endif
 #ifndef _UWP
 		if (!(paused || P_AutoPause()))
-			disStart[view] += FIXED_TO_FLOAT(renderdeltatics);
+			disStart += FIXED_TO_FLOAT(renderdeltatics);
 #endif
 
 		// Capture the screen again for screen waving on the intermission
