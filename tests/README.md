@@ -116,7 +116,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and preservation of simulation tics. Check that only online UWP Legacy GL
   clients defer the blocking title, while hosts, Software, desktop and demos keep
   it; also check clock refresh after an offline load. A delayed-loading simulation
-  tests the server's delay-limit decision with
+  tests the server's delay-limit decision with production keepalives and
   another healthy remote player, across three load durations and two limits.
   Compile/run UWP hardware and desktop hardware variants; the desktop one
   checks that the online changes stay off desktop builds.

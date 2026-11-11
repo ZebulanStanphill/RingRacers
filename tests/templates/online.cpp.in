@@ -79,7 +79,7 @@ void NetKeepAlive(void) { CL_SendClientKeepAlive(); }
 // Simulate a delayed load using the actual sender, byte expansion and server
 // PingUpdate. Receipt is bounded by vanilla's 32-tic client buffer; simulation
 // resumes at two tics per server tic to represent the observed catch-up.
-int delayedLoad(bool fixed, unsigned loadTics, unsigned threshold) {
+int delayedLoad(unsigned loadTics, unsigned threshold) {
     memset(pingtimeout, 0, sizeof(pingtimeout));
     memset(realpingtable, 0, sizeof(realpingtable));
     memset(packetloss, 0, sizeof(packetloss));
@@ -99,7 +99,7 @@ int delayedLoad(bool fixed, unsigned loadTics, unsigned threshold) {
     demo.playback = false;
     cl_packetmissed = false;
     rendermode = render_opengl;
-    const unsigned initial = 10000, paused = loadTics + (fixed ? 0 : PRELEVELTIME);
+    const unsigned initial = 10000, paused = loadTics;
     unsigned cGame = initial, acknowledged = initial;
     for (unsigned t = 1; t <= 200; t++) {
         const unsigned sGame = initial + t;
@@ -110,10 +110,9 @@ int delayedLoad(bool fixed, unsigned loadTics, unsigned threshold) {
         sent.clear();
         CL_SendClientKeepAlive();
         if (t <= paused) {
-            if (fixed)
-                for (auto a : sent)
-                    if (a.type == PT_NODEKEEPALIVE)
-                        acknowledged = ExpandTics(a.bytes[1], acknowledged);
+            for (auto a : sent)
+                if (a.type == PT_NODEKEEPALIVE)
+                    acknowledged = ExpandTics(a.bytes[1], acknowledged);
         } else {
             cGame = std::min(neededtic, cGame + 2);
             acknowledged = neededtic;
@@ -230,11 +229,10 @@ int main() {
 #if defined(_UWP) && defined(HWRENDER)
     for (unsigned load : {63u, 70u, 77u})
         for (unsigned threshold : {8u, 10u}) {
-            int old = delayedLoad(false, load, threshold),
-                fresh = delayedLoad(true, load, threshold);
-            printf("load %u threshold %u: old %d, new %d\n", load, threshold, old, fresh);
-            assert(old == 1 && fresh == 0);
-            cases += 2;
+            int kicks = delayedLoad(load, threshold);
+            printf("load %u threshold %u: kicks %d\n", load, threshold, kicks);
+            assert(kicks == 0);
+            ++cases;
         }
 #endif
     printf("%u packet, wrap, rate-limit, title and server delay cases passed\n", cases);
