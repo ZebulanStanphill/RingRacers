@@ -21,10 +21,10 @@ extern "C" {
 #endif
 
 #define ZCLIP_PLANE 4.0f // Used for the actual game drawing
+#define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
 
 // [UWP]: Palette rendering's RGB -> palette index lookup table is this many entries on each side (from SRB2)
 #define HWR_PALETTE_LUT_SIZE 64
-#define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
 
 // ==========================================================================
 //                                                               SIMPLE TYPES

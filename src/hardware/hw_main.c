@@ -1382,7 +1382,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	Surface->LightTableId = palette ? HWR_GetLightTableID(colormap) : 0;
 }
 
-UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap)
+UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
 {
 	RGBA_t realcolor, surfcolor;
 	INT32 alpha;
@@ -5881,7 +5881,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 		wallVerts[0].t = wallVerts[1].t = HWR_SpriteUV(spr, 1);
 	}
 
-
 	// This needs to be AFTER the shadows so that the regular sprites aren't drawn completely black.
 	// sprite lighting by modulating the RGB components
 	/// \todo coloured
@@ -6707,7 +6706,13 @@ static void HWR_CreateDrawNodes(void)
 
 	if (!capacity)
 		return;
+	// Dump EVERYTHING into a huge drawnode list. Then we'll sort it!
+	// Could this be optimized into _AddTransparentWall/_AddTransparentPlane?
+	// Hell yes! But sort algorithm must be modified to use a linked list.
 	sortnode = Z_Calloc(capacity*sizeof(*sortnode), PU_STATIC, NULL);
+	// todo:
+	// However, in reality we shouldn't be re-copying and shifting all this information
+	// that is already lying around. This should all be in some sort of linked list or lists.
 	sortindex = Z_Malloc(capacity*sizeof(*sortindex), PU_STATIC, NULL);
 
 	ps_hw_nodesorttime = I_GetPreciseTime();
@@ -7109,7 +7114,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	float gz, gzt;
 	spritedef_t *sprdef;
 	spriteframe_t *sprframe;
+#ifdef ROTSPRITE
 	spriteinfo_t *sprinfo;
+#endif
 	md2_t *md2;
 	size_t lumpoff;
 	unsigned rot;
@@ -7228,12 +7235,16 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	if (thing->skin && thing->sprite == SPR_PLAY)
 	{
 		sprdef = &((skin_t *)thing->skin)->sprites[thing->sprite2];
+#ifdef ROTSPRITE
 		sprinfo = &((skin_t *)thing->skin)->sprinfo[thing->sprite2];
+#endif
 	}
 	else
 	{
 		sprdef = &sprites[thing->sprite];
+#ifdef ROTSPRITE
 		sprinfo = &spriteinfo[thing->sprite];
+#endif
 	}
 
 	if (rot >= sprdef->numframes)
@@ -7243,7 +7254,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		thing->sprite = states[S_UNKNOWN].sprite;
 		thing->frame = states[S_UNKNOWN].frame;
 		sprdef = &sprites[thing->sprite];
+#ifdef ROTSPRITE
 		sprinfo = &spriteinfo[thing->sprite];
+#endif
 		rot = thing->frame&FF_FRAMEMASK;
 		thing->state->sprite = thing->sprite;
 		thing->state->frame = thing->frame;
