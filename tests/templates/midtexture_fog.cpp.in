@@ -1,0 +1,61 @@
+#include <cassert>
+#include <initializer_list>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "hardware/hw_defs.h"
+#include "v_video.h"
+@@TRANS@@
+static int queued, alphaCalls;
+static FOutVector *expectedVerts;
+static extracolormap_t *expectedMap;
+static UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *map)
+{
+    assert(light == 137 && map == expectedMap);
+    ++alphaCalls;
+    return 73;
+}
+static void HWR_AddTransparentWall(FOutVector *verts, FSurfaceInfo *surf,
+    INT32 texture, INT32 base, FBITFIELD flags, boolean fogwall,
+    INT32 light, extracolormap_t *map)
+{
+    assert(verts == expectedVerts);
+    assert(texture == 0 && base == 0);
+    assert(flags == (PF_Fog|PF_NoTexture) && fogwall);
+    assert(surf->PolyColor.s.alpha == 73);
+    assert(light == 129 && map == expectedMap);
+    ++queued;
+}
+@@FOG@@
+int main()
+{
+    sector_t front{};
+    extracolormap_t map{};
+    FOutVector verts[4]{};
+    FSurfaceInfo surf{};
+    front.lightlevel = 137;
+    front.extra_colormap = expectedMap = &map;
+    expectedVerts = verts;
+    line_t line{};
+    int cases = 0;
+    for (int mode = AST_COPY; mode <= AST_FOG; ++mode)
+    for (bool poly : {false, true})
+    for (bool tripwire : {false, true})
+    for (fixed_t alpha : {-FRACUNIT, 0, 1, FRACUNIT/2, FRACUNIT, 2*FRACUNIT})
+    {
+        line.blendmode = mode;
+        line.alpha = alpha;
+        queued = alphaCalls = 0;
+        surf.PolyColor.s.alpha = 211;
+        const bool consumed = HWR_MidtextureFog(poly, tripwire, &line,
+            &front, verts, &surf, 129, &map);
+        const bool fog = mode == AST_FOG && !poly && !tripwire;
+        // Alpha 1 rounds to the invisible table as well as zero/negative.
+        const bool visible = alpha >= FRACUNIT/2;
+        assert(consumed == fog);
+        assert(queued == (fog && visible ? 1 : 0));
+        assert(alphaCalls == queued);
+        if (!queued) assert(surf.PolyColor.s.alpha == 211);
+        ++cases;
+    }
+    assert(cases == 192);
+}

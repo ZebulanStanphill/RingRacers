@@ -38,6 +38,7 @@ def generate_title(engine, output, templates, render, function_section):
         "HWR_DrawWallLightSlice",
         "HWR_SplitWall",
         "HWR_MidtextureSkyCuts",
+        "HWR_MidtextureFog",
         "HWR_ProcessSeg",
     ]:
         code += hw.function(n)

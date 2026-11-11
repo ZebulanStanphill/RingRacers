@@ -517,6 +517,16 @@ def generate(engine, output):
         "ADJUST": hardware.function("HWR_AdjustLevelLight"),
     }, output / "level_darkness.cpp")
     assert hardware.function("HWR_ProcessSeg").count("HWR_MidtextureSkyCuts(") == 2
+    process = hardware.function("HWR_ProcessSeg")
+    assert process.count("HWR_MidtextureFog(") == 1
+    assert "if (HWR_MidtextureFog(gl_curline->polyseg != NULL, tripwire,\n\t\t\t\tgl_linedef, gl_frontsector, wallVerts, &Surf, lightnum, colormap))" in process
+    fog_call = process.index("if (HWR_MidtextureFog(")
+    assert process.rindex("wallVerts[1].y = FIXED_TO_FLOAT(l);", 0, fog_call) < fog_call
+    assert "; // Fog (including invisible fog) replaces the textured draw.\n\t\t\telse if (tripwire == false && gl_frontsector->numlights)" in process
+    render(templates / "midtexture_fog.cpp.in", {
+        "FOG": hardware.function("HWR_MidtextureFog"),
+        "TRANS": Source(engine / "src/r_segs.cpp").function("R_GetLinedefTransTable"),
+    }, output / "midtexture_fog.cpp")
     render(templates / "midtexture_sky.cpp.in", {
         "CUTS": hardware.function("HWR_MidtextureSkyCuts"),
     }, output / "midtexture_sky.cpp")

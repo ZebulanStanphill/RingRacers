@@ -2048,6 +2048,22 @@ FBITFIELD HWR_TranstableToAlpha(INT32 transtablenum, FSurfaceInfo *pSurf)
 
 static void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, INT32 basetexnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap);
 
+// [UWP]: Fog lines tint scenery instead of drawing their midtexture.
+// Software follows opaque texture columns; this fills the whole rectangle.
+static boolean HWR_MidtextureFog(boolean polyobject, boolean tripwire,
+	const line_t *line, const sector_t *front, FOutVector *verts,
+	FSurfaceInfo *surf, INT32 light, extracolormap_t *colormap)
+{
+	if (polyobject || tripwire || line->blendmode != AST_FOG)
+		return false;
+	if (R_GetLinedefTransTable(line->alpha) != NUMTRANSMAPS)
+	{
+		surf->PolyColor.s.alpha = HWR_FogBlockAlpha(front->lightlevel, front->extra_colormap);
+		HWR_AddTransparentWall(verts, surf, 0, 0, PF_Fog|PF_NoTexture, true, light, colormap);
+	}
+	return true;
+}
+
 // ==========================================================================
 // Wall generation from subsector segs
 // ==========================================================================
@@ -3087,7 +3103,10 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			// This will cause the midtexture appear on top, if a FOF overlaps with it.
 			blendmode |= PF_Decal;
 
-			if (tripwire == false && gl_frontsector->numlights)
+			if (HWR_MidtextureFog(gl_curline->polyseg != NULL, tripwire,
+				gl_linedef, gl_frontsector, wallVerts, &Surf, lightnum, colormap))
+				; // Fog (including invisible fog) replaces the textured draw.
+			else if (tripwire == false && gl_frontsector->numlights)
 			{
 				if (!(blendmode & PF_Masked))
 					HWR_SplitWall(gl_frontsector, wallVerts, gl_midtexture, gl_sidedef->midtexture, &Surf, FOF_TRANSLUCENT, NULL, blendmode); // vanilla just uses PF_Masked here - if we run into any issues, maybe change to that

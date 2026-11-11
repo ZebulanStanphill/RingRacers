@@ -821,3 +821,15 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   `R_SetupFrame` and `R_SkyboxFrame` select player/sky contexts before traversal;
   `R_GetViewNumber` maps both context groups to the same four player slots.
   These checks cover light arithmetic/submission, not gameplay or GPU pixels.
+
+- **Fog-style linedefs:** `midtexture_fog` executes the production fog-midtexture
+  helper and Software's alpha-table selection for 192 combinations of all blend
+  modes, polyobjects, tripwires and alpha boundaries. Submission mocks require
+  one untextured fog wall, the original quad, front-sector fog-alpha inputs and
+  preserved wall lighting, or no draw for invisible fog. Other modes, plain
+  masked walls, polyobjects and tripwires retain the textured path. Generation
+  checks the helper gates the existing midtexture dispatch after geometry is
+  computed. Software's upstream fog extent mixes world and screen coordinates;
+  this implements the intended tint across the midtexture rectangle, rather
+  than matching those inconsistent extents or the texture's opaque columns.
+  These checks cover decisions/submission, not GPU pixels or Xbox visuals.
