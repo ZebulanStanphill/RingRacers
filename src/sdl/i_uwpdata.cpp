@@ -505,12 +505,12 @@ const char* I_UWPDataResolve(const char* source, const char* expectedmd5)
 		}
 		else if (entry.dest[0])
 		{
-			I_OutputMsg("UWP: data: %s: USB drive (%s this launch: %s)\n", name,
-				entry.hasMd5 ? "checked and copied" : "copied", why ? why : "unknown");
+			I_OutputMsg("UWP: data: %s: USB drive (checked and copied this launch: %s)\n", name,
+				why ? why : "unknown");
 		}
 		else
 		{
-			I_OutputMsg("UWP: data: %s: USB drive (%s%s)\n", name, entry.hasMd5 ? "checked this launch: " : "",
+			I_OutputMsg("UWP: data: %s: USB drive (checked this launch: %s)\n", name,
 				why ? why : "unknown");
 		}
 	}

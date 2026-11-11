@@ -475,7 +475,8 @@ untouched padding.
   staff ghosts, by name without regard to case), what the data folder keeps (a copied file's copy and sidecar, a kept file
   with an expected MD5's `.verified` record, nothing else), and when a kept file's verified record spares its check (the
   file's size, last-write time and expected MD5 unchanged). Copying, renaming, deleting and loading on Xbox are untested
-  here.
+  here. The worker only copies files with an expected MD5 while checking them; the checksum-free music and sound
+  packs stay on USB. Legacy no-MD5 sidecar parsing remains covered for existing records.
 - **Name indexes:** `name_index` compiles the production `src/name_index.hpp`, the hash indexes that replace the linear
   lump-name, PK3 folder and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
   `HashPositions::FirstFrom` and `LastBelow` with the original forward (`W_CheckNumForNamePwad`) and backward

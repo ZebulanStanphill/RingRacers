@@ -171,19 +171,7 @@ struct uwpcheckfile_t
 	double copyseconds;
 	boolean recorded; // it was never copied, and its check passed and was noted in a verified record
 };
-// Main files with no expected MD5 that are loaded from the USB drive: not checked, but copied once the files that are
-// have been
-struct uwpcopyfile_t
-{
-	char filename[MAX_WADPATH];
-	char copydest[MAX_WADPATH];
-	double seconds;
-	size_t bytes;
-	boolean copied;
-};
 static uwpcheckfile_t uwpcheckfiles[32];
-static uwpcopyfile_t uwpcopyfiles[8];
-static size_t uwpcopycount;
 // Owned by the worker, and published to the main thread by the release store of uwpcopydone
 static char uwpcopyerror[256]; // why copying stopped, or empty
 static boolean uwpcopystopped;
@@ -193,7 +181,6 @@ static size_t uwpcheckcount, uwpcheckverified, uwpcheckfailedfile;
 static double uwpcheckseconds;
 static char uwpcheckerror[128], uwpcheckfound[2*MD5_LEN+1], uwpcheckwanted[2*MD5_LEN+1];
 static std::atomic<int> uwpcheckstate { UWPCHECK_IDLE };
-static std::atomic<bool> uwpcheckcancel { false };
 static boolean uwpcheckreported;
 
 static void W_UWPQueueAssetCheck(const char *filename, const UINT8 *expected, const char *copydest)
@@ -207,17 +194,6 @@ static void W_UWPQueueAssetCheck(const char *filename, const UINT8 *expected, co
 	memcpy(file.expected, expected, MD5_LEN);
 	if (copydest && strlen(copydest) < MAX_WADPATH)
 		strcpy(file.copydest, copydest);
-}
-
-static void W_UWPQueueCopy(const char *filename, const char *copydest)
-{
-	if (uwpcheckstate.load(std::memory_order_relaxed) != UWPCHECK_IDLE
-		|| uwpcopycount == sizeof(uwpcopyfiles)/sizeof(uwpcopyfiles[0])
-		|| strlen(filename) >= MAX_WADPATH || strlen(copydest) >= MAX_WADPATH)
-		I_Error("UWP: Cannot queue file copy for %s\n", filename);
-	uwpcopyfile_t &file = uwpcopyfiles[uwpcopycount++];
-	strcpy(file.filename, filename);
-	strcpy(file.copydest, copydest);
 }
 
 // Worker: copying stops for the rest of this launch. Verification goes on.
@@ -344,61 +320,6 @@ static DWORD WINAPI W_UWPAssetCheckWorker(LPVOID)
 	uwpcheckseconds = W_UWPCheckElapsed(start);
 	uwpcheckstate.store(outcome, std::memory_order_release);
 
-	// Verification is published, so the main thread no longer waits: copy the files that have no MD5 to check.
-	for (size_t i = 0; buffer && outcome == UWPCHECK_VERIFIED && i < uwpcopycount && !uwpcopystopped; i++)
-	{
-		uwpcopyfile_t &file = uwpcopyfiles[i];
-		const auto filestart = std::chrono::steady_clock::now();
-		char copyerror[128];
-		FILE *handle = NULL;
-		bool ok = false;
-		if (!I_UWPDataCopyOpen(file.filename, file.copydest, NULL, copyerror, sizeof(copyerror)))
-		{
-			W_UWPStopCopying(file.filename, copyerror);
-			continue;
-		}
-		if (!(handle = fopen(file.filename, "rb")))
-			snprintf(copyerror, sizeof(copyerror), "Cannot open file (errno %d)", errno);
-		else
-		{
-			setvbuf(handle, NULL, _IONBF, 0);
-			for (;;)
-			{
-				if (uwpcheckcancel.load(std::memory_order_relaxed))
-				{
-					snprintf(copyerror, sizeof(copyerror), "Cancelled");
-					break;
-				}
-				const size_t bytes = fread(buffer, 1, chunksize, handle);
-				file.bytes += bytes;
-				if (bytes && !I_UWPDataCopyWrite(buffer, bytes, copyerror, sizeof(copyerror)))
-					break;
-				if (ferror(handle))
-				{
-					snprintf(copyerror, sizeof(copyerror), "Cannot read file (errno %d)", errno);
-					break;
-				}
-				if (feof(handle))
-				{
-					ok = true;
-					break;
-				}
-			}
-			fclose(handle);
-		}
-		if (ok)
-			ok = I_UWPDataCopyCommit(copyerror, sizeof(copyerror));
-		if (ok)
-		{
-			file.copied = true;
-			file.seconds = W_UWPCheckElapsed(filestart);
-		}
-		else
-		{
-			I_UWPDataCopyAbort();
-			W_UWPStopCopying(file.filename, copyerror);
-		}
-	}
 	free(buffer);
 	uwpcopydone.store(true, std::memory_order_release);
 	return 0;
@@ -443,17 +364,6 @@ static void W_UWPPollCopy(void)
 				file.bytes / (1024.0*1024.0), file.copyseconds);
 		}
 	}
-	for (size_t i = 0; i < uwpcopycount; i++)
-	{
-		const uwpcopyfile_t &file = uwpcopyfiles[i];
-		wanted++;
-		if (file.copied)
-		{
-			copied++;
-			I_OutputMsg("UWP: data: copied %s: %.1f MB in %.2f s\n", file.filename,
-				file.bytes / (1024.0*1024.0), file.seconds);
-		}
-	}
 	if (uwpcopyerror[0])
 		I_OutputMsg("UWP: data: copying stopped, %u of %u copied: %s\n", (unsigned)copied, (unsigned)wanted, uwpcopyerror);
 	else if (copied < wanted)
@@ -481,7 +391,6 @@ void W_UWPPollAssetCheck(void)
 		I_OutputMsg("UWP: asset check verified all %u files in %.2f s\n", (unsigned)uwpcheckcount, uwpcheckseconds);
 	else
 	{
-		uwpcheckcancel.store(true, std::memory_order_relaxed);
 		I_OutputMsg("UWP: asset check failed after %.2f s, %u of %u verified\n",
 			uwpcheckseconds, (unsigned)uwpcheckverified, (unsigned)uwpcheckcount);
 		const char *filename = uwpcheckcount ? uwpcheckfiles[uwpcheckfailedfile].filename : "(no file)";
@@ -1295,10 +1204,6 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	if (mainfile && !md5expected)
 	{
 		md5_buffer(filename, strlen(filename), md5sum);
-		// Loaded from the USB drive, so copied to internal storage
-		const char *copydest = I_UWPDataCopyDest(filename);
-		if (copydest)
-			W_UWPQueueCopy(filename, copydest);
 	}
 	else if (!uwptrusted)
 #endif
