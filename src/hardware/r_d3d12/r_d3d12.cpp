@@ -218,13 +218,13 @@ void MatRotate(float angle, float x, float y, float z)
 	CurrentMatrix() = Multiply(CurrentMatrix(), r);
 }
 
-[[maybe_unused]] void MatPush()
+void MatPush()
 {
 	if (g_matrixMode == MODE_MODELVIEW)
 		g_modelview.push_back(g_modelview.back());
 }
 
-[[maybe_unused]] void MatPop()
+void MatPop()
 {
 	if (g_matrixMode == MODE_MODELVIEW && g_modelview.size() > 1)
 		g_modelview.pop_back();
@@ -322,7 +322,7 @@ void SetColor(const UINT8 *color)
 	memcpy(g_gl.color, color, sizeof g_gl.color);
 }
 
-[[maybe_unused]] const UINT8 kWhite[4] = {255, 255, 255, 255};
+const UINT8 kWhite[4] = {255, 255, 255, 255};
 
 
 struct ProgramUniforms

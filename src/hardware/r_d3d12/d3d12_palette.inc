@@ -19,7 +19,7 @@ void RetireScreenSrv()
 }
 
 // The master palette's view, or the null one, for fade maps
-[[maybe_unused]] UINT MasterPaletteSrv()
+UINT MasterPaletteSrv()
 {
 	return g_masterPalette.res ? g_masterPalette.srv : 0;
 }
