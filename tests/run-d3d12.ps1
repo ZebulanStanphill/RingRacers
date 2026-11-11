@@ -83,7 +83,7 @@ function Run-Control([string]$ControlExe, [string]$Scene) {
 # Turning add-on shaders off must make the custom-shader oracle see built-in pixels.
 Run-Control $Exe 'custom-shader-nocustom'
 
-# Preserve the former SM4 harness's bug-injection coverage on the shipped SM5.1 path.
+# Inject shader defects into the shipped SM5.1 path to verify the pixel oracles.
 # These controls change GPU code while keeping the pixel oracle correct. Recompile only
 # the pipeline object containing the shader bytecode, then link the production harness.
 $Controls = @(

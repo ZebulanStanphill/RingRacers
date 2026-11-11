@@ -99,11 +99,5 @@ scene-zero skip assertion. `startup_gamepads` executes the production initial
 event drain and controller-open handler against SDL mocks, checking multiple
 pads, failed opens, instance IDs, preserved button events and no duplicate drain.
 
-On macOS all three generated harnesses compile with Clang and pass under
-ASan/UBSan and warnings as errors. Full `f_finale.c` also passes
-`clang -fsyntax-only -D_UWP -DNONX86 -DNORUSEASM -Isrc src/f_finale.c`.
-CMake is absent here, so the harnesses were generated with `tests/generate.py`
-and compiled directly using the flags in `tests/CMakeLists.txt`. Full SDL
-translation-unit compilation stops at missing `SDL.h` / `SDL_video.h`; the extracted controller
-functions compile with mocks. No Windows/UWP build, live SDL integration,
-Xbox input/visual measurement, or full regression-suite run was possible here.
+Live SDL integration, Windows/UWP linking and Xbox input/visual latency require
+platform testing.

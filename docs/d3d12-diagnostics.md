@@ -1,7 +1,7 @@
 # Direct3D 12 diagnostics
 
-The Direct3D 12 driver has the former Direct3D 11 driver's pixel history,
-plus two tools of its own for presenting and GPU hangs.
+The Direct3D 12 driver provides pixel history, presentation diagnostics and
+GPU-hang reports.
 
 ## Camera position in screenshots (UWP)
 
@@ -17,8 +17,7 @@ when the kart can't be kept still while it is open.
 
 ## Pixel history: `gr_surfaceprobe`
 
-`gr_surfaceprobe [x_percent y_percent]` (default `15 35`) works as it did under the former Direct3D 11 driver and
-logs the same lines, so existing tooling and readers still work:
+`gr_surfaceprobe [x_percent y_percent]` (default `15 35`) logs pixel history:
 
 ```
 surface probe: begin pixel=(x,y) screen=WxH format=N
@@ -30,7 +29,7 @@ surface probe: end draws=N color_changes=N rows_omitted=N overflow=0
 `raw` is the pixel as a little-endian RGBA8 DWORD. A `sample=` row appears for each draw that changed the
 pixel's color (the first 256), with up to eight `v` rows for polygon and batch draws.
 
-How the driver takes its samples differs from the former Direct3D 11 driver's atlas:
+The driver takes its samples as follows:
 
 - After each polygon, indexed batch, sky loop, model mesh or color clear, it transitions the screen to
   `COPY_SOURCE`, copies the one pixel into slot *i* of a single readback buffer with `CopyTextureRegion`, and

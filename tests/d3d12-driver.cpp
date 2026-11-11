@@ -423,7 +423,7 @@ int main(int argc,char **argv) {
         auto deleteTexture = function<void (*)(GLMipmap_t *)>("DeleteTexture");
         auto special = function<void (*)(hwdspecialstate_t,INT32)>("SetSpecialState");
         special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_POINTSAMPLED);
-        // Screen copies are bound to unit 0 without telling SetTexture's bookkeeping (as in the Direct3D 11 driver), so unbind it
+        // Screen copies are bound to unit 0 without telling SetTexture's bookkeeping, so unbind it
         // through a real texture
         auto unbindTextures = [&]() { std::array<UINT8,4> white={255,255,255,255}; GLMipmap_t one={}; one.format=GL_TEXFMT_RGBA; one.width=one.height=1; one.data=white.data(); texture(&one); texture(nullptr); deleteTexture(&one); };
         auto textured = [&](float left=-.8f,float right=.8f,float size=.8f) {

@@ -2,7 +2,7 @@
 
 [D_ShaderSmoke_v1.pk3](D_ShaderSmoke_v1.pk3) is a 2 KB shader-only add-on for
 Ring Racers 2.4, including this port's VibeRant D3D renderer. Its purpose is
-to make custom shader selection unmistakable. Xbox visuals are **untested**.
+to make custom shader selection unmistakable.
 
 ## Install and compare on Xbox
 

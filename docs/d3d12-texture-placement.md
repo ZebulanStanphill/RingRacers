@@ -45,13 +45,13 @@ The arena's largest class is 4 MB, so a texture whose reported size plus the gua
 
 ### Why committed textures aren't the fallback
 
-The obvious fallback for an oversized texture is `CreateCommittedResource`, and that was the fallback until this change. It isn't safe. In the diagnostic app, a committed 256×256 RGBA8 texture read `0` at texel (255,255) after any state transition, while every other texel kept its data: the same state word, inside the resource this time, over its last texel. A large committed texture would come back with its bottom-right texel zeroed after its first use.
+`CreateCommittedResource` is unsafe as an oversized-texture fallback. In the diagnostic app, a committed 256×256 RGBA8 texture read `0` at texel (255,255) after any state transition, while every other texel kept its data: the same state word, inside the resource this time, over its last texel. A large committed texture would come back with its bottom-right texel zeroed after its first use.
 
 That's why both paths place the texture in a heap with room after it. Committed textures remain only as a last resort for when creating a heap fails, and the log reports the first one:
 
 `UWP D3D12: committed texture: 1024x1024 could not be placed; its last texel is unreliable on Xbox One`
 
-The palette lookup table used to be a committed 64×64×64 R8 texture. Its last texel is the entry for white, so it now goes through `CreateTextureResource` like every other texture.
+The 64×64×64 R8 palette lookup table uses `CreateTextureResource` too: its last texel is the entry for white and needs the same guard.
 
 ## Counters
 

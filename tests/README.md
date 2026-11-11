@@ -144,8 +144,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   register in space 0. Native translation emits 79 general Shader Model 5.1
   stages to `translated-shaders`; Windows CI compiles these and the smoke-test
   add-on's 19 stages there as SM5.1, for 98 total (the 79 include one stand-in screen
-  effect fragment, from `TranslateScreenEffect`, which the screen-effect scenes below draw). The Direct3D 11
-  dispatch and GPU factory harnesses were removed with that driver.
+  effect fragment, from `TranslateScreenEffect`, which the screen-effect scenes below draw).
   `custom_shader_dispatch` runs the production Direct3D 12 loader, compiler,
   cleaner and shader selection with translation, shader compilation and pipeline
   creation stubbed. With no add-on loaded nothing is translated or created and
@@ -173,19 +172,18 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   water's default vertex stage, untouched targets, missing-path rejection, nine
   translated target/layout pairs and the water refraction variant. Windows CI
   compiles the pack's 19 SM5.1 stages, bringing the combined translated corpus to 98.
-  The user confirmed the pack's markers on Xbox; its refracted water is untested there.
 - **Installable renderer test map:** [download and
   instructions](addons/renderer-test/README.md). A generated UDMF race map,
   `D_RenderTest_v1.pk3`, with a room each for fog, overlapping water and heat
   haze, polyobject ripples, wall light slices, translucent ordering and
-  brightmaps, a rainy skybox hall and a sprite-textured 3D model (the model
+  brightmaps, a rainy skybox hall, a parity wing for renderer comparisons,
+  and a sprite-textured 3D model (the model
   files are installed beside the game, not in the PK3). CI builds ZDBSP,
   rebuilds the map from `build.py`, compares every entry and validates the
-  nodes, and uploads it as `renderer-test-map`. It has not been run in the game;
-  Xbox visuals are untested.
+  nodes, and uploads it as `renderer-test-map`.
 - **Wall light slices:** execute production UWP wall splitting and clipping with
-  real slope/FOF height evaluation. Reproduce the second build 93 Xbox pixel
-  capture (Water Palace line 1, `WTPTU1`): an 18-unit sloped tier crosses the
+  real slope/FOF height evaluation. Reproduce a Water Palace pixel capture
+  (line 1, `WTPTU1`): an 18-unit sloped tier crosses the
   water light plane at -52. The pre-fix splitter draws outside the original
   wall and fails the vertex-bound assertion. Check 152 fixtures, including
   100 seeded sloped walls, reversed slopes, crossing light planes, zero-height
@@ -198,17 +196,13 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   wall's pieces), and nothing for other walls or kinds; a FOF reaching below the wall
   fills only down to the wall's bottom, and with two stacked solid FOFs the second, whose
   cut lies wholly below the wall, fills nothing. Every textured piece must be drawn with
-  the wall's texture bound again after a fill (`HWR_GetTexture`): Xbox build e5ea183
-  drew the rest of such walls untextured, black. Dropping the solid-wall condition or
+  the wall's texture bound again after a fill (`HWR_GetTexture`). Dropping the solid-wall condition or
   the rebind fails it. An independent sampled polygon oracle checks exact coverage,
   lighting, preserved UVs and no outside geometry, with the light plane evaluated
   in double precision from the slope's own origin, direction and gradient rather
   than by the engine's `P_GetLightZAt`; every submitted piece must have height; draw stubs check opaque/queued/fog
   dispatch, texture IDs, colormaps and alpha. These tests verify submitted
-  geometry, not Xbox visuals or performance. The user confirmed the Water
-  Palace wall fix and water effect on Xbox One X in build 94, and the water,
-  distortion, Encore and portal effects in split-screen (2026-10-17); a
-  controlled performance comparison remains untested.
+  geometry, not Xbox visuals or performance.
 - **Title background light lists:** replay the title map's actual BSP with
   production `HWR_AddLine`, seg processing, wall light slicing, clipping,
   `R_Prep3DFloors`, and all 72 authored slope constructors. All 58 cold first
@@ -242,8 +236,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   checks the driver side: command-ordered copies, logged pixel ownership and the
   inactive path. There is no native test of the `gr_surfaceprobe` console command's
   argument parsing; a mistake there can only give a wrong message or sampling pixel.
-  The former Direct3D 11 copy/readback mocks and extracted SM4 device harness were
-  removed. This validates the diagnostic, not the underlying brown-wall rendering.
+  This validates the diagnostic, not the underlying rendering.
 - **View interpolation after a reset:** execute the production `R_InterpolateView`,
   `R_UpdateViewInterpolation`, `R_ResetViewInterpolation` and `R_SetViewContext`
   with their real state. After a level load (the title screen after EXIT GAME from a
@@ -282,7 +275,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   submitted shader, blend flags, alpha, and translated polygon geometry; invalid
   polygons must submit no draw. Replacing either changed renderer function with
   its pre-feature implementation fails the corresponding behavior assertion.
-- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 14 million UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing (heat is swept every 7 tics to tic 2100 so both of its waves are active on some rows), paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI. The user confirmed underwater and heat distortion on Xbox One X in single player and in split-screen (2026-10-17).
+- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 14 million UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing (heat is swept every 7 tics to tic 2100 so both of its waves are active on some rows), paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI.
 - **Transparency ordering:** extract the production node builder, object pass,
   model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
   and slope helpers. Each UWP/desktop executable checks 225 scenes and cases,
@@ -502,8 +495,8 @@ untouched padding.
 Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
 not copied into the tests. `#line` directives point compiler/sanitizer diagnostics
 back to those engine files. Only dependency stubs, inputs and expected behavior
-live in `templates/`, including the frozen former-driver bounds and constant
-initializer references that independently check Direct3D 12 captures. If a function or section moves incompatibly, generation
+live in `templates/`, including hand-worked literal bounds and constant bytes
+that independently check Direct3D 12 captures. If a function or section moves incompatibly, generation
 fails instead of silently skipping its test.
 
 These are isolated native checks. The network simulation does not run UDP clients
@@ -692,8 +685,8 @@ texture on the second texture unit. `wipe-after` checks that a draw after a wipe
 mask of another size, still work, since the wipe passes end by resetting every binding.
 `postimg-identity` redraws the saved screen with no distortion, which must reproduce it,
 and `postimg-shift` with the water's sway, checking the pixels either side of the edge in
-every row against the sine. The grid argument of `PostImgRedraw` is ignored, as in the former Direct3D 11
-driver, so a shifted grid doesn't shift anything; the sway is what moves pixels.
+every row against the sine. The grid argument of `PostImgRedraw` is ignored,
+so a shifted grid doesn't shift anything; the sway is what moves pixels.
 Fade map scenes give the master palette known colors and a table of three rows (identity,
 index 7 to 40, then 7 to 41 and 19 to 43). `fade-map` and `fade-map-row` check the strength's row,
 `fade-map-clamp` a strength past the last row, `fade-map-remake` the same table id with four
@@ -739,13 +732,9 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   (including fractional vertices), constant bytes, scene and sine texture bindings
   are literal values, and the growth strips must cover exactly the union of the
   pieces' bounds. Engine-side water-plane continuation and transparent-node dispatch
-  checks moved from the removed `water_capture` harness to this Direct3D 12
-  harness, retaining slope/layer changes and wall/non-ripple interruptions.
-  Direct3D 11 blend-state and capture harnesses were removed; Direct3D 12 WARP
-  checks the shipped blend/capture path and rejects a reciprocal-depth water
-  shader with the `water-refraction` oracle. The build 94 Xbox retest confirmed
-  working water effects and the separate wall light-slice fix. A controlled
-  Xbox GPU comparison of bounded captures remains pending.
+  checks cover slope/layer changes and wall/non-ripple interruptions. Direct3D 12
+  WARP checks the shipped blend/capture path and rejects a reciprocal-depth water
+  shader with the `water-refraction` oracle. Xbox GPU performance needs device testing.
 
 - **Sky plane claims:** `sky_claim` extracts the D3D12 gate from `HWR_Subsector`.
   Check floors from above and ceilings from below, rejection from the far side
@@ -758,7 +747,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   when the Xbox chase camera dipped below sky floors. This test checks claim
   submission, not rendered pixels or Xbox output.
 
-- **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment; the user confirmed the revised position on Xbox. They do not verify background visibility through water.
+- **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment. They do not verify background visibility through water.
 
 - **Untextured step flat bleeding:** `flat_bleed` runs the production D3D12 decision,
   UV and draw helpers. Cover the Green Hills Zone linedef 757 slope-rounding sliver,
@@ -788,7 +777,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   condition fails it. The black the rule draws, the clipper and the Xbox view are not covered; the decision and the
   black wall were compared with Software on macOS (Legacy GL on OpenGL) at the Green Hills Zone pose of the user's
   report and four others.
-- **Horizon visibility:** use all 23 horizon boundaries from vanilla 2.4 Water Palace's TEXTMAP, with source/archive identity recorded in `fixtures/water-palace-horizons.json`. Compare the actual hardware horizon draw condition and helper to Software's production line acceptance, fake-flat and empty-line functions. Check its 22 empty sky boundaries, the remaining real boundary, lighting/texture/colormap/tag/slope changes, camera side, fake-flat control sectors (a chase camera makes `R_FakeFlat` substitute the back sector's heights and flat, which flips the decision in both directions; a first-person camera leaves it unchanged), minisegs, one-sided horizons and ordinary non-sky horizons. The old unconditional horizon condition fails. This verifies the renderer's geometry decision; the user confirmed that the background cutoff is fixed on Xbox. Surface ripple artifacts are tracked separately.
+- **Horizon visibility:** use all 23 horizon boundaries from vanilla 2.4 Water Palace's TEXTMAP, with source/archive identity recorded in `fixtures/water-palace-horizons.json`. Compare the actual hardware horizon draw condition and helper to Software's production line acceptance, fake-flat and empty-line functions. Check its 22 empty sky boundaries, the remaining real boundary, lighting/texture/colormap/tag/slope changes, camera side, fake-flat control sectors (a chase camera makes `R_FakeFlat` substitute the back sector's heights and flat, which flips the decision in both directions; a first-person camera leaves it unchanged), minisegs, one-sided horizons and ordinary non-sky horizons. The old unconditional horizon condition fails. This verifies the renderer's geometry decision, not rendered pixels.
 
 - **Internal FOF visibility:** extract Software's actual `R_DrawSinglePlane` rejection block, the hardware helper, and both face-admission conditions. Compare 945 decisions using real engine FOF structures, all CUTEXTRA/EXTRA/water/fog combinations, touching boundaries, moving control heights, and all 29 overlapping-water sectors recorded from vanilla 2.4 Water Palace in `fixtures/water-palace-water.json`. The old hardware height checks admit 15 internal water boundaries that Software suppresses. Removing the new condition from either face fails this test. This verifies the visibility decision; the reported scenery artifacts still require an Xbox retest.
 
@@ -796,18 +785,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   scenes check this (`blend-invisible*` and `blend-remap-*`, above), through real
   pipeline states and pixels: all 100 pairs of blend modes with Invisible set, the
   surface after each, and water refraction and fog remap composites followed by an
-  ordinary translucent surface. A native test that decoded the state from the
-  driver's own `SetBlendMode` was removed: it used that function as its oracle for
-  the visible blend, and everything it caught also changed the WARP pixels. The
-  state fix did not resolve the reported brown walls; pixel history then identified
-  inverted wall light slices, and the user confirmed that separate fix in build 94.
-
-- **Direct3D water shader runtime:** run `tests/run-d3d12.ps1` as described
-  above. The production SM5.1 capture/refraction path runs on Direct3D 12 WARP;
-  an injected reciprocal-depth shader must fail the same `water-refraction`
-  pixel oracle. The former SM4 WARP runner and its water, fog and brightmap
-  sources were deleted because that shader profile is no longer shipped.
-  Xbox gameplay visuals remain a separate device check.
+  ordinary translucent surface.
 
 - **UWP frame schedule:** `frame_schedule` executes the production pure pacing
   helper with fast 60 Hz loops, alternating 30/10 ms loops, a three-second load,
@@ -820,7 +798,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 - **Horizon scan cache:** `horizon_cache` executes the production D3D12 cache
   and both plane/sky admission gates. Cover minisegs, null linedefs, ordinary and
   horizon lines, cache reuse, runtime changes, zone teardown and replacement
-  levels. See [the writer audit](../docs/uwp-horizon-cache.md). These checks use
+  levels. See [the invalidation notes](../docs/uwp-horizon-cache.md). These checks use
   ASan/UBSan and verify scan admission rather than GPU pixels or Xbox timings.
 
 - **UWP PGO capture lifecycle:** not part of ctest; run `python3 tests/check-pgo.py`
