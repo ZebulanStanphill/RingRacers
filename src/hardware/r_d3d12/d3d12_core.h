@@ -56,7 +56,6 @@ ID3D12CommandQueue *Core_Queue();
 ID3D12GraphicsCommandList *Core_List(); // open for recording between submissions
 IDXGIAdapter3 *Core_MemoryAdapter(); // for QueryVideoMemoryInfo; may be null
 UINT64 Core_TimestampFrequency();
-bool Core_UMA();
 
 // Called whenever the list is (re)opened: set the render targets, viewport and scissor again there
 void Core_SetListBegin(void (*callback)(void));

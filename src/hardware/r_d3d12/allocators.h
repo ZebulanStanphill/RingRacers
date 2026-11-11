@@ -195,7 +195,6 @@ public:
 		pending_.erase(pending_.begin(), end);
 	}
 	size_t Reuses() const { return reuses_; }
-	size_t ChunkCount() const { return chunks_.size(); }
 	size_t ChunkBytes() const { return chunkBytes_; }
 private:
 	struct Chunk { size_t blockSize = 0, head = 0, alignment = 0; bool dedicated = false; };

@@ -43,7 +43,6 @@ ComPtr<IDXGIAdapter3> g_memoryAdapter;
 ComPtr<ID3D12DescriptorHeap> g_rtvHeap, g_dsvHeap;
 UINT g_rtvStep = 0, g_dsvStep = 0;
 UINT64 g_frequency = 0;
-bool g_uma = false;
 bool g_forceWarp = false;
 bool g_dred = false;
 HRESULT g_dredResult = S_OK;
@@ -227,7 +226,6 @@ void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
 	const bool optionsKnown = SUCCEEDED(g_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof options));
 	D3D12_FEATURE_DATA_ARCHITECTURE arch = {};
 	const bool archKnown = SUCCEEDED(g_device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &arch, sizeof arch));
-	g_uma = archKnown && arch.UMA;
 	D3D12_FEATURE_DATA_ROOT_SIGNATURE root = {D3D_ROOT_SIGNATURE_VERSION_1_1};
 	HRESULT rootResult = g_device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &root, sizeof root);
 	if (FAILED(rootResult))
@@ -548,11 +546,6 @@ IDXGIAdapter3 *Core_MemoryAdapter()
 UINT64 Core_TimestampFrequency()
 {
 	return g_frequency;
-}
-
-bool Core_UMA()
-{
-	return g_uma;
 }
 
 void Core_SetListBegin(void (*callback)(void))

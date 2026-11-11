@@ -2160,11 +2160,6 @@ void D3D_SetPalette(RGBA_t *palette)
 	}
 }
 
-void D3D_FinishUpdate(INT32 waitvbl)
-{
-	D3D12_FinishUpdate(waitvbl);
-}
-
 void D3D_Draw2DLine(F2DCoord *v1, F2DCoord *v2, RGBA_t Color)
 {
 	FOutVector p[4];
@@ -2894,7 +2889,6 @@ const struct
 {
 	DRIVERFUNCTION(Init),
 	DRIVERFUNCTION(SetPalette),
-	DRIVERFUNCTION(FinishUpdate),
 	DRIVERFUNCTION(Draw2DLine),
 	DRIVERFUNCTION(DrawPolygon),
 	DRIVERFUNCTION(DrawIndexedTriangles),
