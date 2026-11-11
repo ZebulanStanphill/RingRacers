@@ -1,0 +1,52 @@
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <initializer_list>
+#include "doomdef.h"
+#include "hardware/hw_glob.h"
+#undef min
+#undef max
+static int g_matrixMode;
+static constexpr int MODE_PROJECTION = 1, MODE_MODELVIEW = 2;
+static float g_fov = 90, projected_fov, projected_aspect;
+static void MatLoadIdentity() {}
+static void MatScale(float, float, float) {}
+static void MatRotate(float, float, float, float) {}
+static void MatTranslate(float, float, float) {}
+static void Perspective(float fov, float aspect) { projected_fov = fov; projected_aspect = aspect; }
+INT32 r_splitscreen;
+static int viewssnum;
+static fixed_t fov;
+static fixed_t R_FOV(int) { return fov; }
+@@TRANSFORM@@
+@@FRUSTUM@@
+int main()
+{
+    for (int degrees : {40, 60, 90, 100, 120})
+    for (int split = 0; split < 4; ++split)
+    {
+        FTransform transform{};
+        transform.fovxangle = degrees;
+        transform.splitscreen = split;
+        D3D_SetTransform(&transform);
+        double half = tan(projected_fov*M_PI/360)*projected_aspect;
+        double expected = tan(degrees*M_PI/360)*(split == 1 ? 1.7 : 1.0);
+        assert(fabs(half-expected) < 1e-6);
+        // The former 1.6x projection must fail this independent width oracle.
+        if (split == 1) assert(fabs(tan(degrees*M_PI/360)*1.6-expected) > .01);
+        r_splitscreen = split;
+        fov = degrees*FRACUNIT;
+        for (int pitch : {0, 15, 30, 45, 47})
+        {
+            angle_t clip = gld_FrustumAngle(pitch*ANG1);
+            double bound = clip == 0xffffffff ? 180 : double(clip)/ANG1;
+            // Horizontal corner extent under true pitch: y/z <= vertical half-tangent.
+            double vertical = expected*BASEVIDHEIGHT/BASEVIDWIDTH/(split == 1 ? 2 : 1);
+            double denominator = cos(pitch*M_PI/180)-vertical*sin(pitch*M_PI/180);
+            double edge = denominator <= 0 ? 180 : atan(expected/denominator)*180/M_PI;
+            if (split == 1) assert(bound >= edge);
+        }
+    }
+    puts("split projection: 20 projections, 25 split frustum bounds passed");
+}

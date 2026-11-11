@@ -347,6 +347,10 @@ angle_t gld_FrustumAngle(angle_t tiltangle)
 	// NEWCLIP TODO: SRB2CBTODO: make a global render_fov for this function
 
 	float render_fov = FIXED_TO_FLOAT(R_FOV(viewssnum));
+	// [UWP]: Include Software's wider two-player view in both clipper users.
+	if (r_splitscreen == 1)
+		render_fov = (float)(atan(tan(render_fov*M_PI/360.0)*1.7)*360.0/M_PI);
+
 	float render_fovratio = (float)BASEVIDWIDTH / (float)BASEVIDHEIGHT; // SRB2CBTODO: NEWCLIPTODO: Is this right?
 	float render_multiplier = 64.0f / render_fovratio / RMUL;
 

@@ -2666,9 +2666,10 @@ void D3D_SetTransform(FTransform *stransform)
 		MatTranslate(0.0f, -fdy/BASEVIDHEIGHT, 0.0f);
 	}
 
+	// [UWP]: Twice the vertical half-tangent matches Software's 1.7x width.
 	if (special_splitscreen)
 	{
-		used_fov = (float)(atan(tan(used_fov*M_PI/360)*0.8)*360/M_PI);
+		used_fov = (float)(atan(tan(used_fov*M_PI/360)*0.85)*360/M_PI);
 		Perspective(used_fov, 2.0f);
 	}
 	else

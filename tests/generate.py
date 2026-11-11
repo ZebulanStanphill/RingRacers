@@ -45,6 +45,10 @@ def generate(engine, output):
     templates = Path(__file__).parent / "templates"
     generate_fixture(templates.parent / "fixtures", output)
     generate_title(engine, output, templates, render, function_section)
+    render(templates / "split_projection.cpp.in", {
+        "TRANSFORM": Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp").function("D3D_SetTransform"),
+        "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),
+    }, output / "split_projection.cpp")
     finale = Source(engine / "src/f_finale.c")
     render(templates / "intro.cpp.in", {
         "TIMES": finale.section("#define NUMINTROSCENES", "// custom intros"),

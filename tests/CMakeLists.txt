@@ -89,6 +89,7 @@ function(regression name source)
         ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 endfunction()
 
+regression(split_projection split_projection)
 regression(intro_uwp intro _UWP)
 regression(intro_desktop intro)
 regression(startup_gamepads startup_gamepads _UWP)

@@ -833,3 +833,13 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   this implements the intended tint across the midtexture rectangle, rather
   than matching those inconsistent extents or the texture's opaque columns.
   These checks cover decisions/submission, not GPU pixels or Xbox visuals.
+
+- **Two-player view width:** `split_projection` extracts the D3D12 transform
+  and shared frustum helper. Check 20 projections (five FOVs, all view layouts)
+  against Software's 1.7x horizontal half-tangent and 25 pitched split-view corner bounds.
+  Single, three- and four-player projections stay unchanged. The sky dome uses
+  the same driver transform; `HWR_WallFillsView` already uses 1.7. Both normal
+  rendering and portal searches use the widened frustum. The legacy sky quad's
+  height/aim doubling describes the half-height viewport, not a zoom factor.
+  These extracted functions compile natively; the full Windows D3D12 driver,
+  WARP and Xbox visuals cannot be checked on macOS.

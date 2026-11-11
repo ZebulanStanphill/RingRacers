@@ -40,7 +40,7 @@ seg_t *gl_curline;line_t *gl_linedef;side_t *gl_sidedef;
 INT32 skyflatnum=1,numtextures=4;
 INT32 trans[4]={0,1,2,3};INT32 *texturetranslation=trans;texture_t tex[4]{};texture_t *texturePtrs[4]={tex,tex+1,tex+2,tex+3};texture_t **textures=texturePtrs;
 fixed_t heights[4]={0,64*FRACUNIT,64*FRACUNIT,64*FRACUNIT};fixed_t *textureheight=heights;
-consvar_t cv_debugfinishline{},cv_glshaders{};fixed_t viewx=0,viewy=0,viewz=0,dup_viewx=0,dup_viewy=0;UINT8 viewssnum=0;boolean drawsky=true;int ps_numbspcalls=0;fixed_t *hwbbox;boolean gl_shadersavailable=true;
+consvar_t cv_debugfinishline{},cv_glshaders{};fixed_t viewx=0,viewy=0,viewz=0,dup_viewx=0,dup_viewy=0;INT32 r_splitscreen=0;UINT8 viewssnum=0;boolean drawsky=true;int ps_numbspcalls=0;fixed_t *hwbbox;boolean gl_shadersavailable=true;
 static extracolormap_t fog{};static ffloor_t rovers[300]{};
 mapthing_t fixtureThings[100]{};mapthing_t *mapthings=fixtureThings;size_t nummapthings=0;
 pslope_t *slopelist=nullptr;UINT16 slopecount=0;struct maplighting maplighting{};
