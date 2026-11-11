@@ -1563,11 +1563,7 @@ static void HWR_RenderSkyClaim(subsector_t *subsector, extrasubsector_t *xsub, f
 	// Software extends a plane past a horizon line (special 41) to the horizon, and a sky plane's extension is sky:
 	// Green Hills Zone's skies above its horizons. Claim the same extension that HWR_RenderPlane draws for other
 	// planes: out to 27000 units, then a strip raised to eye level at 32768.
-	if (subsector
-#ifdef HAVE_D3D12
-		&& HWR_SubsectorHasHorizon(subsector)
-#endif
-	)
+	if (HWR_SubsectorHasHorizon(subsector))
 	{
 		const float renderdist = 27000.0f, farrenderdist = 32768.0f;
 		seg_t *line = &segs[subsector->firstline];
