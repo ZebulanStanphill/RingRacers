@@ -327,8 +327,37 @@ def generate(engine, output):
         "LIGHT_HEIGHT": slopes.function("P_GetLightZAt"),
         "FOF_BOTTOM": slopes.function("P_GetFFloorBottomZAt"),
         "CLIP_SLICE": hardware.function("HWR_DrawWallLightSlice"),
-        "SPLIT_WALL": hardware.function("HWR_SplitWall"),
+        "SPLIT_WALL": hardware.function("HWR_TranslucentWallLight") + hardware.function("HWR_SplitWall"),
     }, output / "wall_light.cpp")
+    segs = Source(engine / "src/r_segs.cpp")
+    process = hardware.function("HWR_ProcessSeg").split("\n", 1)[1]
+    # The two side branches deliberately share spelling. Bound each by its own
+    # position in this function, preserving source locations for diagnostics.
+    side_start = "\t\t\t\t\t\tif (blendmode != PF_Masked)"
+    side_parts = []
+    offset = hardware.text.index(process.rstrip("\n"))
+    start = 0
+    for _ in range(2):
+        start = process.index(side_start, start)
+        end = process.index("HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);", start)
+        end += len("HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);")
+        side_parts.append(hardware.annotated(offset + start, offset + end))
+        start = end
+    render(templates / "translucent_wall_light.cpp.in", {
+        "HELPER": hardware.function("HWR_TranslucentWallLight"),
+        "SPLIT": function_section(hardware, "HWR_SplitWall",
+            "\t\tif (!(list[i].flags & FOF_NOSHADE))", "\n\t\tsolid = false;"),
+        "MID": function_section(hardware, "HWR_ProcessSeg",
+            "\t\t\telse if (!(blendmode & PF_Masked))", "\n\t\t}\n\n\t\t// Sky culling"),
+        "SIDE_FRONT": side_parts[0], "SIDE_BACK": side_parts[1],
+        "SW_MID": function_section(segs, "R_RenderMaskedSegLoop",
+            "\t\tif (tripwire)", "\n\t\tif (lightnum < 0)"),
+        "SW_LIST": function_section(segs, "R_RenderMaskedSegLoop",
+            "\t\t\tif ((R_CheckColumnFunc(COLDRAWFUNC_FUZZY) == false)\n\t\t\t\t|| (rlight->flags & FOF_FOG)",
+            "\n\t\t\trlight->lightnum = lightnum;"),
+        "SW_SIDE": function_section(segs, "R_RenderThickSideRange",
+            "\t\t// Get correct light level!", "\n\t\tif (lightnum < 0)"),
+    }, output / "translucent_wall_light.cpp")
     things = Source(engine / "src/r_things.cpp")
     batching = Source(engine / "src/hardware/hw_batching.c")
     batch_helper = batching.function("HWR_SetBatchTextures")

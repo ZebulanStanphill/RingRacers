@@ -2217,6 +2217,14 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 #endif
 
 
+// [UWP]: Software draws a translucent middle texture, and a translucent 3D floor's side seen from a sector with no
+// light list, at full brightness wherever the colormap isn't fog (R_RenderMaskedSegLoop, R_RenderThickSideRange).
+// Legacy GL lit them like any wall, so glass and water sides in dim sectors darkened with distance.
+static FUINT HWR_TranslucentWallLight(FUINT lightnum, const extracolormap_t *colormap)
+{
+	return (colormap && (colormap->flags & CMF_FOG)) ? lightnum : 255;
+}
+
 static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum, INT32 basetexnum, FSurfaceInfo* Surf, INT32 cutflag, ffloor_t *pfloor, FBITFIELD polyflags)
 {
 	/* SoM: split up and light walls according to the
@@ -2294,6 +2302,9 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 			{
 				lightnum = *list[i].lightlevel;
 				colormap = *list[i].extra_colormap;
+				// [UWP]: The translucent middle texture, whose pieces Software lights the same way
+				if (!pfloor && cutflag == FOF_TRANSLUCENT && !(list[i].flags & FOF_FOG))
+					lightnum = HWR_TranslucentWallLight(lightnum, colormap);
 			}
 		}
 
@@ -3120,7 +3131,8 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 				}
 			}
 			else if (!(blendmode & PF_Masked))
-				HWR_AddTransparentWall(wallVerts, &Surf, gl_midtexture, gl_sidedef->midtexture, blendmode, false, lightnum, colormap);
+				HWR_AddTransparentWall(wallVerts, &Surf, gl_midtexture, gl_sidedef->midtexture, blendmode, false,
+					tripwire ? lightnum : HWR_TranslucentWallLight(lightnum, colormap), colormap);
 			else
 				HWR_ProjectWall(wallVerts, &Surf, blendmode, lightnum, colormap);
 		}
@@ -3451,7 +3463,10 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					else
 					{
 						if (blendmode != PF_Masked)
-							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false, lightnum, colormap);
+							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false,
+								// [UWP]: Translucent where Software's blend table is, from alpha 242 down
+								(rover->blend || (10*((256+12) - rover->alpha))/255 > 0)
+									? HWR_TranslucentWallLight(lightnum, colormap) : lightnum, colormap);
 						else
 							HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);
 					}
@@ -3587,7 +3602,10 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					else
 					{
 						if (blendmode != PF_Masked)
-							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false, lightnum, colormap);
+							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false,
+								// [UWP]: Translucent where Software's blend table is, from alpha 242 down
+								(rover->blend || (10*((256+12) - rover->alpha))/255 > 0)
+									? HWR_TranslucentWallLight(lightnum, gl_backsector->extra_colormap) : lightnum, colormap);
 						else
 							HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);
 					}

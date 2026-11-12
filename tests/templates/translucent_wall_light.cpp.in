@@ -1,0 +1,98 @@
+#include <cassert>
+#include <cstdio>
+#include <initializer_list>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "r_state.h"
+#include "hardware/hw_defs.h"
+static constexpr int LIGHTSEGSHIFT=3, COLDRAWFUNC_FUZZY=1,COLDRAWFUNC_FOG=2;
+static bool fuzzy;
+static bool R_CheckColumnFunc(int k) { return k==1 && fuzzy; }
+static bool P_ApplyLightOffset(int n,sector_t *) { return n!=LIGHTLEVELS-1; }
+static int R_AdjustLightLevel(int n) { return n; }
+static sector_t *R_FakeFlat(sector_t *s,sector_t *,int *,int *,boolean) { return s; }
+@@HELPER@@
+static int drawn;
+static void HWR_AddTransparentWall(FOutVector *,FSurfaceInfo *,int,int,FBITFIELD,boolean,int n,extracolormap_t *) { drawn=n; }
+static void HWR_ProjectWall(FOutVector *,FSurfaceInfo *,FBITFIELD,int n,extracolormap_t *) { drawn=n; }
+static int Mid(int lightnum,extracolormap_t *colormap,bool tripwire,FBITFIELD blendmode) {
+ FOutVector wallVerts[4]{}; FSurfaceInfo Surf{}; side_t side{}; side_t *gl_sidedef=&side; int gl_midtexture=0;
+ if(false) {}
+@@MID@@
+ return drawn;
+}
+static int Side(int site,int lightnum,extracolormap_t *colormap,sector_t *gl_backsector,ffloor_t *rover,FBITFIELD blendmode) {
+ FOutVector wallVerts[4]{}; FSurfaceInfo Surf{}; int texnum=0,basetexnum=0;
+ if(site==0) {
+@@SIDE_FRONT@@
+ } else {
+@@SIDE_BACK@@
+ }
+ return drawn;
+}
+static int Split(lightlist_t *list,int i,ffloor_t *pfloor,int cutflag,int lightnum,extracolormap_t *colormap) {
+@@SPLIT@@
+ return lightnum;
+}
+static int SoftwareMid(sector_t *frontsector,bool tripwire) {
+ int lightnum=-1; seg_t line{}; seg_t *curline=&line;
+@@SW_MID@@
+ return lightnum;
+}
+struct RenderLight { int lightlevel; ffloortype_e flags; extracolormap_t *extra_colormap; };
+static int SoftwareList(sector_t *frontsector,RenderLight *rlight) {
+ int lightnum=-1; seg_t line{}; seg_t *curline=&line;
+@@SW_LIST@@
+ return lightnum;
+}
+static int SoftwareSide(sector_t *frontsector,ffloor_t *pfloor) {
+ int lightnum=-1,templight=0; sector_t tempsec{}; seg_t line{}; seg_t *curline=&line;
+@@SW_SIDE@@
+ return lightnum;
+}
+static int failures;
+static void Check(const char *name,int hw,int sw,int expected) {
+ if(hw!=expected || (hw==255?LIGHTLEVELS-1:hw>>LIGHTSEGSHIFT)!=sw) {
+  fprintf(stderr,"%s: hardware=%d Software=%d expected hardware=%d\n",name,hw,sw,expected); ++failures;
+ }
+}
+int main() {
+ sector_t sector{},back{}; extracolormap_t ordinary{},fog{}; fog.flags=CMF_FOG;
+ for(int level:{0,96,160,255}) for(auto map:{&ordinary,(extracolormap_t *)nullptr,&fog}) {
+  sector.lightlevel=level; sector.extra_colormap=map;
+  for(bool trans:{false,true}) {
+   fuzzy=trans;
+   Check(trans?"middle translucent":"middle masked",Mid(level,map,false,trans?PF_Translucent:PF_Masked),SoftwareMid(&sector,false),trans && map!=&fog?255:level);
+  }
+  Check("tripwire",Mid(255,map,true,PF_Translucent),SoftwareMid(&sector,true),255);
+  ffloor_t floor{};
+  for(int alpha=0;alpha<=255;++alpha) for(int blend:{0,1}) for(int site:{0,1}) {
+   floor.alpha=alpha; floor.blend=blend;
+   // Blend-table dependency: available exactly when blend or trans is nonzero.
+   fuzzy=blend || (10*((256+12)-alpha))/255>0;
+   back.extra_colormap=map;
+   // Opposite fog state at the back-facing draw catches use of the wrong map.
+   auto drawmap=site?(map==&fog?&ordinary:&fog):map;
+   Check(site?"side back":"side front",Side(site,level,drawmap,&back,&floor,PF_Translucent),SoftwareSide(&sector,&floor),fuzzy && map!=&fog?255:level);
+   if(!fuzzy) Check("side masked",Side(site,level,drawmap,&back,&floor,PF_Masked),SoftwareSide(&sector,&floor),level);
+  }
+ }
+ INT16 levels[3]={96,160,0}; extracolormap_t *maps[3]={&ordinary,&ordinary,&ordinary}; lightlist_t lights[3]{};
+ for(int i=0;i<3;++i) { lights[i].lightlevel=&levels[i]; lights[i].extra_colormap=&maps[i]; }
+ ffloor_t floor{};
+ for(int cut:{int(FOF_TRANSLUCENT),int(FOF_CUTLEVEL)}) for(bool floorCall:{false,true}) for(int special:{0,1,2,3}) {
+  int previous=96,swprevious=96>>LIGHTSEGSHIFT;
+  for(int i=0;i<3;++i) {
+   lights[i].flags=i==1?(special==1?FOF_FOG:special==2?FOF_NOSHADE:0):0;
+   maps[i]=i==1 && special==3?&fog:&ordinary;
+   fuzzy=cut==int(FOF_TRANSLUCENT) && !floorCall;
+   RenderLight ref{levels[i],static_cast<ffloortype_e>(lights[i].flags),maps[i]};
+   int sw=SoftwareList(&sector,&ref);
+   if(lights[i].flags&FOF_NOSHADE) sw=swprevious;
+   int expected=lights[i].flags&FOF_NOSHADE?previous:(fuzzy && !(lights[i].flags&FOF_FOG) && maps[i]!=&fog?255:levels[i]);
+   int hw=Split(lights,i,floorCall?&floor:nullptr,cut,previous,nullptr);
+   Check("split light",hw,sw,expected); previous=hw; swprevious=sw;
+  }
+ }
+ assert(failures==0);
+}

@@ -220,6 +220,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   than by the engine's `P_GetLightZAt`; every submitted piece must have height; draw stubs check opaque/queued/fog
   dispatch, texture IDs, colormaps and alpha. These tests verify submitted
   geometry, not Xbox visuals or performance.
+- **Translucent wall lighting:** `translucent_wall_light` compares extracted hardware
+  middle-texture and 3D-floor side lighting with Software, including light lists,
+  fog colormaps, fog lights, NOSHADE, opaque walls, tripwires and the alpha 242/243
+  boundary. A translucent window in a dim, colormapped sector darkened with distance
+  in hardware but not in Software; found comparing Xbox screenshots of the renderer
+  test map's room 1. Draw and renderer dependencies are stubs; no pixels are rendered.
 - **Title background light lists:** replay the title map's actual BSP with
   production `HWR_AddLine`, seg processing, wall light slicing, clipping,
   `R_Prep3DFloors`, and all 72 authored slope constructors. All 58 cold first

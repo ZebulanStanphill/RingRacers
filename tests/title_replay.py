@@ -36,6 +36,7 @@ def generate_title(engine, output, templates, render, function_section):
     for n in [
         "HWR_FogBlockAlpha",
         "HWR_DrawWallLightSlice",
+        "HWR_TranslucentWallLight",
         "HWR_SplitWall",
         "HWR_MidtextureSkyCuts",
         "HWR_MidtextureFog",
