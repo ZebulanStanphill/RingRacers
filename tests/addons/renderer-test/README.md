@@ -188,8 +188,9 @@ y=-2048..-3072. The near pair is on flat ground; the far pair is on a ramp
 rising from 0 to 128. In each pair the west/right striped post has
 `RF_SHADOWDRAW`, the east/left post does not. Look south from
 (4608, -1940, 220), pitch -10, or drive in and look down. Software draws the
-flagged posts as flat little ground shapes, width based on the object's
-48-unit radius, beside the tall 192-unit reference posts. The ramp version
+flagged posts as flat little ground shapes, as wide as the upright posts and
+as tall as the object's 48-unit radius and the camera's height make them,
+beside the tall 192-unit reference posts. The ramp version
 also takes the slope. Lua calls `P_TryMove` at the same position after settling
 the object on its floor: `p_map.c` assigns `standingslope` on that successful
 grounded move, even for static scenery. VibeRant should match; the supplied

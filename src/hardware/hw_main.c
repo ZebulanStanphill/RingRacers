@@ -7048,13 +7048,14 @@ static void HWR_AddPrecipitationSprites(void)
 //  Generates a vissprite for a thing if it might be visible.
 // --------------------------------------------------------------------------
 // BP why not use xtoviexangle/viewangletox like in bsp ?....
-// [UWP]: Use Software's radius, view-height flattening and slope components.
+// [UWP]: Use Software's radius, view-height flattening and slope components. The width stays the sprite's own:
+// Software works out a radius-based width too, but then stretches the patch over the columns the sprite had.
 static boolean HWR_ShadowDrawScale(mobj_t *thing, const interpmobjstate_t *interp,
-	float depth, INT32 width, INT32 height, float *xscale, float *yscale, float *skew)
+	float depth, INT32 height, float *yscale, float *skew)
 {
 	fixed_t x, y, groundz;
 	if (!(thing->renderflags & RF_SHADOWDRAW) || R_ThingIsPaperSprite(thing)
-		|| R_ThingIsFloorSprite(thing) || depth <= 0 || width <= 0 || height <= 0)
+		|| R_ThingIsFloorSprite(thing) || depth <= 0 || height <= 0)
 		return false;
 
 	groundz = R_GetShadowZ(thing, NULL);
@@ -7062,7 +7063,6 @@ static boolean HWR_ShadowDrawScale(mobj_t *thing, const interpmobjstate_t *inter
 	y = FixedMul(thing->radius * 2, interp->spriteyscale);
 	y = FixedMul(y, FixedDiv(abs(groundz - viewz), FLOAT_TO_FIXED(depth)));
 	y = min(y, x) / height;
-	x /= width;
 	*skew = 0;
 	if (thing->standingslope)
 	{
@@ -7079,7 +7079,6 @@ static boolean HWR_ShadowDrawScale(mobj_t *thing, const interpmobjstate_t *inter
 		y = abs(y);
 		*skew = FIXED_TO_FLOAT(xslope);
 	}
-	*xscale = FIXED_TO_FLOAT(x);
 	*yscale = FIXED_TO_FLOAT(y);
 	return true;
 }
@@ -7444,8 +7443,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		}
 	}
 
-	shadowdraw = HWR_ShadowDrawScale(thing, &interp, tz,
-		spr_width / FRACUNIT, spr_height / FRACUNIT, &spritexscale, &spriteyscale, &shadowskew);
+	shadowdraw = HWR_ShadowDrawScale(thing, &interp, tz, spr_height / FRACUNIT, &spriteyscale, &shadowskew);
 
 	this_xscale = spritexscale * this_scale;
 	this_yscale = spriteyscale * this_scale;

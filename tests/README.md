@@ -911,7 +911,9 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   slope adjustment and position with Software's extracted projection block and
   `R_SkewShadowSprite` in 960 cases (flat/sloped, five directions, four camera
   heights, two depths, gravity flips, stretching and object scaling). Check literal flat numbers,
-  paper/floor exclusions, unchanged unflagged inputs and zero-shear vertices,
+  paper/floor exclusions, non-positive depth/height, unchanged unflagged inputs and zero-shear vertices,
+  and that the flat shape keeps the sprite's own width, as Software does by
+  stretching the whole patch over its original columns (27 width/radius/scale cases),
   and the quad's shear with and without camera billboarding. Shadow-draw sprites
   skip light-list splitting as in Software. Models keep their original object
   transforms; only a sprite fallback is flattened. A continuous hardware quad

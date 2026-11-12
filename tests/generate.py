@@ -94,7 +94,10 @@ def generate(engine, output):
         "SHEAR": shadow_hardware.function("HWR_ShadowDrawShear"),
         "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
         "SOFTWARE_SKEW": shadow_software.function("R_SkewShadowSprite"),
-        "SOFTWARE_SCALE": function_section(shadow_software, "R_ProjectSprite",
+        "CALL": shadow_hardware.section("\tshadowdraw = HWR_ShadowDrawScale(thing, &interp, tz,", "\n\n\tthis_xscale"),
+        "SOFTWARE_WIDTH": shadow_software.section("\toffset2 = FixedMul(spr_width, FixedMul(spritexscale, this_scale));", "\n\n\tif (papersprite)"),
+        "SOFTWARE_STEP": shadow_software.section("\t\tiscale = (patch->width<<FRACBITS)/(x2-x1+1);", "\n\t\tx1 +="),
+        "SOFTWARE_SCALE": shadow_software.section(
             "\t// Check if this sprite needs to be rendered like a shadow", "\tif (!shadowskew)"),
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
     }, output / "shadow_draw.cpp")

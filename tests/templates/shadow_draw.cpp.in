@@ -58,6 +58,32 @@ static void Software(mobj_t *thing, INT32 width, INT32 height, fixed_t tz,
 @@SOFTWARE_SCALE@@
     (void)cut;
 }
+// Run the production caller with the original sprite scales.
+static bool Hardware(mobj_t *thing, float tz, INT32 width, INT32 height,
+    float &spritexscale, float &spriteyscale, float &shadowskew)
+{
+    interpmobjstate_t interp = state;
+    fixed_t spr_height = height * FRACUNIT;
+    boolean shadowdraw;
+    (void)spritexscale; // production deliberately leaves the horizontal scale alone
+    (void)width; // also used by the old-behaviour mutation check
+@@CALL@@
+    return shadowdraw;
+}
+static void SoftwareWidth(INT32 width, fixed_t spritexscale, INT32 &columns, fixed_t &step)
+{
+    fixed_t spr_width = width * FRACUNIT, this_scale = FRACUNIT, offset2;
+@@SOFTWARE_WIDTH@@
+    // Unclipped, left-aligned projection at unit screen scale. These column
+    // endpoints model R_ProjectSprite's non-paper branch; offset2 above is real code.
+    INT32 x1 = 0, x2 = offset2 / FRACUNIT - 1;
+    struct { INT32 width; } patchdata{width};
+    auto *patch = &patchdata;
+    fixed_t iscale;
+@@SOFTWARE_STEP@@
+    columns = x2-x1+1;
+    step = iscale;
+}
 int main()
 {
     mobj_t thing{};
@@ -86,9 +112,9 @@ int main()
         fixed_t swx = state.spritexscale, swy = state.spriteyscale, swskew = 0, swbottom = 0, swtop = 0;
         Software(&thing, 64, 48, depth*FRACUNIT, swx, swy, swskew, swbottom, swtop);
         float x = 1, y = stretch, skew = 0, bottom = 0, top = 0;
-        assert(HWR_ShadowDrawScale(&thing, &state, depth, 64, 48, &x, &y, &skew));
+        assert(Hardware(&thing, depth, 64, 48, x, y, skew));
         HWR_ShadowDrawPosition(&thing, &state, 48, y, objectscale, &bottom, &top);
-        assert(x == FIXED_TO_FLOAT(swx));
+        assert(x == FIXED_TO_FLOAT(state.spritexscale));
         assert(y == FIXED_TO_FLOAT(swy));
         assert(skew == FIXED_TO_FLOAT(swskew));
         // Software scales the drawn patch height after choosing its top from texturemid.
@@ -101,13 +127,44 @@ int main()
     thing.renderflags = RF_SHADOWDRAW; thing.standingslope = nullptr;
     state.spritexscale = state.spriteyscale = FRACUNIT; viewz = 16*FRACUNIT;
     float x = 1, y = 1, skew = 0;
-    assert(HWR_ShadowDrawScale(&thing, &state, 128, 64, 48, &x, &y, &skew));
-    assert(x == .75f && y == .125f && skew == 0);
+    assert(Hardware(&thing, 128, 64, 48, x, y, skew));
+    assert(x == 1 && y == .125f && skew == 0);
     for (auto flags : {0u, UINT32(RF_SHADOWEFFECTS), UINT32(RF_SHADOWDRAW|RF_PAPERSPRITE), UINT32(RF_SHADOWDRAW|RF_FLOORSPRITE)})
     {
         thing.renderflags = flags;
         x = 2; y = 3; skew = 4;
-        assert(!HWR_ShadowDrawScale(&thing, &state, 128, 64, 48, &x, &y, &skew));
+        assert(!Hardware(&thing, 128, 64, 48, x, y, skew));
+        assert(x == 2 && y == 3 && skew == 4);
+    }
+    thing.renderflags = RF_SHADOWDRAW;
+    for (int radius : {16, 32, 48})
+    for (int width : {32, 64, 96})
+    for (fixed_t original : {FRACUNIT/2, FRACUNIT, 2*FRACUNIT})
+    {
+        thing.radius = radius * FRACUNIT;
+        state.spritexscale = original;
+        float spritexscale = FIXED_TO_FLOAT(original), before = spritexscale;
+        y = 1; skew = 0;
+        assert(Hardware(&thing, 128, width, 48, spritexscale, y, skew));
+        assert(spritexscale == before);
+        INT32 columns; fixed_t step;
+        SoftwareWidth(width, original, columns, step);
+        assert(columns == width * before);
+        // Fixed-point division may leave less than one step's rounding residual.
+        assert((int64_t)step * columns <= (int64_t)width * FRACUNIT);
+        assert((int64_t)(step+1) * columns > (int64_t)width * FRACUNIT);
+        assert(int64_t(columns-1) * step < (int64_t)width * FRACUNIT);
+    }
+    for (float depth : {0.f, -1.f})
+    {
+        x = 2; y = 3; skew = 4;
+        assert(!Hardware(&thing, depth, 64, 48, x, y, skew));
+        assert(x == 2 && y == 3 && skew == 4);
+    }
+    for (INT32 height : {0, -1})
+    {
+        x = 2; y = 3; skew = 4;
+        assert(!Hardware(&thing, 128, 64, height, x, y, skew));
         assert(x == 2 && y == 3 && skew == 4);
     }
     // A positive screen slope lowers the right edge, about the quad centre.
