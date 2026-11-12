@@ -52,8 +52,10 @@ the start line (see Hall).
 
 A new **parity wing** leaves the south wall of Brightmaps (between x=576 and
 1088). Follow its corridor east, y=-1920. Numbered coloured wall panels identify
-rooms 1 through 7; 0 marks the entrance/corridor. Every room returns to this
-corridor, and the hall's finish, checkpoint and waypoint loop are unchanged.
+rooms 1 through 9; 0 marks the entrance/corridor. Rooms 1 to 6 open off the
+corridor's south wall, room 7 is at its east end, and rooms 8 and 9 open off its
+north wall (east of x=3400). Every room returns to this corridor, and the hall's
+finish, checkpoint and waypoint loop are unchanged.
 
 ## What to look at
 
@@ -254,6 +256,46 @@ the supplied build predates the split-screen view fix and shows bands 35/4
 in two-player mode (29/10 in one-player), against Software's 36/3. Camera
 z=100 works.
 
+**8: Semibright sprites and a dark bay** *(CHANGES: Semibright sprites; Wall and
+sprite brightness by distance).* Two bays open off the corridor's north wall,
+each 768 wide and 1280 deep, 128 apart: bay A at x=3456..4224 with sector light
+128, bay B at x=4352..5120 with sector light 96 (y=-1792..-512 in both; no
+colormaps). Each holds nine striped posts in three rows (1024, 640 and 256
+units from the corridor, so y=-768, -1152 and -1536) and three columns, 128, 384
+and 640 units from the bay's west wall. The west column is lit like an ordinary
+sprite, the middle column is semibright (`RF_SEMIBRIGHT`), and the east column
+is fullbright. Look at bay A from (3736, -2000, 100) and at bay B from
+(4632, -2000, 100), both facing north turned 10 degrees east (yaw 80). The near
+posts hide parts of the far ones from there; walk in and move sideways to see
+the rest.
+
+In bay A the east posts are fullbright. The middle (semibright) posts should be
+about half as bright, and the west (ordinary) posts clearly darker again, in all
+three rows. Only right next to a post, within about 100 units, do an ordinary and
+a semibright post look the same. Before the fix, hardware drew the middle posts
+almost as bright as the east ones. In bay B, seen from the corridor, the west
+posts are black, the middle posts dim but visible, and the east posts
+fullbright, while the walls and floor fade to black a short way in. Before the
+fix, hardware drew the middle posts bright. Both renderers should also agree on
+the walls and floor in both bays: this is the map's dark-sector check.
+
+**9: Wall texture above the sky ceiling** *(CHANGES: Wall textures above a sky
+ceiling).* One room with a 224-high sky ceiling, x=5248..6784,
+y=-1792..-768 (light 255, the number 9 on its panels). Its north edge is the
+same masked, blocking, `midpeg` tree-line texture as room 6 (RTTREE, 256 by
+512, opaque tips at z=352), so the tips rise 128 above the ceiling. The west
+bay (x=5248..5984) is room 6's arrangement: behind the line is a thin sector
+whose floor and ceiling are both at -2 and both sky. The east bay
+(x=6048..6784) has an ordinary open strip behind the line, 256 deep, with floor
+0 and a sky ceiling at 224, closed in by solid walls. A solid 64-unit wall
+with a 9 panel (x=5984..6048) separates the two bays. Face north (yaw 90, pitch
+0) from (5616, -1560, 80) for the west bay and from (6416, -1560, 80) for the
+east bay, far enough back to see the tips against the sky. Software and
+hardware should both show the complete jagged silhouette up to its tips in both
+bays. Before the fix, hardware cut the trees off flat at the height of the 224
+sky ceiling. The hardware fix needs Batching on (`gr_batching`, on by default).
+As in room 6, magenta skybox tiles behind the trees are expected.
+
 **Encore** *(Encore distortion; Encore inversion flag).* With `-e`, repeat the
 Water room's underwater and heat views: the mirroring should combine with the
 distortion instead of replacing it. Wherever Encore inverts the screen, such as
@@ -321,9 +363,14 @@ as `renderer-test-map`.
 
 The parity checks additionally require the fog style/midtexture and front
 colormap, matching fade-room/control colormaps with sprite-cutting light
-blocks, all scenery variants, the darkness pad's tag matching Lua, the
-zero-height two-sky sector and its blocked `midpeg` edge, all forty ruler bands
-and their width, and every generated texture. Zero-height sky sectors are
+blocks, all eight scenery variants (0 to 7, with `scenery.lua` making variant 6
+ordinary-lit and variant 7 semibright), the darkness pad's tag matching Lua,
+room 8's two bays (light 128 and 96, no colormap, nine posts each, in rows of
+ordinary, semibright and fullbright), the two zero-height two-sky sectors
+(rooms 6 and 9) and their blocked `midpeg` edges, room 9's three tree-line
+edges (all two-sided, blocking, `midpeg`, RTTREE, with sky ceilings at 224 or
+the zero-height sky sector behind, and RTTREE's tips above 224), all forty ruler
+bands and their width, and every generated texture. Zero-height sky sectors are
 checked separately from the original deep sky pit rules.
 
 `--validate` also checks that the map's `ENCORE` lump is the 256-byte red/blue
@@ -392,10 +439,13 @@ SOC, `BRIGHT` and `SPRTINFO` text, the polyobject rotation trigger (crossing the
 doorway line), the finish line, the checkpoint and the waypoint loop still need
 gameplay validation; their definitions were checked against the engine source.
 
-The seven parity rooms were rendered in Software and in the UWP hardware paths
+Parity rooms 1 to 7 were rendered in Software and in the UWP hardware paths
 using the local invisible-window macOS harness, with the `sw-parity-walls`
 binary (walls fixes present, sprite/view fixes absent). The observations above
-refer to that build. The pad/command were also exercised with a temporary
+for those rooms refer to that build. Rooms 8 and 9 were added later and
+rendered in Software with the same harness, and room 9 also in the hardware
+path with its fix. Room 8's hardware expectation rests on the Direct3D 12
+shader, which the harness doesn't run. The pad/command were also exercised with a temporary
 harness-only Lua probe; this add-on ships no probe or forced camera logic.
 The harness loads the map with `-warp RR_RENDERTEST -file
 /path/to/D_RenderTest_v1.pk3`; its first argument is `RR_RENDERTEST`, not MAP01.

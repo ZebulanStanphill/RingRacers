@@ -83,6 +83,14 @@ local function replaceCollidingScenery()
 					mo.frame = $|FF_TRANS50
 				elseif variant == 5 then
 					mo.frame = $|FF_OVERLAY
+				elseif variant == 6 then
+					-- Ordinary light: with the render flags' brightness bits
+					-- clear, R_ThingIsFullBright reads the frame's flags.
+					mo.frame = A
+				elseif variant == 7 then
+					-- Semibright: the render flags' brightness bits come
+					-- before the frame's FF_FULLBRIGHT.
+					mo.renderflags = $|RF_SEMIBRIGHT
 				end
 				-- P_TryMove, even without displacement, sets floorz and
 				-- standingslope for a grounded object (p_map.c).

@@ -377,6 +377,8 @@ def texture_label(number):
     colours = [(220, 70, 60, 255), (60, 200, 100, 255), (70, 130, 240, 255),
                (230, 180, 50, 255), (180, 80, 220, 255), (40, 210, 210, 255),
                (240, 130, 60, 255)]
+    # Rooms 8 and 9 get colours no other room panel has (the seven above repeat from room 7 on).
+    colours = {8: (240, 110, 170, 255), 9: (150, 110, 60, 255)}.get(number, colours[number % 7])
     text = str(number)
 
     def pixel(x, y):
@@ -389,8 +391,7 @@ def texture_label(number):
                 return 2
         return 1
 
-    return render(128, 128, [(12, 16, 24, 255), colours[number % 7],
-                             (255, 255, 255, 255)], pixel)
+    return render(128, 128, [(12, 16, 24, 255), colours, (255, 255, 255, 255)], pixel)
 
 
 def texture_fogpanel():
@@ -772,6 +773,15 @@ SKY_PIT = (1792, -448, 3200, 448)
 PIT_CEILING, PIT_FLOOR = 320, -32
 
 
+# Room 8: the west x of each bay (768 wide, 128 apart), its sector light, and the posts' distances north of the
+# corridor. Room 9: the x range of the one walkable sector, and its sky ceiling height.
+SEMI_X = (3456, 4352)
+SEMI_LIGHT = (128, 96)
+SEMI_ROWS = (256, 640, 1024)
+SKYRISE_X = (5248, 6784)
+SKYRISE_CEILING = 224
+
+
 def room_x(cx):
     return cx - 384, cx + 384
 
@@ -964,6 +974,30 @@ def build_geometry():
     for n in range(40):
         a = 4352+n*128
         g.edge((a, -8448), (a+128, -8448), sides=({"texturemiddle": f"RTN{n:02}"},))
+
+    # 8: two bays north of the corridor, 768 wide and 1280 deep: sector light 128 and 96. Each holds three
+    # columns of posts (west: ordinary light, middle: semibright, east: fullbright) in three rows.
+    for n, (x0, light) in enumerate(zip(SEMI_X, SEMI_LIGHT)):
+        g.sector(f"semi_bay{n}", rect(x0, -1792, x0 + 768, -512), wall="RTN08", lightlevel=light)
+        for dy in SEMI_ROWS:
+            for dx, variant in zip((128, 384, 640), (6, 7, 0)):
+                extra = {"thingarg0": variant} if variant else {}
+                g.thing(THING_PARITY, x0 + dx, -1792 + dy, **extra)
+
+    # 9: a masked tree-line texture whose tips (z=352) rise above the sky ceilings (224) of both sides. One
+    # walkable sector, with two different north edges: the west bay is room 6's arrangement (a zero-height
+    # sky sector behind the line); the east bay has an ordinary open strip behind it. A 64-unit solid wall
+    # between them keeps the two back sectors from touching.
+    x0, x1 = SKYRISE_X
+    gap0, gap1 = (x0 + x1) // 2 - 32, (x0 + x1) // 2 + 32
+    g.sector("skyrise_walk", rect(x0, -1792, x1, -768), wall="RTN09", heightceiling=SKYRISE_CEILING,
+             textureceiling="F_SKY1", lightlevel=255)
+    g.sector("skyrise_back", rect(x0, -768, gap0, -704), wall="RTN09", heightfloor=-2, heightceiling=-2,
+             texturefloor="F_SKY1", textureceiling="F_SKY1", lightlevel=255)
+    g.sector("skyrise_strip", rect(gap1, -768, x1, -512), wall="RTN09", heightceiling=SKYRISE_CEILING,
+             textureceiling="F_SKY1", lightlevel=255)
+    g.edge((x0, -768), (gap0, -768), midtexture="RTTREE", midpeg=True, blocking=True, sides=({}, {}))
+    g.edge((gap1, -768), (x1, -768), midtexture="RTTREE", midpeg=True, blocking=True, sides=({}, {}))
 
     # The control sectors, one 64x64 square each.
     for n, (name, bottom, top, special, args, wall, props) in enumerate(controls):
@@ -1186,7 +1220,7 @@ def _in_sector(sector, x, y, lines, sides, vertices):
     return inside
 
 
-def validate_map(tm, image_names):
+def validate_map(tm, image_names, entries_png):
     """What the engine requires of a UDMF map, as far as it can be checked without the game.
 
     Raises AssertionError. Returns the polyobject linedefs.
@@ -1339,14 +1373,58 @@ def validate_map(tm, image_names):
     back = named("skyedge_back")
     assert back["heightfloor"] == back["heightceiling"] == -2
     assert back["texturefloor"] == back["textureceiling"] == "F_SKY1"
+    # Room 9's west bay has a second zero-height sky sector, behind its own copy of room 6's edge.
     assert [i for i, sector in enumerate(sectors) if sector["texturefloor"] == "F_SKY1"
-            and sector["heightfloor"] == sector["heightceiling"]] == [geometry.index("skyedge_back")]
+            and sector["heightfloor"] == sector["heightceiling"]] == \
+           [geometry.index("skyedge_back"), geometry.index("skyrise_back")]
     skyedges = [l for l in lines if sides[l["sidefront"]].get("texturemiddle") == "RTTREE"]
-    assert len(skyedges) == 1
-    edge = skyedges[0]
-    assert all(edge.get(k) is True for k in ("twosided", "midpeg", "blocking"))
+    assert len(skyedges) == 3
+    for edge in skyedges:
+        assert all(edge.get(k) is True for k in ("twosided", "midpeg", "blocking"))
+        assert sides[edge["sidefront"]]["texturemiddle"] == sides[edge["sideback"]].get("texturemiddle", "RTTREE")
+    edge = next(l for l in skyedges if vertices[l["v1"]]["y"] == -3072)
     assert sectors[sides[edge["sideback"]]["sector"]] == back
-    assert {t.get("thingarg0", 0) for t in things if t["type"] == THING_PARITY} == set(range(6))
+
+    # Room 8: two bays of nine posts, light 128 and 96, three columns of ordinary, semibright and fullbright.
+    variants = {t.get("thingarg0", 0) for t in things if t["type"] == THING_PARITY}
+    assert variants == set(range(8)), f"parity post variants are {sorted(variants)}, not 0 to 7"
+    assert [named(f"semi_bay{n}")["lightlevel"] for n in range(2)] == [128, 96]
+    for n in range(2):
+        bay = named(f"semi_bay{n}")
+        assert "lightcolor" not in bay and "fadecolor" not in bay, "the dark bays have no colormap"
+        assert bay["textureceiling"] != "F_SKY1" and bay["heightceiling"] == 256
+        x0 = SEMI_X[n]
+        posts = [t for t in things if t["type"] == THING_PARITY and x0 < t["x"] < x0 + 768 and -1792 < t["y"] < -512]
+        assert len(posts) == 9, f"semi_bay{n} has {len(posts)} posts, not 9"
+        for dy in SEMI_ROWS:
+            row = sorted((t["x"] - x0, t.get("thingarg0", 0)) for t in posts if t["y"] == -1792 + dy)
+            assert row == [(128, 6), (384, 7), (640, 0)], f"semi_bay{n}, row {dy} north: {row}"
+        assert all(_in_sector(geometry.index(f"semi_bay{n}"), t["x"], t["y"], lines, sides, vertices) for t in posts)
+
+    # Room 9: the tree line's opaque tips (z=352, texture bottom at the floor) rise above the sky ceilings
+    # (224) on both sides of both its edges: the west bay's zero-height sky sector, and the east bay's strip.
+    rise = geometry.index("skyrise_walk")
+    walk, rise_back, strip = named("skyrise_walk"), named("skyrise_back"), named("skyrise_strip")
+    assert walk["textureceiling"] == strip["textureceiling"] == "F_SKY1"
+    assert walk["heightceiling"] == strip["heightceiling"] == SKYRISE_CEILING
+    assert walk["heightfloor"] == strip["heightfloor"] == 0
+    assert walk["lightlevel"] == strip["lightlevel"] == rise_back["lightlevel"] == 255
+    assert rise_back["heightfloor"] == rise_back["heightceiling"] == -2
+    assert rise_back["texturefloor"] == rise_back["textureceiling"] == "F_SKY1"
+    assert strip["texturefloor"] != "F_SKY1" and not {"colormapfog"} & set(strip)
+    tree_top = tree_tip_height(entries_png["Textures/RTTREE.png"])
+    assert tree_top > SKYRISE_CEILING, f"RTTREE's tips reach {tree_top}, not above the {SKYRISE_CEILING} sky ceilings"
+    rise_edges = [l for l in skyedges if sides[l["sidefront"]]["sector"] == rise]
+    assert len(rise_edges) == 2
+    assert sorted(sides[l["sideback"]]["sector"] for l in rise_edges) == \
+           sorted([geometry.index("skyrise_back"), geometry.index("skyrise_strip")])
+    for edge in rise_edges:
+        back_sector = sectors[sides[edge["sideback"]]["sector"]]
+        assert back_sector["textureceiling"] == "F_SKY1"
+        assert back_sector["heightceiling"] in (-2, SKYRISE_CEILING)
+    strip_lines = [l for l in lines if strip is sectors[sides[l["sidefront"]]["sector"]]
+                   or ("sideback" in l and strip is sectors[sides[l["sideback"]]["sector"]])]
+    assert sum("sideback" in l for l in strip_lines) == 1, "the strip is open only behind the tree line"
     bands = [l for l in lines if vertices[l["v1"]]["y"] == vertices[l["v2"]]["y"] == -8448]
     assert len(bands) == 40
     assert all(abs(vertices[l["v1"]]["x"] - vertices[l["v2"]]["x"]) == 128 for l in bands)
@@ -1366,7 +1444,8 @@ def validate_map(tm, image_names):
             break
     assert all(geometry.index(name) in reached for name in
                ("fogline_front", "fade_room0", "fade_room1", "shadow_flat", "shadow_slope",
-                "overlay_room", "dark_pad", "skyedge_walk", "ruler_spot"))
+                "overlay_room", "dark_pad", "skyedge_walk", "ruler_spot", "semi_bay0", "semi_bay1",
+                "skyrise_walk"))
     # Everything the map names ships in the PK3 (or comes with the game).
     shipped = {Path(n).stem.upper() for n in image_names}
     used = {s[k] for s in sectors for k in ("texturefloor", "textureceiling")}
@@ -1390,6 +1469,13 @@ def png_opaque_mask(data):
     assert len(raw) == height * (width + 1) and all(raw[y * (width + 1)] == 0 for y in range(height))
     return width, height, [raw[y * (width + 1) + 1 + x] >= len(alphas) or alphas[raw[y * (width + 1) + 1 + x]] != 0
                            for y in range(height) for x in range(width)]
+
+
+def tree_tip_height(data):
+    """The height above a texture's bottom of the topmost opaque pixel of an indexed PNG (with a pegged bottom)."""
+    width, height, opaque = png_opaque_mask(data)
+    top = min(i // width for i, solid in enumerate(opaque) if solid)
+    return height - top
 
 
 def doom_patch_pixels(data):
@@ -1437,10 +1523,19 @@ def validate_scenery_script(source):
 
     for required in ("mt.args[0]", "RF_SHADOWDRAW", "P_TryMove", "FF_FULLBRIGHT",
                      "FF_OVERLAY|FF_TRANS50", "RF_OVERLAY|RF_TRANS50",
+                     "variant == 6", "variant == 7", "mo.renderflags = $|RF_SEMIBRIGHT",
                      'COM_AddCommand("rendertest_darkness"', "player.darkness_start",
                      "player.darkness_end", "mo.subsector.sector.tag == DARK_PAD_TAG"):
         assert required in source, f"scenery.lua lacks {required}"
     assert "SpriteFrame = FF_FULLBRIGHT|A" in SOC
+    # Variant 6 must be ordinary-lit: the base frame is fullbright, so it has to drop that flag (the renderflags'
+    # brightness bits, which take precedence, stay clear). Variant 7 sets them to semibright.
+    ordinary = re.search(r"variant == 6 then\n(.*?)\n\s*elseif", source, re.S)
+    assert ordinary and "mo.frame = A\n" in ordinary.group(1) + "\n" and "RF_" not in ordinary.group(1), \
+        "scenery.lua variant 6 must set mo.frame = A (no FF_FULLBRIGHT) and no render flags"
+    semibright = re.search(r"variant == 7 then\n(.*?)\n\s*(?:elseif|end)", source, re.S)
+    assert semibright and "mo.renderflags = $|RF_SEMIBRIGHT" in semibright.group(1), \
+        "scenery.lua variant 7 must add RF_SEMIBRIGHT"
 
 
 def encore_remap(playpal):
@@ -1474,7 +1569,7 @@ def validate_package(entries, models, rewritten=None):
     text = lumps["TEXTMAP"].decode("ascii")
     assert text == emit_textmap(geometry, lines), "the TEXTMAP is not what this script generates"
     tm = parse_textmap(text)
-    one_sided = validate_map(tm, [n for n in entries if n.endswith((".png", ".lmp"))])
+    one_sided = validate_map(tm, [n for n in entries if n.endswith((".png", ".lmp"))], entries)
     sent = parse_textmap(emit_textmap(geometry, lines, zdbsp=True))
     if rewritten is not None:
         # The node builder numbered everything the way we did, so its nodes fit the TEXTMAP we ship.
