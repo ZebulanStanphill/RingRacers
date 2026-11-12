@@ -60,6 +60,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/m_fixed.h"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/r_things.cpp"
+    "${RR_SOURCE_DIR}/src/r_draw_column.cpp"
     "${RR_SOURCE_DIR}/src/r_patchrotation.c"
     "${RR_SOURCE_DIR}/src/r_patch.cpp"
     "${RR_SOURCE_DIR}/src/r_picformats.c"
@@ -109,6 +110,7 @@ set_tests_properties(shared_brightmap_gl_update shared_brightmap_texture
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 regression(sprite_fade sprite_fade)
 regression(shadow_draw shadow_draw)
+regression(drop_shadow_color drop_shadow_color)
 regression(overlay_blend overlay_blend)
 regression(split_projection split_projection)
 regression(software_shear software_shear)

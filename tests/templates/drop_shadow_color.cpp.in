@@ -1,0 +1,191 @@
+// Production drop-shadow binding/lighting/blend, mapped cache and Software column.
+// Allocation/GPU mocks deliberately leave palette translation to the extracted engine code.
+#include <array>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <string> // before the engine headers, one of which includes it inside extern "C"
+#include <vector>
+#include "doomdef.h"
+#include "r_things.h"
+#include "r_state.h"
+#include "r_draw.h"
+#include "v_video.h"
+#include "z_zone.h"
+#include "hardware/hw_glob.h"
+#include "hardware/hw_drv.h"
+
+static std::array<lighttable_t, COLORMAP_REMAPOFFSET + 256> maps{};
+lighttable_t *colormaps = maps.data();
+UINT8 *encoremap = nullptr;
+static RGBA_t mapPalette[256];
+RGBA_t *pLocalPalette = nullptr;
+static RGBA_t localPalette[256];
+static bool paletteRendering;
+boolean HWR_ShouldUsePaletteRendering() { return paletteRendering; }
+@@TEXTURE_PALETTE@@
+UINT8 ASTBlendPaletteIndexes(UINT8, UINT8, int, UINT8) { std::abort(); }
+UINT32 ASTBlendTexturePixel(RGBA_t, RGBA_t, int, UINT8) { std::abort(); }
+void I_Error(const char *, ...) { std::abort(); }
+@@DRAW_COLUMN@@
+
+
+static std::vector<void *> allocations;
+static std::map<GLMipmap_t *, std::vector<UINT8>> pixels;
+static GLPatch_t hardware{};
+static GLMipmap_t base{};
+static GLMipmap_t *bound;
+static unsigned makes, uploads, updates;
+static unsigned bytesPerPixel = 4;
+void *Patch_CreateGL(patch_t *patch) {
+    hardware.mipmap = &base; patch->hardware = &hardware; return &hardware;
+}
+static void HWR_MakePatch(patch_t *patch, GLPatch_t *, GLMipmap_t *mip, boolean bitmap) {
+    assert(bitmap && patch->width == 2 && patch->height == 3); ++makes;
+    auto &out = pixels[mip]; out.assign(6 * bytesPerPixel, 0);
+    mip->data = out.data();
+    for(unsigned index = 0; index < 2; ++index) {
+        // Two index-24 posts per column, separated by a transparent hole.
+        const UINT8 post[] = {0, 1, 0, 24, 0, 2, 1, 0, 24, 0, 0xff};
+        HWR_DrawColumnInCache(reinterpret_cast<const column_t *>(post),
+            out.data() + index * bytesPerPixel, mip, 3, 2 * bytesPerPixel,
+            FRACUNIT, FRACUNIT, nullptr, 3, bytesPerPixel);
+    }
+}
+static void upload(GLMipmap_t *mip) { ++uploads; mip->downloaded = 1; }
+static void update(GLMipmap_t *mip) { assert(mip->downloaded); ++updates; }
+hwdriver_s hwdriver{};
+static void HWR_SetCurrentTexture(GLMipmap_t *mip) { bound = mip; }
+#undef Z_ChangeTag
+#define Z_ChangeTag(p,t) ((void)(p), assert((t) == PU_HWRCACHE_UNLOCKED))
+#undef Z_Calloc
+#define Z_Calloc(s,t,u) allocate(s,t,u)
+static void *allocate(size_t size, INT32 tag, void *user) {
+    assert(tag == PU_HWRPATCHCOLMIPMAP && !user);
+    auto *p = std::calloc(1, size); assert(p); allocations.push_back(p); return p;
+}
+#define M_Memcpy std::memcpy
+@@LOAD_PATCH@@
+@@UPDATE_PATCH@@
+@@GET_PATCH@@
+@@GET_MAPPED_PATCH@@
+
+
+static unsigned mapAllocations;
+#undef Z_Malloc
+#define Z_Malloc(s,t,u) allocateMap(s,t,u)
+static void *allocateMap(size_t size, INT32 tag, void *user) {
+    assert(size == 256 && tag == PU_STATIC && !user);
+    ++mapAllocations;
+    void *p = std::malloc(size); assert(p); return p;
+}
+@@COLOR_MAP@@
+static INT32 receivedLight;
+static extracolormap_t *receivedColormap;
+void HWR_Lighting(FSurfaceInfo *, INT32 light, extracolormap_t *map, boolean) {
+    receivedLight = light; receivedColormap = map;
+}
+boolean P_SectorUsesDirectionalLighting(sector_t *) { return false; }
+static void draw(mobj_t *thing, patch_t *gpatch, FBITFIELD &mode) {
+    FOutVector shadowVerts[4]{};
+    FSurfaceInfo sSurf{};
+    FBITFIELD blendmode = PF_ReverseSubtract;
+@@BIND@@
+@@LIGHT_BLEND@@
+    assert(sSurf.PolyColor.s.alpha == 255);
+    mode = blendmode;
+}
+static UINT8 subtractTable[65536], addTable[65536];
+static int selectedStyle, selectedStrength;
+UINT8 *R_GetBlendTable(INT32 style, INT32 strength) {
+    selectedStyle = style; selectedStrength = strength;
+    return style == AST_ADD ? addTable : subtractTable;
+}
+static vissprite_t selectSoftware(mobj_t *thing) {
+    vissprite_t result{}, *shadow = &result;
+@@SOFTWARE_SELECT@@
+    return result;
+}
+UINT8 *topleft;
+viddef_t vid{};
+#define ZoneScoped
+@@SOFTWARE_COLUMN@@
+int main() {
+    const UINT8 *previous = nullptr;
+    for (unsigned color : {0u, 15u, 31u, 255u}) {
+        unsigned before = mapAllocations;
+        const auto *map = HWR_ShadowColorMap(color);
+        assert(mapAllocations == before + 1);
+        for (unsigned i = 0; i < 256; ++i) assert(map[i] == color);
+        assert(map != previous);
+        previous = map;
+        assert(HWR_ShadowColorMap(color) == map && mapAllocations == before + 1);
+        for (unsigned other : {0u, 15u, 31u, 255u})
+            if (other < color) assert(HWR_ShadowColorMap(other) != map);
+    }
+    assert(mapAllocations == 4);
+    hwdriver.pfnSetTexture = upload; hwdriver.pfnUpdateTexture = update;
+    pLocalPalette = localPalette;
+    for (unsigned i = 0; i < 256; ++i) {
+        maps[i] = i;
+        localPalette[i].s = {UINT8(i), UINT8(255-i), UINT8(i^85), 255};
+        for (unsigned dest = 0; dest < 256; ++dest) {
+            subtractTable[i*256+dest] = UINT8(i*3+dest*7);
+            addTable[i*256+dest] = UINT8(i*5+dest*11);
+        }
+    }
+    patch_t patch{}; patch.width = 2; patch.height = 3;
+    Patch_CreateGL(&patch); base.format = GL_TEXFMT_RGBA;
+    sector_t sector{}; subsector_t subsector{}; subsector.sector = &sector;
+    mobj_t thing{}; thing.subsector = &subsector;
+    extracolormap_t tint{}, listTint{}; extracolormap_t *listMap = &listTint;
+    lightlist_t list{}; list.extra_colormap = &listMap; sector.lightlist = &list;
+    for (unsigned color : {15u, 31u})
+    for (int lighting : {0, 1, 2})
+    for (bool noMaps : {false, true})
+    for (bool white : {false, true}) {
+        sector.extra_colormap = lighting ? &tint : nullptr;
+        sector.numlights = lighting == 2 ? 1 : 0;
+        thing.shadowcolor = color; thing.whiteshadow = white;
+        thing.renderflags = noMaps ? RF_NOCOLORMAPS : 0;
+        bound = nullptr; receivedColormap = &tint; receivedLight = -1;
+        FBITFIELD mode = 0;
+        draw(&thing, &patch, mode);
+        assert(bound && bound != &base && bound->colormap);
+        assert(bound->colormap->source == HWR_ShadowColorMap(color));
+        for (unsigned i = 0; i < 256; ++i) assert(bound->colormap->data[i] == color);
+        assert(receivedLight == 255);
+        assert(receivedColormap == nullptr);
+        assert(mode == (white ? PF_Additive : PF_ReverseSubtract));
+        const auto &texture = pixels.at(bound);
+        for (unsigned i = 0; i < 6; ++i) {
+            if (i/2 == 1) assert(texture[i*4+3] == 0);
+            else assert(std::memcmp(texture.data()+i*4, &localPalette[color], 4) == 0);
+        }
+        auto sw = selectSoftware(&thing);
+        assert(selectedStyle == (white ? AST_ADD : AST_SUBTRACT) && selectedStrength == 0);
+        assert(sw.color == color);
+        for (unsigned patchIndex : {0u, 24u, 255u})
+        for (unsigned dest = 0; dest < 256; ++dest)
+        for (int height : {1, 2, 3, 4}) {
+            UINT8 framebuffer[6]; std::memset(framebuffer, dest, sizeof framebuffer);
+            UINT8 source[4]; std::memset(source, patchIndex, sizeof source);
+            UINT8 arbitraryMap[256]; std::memset(arbitraryMap, lighting*37 + noMaps, sizeof arbitraryMap);
+            topleft = framebuffer; vid.width = 1; vid.height = 6;
+            drawcolumndata_t dc{}; dc.x = 0; dc.yl = 1; dc.yh = height;
+            dc.transmap = sw.transmap; dc.shadowcolor = sw.color;
+            dc.source = source; dc.colormap = arbitraryMap; dc.lightmap = arbitraryMap;
+            R_DrawDropShadowColumn(&dc);
+            for (int y = 0; y < 6; ++y)
+                assert(framebuffer[y] == (y >= 1 && y <= height ? sw.transmap[color*256+dest] : dest));
+        }
+    }
+    for (auto *mip = base.nextcolormap; mip;) {
+        auto *next = mip->nextcolormap; std::free(mip); mip = next;
+    }
+    for (void *p : allocations) std::free(p);
+    // PU_STATIC maps intentionally live for the process lifetime, as in the engine.
+    std::puts("drop shadow colour: cache, binding, lighting, blend, texture holes and Software rows passed");
+}

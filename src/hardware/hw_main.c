@@ -5057,6 +5057,22 @@ static boolean HWR_DoCulling(line_t *cullheight, line_t *viewcullheight, float v
 	return false;
 }
 
+// [UWP]: A translation that turns every pixel of the shadow patch into one palette color. Software subtracts (or, for a
+// white shadow, adds) the object's shadow color, index 15 by default, wherever the patch has a pixel, and takes no
+// color from the patch itself or from the sector's colormap (R_DrawDropShadowColumn). The patch's own pixels are a
+// much darker gray, so Legacy GL's shadows were less than half as strong.
+static const UINT8 *HWR_ShadowColorMap(UINT8 color)
+{
+	static UINT8 *maps[256];
+
+	if (!maps[color])
+	{
+		maps[color] = Z_Malloc(256, PU_STATIC, NULL);
+		memset(maps[color], color, 256);
+	}
+	return maps[color];
+}
+
 static void HWR_DrawDropShadow(mobj_t *thing, fixed_t scale)
 {
 	patch_t *gpatch;
@@ -5064,13 +5080,11 @@ static void HWR_DrawDropShadow(mobj_t *thing, fixed_t scale)
 	FSurfaceInfo sSurf;
 	float fscale; float fx; float fy; float offset;
 	float ph;
-	extracolormap_t *colormap = NULL;
 	FBITFIELD blendmode = PF_ReverseSubtract;
 	INT32 shader = SHADER_DEFAULT;
 	UINT8 i;
 	SINT8 flip = P_MobjFlip(thing);
 
-	INT32 light;
 	fixed_t scalemul;
 	fixed_t groundz;
 	fixed_t slopez;
@@ -5129,7 +5143,7 @@ static void HWR_DrawDropShadow(mobj_t *thing, fixed_t scale)
 			gpatch = (patch_t *)W_CachePatchNum(shadowlump, PU_SPRITE);
 	}
 	if (!(gpatch && ((GLPatch_t *)gpatch->hardware)->mipmap->format)) return;
-	HWR_GetPatch(gpatch);
+	HWR_GetMappedPatch(gpatch, HWR_ShadowColorMap(thing->shadowcolor));
 
 	scalemul = FixedMul(scale, (thing->radius * 2) / gpatch->height);
 
@@ -5186,21 +5200,7 @@ static void HWR_DrawDropShadow(mobj_t *thing, fixed_t scale)
 	shadowVerts[3].t = shadowVerts[2].t = 0;
 	shadowVerts[0].t = shadowVerts[1].t = ((GLPatch_t *)gpatch->hardware)->max_t;
 
-	if (!(thing->renderflags & RF_NOCOLORMAPS))
-	{
-		if (thing->subsector->sector->numlights)
-		{
-			// Always use the light at the top instead of whatever I was doing before
-			light = R_GetPlaneLight(thing->subsector->sector, groundz, false);
-
-			if (*thing->subsector->sector->lightlist[light].extra_colormap)
-				colormap = *thing->subsector->sector->lightlist[light].extra_colormap;
-		}
-		else if (thing->subsector->sector->extra_colormap)
-			colormap = thing->subsector->sector->extra_colormap;
-	}
-
-	HWR_Lighting(&sSurf, 255, colormap, P_SectorUsesDirectionalLighting(thing->subsector->sector));
+	HWR_Lighting(&sSurf, 255, NULL, P_SectorUsesDirectionalLighting(thing->subsector->sector));
 	sSurf.PolyColor.s.alpha = 255;
 
 	if (thing->whiteshadow == true)

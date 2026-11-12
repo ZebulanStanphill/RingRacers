@@ -927,6 +927,15 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   hardware retains true perspective. Native tests check geometry, not pixels,
   model rasterization or Xbox output.
 
+- **Drop shadow color:** `drop_shadow_color` checks cached constant-color maps,
+  mapped-patch binding, opaque texel colors and transparent holes through the real
+  patch cache and column converter, full light without sector or light-list colormaps,
+  and normal/white blend modes. Software's real projection selection and shadow
+  column establish the reference: use the shadow color's blend-table row, ignoring
+  patch pixels and colormaps. Hardware's drop shadows were less than half as dark
+  as Software's; this was found comparing Xbox screenshots. Native checks cover
+  color conversion and draw inputs, not GPU blending or Xbox pixels.
+
 - **Split fullbright colormap fading:** `sprite_fade` executes the production
   split-sprite lighting block and fade helper with real engine types and
   brightness predicates. Check fullbright/ordinary sprites, flagged/unflagged

@@ -101,6 +101,26 @@ def generate(engine, output):
             "\t// Check if this sprite needs to be rendered like a shadow", "\tif (!shadowskew)"),
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
     }, output / "shadow_draw.cpp")
+    shadow_cache = Source(engine / "src/hardware/hw_cache.c")
+    shadow_parts = {
+        "COLOR_MAP": shadow_hardware.function("HWR_ShadowColorMap").replace("= Z_Malloc(", "= (UINT8 *)Z_Malloc("),
+        "BIND": function_section(shadow_hardware, "HWR_DrawDropShadow",
+            "\tif (!(gpatch &&", "\n\tscalemul ="),
+        "LIGHT_BLEND": function_section(shadow_hardware, "HWR_DrawDropShadow",
+            "\tshadowVerts[0].t =", "\n\tif (HWR_UseShader())"),
+        "SOFTWARE_SELECT": function_section(shadow_software, "R_ProjectDropShadow",
+            "\tshadow->transmap =", "\n\tobjectsdrawn++;"),
+        "SOFTWARE_COLUMN": Source(engine / "src/r_draw_column.cpp").function("R_DrawDropShadowColumn"),
+        "TEXTURE_PALETTE": shadow_cache.function("HWR_GetTexturePalette"),
+        "DRAW_COLUMN": shadow_cache.function("HWR_DrawColumnInCache"),
+    }
+    for token, name in (("GET_PATCH", "HWR_GetPatch"), ("GET_MAPPED_PATCH", "HWR_GetMappedPatch"),
+                        ("LOAD_PATCH", "HWR_LoadPatchMipmap"), ("UPDATE_PATCH", "HWR_UpdatePatchMipmap")):
+        shadow_parts[token] = shadow_cache.function(name).replace(
+            "grPatch = patch->hardware;", "grPatch = (GLPatch_t *)patch->hardware;").replace(
+            "newMipmap = calloc(", "newMipmap = (GLMipmap_t *)calloc(").replace(
+            "newMipmap->colormap = Z_Calloc(", "newMipmap->colormap = (GLColormap_t *)Z_Calloc(")
+    render(templates / "drop_shadow_color.cpp.in", shadow_parts, output / "drop_shadow_color.cpp")
     finale = Source(engine / "src/f_finale.c")
     render(templates / "intro.cpp.in", {
         "TIMES": finale.section("#define NUMINTROSCENES", "// custom intros"),
