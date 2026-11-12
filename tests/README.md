@@ -43,6 +43,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
 
+- **Plane polygon loops:** `plane_polygon_loops` runs the production plane polygon
+  construction and seg adjustment on a four-subsector map whose partitions cross a
+  quarter of a unit apart. It checks that each polygon has exactly its GL seg loop's
+  corners, that the T-join pass leaves loop polygons alone, that dented and unclosed
+  loops fall back to the BSP cut while a rounding-sized dent is accepted, that a loop
+  starting with GL segs is complete, and that a leaf the BSP walk skips still gets its
+  loop. Prevents seams of void between a floor's subsectors where BSP partitions cross
+  within the merge tolerance, found on Test Run's bowl.
+
 - **Startup intro input:** `intro_uwp` and `intro_desktop` execute the production
   intro ticker/responder at immediate and 17/18-tic boundaries, preserving the
   disclaimer visibility and progression guards, natural durations, key mapping

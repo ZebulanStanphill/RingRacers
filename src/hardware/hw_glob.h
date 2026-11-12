@@ -63,6 +63,7 @@ typedef struct
 typedef struct
 {
 	poly_t *planepoly;  // the generated convex polygon
+	boolean segloop;    // [UWP]: planepoly is the subsector's own GL seg loop, whose corners are exact
 } extrasubsector_t;
 
 // needed for sprite rendering

@@ -1,0 +1,182 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <climits>
+#include <vector>
+#include <algorithm>
+#include "hardware/hw_glob.h"
+#include "r_state.h"
+#include "m_bbox.h"
+#undef HWR_LOADING_SCREEN
+#undef min
+#undef max
+
+size_t numvertexes, numsegs, numsubsectors, numnodes;
+vertex_t *vertexes;
+seg_t *segs;
+subsector_t *subsectors;
+node_t *nodes;
+consvar_t cv_glsolvetjoin{};
+void I_Error(const char *, ...) { std::abort(); }
+static void CONS_Debug(int, const char *, ...) {}
+#define DBG_RENDER 0
+#define PU_HWRPLANE 0
+char *sizeu1(size_t) { static char text[]="fixture"; return text; }
+void M_ClearBox(fixed_t *b) { b[BOXTOP]=b[BOXRIGHT]=INT_MIN; b[BOXBOTTOM]=b[BOXLEFT]=INT_MAX; }
+void M_AddToBox(fixed_t *b, fixed_t x, fixed_t y) {
+    b[BOXTOP]=std::max(b[BOXTOP],y); b[BOXBOTTOM]=std::min(b[BOXBOTTOM],y);
+    b[BOXRIGHT]=std::max(b[BOXRIGHT],x); b[BOXLEFT]=std::min(b[BOXLEFT],x);
+}
+#define M_Memcpy std::memcpy
+// C's implicit void-pointer conversions, without changing the extracted code.
+struct allocation {
+    void *p;
+    template<class T> operator T *() const { return static_cast<T *>(p); }
+};
+static std::vector<void *> allocated;
+static allocation zonealloc(size_t n) {
+    void *p=std::calloc(1,n); assert(p); allocated.push_back(p); return {p};
+}
+static void zonefree(void *p) {
+    auto i=std::find(allocated.begin(),allocated.end(),p); assert(i!=allocated.end());
+    allocated.erase(i); std::free(p);
+}
+#define Z_Malloc(n,t,u) zonealloc(n)
+#define Z_Free(p) zonefree(p)
+#define malloc(n) allocation{std::malloc(n)}
+#define calloc(n,s) allocation{std::calloc(n,s)}
+// The engine still uses the C register keyword in PointInSeg.
+#define register
+@@POLYGONS@@
+#undef register
+#undef malloc
+#undef calloc
+
+static vertex_t verts[32];
+static seg_t segments[32]; // Includes a valid trailing GL seg for shifted firstline's AdjustSegs walk.
+static subsector_t subs[4];
+static node_t bsp[3];
+static line_t linedefs[32];
+static std::vector<std::vector<int>> loops;
+static size_t first[4];
+static void clear() {
+    HWR_FreeExtraSubsectors();
+    for (void *p: allocated) std::free(p);
+    allocated.clear();
+}
+static void map(fixed_t right=64*FRACUNIT+FRACUNIT/4) {
+    clear();
+    std::memset(verts,0,sizeof verts); std::memset(segments,0,sizeof segments);
+    std::memset(subs,0,sizeof subs); std::memset(bsp,0,sizeof bsp);
+    std::memset(linedefs,0,sizeof linedefs);
+    // Shared objects along x=64 include both near crossings.
+    const fixed_t xy[][2]={{0,0},{0,64*FRACUNIT},{0,128*FRACUNIT},
+        {64*FRACUNIT,0},{64*FRACUNIT,64*FRACUNIT},{64*FRACUNIT,right},
+        {64*FRACUNIT,128*FRACUNIT},{128*FRACUNIT,0},{128*FRACUNIT,right},{128*FRACUNIT,128*FRACUNIT}};
+    numvertexes=10; vertexes=verts;
+    for (size_t i=0;i<numvertexes;++i) { verts[i].x=xy[i][0]; verts[i].y=xy[i][1]; }
+    loops={{0,1,4,3},{1,2,6,5,4},{3,4,5,8,7},{5,6,9,8}};
+    numsegs=0; segs=segments; subsectors=subs; numsubsectors=4; nodes=bsp; numnodes=3;
+    for (size_t s=0;s<4;++s) {
+        first[s]=numsegs; subs[s].firstline=numsegs; subs[s].numlines=loops[s].size();
+        for (size_t j=0;j<loops[s].size();++j) {
+            auto &seg=segments[numsegs];
+            seg.v1=&verts[loops[s][j]]; seg.v2=&verts[loops[s][(j+1)%loops[s].size()]];
+            seg.glseg=(seg.v1->x==64*FRACUNIT && seg.v2->x==64*FRACUNIT)
+                || (seg.v1->y==seg.v2->y && seg.v1->y!=0 && seg.v1->y!=128*FRACUNIT);
+            if (!seg.glseg) { seg.linedef=&linedefs[numsegs]; seg.linedef->v1=seg.v1; seg.linedef->v2=seg.v2; }
+            ++numsegs;
+        }
+    }
+    segments[numsegs].glseg=true; segments[numsegs].v1=&verts[0]; segments[numsegs].v2=&verts[1];
+    // Horizontal eastward lines: south is front. Vertical northward root: east is front.
+    for (int i=0;i<2;++i) {
+        bsp[i].y=i ? right : 64*FRACUNIT; bsp[i].dx=128*FRACUNIT;
+        bsp[i].children[0]=NF_SUBSECTOR | (i ? 2 : 0);
+        bsp[i].children[1]=NF_SUBSECTOR | (i ? 3 : 1);
+    }
+    bsp[2].x=64*FRACUNIT; bsp[2].dy=128*FRACUNIT;
+    bsp[2].children[0]=1; bsp[2].children[1]=0;
+    for (auto &n:bsp) for (auto &b:n.bbox) {
+        M_ClearBox(b); M_AddToBox(b,0,0); M_AddToBox(b,128*FRACUNIT,128*FRACUNIT);
+    }
+    cv_glsolvetjoin.value=0;
+}
+static void exact(size_t s) {
+    const poly_t *p=extrasubsectors[s].planepoly;
+    assert(p);
+    if (p->numpts != static_cast<INT32>(loops[s].size()))
+        std::fprintf(stderr,"subsector %zu: got %d expected %zu, loop %d\n",
+            s,p->numpts,loops[s].size(),extrasubsectors[s].segloop);
+    assert(p->numpts == static_cast<INT32>(loops[s].size()));
+    assert(extrasubsectors[s].segloop);
+    for (size_t j=0;j<loops[s].size();++j) {
+        const vertex_t &v=verts[loops[s][j]];
+        const float x=FIXED_TO_FLOAT(v.x), y=FIXED_TO_FLOAT(v.y);
+        assert(std::memcmp(&p->pts[j].x,&x,sizeof x)==0);
+        assert(std::memcmp(&p->pts[j].y,&y,sizeof y)==0);
+        assert(p->pts[j].z==0);
+    }
+}
+static void all_exact() { for (size_t s=0;s<4;++s) exact(s); }
+static void dent(fixed_t amount) {
+    // Only this loop is malformed; neighbours retain the valid shared map.
+    verts[10]=verts[5]; verts[10].x-=amount; numvertexes=11;
+    loops[1][3]=10;
+    segments[first[1]+2].v2=&verts[10];
+    segments[first[1]+3].v1=&verts[10];
+}
+int main() {
+    map(); HWR_CreatePlanePolygons(2);
+    // Case 1 starts with left-top: the old BSP cutter drops (64,64.25).
+    exact(1); all_exact();
+    for (size_t i=0;i<numsegs;++i) if (!segs[i].glseg) {
+        const auto *a=static_cast<polyvertex_t *>(segs[i].pv1);
+        const auto *b=static_cast<polyvertex_t *>(segs[i].pv2);
+        assert(a && b);
+        assert(a->x==FIXED_TO_FLOAT(segs[i].v1->x) && a->y==FIXED_TO_FLOAT(segs[i].v1->y));
+        assert(b->x==FIXED_TO_FLOAT(segs[i].v2->x) && b->y==FIXED_TO_FLOAT(segs[i].v2->y));
+    }
+    // Every occurrence of a shared vertex has identical float coordinates.
+    for (size_t a=0;a<4;++a) for (size_t b=a+1;b<4;++b)
+        for (size_t i=0;i<loops[a].size();++i) for (size_t j=0;j<loops[b].size();++j)
+            if (loops[a][i]==loops[b][j])
+                assert(std::memcmp(&extrasubsectors[a].planepoly->pts[i],
+                    &extrasubsectors[b].planepoly->pts[j],sizeof(polyvertex_t))==0);
+
+    // The old T-join pass would insert this off-edge corner into left-top.
+    map(65*FRACUNIT); HWR_CreatePlanePolygons(2); all_exact();
+    // Move the right corner one unit from the left-top vertical edge, away from its ends.
+    verts[8].x=64*FRACUNIT+FRACUNIT;
+    polyvertex_t near{65,65,0};
+    poly_t *left=extrasubsectors[1].planepoly;
+    assert(!SameVertice(&near,&left->pts[2]) && !SameVertice(&near,&left->pts[3]));
+    assert(PointInSeg(&near,&left->pts[2],&left->pts[3]));
+    cv_glsolvetjoin.value=1; HWR_CreatePlanePolygons(2); all_exact();
+    assert(numsplitpoly==0);
+
+    // Dented middle point on left-top's partition edge: clear rejection and rounding tolerance.
+    map(); dent(FRACUNIT); HWR_CreatePlanePolygons(2);
+    assert(extrasubsectors[1].planepoly && !extrasubsectors[1].segloop);
+    exact(0); exact(2); exact(3);
+    map(); dent(1); HWR_CreatePlanePolygons(2); all_exact();
+
+    map(); segments[first[1]].v2=&verts[0]; HWR_CreatePlanePolygons(2);
+    assert(extrasubsectors[1].planepoly && !extrasubsectors[1].segloop);
+    exact(0); exact(2); exact(3);
+
+    // Right-top starts with a GL seg; the loader advances firstline to its first real seg.
+    map(); assert(segments[first[3]].glseg);
+    subs[3].firstline=first[3]+1; HWR_CreatePlanePolygons(2); all_exact();
+    // A partition beyond the map boundary leaves its back leaf unvisited. The post-walk
+    // fallback must recover that leaf, even with a dent that the convex path rejects.
+    map(); dent(FRACUNIT); bsp[0].y=129*FRACUNIT;
+    const INT32 before=totalsubsecpolys;
+    HWR_CreatePlanePolygons(2);
+    assert(totalsubsecpolys-before==3);
+    all_exact();
+    clear();
+    puts("plane polygons: shared GL loops, T-joins, fallback and leading GL segs");
+}

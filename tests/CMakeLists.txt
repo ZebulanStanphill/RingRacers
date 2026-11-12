@@ -31,6 +31,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_main.cpp"
     "${RR_SOURCE_DIR}/src/r_fps.cpp"
     "${RR_SOURCE_DIR}/src/v_video.cpp"
+    "${RR_SOURCE_DIR}/src/hardware/hw_bsp.c"
+    "${RR_SOURCE_DIR}/src/hardware/hw_glob.h"
     "${RR_SOURCE_DIR}/src/hardware/hw_draw.c"
     "${RR_SOURCE_DIR}/src/hardware/r_opengl/r_opengl.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_cache.c"
@@ -270,3 +272,5 @@ set_tests_properties(name_index PROPERTIES TIMEOUT 60
 regression(frame_schedule frame_schedule _UWP)
 
 regression(horizon_cache horizon_cache _UWP HWRENDER)
+
+regression(plane_polygon_loops plane_polygon_loops HWRENDER)

@@ -571,6 +571,62 @@ static poly_t *CutOutSubsecPoly(seg_t *lseg, INT32 count, poly_t *poly)
 	return poly;
 }
 
+// [UWP]: Each subsector's first seg, GL segs included, while the polygons are built. The extended node loaders store
+// the subsectors' segs in turn, and move firstline past the leading GL segs without changing numlines.
+static size_t *subsecfirstseg;
+
+// A corner that turns the wrong way still counts as straight when it lies this close to the line between its
+// neighbours: node builders round every vertex to a 65536th of a unit
+#define LOOPDENT (1.0/1024)
+
+// [UWP]: The subsector's shape from its closed loop of GL segs, or NULL when it has none. The BSP walk cuts its
+// polygons out of partition lines in float and merges points SameVertice calls equal, so where partitions cross
+// within that tolerance, neighbouring polygons get different corners and the void shows between them: dark lines
+// to the centre of Test Run's bowl. The loops of one node build share their vertices, so they can't come apart.
+static poly_t *HWR_SegLoopPoly(size_t num, boolean convex)
+{
+	const size_t first = subsecfirstseg[num];
+	const INT32 count = subsectors[num].numlines;
+	size_t k;
+	INT32 j;
+	seg_t *lseg;
+	poly_t *poly;
+
+	if (count < 3 || first + count > numsegs)
+		return NULL;
+
+	if (subsectors[num].firstline < first || subsectors[num].firstline >= first + count)
+		return NULL;
+	for (k = first; k < subsectors[num].firstline; k++)
+		if (!segs[k].glseg)
+			return NULL;
+
+	lseg = &segs[first];
+	for (j = 0; j < count; j++)
+		if (lseg[j].v2 != lseg[(j + 1) % count].v1)
+			return NULL;
+
+	// plane polygons are clockwise, and drawn as a fan
+	for (j = 0; convex && j < count; j++)
+	{
+		const vertex_t *a = lseg[j].v1, *b = lseg[(j + 1) % count].v1, *c = lseg[(j + 2) % count].v1;
+		const double abx = ((double)b->x - a->x) / FRACUNIT, aby = ((double)b->y - a->y) / FRACUNIT;
+		const double bcx = ((double)c->x - b->x) / FRACUNIT, bcy = ((double)c->y - b->y) / FRACUNIT;
+
+		if (abx*bcy - aby*bcx > LOOPDENT * hypot(abx + bcx, aby + bcy))
+			return NULL;
+	}
+
+	poly = HWR_AllocPoly(count);
+	for (j = 0; j < count; j++)
+	{
+		poly->pts[j].x = FIXED_TO_FLOAT(lseg[j].v1->x);
+		poly->pts[j].y = FIXED_TO_FLOAT(lseg[j].v1->y);
+		poly->pts[j].z = 0.0f;
+	}
+	return poly;
+}
+
 // At this point, the poly should be convex and the exact
 // layout of the subsector, it is not always the case,
 // so continue to cut off the poly into smaller parts with
@@ -588,7 +644,16 @@ static inline void HWR_SubsecPoly(INT32 num, poly_t *poly)
 
 	if (poly)
 	{
-		poly = CutOutSubsecPoly (lseg,count,poly);
+		poly_t *loop = HWR_SegLoopPoly(num, true); // [UWP]
+
+		if (loop)
+		{
+			HWR_FreePoly(poly);
+			poly = loop;
+			extrasubsectors[num].segloop = true;
+		}
+		else
+			poly = CutOutSubsecPoly (lseg,count,poly);
 		totalsubsecpolys++;
 		//extra data for this subsector
 		extrasubsectors[num].planepoly = poly;
@@ -738,42 +803,14 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
 // around the exact subsector shape, so use that
 static void HWR_SegLoopPolys(void)
 {
-	size_t i, k, first = 0;
-	INT32 j, count;
-	seg_t *lseg;
-	poly_t *poly;
+	size_t i;
 
-	for (i = 0; i < numsubsectors; first += subsectors[i].numlines, i++)
+	for (i = 0; i < numsubsectors; i++)
 	{
-		count = subsectors[i].numlines;
-		if (extrasubsectors[i].planepoly || count < 3 || first + count > numsegs)
+		if (extrasubsectors[i].planepoly)
 			continue;
-
-		// the extended node loaders store each subsector's segs in turn,
-		// moving firstline past leading GL segs without changing numlines
-		if (subsectors[i].firstline < first || subsectors[i].firstline >= first + count)
-			continue;
-		for (k = first; k < subsectors[i].firstline; k++)
-			if (!segs[k].glseg)
-				break;
-		if (k < subsectors[i].firstline)
-			continue;
-
-		lseg = &segs[first];
-		for (j = 0; j < count; j++)
-			if (lseg[j].v2 != lseg[(j + 1) % count].v1)
-				break;
-		if (j < count)
-			continue;
-
-		poly = HWR_AllocPoly(count);
-		for (j = 0; j < count; j++)
-		{
-			poly->pts[j].x = FIXED_TO_FLOAT(lseg[j].v1->x);
-			poly->pts[j].y = FIXED_TO_FLOAT(lseg[j].v1->y);
-			poly->pts[j].z = 0.0f;
-		}
-		extrasubsectors[i].planepoly = poly;
+		extrasubsectors[i].planepoly = HWR_SegLoopPoly(i, false);
+		extrasubsectors[i].segloop = (extrasubsectors[i].planepoly != NULL);
 	}
 }
 
@@ -857,7 +894,8 @@ static void SearchSegInBSP(INT32 bspnum,polyvertex_t *p,poly_t *poly)
 		{
 			bspnum &= ~NF_SUBSECTOR;
 			q = extrasubsectors[bspnum].planepoly;
-			if (poly == q || !q)
+			// [UWP]: A seg loop has a corner wherever its neighbours do, and a point put into it would bend its edge
+			if (poly == q || !q || extrasubsectors[bspnum].segloop)
 				return;
 			for (j = 0; j < q->numpts; j++)
 			{
@@ -1072,6 +1110,12 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	// number of the first new subsector that might be added
 	addsubsector = numsubsectors;
 
+	subsecfirstseg = malloc((numsubsectors + 1) * sizeof (*subsecfirstseg));
+	if (subsecfirstseg == NULL)
+		I_Error("couldn't malloc subsecfirstseg numsubsectors %s\n", sizeu1(numsubsectors));
+	for (i = 0, subsecfirstseg[0] = 0; i < numsubsectors; i++)
+		subsecfirstseg[i + 1] = subsecfirstseg[i] + subsectors[i].numlines;
+
 	// construct the initial convex poly that encloses the full map
 	rootp = HWR_AllocPoly(4);
 	rootpv = rootp->pts;
@@ -1091,6 +1135,8 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 
 	WalkBSPNode(bspnum, rootp, NULL,rootbbox);
 	HWR_SegLoopPolys();
+	free(subsecfirstseg);
+	subsecfirstseg = NULL;
 
 	i = SolveTProblem();
 	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);

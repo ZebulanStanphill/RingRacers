@@ -49,6 +49,10 @@ def generate(engine, output):
         "TRANSFORM": Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp").function("D3D_SetTransform"),
         "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),
     }, output / "split_projection.cpp")
+    render(templates / "plane_polygon_loops.cpp.in", {
+        "POLYGONS": Source(engine / "src/hardware/hw_bsp.c").section(
+            "extrasubsector_t *extrasubsectors = NULL;", "\n#endif //HWRENDER"),
+    }, output / "plane_polygon_loops.cpp")
     events = Source(engine / "src/d_main.cpp")
     render(templates / "event_queue.cpp.in", {
         "ADDED": events.function("HandleGamepadDeviceAdded"),
