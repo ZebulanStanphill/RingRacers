@@ -58,7 +58,8 @@ cbuffer DrawConstants : register(b0)
 	int u_alpha_func; // 0: GL_ALWAYS, 1: GL_GREATER, 2: GL_NOTEQUAL
 	int u_tex_mode; // fixed-function texturing: 0: none (the vertex color), 1: GL_MODULATE, 2: GL_REPLACE
 	int u_palette; // palette rendering, with a light table
-	int2 u_pad;
+	int u_light_plane; // 1: lit by distance like Software's planes, 0: by scale like its walls and sprites
+	float u_light_view_ratio; // the view's width over the screen's, as for FogColormap
 	float4 u_clip_plane; // camera space, evaluated after the full modelview
 	float u_fullscreen_depth;
 	float3 u_portal_pad;
@@ -261,14 +262,30 @@ float4 AlphaTest(float4 color)
 	return color;
 }
 
-// GLSL_DOOM_COLORMAP
+// Software's integer distance/scale tables, rather than the smooth shader's
+// approximation. A fog boundary remaps the scene once at its own distance.
+float FogColormap(float distance, int lightnum, int plane, float viewRatio)
+{
+	int start = (31 - clamp(lightnum, 0, 31)) * 2;
+	int attenuation;
+	if (plane)
+	{
+		int index = min((int)floor(max(distance, 0.0) / 16.0), 127);
+		attenuation = (int)floor(160.0 / (index + 1)) / 2;
+	}
+	else
+	{
+		int index = min((int)floor(5120.0 * viewRatio / max(distance, 0.0001)), 47);
+		attenuation = (int)floor(index / viewRatio) / 2;
+	}
+	return clamp(start - attenuation, 0, 31);
+}
+
+// GLSL_DOOM_COLORMAP, but with Software's own tables. The GLSL has one smooth curve for every surface, and it is the
+// planes': Software lights walls and sprites as if they were at half their distance, so they came out darker here.
 float R_DoomColormap(float light, float z)
 {
-	float lightnum = clamp(light / 17.0, 0.0, 15.0);
-	float lightz = clamp(z / 16.0, 0.0, 127.0);
-	float startmap = (15.0 - lightnum) * 4.0;
-	float scale = 160.0 / (lightz + 1.0);
-	return startmap - scale * 0.5;
+	return FogColormap(z, (int)floor(clamp(light, 0.0, 255.0) / 8.0), u_light_plane, u_light_view_ratio);
 }
 
 // GLSL_DOOM_LIGHT_EQUATION
@@ -412,9 +429,9 @@ float4 PSSoftware(VSOut i) : SV_Target
 	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 	float final_lighting = u_lighting + light_gain;
 	if (u_palette)
-		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz, brightmap_mix));
+		return AlphaTest(PaletteLight(texel, final_lighting, i.pos.w, brightmap_mix));
 	float4 final_color = SoftwareTint(base_color, brightmap_mix);
-	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
+	final_color = SoftwareFade(final_color, final_lighting, i.pos.w);
 	final_color.a = texel.a * u_poly_color.a;
 	return AlphaTest(final_color);
 }
@@ -430,9 +447,9 @@ float4 PSSoftwareModelLight(VSOut i) : SV_Target
 	float light_gain = (255.0 - final_lighting) * brightmap_mix;
 	final_lighting += light_gain;
 	if (u_palette)
-		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz, brightmap_mix));
+		return AlphaTest(PaletteLight(texel, final_lighting, i.pos.w, brightmap_mix));
 	float4 final_color = SoftwareTint(base_color, brightmap_mix);
-	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
+	final_color = SoftwareFade(final_color, final_lighting, i.pos.w);
 	final_color.a = texel.a * u_poly_color.a;
 	return AlphaTest(final_color);
 }
@@ -456,9 +473,9 @@ float4 PSWater(VSOut i) : SV_Target
 	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 	float final_lighting = u_lighting + light_gain;
 	if (u_palette)
-		return AlphaTest(PaletteLight(texel, final_lighting, i.fragz, brightmap_mix));
+		return AlphaTest(PaletteLight(texel, final_lighting, i.pos.w, brightmap_mix));
 	float4 final_color = SoftwareTint(base_color, brightmap_mix);
-	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
+	final_color = SoftwareFade(final_color, final_lighting, i.pos.w);
 	final_color.a = texel.a * u_poly_color.a;
 	return AlphaTest(final_color);
 }
@@ -521,25 +538,6 @@ float4 PSFog(VSOut i) : SV_Target
 	float4 final_color = SoftwareTint(base_color, brightmap_mix);
 	final_color = SoftwareFade(final_color, final_lighting, i.fragz);
 	return AlphaTest(final_color);
-}
-
-// Software's integer distance/scale tables, rather than the smooth shader's
-// approximation. A fog boundary remaps the scene once at its own distance.
-float FogColormap(float distance, int lightnum, int plane, float viewRatio)
-{
-	int start = (31 - clamp(lightnum, 0, 31)) * 2;
-	int attenuation;
-	if (plane)
-	{
-		int index = min((int)floor(max(distance, 0.0) / 16.0), 127);
-		attenuation = (int)floor(160.0 / (index + 1)) / 2;
-	}
-	else
-	{
-		int index = min((int)floor(5120.0 * viewRatio / max(distance, 0.0001)), 47);
-		attenuation = (int)floor(index / viewRatio) / 2;
-	}
-	return clamp(start - attenuation, 0, 31);
 }
 
 RR_RS

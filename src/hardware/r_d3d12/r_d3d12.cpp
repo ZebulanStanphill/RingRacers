@@ -367,7 +367,8 @@ struct Constants
 	INT32 alphaFunc;
 	INT32 texMode;
 	INT32 palette; // palette rendering, with a light table
-	INT32 pad[2];
+	INT32 lightPlane; // Software lights planes by distance, and walls and sprites by scale
+	float lightViewRatio;
 	float clipPlane[4];
 	float fullscreenDepth, portalPad[3];
 	float postImageRect[4];
@@ -1501,6 +1502,9 @@ bool ApplyConstants(bool custom)
 	c.texMode = g_gl.texture2D && g_units[0] && g_units[0]->res
 		? (g_gl.texEnv == TE_MODULATE ? 1 : 2) : 0;
 	c.palette = (g_paletteRendering && g_paletteLookup.res && g_currentLightTable) ? 1 : 0;
+	c.lightPlane = !(g_program == SHADER_WALL || g_program == SHADER_SPRITE || g_program == SHADER_SPRITECLIPHACK
+		|| g_program == SHADER_MODEL || g_program == SHADER_MODEL_LIGHTING);
+	c.lightViewRatio = g_gl.viewport[2] > 0 && g_screenWidth > 0 ? (float)g_gl.viewport[2] / g_screenWidth : 1.0f;
 	const bool updateView = custom && (!g_customViewConstants || g_customViewFrame != g_frameCounter
 		|| g_customViewHeight != g_rtHeight || g_customViewConstants.generation != g_constantRing.Generation());
 	if (updateView || g_waterRefraction || g_fogRemap || !g_constantsValid || g_constantAllocation.generation != g_constantRing.Generation()

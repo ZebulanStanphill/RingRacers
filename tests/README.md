@@ -336,6 +336,13 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   adjustment on fog. Windows WARP executes the shipped SM5.1 path and rejects
   a reciprocal-depth fog shader with the `fog-palette` oracle. Complete fog
   volumes, overlapping visuals and Xbox performance still need device testing.
+- **Surface lighting:** `surface_light` compares the built-in shader's colormap
+  row with Software's actual plane and wall/sprite tables for all 256 light levels,
+  table edges and midpoints, near and far distances, and full/half-width views.
+  It also checks the driver's surface classification and viewport light ratio.
+  Sprites and walls in dim sectors were darker than Software's, found comparing
+  Xbox screenshots of the renderer test map. WARP's `surface-light` scene reads
+  distinct row colors for a plane, wall and sprite at the same known depth.
 - **Batch sort keys:** extract the production sort-key struct, key builder and comparator from `hw_batching.c` and check the Legacy GL batch order: skywalls and horizon lines first in submission order, then shader, texture, brightmap, polyflags, colors and light fields (including colors above and below `0x80000000`), identical states in submission order, and the shaderless order. Run with `ctest -R '^batch_sort_keys'`.
 - **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary, light-split and linkdraw paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. For every rotated case the coordinate oracle must also reject a missing map, a blank map of the right size and the right map moved one pixel in each direction (the previous dropped-map behavior and a one-pixel transform error), so it cannot go blind unnoticed. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
 - **Encore brightmap colors:** run production sprite colormap selection, Software
@@ -561,9 +568,10 @@ the capture-count deltas) a wrong expectation, off by two levels in each channel
 applies, and requires the specific rejection that kind throws; a right expectation, or one a level
 off, must pass. A hit registry then requires every listed scene's oracle to run at least once in the
 full run, and no oracle to run that isn't listed, so a skipped, renamed or misspelled scene fails the
-run. Four negative controls remain, because each changes the code under test while keeping the
+run. Five negative controls remain, because each changes the code under test while keeping the
 correct oracle, which must then reject it: shader mutants of `water-refraction` and `fog-palette`
-(reciprocal depth) and of `brightmap-palette` (the surface row instead of the full-bright row), which
+(reciprocal depth), of `brightmap-palette` (the surface row instead of the full-bright row) and of
+`surface-light` (the planes' table for every surface), which
 rebuild only the pipeline object from the edited HLSL, and `custom-shader-nocustom`, which turns
 add-on shaders off. Each is its own process that replays the scenes up to the one whose oracle
 rejects it, with the debug layer on but GPU-based validation off, since it runs the same GPU work

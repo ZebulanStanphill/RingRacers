@@ -1,0 +1,95 @@
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+#include "doomdef.h"
+#include "r_main.h"
+#include "hardware/hw_defs.h"
+#include "i_video.h"
+#undef min
+#undef max
+#undef clamp
+using std::min;
+using std::max;
+using std::clamp;
+void I_Error(const char *, ...) { abort(); }
+static const int DISTMAP=2;
+static lighttable_t maps[NUMCOLORMAPS*256];
+lighttable_t *colormaps=maps;
+lighttable_t *scalelight[LIGHTLEVELS][MAXLIGHTSCALE], *zlight[LIGHTLEVELS][MAXLIGHTZ];
+viddef_t vid;
+INT32 viewwidth;
+@@FIXED_DIV@@
+@@SOFTWARE_Z@@
+static void InitScale() {
+    INT32 i,j,level,startmapl;
+@@SOFTWARE_SCALE@@
+}
+static int u_light_plane;
+static float u_light_view_ratio;
+@@FOG_ROW@@
+@@SURFACE_ROW@@
+static int g_program, g_screenWidth;
+static struct { int viewport[4]; } g_gl;
+static struct { INT32 lightPlane; float lightViewRatio; } c;
+static void ApplyLightConstants() {
+@@LIGHT_CONSTANTS@@
+}
+int main() {
+    for(int shader : {SHADER_FLOOR,SHADER_WATER,SHADER_FOG,SHADER_DEFAULT,
+        SHADER_WALL,SHADER_SPRITE,SHADER_SPRITECLIPHACK,SHADER_MODEL,SHADER_MODEL_LIGHTING}) {
+        g_program=shader;
+        const int plane=shader==SHADER_FLOOR || shader==SHADER_WATER || shader==SHADER_FOG || shader==SHADER_DEFAULT;
+        for(int screen : {0,640}) for(int width : {0,320,640}) {
+            g_screenWidth=screen; g_gl.viewport[2]=width; ApplyLightConstants();
+            assert(c.lightPlane==plane);
+            assert(c.lightViewRatio==(screen>0 && width>0 ? float(width)/screen : 1.f));
+        }
+    }
+    R_InitLightTables();
+    // The observed kind of regression: dim wall/sprite, well away from clamps.
+    vid.width=viewwidth=640; InitScale();
+    u_light_plane=0; u_light_view_ratio=1.f;
+    const int wallRow=(scalelight[160>>3][25]-maps)/256;
+    assert(wallRow==10);
+    const float wallActual=R_DoomColormap(160.f,200.125f);
+    if(wallActual!=wallRow) fprintf(stderr,"dim wall: got %.9g expected %d\n",wallActual,wallRow);
+    assert(wallActual==wallRow);
+    int cases=1;
+    for(int split : {1,2}) {
+        vid.width=640; viewwidth=640/split; InitScale();
+        u_light_view_ratio=1.f/split;
+        std::vector<float> distances={0.001f,0.125f,1.f,4096.f,16000.f};
+        // Probe just inside both sides of every z bucket and its midpoint.
+        // Stay clear of exact edges, where fixed and floating point may disagree.
+        for(int bucket=0;bucket<MAXLIGHTZ+12;++bucket)
+            for(float offset : {0.125f,8.f,15.875f}) distances.push_back(bucket*16.f+offset);
+        // Every scale bucket, on both sides of its edge and at its midpoint.
+        for(int bucket=0;bucket<MAXLIGHTSCALE+12;++bucket)
+            for(float offset : {0.125f,0.5f,0.875f})
+                // Keep far distances representable as Software fixed_t.
+                distances.push_back(min(30000.f,5120.f/split/(bucket+offset)));
+        for(int light=0;light<256;++light) for(float distance : distances) {
+            const fixed_t z=fixed_t(distance*FRACUNIT);
+            for(int plane : {0,1}) {
+                u_light_plane=plane;
+                int index;
+                if(plane) index=min(z>>LIGHTZSHIFT,MAXLIGHTZ-1);
+                else {
+                    // Software's projection at a 90-degree FOV, then its real
+                    // FixedMul(scale, LIGHTRESOLUTIONFIX) >> LIGHTSCALESHIFT.
+                    fixed_t scale=FixedDiv((viewwidth/2)*FRACUNIT,z);
+                    index=min(FixedMul(scale,640*FRACUNIT/vid.width)>>LIGHTSCALESHIFT,MAXLIGHTSCALE-1);
+                }
+                int expected=((plane?zlight[light>>3][index]:scalelight[light>>3][index])-maps)/256;
+                float actual=R_DoomColormap(float(light),distance);
+                if(actual!=expected) fprintf(stderr,"surface light=%d distance=%.9g plane=%d ratio=%g: got %.9g expected %d\n",light,distance,plane,u_light_view_ratio,actual,expected);
+                assert(actual==expected);
+                ++cases;
+            }
+        }
+    }
+    printf("%d surface rows match production Software tables; light constants match all shader types\n",cases);
+}

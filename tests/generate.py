@@ -192,6 +192,15 @@ def generate(engine, output):
         "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
     }, output / "fog.cpp")
 
+    render(templates / "surface_light.cpp.in", {
+        "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
+        "FOG_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("FogColormap")),
+        "SURFACE_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("R_DoomColormap")),
+        "SOFTWARE_Z": renderer.function("R_InitLightTables"),
+        "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
+        "LIGHT_CONSTANTS": driver12.section("\tc.lightPlane =", "\tconst bool updateView ="),
+    }, output / "surface_light.cpp")
+
     for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
         name = "Capture" + kind + "Scene"
         # Expected constants and boxes are literal (see the tables in capture_d3d12.cpp.in), not recomputed.

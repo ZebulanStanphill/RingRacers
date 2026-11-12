@@ -231,7 +231,7 @@ static const char *const kOracles[]={
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect",
     "texture", "texture-update", "texture-reuse", "mips", "shared-brightmap",
-    "palette", "palette-post", "light-table-update", "light-table-update-post", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
+    "palette", "palette-post", "light-table-update", "light-table-update-post", "surface-light", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
     "screen-copy", "final-screen", "screen-flush", "wipe-blend", "wipe-mode", "wipe-wiggle", "wipe-fallback", "wipe-after", "postimg-identity", "postimg-shift",
     "fade-map-off", "fade-map", "fade-map-row", "fade-map-clamp", "fade-map-remake", "fade-map-after", "fade-map-reuse", "resize-fade-map", "resize-screen",
@@ -789,6 +789,32 @@ int main(int argc,char **argv) {
             expect("light-table-update",oldColor,18,32); expect("light-table-update",newColor,46,32);
             expectPost("light-table-update-post",index19,18,32); expectPost("light-table-update-post",index7,46,32);
             D3D12_FinishUpdate(0);
+            // Use an explicit 90-degree view: SetTransform negates eye-space z,
+            // so clip w = quad(z)'s positive z. Its x/y scale with z as well.
+            // light=160 -> lightnum=20 -> start=22. At z=200.125:
+            // plane: 22 - (160/(12+1))/2 = 16;
+            // wall/sprite: 22 - floor(5120/200.125)/2 = 10.
+            // All rows differ in color, so any wrong row is observable.
+            FTransform lightView={};
+            lightView.scalex=lightView.scaley=lightView.scalez=1;
+            lightView.angley=-270; lightView.fovxangle=90;
+            auto lightTransform=function<void (*)(FTransform *)>("SetTransform");
+            lightTransform(&lightView);
+            for(int row=0;row<33;row++)
+                lightTable[row*256+7]=rgba({16+row*7,240-row*6,32+row*5});
+            updateLightTable(lightId,lightTable.data());
+            for(int shader : {SHADER_FLOOR,SHADER_WALL,SHADER_SPRITE}) {
+                reset(); texture(&paletteTexture); setShader(shader);
+                auto lit=surface({255,255,255}); lit.LightTableId=lightId;
+                lit.LightInfo.light_level=160; lit.LightInfo.fade_end=31;
+                auto q=quad(200.125f);
+                const FBITFIELD flags=PF_Modulated|PF_ColorMapped|PF_NoDepthTest;
+                blend(flags); polygon(&lit,q.data(),4,flags);
+                const int row=shader==SHADER_FLOOR?16:10;
+                expect("surface-light",{16+row*7,240-row*6,32+row*5});
+                D3D12_FinishUpdate(0);
+            }
+            setShader(SHADER_FLOOR);
             // Bright texels use the base full-bright row (32), never the surface row. The four texel colors stand for palette
             // indices as the cache hands them over, already translated for Encore (the native encore_brightmap test checks that
             // translation), so what is drawn here is only the shader's choice of row.

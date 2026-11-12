@@ -89,7 +89,8 @@ Run-Control $Exe 'custom-shader-nocustom'
 $Controls = @(
     @{ Scene = 'water-refraction'; Entry = 'PSWaterRefraction'; Good = 'WaterBackgroundOffset(i.pos.w, u_leveltime)'; Bad = 'WaterBackgroundOffset(1.0 / i.pos.w, u_leveltime)' },
     @{ Scene = 'fog-palette'; Entry = 'PSFogRemap'; Good = 'FogColormap(i.pos.w, u_fog_lightnum'; Bad = 'FogColormap(1.0 / i.pos.w, u_fog_lightnum' },
-    @{ Scene = 'brightmap-palette'; Entry = 'PSSoftware'; Good = 'brightmap_mix > 0.0 ? 32 : '; Bad = '' }
+    @{ Scene = 'brightmap-palette'; Entry = 'PSSoftware'; Good = 'brightmap_mix > 0.0 ? 32 : '; Bad = '' },
+    @{ Scene = 'surface-light'; Entry = 'PSSoftware'; Good = 'u_light_plane, u_light_view_ratio);'; Bad = '1, u_light_view_ratio);' }
 )
 $ProductionSource = Get-Content -Raw $Source
 foreach ($Control in $Controls) {
