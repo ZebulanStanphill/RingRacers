@@ -8255,6 +8255,11 @@ static void HWR_SetTransformAiming(FTransform *trans, player_t *player, boolean 
 	{
 		fixed_t fixedaiming = AIMINGTODY(aimingangle);
 		trans->viewaiming = FIXED_TO_FLOAT(fixedaiming);
+		// [UWP]: The drivers move the picture by viewaiming 100ths of the view's height, which is Software's shear
+		// only in a view shaped like 320x200. Software moves it by AIMINGTODY 320ths of the view's width
+		// (R_SetupFreelook), so at 16:9 the picture sat a tenth of the shear too low, and over half in two-player.
+		if (gl_viewwidth > 0 && gl_viewheight > 0)
+			trans->viewaiming *= (gl_viewwidth / gl_viewheight) / ((float)BASEVIDWIDTH / BASEVIDHEIGHT);
 		trans->shearing = true;
 		gl_aimingangle = 0;
 	}

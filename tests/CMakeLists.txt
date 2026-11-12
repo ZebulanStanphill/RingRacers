@@ -56,6 +56,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/tables.c"
     "${RR_SOURCE_DIR}/src/t_fsin.c"
     "${RR_SOURCE_DIR}/src/hardware/hw_clip.c"
+    "${RR_SOURCE_DIR}/src/doomdef.h"
+    "${RR_SOURCE_DIR}/src/m_fixed.h"
     "${RR_SOURCE_DIR}/src/m_fixed.c"
     "${RR_SOURCE_DIR}/src/r_things.cpp"
     "${RR_SOURCE_DIR}/src/r_patchrotation.c"
@@ -109,6 +111,7 @@ regression(sprite_fade sprite_fade)
 regression(shadow_draw shadow_draw)
 regression(overlay_blend overlay_blend)
 regression(split_projection split_projection)
+regression(software_shear software_shear)
 regression(renderer_setting renderer_setting HWRENDER)
 regression(event_queue event_queue)
 regression(intro_uwp intro _UWP)

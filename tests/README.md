@@ -888,6 +888,17 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   These extracted functions compile natively; the full Windows D3D12 driver,
   WARP and Xbox visuals cannot be checked on macOS.
 
+- **Software perspective shear:** `software_shear` compares the production hardware
+  aiming setup and D3D12 projection translation against Software's rounded view
+  centre, within one pixel. Checks 1920x1080, two-player 1920x540 (with the 1.7x
+  FOV tangent), three/four-player 960x540 and 1280x800, three FOVs, pitches up
+  and down including -17.3 degrees, flip, and Off/On/Third-person selection.
+  Also checks zero pitch while shearing, preserved aim and pitch when off, and
+  unchanged shear for 320x200-shaped views. Hardware's Software-perspective
+  picture sat lower than Software's at 16:9 and much lower in two-player;
+  this was found comparing Xbox screenshots. Matrix operations are dependency
+  stubs capturing the driver's NDC translation; GPU pixels are not tested.
+
 - **Translucent overlay:** `overlay_blend` executes production surface blending
   for every style at four translucency levels and the raw-alpha helper at seven
   alpha boundaries (88 decisions). Only overlay with partial alpha changes mode;

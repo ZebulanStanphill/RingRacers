@@ -1,0 +1,112 @@
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <initializer_list>
+#include "doomdef.h"
+#include "hardware/hw_glob.h"
+#include "tables.h"
+#undef min
+#undef max
+// Compute the fixed-point tangent at the engine's half-bin table positions.
+// Only the table lookup is stubbed; AIMINGTODY comes from doomdef.h.
+#undef FINETANGENT
+#define FINETANGENT(n) Tangent(n)
+static fixed_t Tangent(unsigned n)
+{
+    return static_cast<fixed_t>(tan((double(n) - FINEANGLES/4 + 0.5)*2*M_PI/FINEANGLES)*FRACUNIT);
+}
+void I_Error(const char *, ...) { abort(); }
+@@FIXED_MUL@@
+@@FIXED_DIV@@
+static angle_t aimingangle, gl_aimingangle;
+static fixed_t fovtan[4];
+INT32 viewwidth;
+static int viewssnum, viewheight, centery;
+static fixed_t centeryfrac;
+static fixed_t slopeStorage[4][1080*16];
+static fixed_t *yslopetab[4] = {slopeStorage[0], slopeStorage[1], slopeStorage[2], slopeStorage[3]};
+static fixed_t *yslope;
+static constexpr int render_soft = 0;
+static int rendermode = render_soft;
+float gl_viewwidth, gl_viewheight;
+consvar_t cv_glshearing;
+static boolean thirdPerson;
+// Camera clipping and viewpoint selection are dependencies, not the shear math.
+static void G_FinalClipAimingPitch(INT32 *, player_t *, boolean) {}
+static boolean R_IsViewpointThirdPerson(player_t *, boolean) { return thirdPerson; }
+@@FREELOOK@@
+@@AIMING@@
+static int g_matrixMode;
+static constexpr int MODE_PROJECTION = 1, MODE_MODELVIEW = 2;
+static float g_fov = 90, projectionY;
+static void MatLoadIdentity() { if (g_matrixMode == MODE_PROJECTION) projectionY = 0; }
+static void MatScale(float, float, float) {}
+static void MatRotate(float, float, float, float) {}
+static void MatTranslate(float, float y, float) { if (g_matrixMode == MODE_PROJECTION) projectionY += y; }
+static void Perspective(float, float) {}
+@@TRANSFORM@@
+int main(int argc, char **argv)
+{
+    struct View { int width, height, split; };
+    const View views[] = {{1920,1080,0}, {1920,540,1}, {960,540,2}, {960,540,3}, {1280,800,0}};
+    // Optional layout selection lets the pre-fix run demonstrate each regression independently.
+    const int selected = argc > 1 ? atoi(argv[1]) : -1;
+    unsigned checked = 0;
+    for (int layout = 0; layout < 5; ++layout)
+    {
+        if (selected >= 0 && selected != layout) continue;
+        const auto &view = views[layout];
+        viewwidth = view.width; viewheight = view.height;
+        gl_viewwidth = viewwidth; gl_viewheight = viewheight;
+        viewssnum = view.split;
+        for (int fovDegrees : {60, 90, 110})
+        {
+            fovtan[viewssnum] = static_cast<fixed_t>(tan(fovDegrees*M_PI/360)*FRACUNIT);
+            // R_ExecuteSetViewSize has already applied this before AIMINGTODY runs.
+            if (view.split == 1) fovtan[viewssnum] = FixedMul(fovtan[viewssnum], 17*FRACUNIT/10);
+            for (double pitch : {-30.0, -17.3, -5.0, 0.0, 5.0, 17.3, 30.0})
+            for (int setting : {0, 1, 2})
+            for (boolean chase : {false, true})
+            for (boolean flip : {false, true})
+            {
+                aimingangle = static_cast<angle_t>(static_cast<INT32>(pitch*4294967296.0/360));
+                cv_glshearing.value = setting; thirdPerson = chase;
+                R_SetupFreelook(nullptr, false);
+                FTransform transform{};
+                transform.viewaiming = 123.0f;
+                transform.fovxangle = fovDegrees;
+                transform.splitscreen = view.split;
+                transform.flip = flip;
+                HWR_SetTransformAiming(&transform, nullptr, false);
+                const bool shear = setting == 1 || (setting == 2 && chase);
+                assert(bool(transform.shearing) == shear);
+                if (shear)
+                {
+                    assert(transform.anglex == 0);
+                    if (layout == 4)
+                        assert(fabs(transform.viewaiming - FIXED_TO_FLOAT(AIMINGTODY(aimingangle))) < 1e-4);
+                }
+                else
+                {
+                    assert(transform.viewaiming == 123.0f);
+                    assert(transform.anglex == float(aimingangle >> ANGLETOFINESHIFT)*(360.0f/FINEANGLES));
+                }
+                D3D_SetTransform(&transform);
+                if (shear)
+                {
+                    // Screen y grows downwards; NDC y grows upwards, reversed by flip.
+                    const double softwareNdc = (flip ? 1 : -1)*2.0*(centery-viewheight/2)/viewheight;
+                    const double onePixelNdc = 2.0/viewheight;
+                    if (fabs(projectionY-softwareNdc) > onePixelNdc)
+                        fprintf(stderr, "layout=%d %dx%d pitch=%.1f fov=%d flip=%d hardware=%g software=%g tolerance=%g\n",
+                            layout, viewwidth, viewheight, pitch, fovDegrees, int(flip), projectionY, softwareNdc, onePixelNdc);
+                    assert(fabs(projectionY - softwareNdc) <= onePixelNdc);
+                }
+                else assert(projectionY == 0);
+                ++checked;
+            }
+        }
+    }
+    printf("software shear: %u layout/FOV/pitch/setting/viewpoint/flip cases passed\n", checked);
+}
