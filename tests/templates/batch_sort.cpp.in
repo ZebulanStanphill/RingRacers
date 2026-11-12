@@ -2,17 +2,28 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <array>
 #include <vector>
+#include "hardware/hw_glob.h"
 #include "hardware/hw_batching.h"
 #undef min
 #undef max
 
-PolygonArrayEntry *polygonArray = nullptr;
-int polygonArraySize = 0;
-@@SORT_KEYS@@
+// Stand-ins for the rest of the engine; hw_batching.c below is the production collection, sort and draw code.
+hwdriver_s hwdriver{};
+consvar_t cv_glshaders{};
+boolean gl_shadersavailable = true;
+int ps_hw_numpolys, ps_hw_numverts, ps_hw_numcalls, ps_hw_numshaders, ps_hw_numtextures, ps_hw_numpolyflags, ps_hw_numcolors;
+precise_t ps_hw_batchsorttime, ps_hw_batchdrawtime;
+precise_t I_GetPreciseTime() { return 0; }
+void I_Error(const char *, ...) { std::abort(); }
+@@BATCHING@@
 
 // Sorts the polygons as HWR_RenderBatches does and returns the sorted polygon indices.
 static std::vector<int> Sort(const std::vector<PolygonArrayEntry> &polygons, bool shaders) {
+    PolygonArrayEntry *savedArray = polygonArray; int savedSize = polygonArraySize;
+    PolygonSortKey *savedKeys = polygonSortKeys; int savedKeysSize = polygonSortKeysAllocSize;
     std::vector<PolygonArrayEntry> copy = polygons;
     polygonArray = copy.data();
     polygonArraySize = (int)copy.size();
@@ -24,6 +35,8 @@ static std::vector<int> Sort(const std::vector<PolygonArrayEntry> &polygons, boo
     qsort(indices.data(), indices.size(), sizeof(UINT32), comparePolygonIndices);
     std::vector<int> order;
     for (UINT32 index : indices) order.push_back((int)index);
+    polygonArray = savedArray; polygonArraySize = savedSize;
+    polygonSortKeys = savedKeys; polygonSortKeysAllocSize = savedKeysSize;
     return order;
 }
 static PolygonArrayEntry Entry(GLMipmap_t *texture = nullptr) {
@@ -102,6 +115,170 @@ int main() {
         polys[1].polyFlags = 0;
         polys.push_back(Entry(nullptr));
         assert((Sort(polys, false) == Order{1, 5, 2, 3, 0, 4}));
+    }
+    // PF_BeforeSky polygons (a masked wall texture between two skies) sort ahead of the untextured sky
+    // occluders and of every ordinary textured polygon, with and without shaders.
+    {
+        const FBITFIELD sky = PF_NoTexture | PF_Invisible | PF_Occlude;
+        const FBITFIELD before = PF_Masked | PF_Decal | PF_BeforeSky;
+        std::vector<PolygonArrayEntry> polys = {Entry(&low), Entry(nullptr), Entry(&high), Entry(nullptr), Entry(&low), Entry(&low)};
+        polys[0].shader = 0; polys[0].polyFlags = PF_Masked;           // ordinary, lowest shader
+        polys[1].polyFlags = sky;                                      // sky occluder
+        polys[2].shader = 9; polys[2].polyFlags = before;              // BeforeSky, high shader and texture
+        polys[3].polyFlags = sky; polys[3].horizonSpecial = true;      // horizon line
+        polys[4].shader = 9; polys[4].polyFlags = before;              // BeforeSky, low texture
+        polys[5].shader = 1; polys[5].polyFlags = PF_Masked | PF_Decal; // ordinary with the same flags but one
+        assert((Sort(polys, true) == Order{4, 2, 1, 3, 0, 5}));
+        assert((Sort(polys, false) == Order{4, 2, 1, 3, 0, 5}));
+        // Whatever the submission order, the three roles come out as BeforeSky, occluder, ordinary.
+        std::vector<PolygonArrayEntry> roles = {Entry(&low), Entry(nullptr), Entry(&high)};
+        roles[0].polyFlags = PF_Masked; roles[1].polyFlags = sky; roles[2].polyFlags = before;
+        std::array<int, 3> permutation = {0, 1, 2};
+        do {
+            std::vector<PolygonArrayEntry> scene;
+            for (int i : permutation) scene.push_back(roles[i]);
+            for (bool shaders : {true, false}) {
+                Order expected;
+                for (int role : {2, 1, 0})
+                    expected.push_back((int)(std::find(permutation.begin(), permutation.end(), role) - permutation.begin()));
+                assert(Sort(scene, shaders) == expected);
+            }
+        } while (std::next_permutation(permutation.begin(), permutation.end()));
+    }
+    // Among PF_BeforeSky polygons the order is the usual one: texture, brightmap, polyflags, colors and light,
+    // then submission. The shader no longer takes part, since every one of them has the same shader key.
+    {
+        const FBITFIELD before = PF_Masked | PF_BeforeSky;
+        std::vector<PolygonArrayEntry> sorted;
+        PolygonArrayEntry e = Entry(&low); e.polyFlags = before; e.shader = 9; sorted.push_back(e); // lower texture, higher shader
+        e = Entry(&low); e.polyFlags = before; e.shader = 1; e.brightmap = &brightHigh; sorted.push_back(e);
+        e = Entry(&high); e.polyFlags = before; e.shader = 0; sorted.push_back(e);                   // higher texture, lowest shader
+        e.polyFlags = before | PF_Decal; sorted.push_back(e);
+        e.surf.PolyColor.rgba = 1; sorted.push_back(e);
+        e.surf.TintColor.rgba = 1; sorted.push_back(e);
+        e.surf.LightInfo.light_level = 1; sorted.push_back(e);
+        e.surf.LightInfo.light_level = 200; sorted.push_back(e);
+        e.surf.LightTableId = 4; sorted.push_back(e);
+        Order shuffle = {5, 8, 0, 3, 7, 1, 6, 2, 4};
+        assert(shuffle.size() == sorted.size());
+        std::vector<PolygonArrayEntry> scrambled;
+        for (int i : shuffle) scrambled.push_back(sorted[i]);
+        Order recovered, expected;
+        for (int i : Sort(scrambled, true)) recovered.push_back(shuffle[i]);
+        for (int i = 0; i < (int)sorted.size(); i++) expected.push_back(i);
+        assert(recovered == expected);
+        // Without shaders only the texture, polyflags and color matter.
+        std::vector<PolygonArrayEntry> plain = {sorted[4], sorted[2], sorted[3], sorted[0]};
+        assert((Sort(plain, false) == Order{3, 1, 2, 0}));
+        // Identical polygons keep their submission order.
+        std::vector<PolygonArrayEntry> same(4, sorted[2]);
+        assert((Sort(same, true) == Order{0, 1, 2, 3}));
+        assert((Sort(same, false) == Order{0, 1, 2, 3}));
+    }
+    // The order of everything else, the untextured group first, is the same whether or not PF_BeforeSky polygons
+    // are submitted with it, wherever in the submission order they are.
+    {
+        std::vector<PolygonArrayEntry> polys(6, Entry(&low));
+        polys[0].shader = 1;
+        polys[1].polyFlags = PF_NoTexture; polys[1].shader = 9;
+        polys[1].surf.PolyColor.rgba = 0xFFFFFFFF; polys[1].texture = &high;
+        polys[2].shader = 0;
+        polys[3].horizonSpecial = true; polys[3].shader = 7;
+        polys[4].polyFlags = PF_NoTexture;
+        polys[5].shader = 0; polys[5].texture = &high;
+        for (bool shaders : {true, false}) {
+            const Order baseline = Sort(polys, shaders);
+            for (size_t first = 0; first <= polys.size(); first++)
+            for (size_t second = first; second <= polys.size(); second++) {
+                std::vector<PolygonArrayEntry> mixed;
+                Order original; // index in polys, or -1 for a PF_BeforeSky polygon
+                for (size_t i = 0; i <= polys.size(); i++) {
+                    for (size_t extra : {first, second}) {
+                        if (extra != i) continue;
+                        PolygonArrayEntry e = Entry(&high); e.shader = 5; e.polyFlags = PF_Masked | PF_BeforeSky;
+                        mixed.push_back(e); original.push_back(-1);
+                    }
+                    if (i < polys.size()) { mixed.push_back(polys[i]); original.push_back((int)i); }
+                }
+                const Order got = Sort(mixed, shaders);
+                Order rest;
+                size_t leading = 0;
+                while (leading < got.size() && original[got[leading]] == -1) leading++;
+                assert(leading == 2);
+                for (size_t i = leading; i < got.size(); i++) rest.push_back(original[got[i]]);
+                assert(rest == baseline);
+            }
+        }
+    }
+    // A polygon that is both untextured and PF_BeforeSky is still an untextured one: it stays at -1 among them in
+    // submission order, with and without shaders, and so does a horizon line with the flag.
+    {
+        std::vector<PolygonArrayEntry> polys = {Entry(&low), Entry(nullptr), Entry(nullptr), Entry(&high), Entry(nullptr)};
+        polys[0].polyFlags = PF_Masked;                                         // ordinary
+        polys[1].polyFlags = PF_NoTexture | PF_BeforeSky;                       // untextured and BeforeSky
+        polys[2].polyFlags = PF_NoTexture | PF_Invisible | PF_Occlude;          // plain occluder
+        polys[3].polyFlags = PF_Masked | PF_BeforeSky;                          // BeforeSky
+        polys[4].polyFlags = PF_Masked | PF_BeforeSky; polys[4].horizonSpecial = true; // horizon line and BeforeSky
+        assert((Sort(polys, true) == Order{3, 1, 2, 4, 0}));
+        assert((Sort(polys, false) == Order{3, 1, 2, 4, 0}));
+    }
+
+    // The draw loop, which is the production HWR_RenderBatches, draws them in that order.
+    {
+        struct Draw { unsigned id; FBITFIELD flags; GLMipmap_t *texture; };
+        static std::vector<Draw> draws;
+        static GLMipmap_t *bound;
+        static FOutVector triangle[3]{};
+        static FSurfaceInfo surface{};
+        hwdriver.pfnSetShader = [](int) {};
+        hwdriver.pfnSetTexture = [](GLMipmap_t *texture) { if (!texture || !(texture->flags & TF_BRIGHTMAP)) bound = texture; };
+        hwdriver.pfnDrawIndexedTriangles = [](FSurfaceInfo *info, FOutVector *, FUINT count, FBITFIELD flags, UINT32 *) {
+            assert(count == 3);
+            draws.push_back({info->PolyColor.s.red, flags, bound});
+        };
+        const FBITFIELD sky = PF_NoTexture | PF_Invisible | PF_Occlude;
+        const FBITFIELD before = PF_Masked | PF_Decal | PF_BeforeSky;
+        struct Submit { unsigned id; GLMipmap_t *texture; FBITFIELD flags; int shader; };
+        const auto render = [&](const std::vector<Submit> &scene, bool shaders) {
+            cv_glshaders.value = shaders;
+            HWR_StartBatching();
+            for (const Submit &poly : scene) {
+                HWR_SetCurrentTexture(poly.texture);
+                surface.PolyColor.s.red = poly.id;
+                HWR_ProcessPolygon(&surface, triangle, 3, poly.flags, poly.shader, false);
+            }
+            draws.clear(); bound = nullptr;
+            HWR_RenderBatches();
+            std::vector<unsigned> ids;
+            for (const Draw &draw : draws) {
+                ids.push_back(draw.id);
+                // Each draw has the state of its polygon, and the driver is still given the flag.
+                for (const Submit &poly : scene)
+                    if (poly.id == draw.id) { assert(draw.flags == poly.flags && draw.texture == (poly.flags & PF_NoTexture ? nullptr : poly.texture)); }
+            }
+            return ids;
+        };
+        using Ids = std::vector<unsigned>;
+        for (bool shaders : {true, false}) {
+            // A wall texture between two skies, a sky occluder and an ordinary wall, in every submission order.
+            std::array<Submit, 3> parts = {{{1, &low, PF_Masked, 3}, {2, nullptr, sky, 3}, {3, &high, before, 3}}};
+            std::array<int, 3> permutation = {0, 1, 2};
+            do {
+                std::vector<Submit> scene;
+                for (int i : permutation) scene.push_back(parts[i]);
+                assert((render(scene, shaders) == Ids{3, 2, 1}));
+            } while (std::next_permutation(permutation.begin(), permutation.end()));
+            // Without the flag the wall is drawn after the occluder, which is what hid it.
+            std::vector<Submit> unflagged = {{3, &high, PF_Masked | PF_Decal, 3}, {2, nullptr, sky, 3}};
+            assert((render(unflagged, shaders) == Ids{2, 3}));
+            // A larger scene: sky walls and two kinds of ordinary wall with BeforeSky walls of two textures.
+            std::vector<Submit> scene = {
+                {1, &low, PF_Masked, 3}, {2, nullptr, sky, 3}, {3, &high, before, 3}, {4, nullptr, sky, 3},
+                {5, &high, PF_Masked | PF_Decal, 3}, {6, &low, before, 3}};
+            assert((render(scene, shaders) == Ids{6, 3, 2, 4, 1, 5}));
+        }
+        free(finalVertexArray); free(finalVertexIndexArray); free(polygonArray);
+        free(polygonIndexArray); free(unsortedVertexArray); free(polygonSortKeys);
     }
     puts("batch sort keys passed");
 }

@@ -39,6 +39,7 @@ def generate_title(engine, output, templates, render, function_section):
         "HWR_TranslucentWallLight",
         "HWR_SplitWall",
         "HWR_MidtextureSkyCuts",
+        "HWR_MidtextureBeforeSky",
         "HWR_MidtextureFog",
         "HWR_ProcessSeg",
     ]:

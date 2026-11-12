@@ -153,7 +153,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 // total and deterministic.
 typedef struct
 {
-	INT32 shader;// -1 for skywalls and horizon lines, which must retain their order
+	INT32 shader;// -1 for skywalls and horizon lines, which must retain their order; -2 for PF_BeforeSky, drawn before them
 	UINT32 texture;// the texture's `downloaded` name, or 0
 	UINT32 brightmap;
 	UINT64 polyFlags;
@@ -219,6 +219,9 @@ static void buildPolygonSortKeys(boolean shaders)
 
 		if (shaders)
 			key->shader = poly->shader;
+		// [UWP]: Ahead of the sky occluders, which are drawn first and whose depth would hide these
+		if (poly->polyFlags & PF_BeforeSky)
+			key->shader = -2;
 		if (poly->texture)
 			key->texture = poly->texture->downloaded; // there should be a opengl texture name here, usable for comparisons
 		key->polyFlags = poly->polyFlags;

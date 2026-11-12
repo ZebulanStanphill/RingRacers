@@ -667,8 +667,16 @@ def generate(engine, output):
         "FOG": hardware.function("HWR_MidtextureFog"),
         "TRANS": Source(engine / "src/r_segs.cpp").function("R_GetLinedefTransTable"),
     }, output / "midtexture_fog.cpp")
+    assert process.count("HWR_MidtextureBeforeSky(") == 1
+    # Every single-bit flag of EPolyFlags, so a flag added later is checked against PF_BeforeSky too.
+    poly_flags = re.findall(r"^\t(PF_\w+)\s*=\s*0x[0-9A-Fa-f]+,", Source(engine / "src/hardware/hw_defs.h").text, re.MULTILINE)
+    assert len(poly_flags) >= 24 and "PF_BeforeSky" in poly_flags
     render(templates / "midtexture_sky.cpp.in", {
         "CUTS": hardware.function("HWR_MidtextureSkyCuts"),
+        "BEFORE_SKY": hardware.function("HWR_MidtextureBeforeSky"),
+        "CALLER": function_section(hardware, "HWR_ProcessSeg",
+            "\t\t\tblendmode |= HWR_MidtextureBeforeSky(", "\n"),
+        "FLAGS": ", ".join(poly_flags),
     }, output / "midtexture_sky.cpp")
     render(templates / "sky_claim.cpp.in", {
         "SKY_GATE": function_section(hardware, "HWR_Subsector",
@@ -718,7 +726,7 @@ def generate(engine, output):
     }, output / "void_wall.cpp")
 
     render(templates / "batch_sort.cpp.in", {
-        "SORT_KEYS": batching.section("typedef struct\n{\n\tINT32 shader;", "// [UWP]: Binds a batch"),
+        "BATCHING": batch_code,
     }, output / "batch_sort.cpp")
 
     postimg_mobj = Source(engine / "src/p_mobj.c")

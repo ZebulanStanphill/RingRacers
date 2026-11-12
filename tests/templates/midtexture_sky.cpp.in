@@ -2,10 +2,113 @@
 #include <algorithm>
 #include "doomdef.h"
 #include "r_defs.h"
+#include "hardware/hw_defs.h"
 static int skyflatnum = 1;
 @@CUTS@@
+@@BEFORE_SKY@@
+
+// The state HWR_ProcessSeg's two-sided middle texture path calls the helper with.
+static seg_t line{};
+static seg_t *gl_curline = &line;
+static sector_t sectors[2]{};
+static sector_t *gl_frontsector = &sectors[0], *gl_backsector = &sectors[1];
+static FBITFIELD blendmode;
+// Runs the production statement of HWR_ProcessSeg that adds the flag to the blend mode, with the blend mode
+// the path has at that point: whatever the line's alpha produced, plus PF_Decal.
+static FBITFIELD Caller(FBITFIELD produced)
+{
+    blendmode = produced;
+    blendmode |= PF_Decal;
+@@CALLER@@
+    return blendmode;
+}
+
+// Every single-bit enumerator of EPolyFlags in hw_defs.h, read from the production header when the test is
+// generated, so a flag added there is compared against PF_BeforeSky without anyone extending this table.
+static const FBITFIELD allFlags[] = {
+@@FLAGS@@
+};
+
+static void CheckFlag()
+{
+    assert(PF_BeforeSky != 0 && (PF_BeforeSky & (PF_BeforeSky - 1)) == 0);
+    int found = 0;
+    for (FBITFIELD flag : allFlags)
+    {
+        assert(flag != 0 && (flag & (flag - 1)) == 0);
+        if (flag == PF_BeforeSky)
+            ++found;
+        else
+            assert(!(flag & PF_BeforeSky));
+    }
+    assert(found == 1);
+    // The combinations of the flags above as well.
+    assert(!(PF_BeforeSky & PF_Blending));
+    assert(!(PF_BeforeSky & PF_EnvironmentTrans));
+}
+
+static void SetSky(sector_t &sector, bool ceiling, bool floor)
+{
+    sector.ceilingpic = ceiling ? skyflatnum : 0;
+    sector.floorpic = floor ? skyflatnum : 0;
+}
+
 int main()
 {
+    CheckFlag();
+
+    // The caller passes the blend mode before the flag: PF_Masked|PF_Decal for an opaque midtexture.
+    const auto flagged = [&](bool polyobject, bool frontCeiling, bool backCeiling, bool frontFloor,
+                             bool backFloor, FBITFIELD produced) {
+        SetSky(sectors[0], frontCeiling, frontFloor);
+        SetSky(sectors[1], backCeiling, backFloor);
+        line.polyseg = polyobject ? reinterpret_cast<polyobj_t *>(&line) : nullptr;
+        const FBITFIELD helper = HWR_MidtextureBeforeSky(polyobject, gl_frontsector, gl_backsector,
+            produced | PF_Decal);
+        // The helper returns the flag and nothing else; the caller keeps every other bit.
+        assert(helper == 0 || helper == PF_BeforeSky);
+        const FBITFIELD result = Caller(produced);
+        assert(result == (produced | PF_Decal | helper));
+        return helper == PF_BeforeSky;
+    };
+    // Both ceilings sky, both floors sky, or both.
+    assert(flagged(false, true, true, false, false, PF_Masked));
+    assert(flagged(false, false, false, true, true, PF_Masked));
+    assert(flagged(false, true, true, true, true, PF_Masked));
+    // Both ceilings sky with one floor sky, or both floors sky with one ceiling sky: still a pair.
+    assert(flagged(false, true, true, true, false, PF_Masked));
+    assert(flagged(false, true, true, false, true, PF_Masked));
+    assert(flagged(false, false, true, true, true, PF_Masked));
+    // One sky ceiling only, or one sky floor only, or one of each: no flag.
+    assert(!flagged(false, true, false, false, false, PF_Masked));
+    assert(!flagged(false, false, true, false, false, PF_Masked));
+    assert(!flagged(false, false, false, true, false, PF_Masked));
+    assert(!flagged(false, false, false, false, true, PF_Masked));
+    // A ceiling is not a floor: a sky ceiling on one side and a sky floor on the other is not a pair.
+    assert(!flagged(false, true, false, false, true, PF_Masked));
+    assert(!flagged(false, false, true, true, false, PF_Masked));
+    assert(!flagged(false, true, false, true, false, PF_Masked));
+    assert(!flagged(false, false, false, false, false, PF_Masked));
+    // A polyobject's texture is never moved, whatever the sectors.
+    assert(!flagged(true, true, true, false, false, PF_Masked));
+    assert(!flagged(true, false, false, true, true, PF_Masked));
+    assert(!flagged(true, true, true, true, true, PF_Masked));
+    // Without PF_Masked, which is every translucent blend the middle texture path produces, nothing changes:
+    // those walls are sorted with the other translucent walls and stay cut by the sky.
+    const FBITFIELD blends[] = {PF_Translucent, PF_Additive, PF_Subtractive, PF_ReverseSubtract,
+                                PF_Multiplicative, PF_Environment, PF_Invert, PF_Fog, 0};
+    for (FBITFIELD blend : blends)
+    {
+        assert(!(blend & PF_Masked));
+        assert(!flagged(false, true, true, false, false, blend));
+        assert(!flagged(false, false, false, true, true, blend));
+        assert(!flagged(false, true, true, true, true, blend));
+    }
+    // PF_Masked together with other bits the caller or the surface may add keeps the flag.
+    assert(flagged(false, true, true, false, false, PF_Masked | PF_ColorMapped));
+    assert(flagged(false, false, false, true, true, PF_Masked | PF_NoAlphaTest));
+    assert(!flagged(false, true, false, false, false, PF_Masked | PF_ColorMapped));
+
     sector_t front{}, back{};
     const auto check = [&](bool ceilings, bool floors, bool poly,
                            int top, int bottom, int high, int low,

@@ -249,6 +249,7 @@ enum EPolyFlags
 #ifdef HAVE_D3D12
 	PF_RollSprite = 0x00800000,
 #endif
+	PF_BeforeSky        = 0x00080000,   // [UWP]: Batched ahead of the sky occluders (a masked middle texture between two skies)
 	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
 	PF_FogPlane         = 0x00400000,   // Fog uses Software plane-distance lighting
 	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles

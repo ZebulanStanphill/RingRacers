@@ -1301,6 +1301,21 @@ static void HWR_MidtextureSkyCuts(boolean polyobject, const sector_t *front,
 		*lowcut = polybottom;
 }
 
+// [UWP]: Software has no ceiling or floor edge to clip a masked middle texture between two skies, so the texture
+// shows over the sky wherever it rises past them. Here the sky planes' depth hid that part. Drawn ahead of them
+// it stays: they write depth but no color, and nearer walls still cover it. This needs Batching on, which is what
+// orders the draws; translucent middle textures are sorted with the other translucent walls and stay cut.
+static FBITFIELD HWR_MidtextureBeforeSky(boolean polyobject, const sector_t *front,
+	const sector_t *back, FBITFIELD blendmode)
+{
+	if (polyobject || !(blendmode & PF_Masked))
+		return 0;
+	if ((front->ceilingpic == skyflatnum && back->ceilingpic == skyflatnum)
+		|| (front->floorpic == skyflatnum && back->floorpic == skyflatnum))
+		return PF_BeforeSky;
+	return 0;
+}
+
 void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap, boolean directional)
 {
 	RGBA_t poly_color, tint_color, fade_color;
@@ -3117,6 +3132,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			// Render midtextures on two-sided lines with a z-buffer offset.
 			// This will cause the midtexture appear on top, if a FOF overlaps with it.
 			blendmode |= PF_Decal;
+			blendmode |= HWR_MidtextureBeforeSky(gl_curline->polyseg != NULL, gl_frontsector, gl_backsector, blendmode);
 
 			if (HWR_MidtextureFog(gl_curline->polyseg != NULL, tripwire,
 				gl_linedef, gl_frontsector, wallVerts, &Surf, lightnum, colormap))
