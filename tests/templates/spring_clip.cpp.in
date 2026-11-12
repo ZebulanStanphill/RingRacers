@@ -74,6 +74,7 @@ boolean HWR_OverrideObjectLightLevel(mobj_t *,INT32 *){return false;}
 static boolean HWR_UseShader(){return true;}
 void HWR_ObjectLightLevelPost(gl_vissprite_t *,const sector_t *,INT32 *,boolean){}
 void HWR_Lighting(FSurfaceInfo *s,INT32,extracolormap_t *,const boolean){std::memset(s,0,sizeof *s);s->PolyColor.s.red=37;}
+void HWR_SemiBrightLight(FSurfaceInfo *,mobj_t *){}
 FBITFIELD HWR_SurfaceBlend(INT32,INT32,FSurfaceInfo *s){s->PolyColor.s.alpha=173;return PF_Translucent;}
 void HWR_GetMappedPatch(patch_t *,const UINT8 *){}
 void HWR_GetSpriteBrightmap(patch_t *){}

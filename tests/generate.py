@@ -228,8 +228,29 @@ def generate(engine, output):
         "SURFACE_ROW": re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", fog.function("R_DoomColormap")),
         "SOFTWARE_Z": renderer.function("R_InitLightTables"),
         "SOFTWARE_SCALE": renderer.section("\tmemset(scalelight,", "\n\t// continue to do the software"),
-        "LIGHT_CONSTANTS": driver12.section("\tc.lightPlane =", "\tconst bool updateView ="),
+        "LIGHT_CONSTANTS": driver12.section("\tc.lightPlane = !(g_program", "\tconst bool updateView ="),
+        "PROGRAM_UNIFORMS": driver12.section("struct ProgramUniforms\n{", "ProgramUniforms g_uniforms"),
+        "UNIFORM_LIGHT": driver12.section("\tif (surface != NULL)\n\t{\n\t\tu.lighting =", "\n\tif (directional)"),
+        # Software's scale index for a sprite, with its semibright statement
+        "PROJECT_INDEX": Source(engine / "src/r_things.cpp").section(
+            "\t\tlindex = FixedMul(xscale, LIGHTRESOLUTIONFIX)>>(LIGHTSCALESHIFT);", "\n\n\t\tvis->colormap = lights_array[lindex];"),
+        "SPLIT_INDEX": Source(engine / "src/r_things.cpp").section(
+            "\t\t\t\tlindex = FixedMul(sprite->xscale, LIGHTRESOLUTIONFIX)>>(LIGHTSCALESHIFT);", "\n\n\t\t\t\tnewsprite->colormap = spritelights[lindex];"),
     }, output / "surface_light.cpp")
+
+    semibright_hw = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "semibright_light.cpp.in", {
+        "SEMIBRIGHT": Source(engine / "src/r_things.cpp").function("R_ThingIsSemiBright"),
+        "USE_SHADER": semibright_hw.function("HWR_UseShader"),
+        "SEMIBRIGHT_LIGHT": semibright_hw.function("HWR_SemiBrightLight"),
+        "POST_HEAD": function_section(semibright_hw, "HWR_ObjectLightLevelPost", "\tconst boolean semibright =", "\tconst boolean papersprite"),
+        "POST_TAIL": function_section(semibright_hw, "HWR_ObjectLightLevelPost", "\t// [UWP]: Only an approximation of Software", "\n}"),
+        "SPLIT_SPRITE": semibright_hw.function("HWR_SplitSprite"),
+        "DRAW_SPRITE": semibright_hw.function("HWR_DrawSprite"),
+        "DRAW_MODEL": Source(engine / "src/hardware/hw_md2.c").function("HWR_DrawModel"),
+        "DRAW_PRECIPITATION": semibright_hw.function("HWR_DrawPrecipitationSprite"),
+        "DRAW_DROP_SHADOW": semibright_hw.function("HWR_DrawDropShadow"),
+    }, output / "semibright_light.cpp")
 
     for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
         name = "Capture" + kind + "Scene"

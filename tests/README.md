@@ -31,7 +31,7 @@ those active branches. The Windows WARP harness uses the same definitions.
 
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
-builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop` and `front_bbox_desktop`.
+builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop`, `front_bbox_desktop` and `semibright_light_desktop`.
 Where the preprocessed code is identical, a second executable would only repeat
 the first, so the test runs the cases for each runtime setting (for example both
 renderers) in one executable.
@@ -349,6 +349,23 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   Sprites and walls in dim sectors were darker than Software's, found comparing
   Xbox screenshots of the renderer test map. WARP's `surface-light` scene reads
   distinct row colors for a plane, wall and sprite at the same known depth.
+  Semibright sprites get the same checks. Software keeps the sector's light for them and squeezes the
+  distance into the nearer half of its table; Legacy GL had raised the light level instead, which
+  is far brighter in a dim sector (light 64: rows 0 to 6 against Software's 22 to 31). With
+  `u_light_plane` 2, the shader's row must equal `scalelight` read through the index lines
+  extracted from `R_ProjectSprite` and `R_SplitSprite`, including the `SC_SEMIBRIGHT` statement, for all 256
+  light levels, the same distances and both view widths, and a few literal rows pin the numbers
+  (light 160 at 200.125: plain row 10, semibright row 4). The driver lines that strip
+  `HWR_LIGHT_SEMIBRIGHT` from the light level and choose `lightPlane` 2 are extracted too: only a
+  wall, sprite or model with the bit gets 2, and planes, water and fog keep 1 even with it set.
+  `semibright_light_uwp` and `semibright_light_desktop` extract `HWR_SemiBrightLight`, `HWR_UseShader`,
+  `R_ThingIsSemiBright` and the end of `HWR_ObjectLightLevelPost`. With the Direct3D 12 driver and shaders the
+  level is left alone and only the bit is added (level 0 to 255 kept); without shaders, and in the
+  desktop build, the old `192 + level / 2` applies and the bit is never set; other things get neither.
+  Where the calls are made is checked as text, because the sprite and model draw functions need a map
+  and a renderer to run: `HWR_SplitSprite` (both pieces), `HWR_DrawSprite` and `HWR_DrawModel` call it right after each
+  `HWR_Lighting`, and `HWR_DrawPrecipitationSprite` and `HWR_DrawDropShadow` do not. WARP's
+  `surface-light-semibright` scene draws a semibright sprite at that depth and expects row 4.
 - **Batch sort keys:** extract the production batching code from `hw_batching.c` (the sort-key struct, key builder, comparator, collection and the `HWR_RenderBatches` draw loop, with a recording driver) and check the Legacy GL batch order: skywalls and horizon lines first in submission order, then shader, texture, brightmap, polyflags, colors and light fields (including colors above and below `0x80000000`), identical states in submission order, and the shaderless order. It also checks `PF_BeforeSky`, the flag of a masked wall texture between two sky-ceilinged (or two sky-floored) sectors. Software shows that texture against the sky, but in hardware the invisible sky polygons, which batching draws first, wrote depth over the part of the texture above the nearer sky ceiling and cut it off flat (found on the renderer test map). Flagged polygons must sort before the untextured group and before every ordinary textured polygon, with and without shaders and in every submission order. Among themselves they keep the normal order (texture, brightmap, polyflags, colors, light, submission index; the shader no longer takes part). The order of all other polygons, the untextured group above all, is unchanged by flagged polygons. A polygon that is both untextured and flagged stays in the untextured group. The draw loop test submits a flagged wall, a sky occluder and an ordinary wall in all six orders, and a larger scene, and checks the draw calls come out flagged wall, occluder, ordinary wall, and that an unflagged wall is still drawn after the occluder. These fail if the key builder stops giving flagged polygons their own group. Run with `ctest -R '^batch_sort_keys'`.
 - **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary, light-split and linkdraw paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. For every rotated case the coordinate oracle must also reject a missing map, a blank map of the right size and the right map moved one pixel in each direction (the previous dropped-map behavior and a one-pixel transform error), so it cannot go blind unnoticed. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
 - **Encore brightmap colors:** run production sprite colormap selection, Software
@@ -574,10 +591,11 @@ the capture-count deltas) a wrong expectation, off by two levels in each channel
 applies, and requires the specific rejection that kind throws; a right expectation, or one a level
 off, must pass. A hit registry then requires every listed scene's oracle to run at least once in the
 full run, and no oracle to run that isn't listed, so a skipped, renamed or misspelled scene fails the
-run. Five negative controls remain, because each changes the code under test while keeping the
+run. Six negative controls remain, because each changes the code under test while keeping the
 correct oracle, which must then reject it: shader mutants of `water-refraction` and `fog-palette`
-(reciprocal depth), of `brightmap-palette` (the surface row instead of the full-bright row) and of
-`surface-light` (the planes' table for every surface), which
+(reciprocal depth), of `brightmap-palette` (the surface row instead of the full-bright row), of
+`surface-light` (the planes' table for every surface) and of `surface-light-semibright` (the semibright
+branch made unreachable), which
 rebuild only the pipeline object from the edited HLSL, and `custom-shader-nocustom`, which turns
 add-on shaders off. Each is its own process that replays the scenes up to the one whose oracle
 rejects it, with the debug layer on but GPU-based validation off, since it runs the same GPU work

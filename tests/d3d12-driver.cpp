@@ -231,7 +231,7 @@ static const char *const kOracles[]={
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect",
     "texture", "texture-update", "texture-reuse", "mips", "shared-brightmap",
-    "palette", "palette-post", "light-table-update", "light-table-update-post", "surface-light", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
+    "palette", "palette-post", "light-table-update", "light-table-update-post", "surface-light", "surface-light-semibright", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
     "screen-copy", "final-screen", "screen-flush", "wipe-blend", "wipe-mode", "wipe-wiggle", "wipe-fallback", "wipe-after", "postimg-identity", "postimg-shift",
     "fade-map-off", "fade-map", "fade-map-row", "fade-map-clamp", "fade-map-remake", "fade-map-after", "fade-map-reuse", "resize-fade-map", "resize-screen",
@@ -812,6 +812,21 @@ int main(int argc,char **argv) {
                 blend(flags); polygon(&lit,q.data(),4,flags);
                 const int row=shader==SHADER_FLOOR?16:10;
                 expect("surface-light",{16+row*7,240-row*6,32+row*5});
+                D3D12_FinishUpdate(0);
+            }
+            // A semibright sprite (HWR_LIGHT_SEMIBRIGHT in its light level) at the same depth. Software keeps the sector's
+            // light and moves the scale index into the nearer half of the table: index 25 at z=200.125 becomes
+            // 24+25/2=36, and the row is 22-36/2=4. A plain sprite's row there is 10 and a plane's 16, so a
+            // wrong mode shows. The row's color comes from the same table as above.
+            {
+                reset(); texture(&paletteTexture); setShader(SHADER_SPRITE);
+                auto lit=surface({255,255,255}); lit.LightTableId=lightId;
+                lit.LightInfo.light_level=160|HWR_LIGHT_SEMIBRIGHT; lit.LightInfo.fade_end=31;
+                auto q=quad(200.125f);
+                const FBITFIELD flags=PF_Modulated|PF_ColorMapped|PF_NoDepthTest;
+                blend(flags); polygon(&lit,q.data(),4,flags);
+                const int row=4;
+                expect("surface-light-semibright",{16+row*7,240-row*6,32+row*5});
                 D3D12_FinishUpdate(0);
             }
             setShader(SHADER_FLOOR);

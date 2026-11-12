@@ -58,7 +58,7 @@ cbuffer DrawConstants : register(b0)
 	int u_alpha_func; // 0: GL_ALWAYS, 1: GL_GREATER, 2: GL_NOTEQUAL
 	int u_tex_mode; // fixed-function texturing: 0: none (the vertex color), 1: GL_MODULATE, 2: GL_REPLACE
 	int u_palette; // palette rendering, with a light table
-	int u_light_plane; // 1: lit by distance like Software's planes, 0: by scale like its walls and sprites
+	int u_light_plane; // 1: lit by distance like Software's planes, 0: by scale like its walls and sprites, 2: a semibright sprite
 	float u_light_view_ratio; // the view's width over the screen's, as for FogColormap
 	float4 u_clip_plane; // camera space, evaluated after the full modelview
 	float u_fullscreen_depth;
@@ -285,7 +285,14 @@ float FogColormap(float distance, int lightnum, int plane, float viewRatio)
 // planes': Software lights walls and sprites as if they were at half their distance, so they came out darker here.
 float R_DoomColormap(float light, float z)
 {
-	return FogColormap(z, (int)floor(clamp(light, 0.0, 255.0) / 8.0), u_light_plane, u_light_view_ratio);
+	int lightnum = (int)floor(clamp(light, 0.0, 255.0) / 8.0);
+	if (u_light_plane == 2)
+	{
+		// Software moves a semibright sprite's scale index into the nearer half of the table (R_ProjectSprite)
+		int index = 24 + min((int)floor(5120.0 * u_light_view_ratio / max(z, 0.0001)), 47) / 2;
+		return clamp((31 - lightnum) * 2 - (int)floor(index / u_light_view_ratio) / 2, 0, 31);
+	}
+	return FogColormap(z, lightnum, u_light_plane, u_light_view_ratio);
 }
 
 // GLSL_DOOM_LIGHT_EQUATION

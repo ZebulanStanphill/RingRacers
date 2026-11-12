@@ -1,0 +1,126 @@
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include "doomdef.h"
+#include "r_things.h"
+#include "hardware/hw_glob.h"
+#include "hardware/hw_main.h"
+// A desktop build has no Direct3D 12 driver, so HWR_SemiBrightLight does nothing there and the raised light level stays;
+// this test runs both ways (semibright_light_uwp and semibright_light_desktop).
+#ifdef HAVE_D3D12
+static const bool kDirect3D12 = true;
+#else
+static const bool kDirect3D12 = false;
+#endif
+// Dependencies of the extracted code: the shader setting that HWR_UseShader reads, and the globals r_things.h's inline
+// helpers name
+consvar_t cv_glshaders;
+boolean gl_shadersavailable = true;
+fixed_t fovtan[MAXSPLITSCREENPLAYERS];
+UINT8 viewssnum;
+@@SEMIBRIGHT@@
+@@USE_SHADER@@
+@@SEMIBRIGHT_LIGHT@@
+// The start and the end of HWR_ObjectLightLevelPost: what it decides before and after the directional lighting between them,
+// which needs a sector and a map and doesn't change a level this test leaves undirected. Its argument spr only has to
+// carry the thing.
+static void ObjectLightLevelPost(gl_vissprite_t *spr, INT32 *lightlevel)
+{
+@@POST_HEAD@@
+@@POST_TAIL@@
+}
+// The call sites are checked as text: the functions that make them are too large to run without a map and a renderer.
+extern const char *const kSplitSprite, *const kDrawSprite, *const kDrawModel, *const kDrawPrecipitation, *const kDrawDropShadow;
+static int Count(const std::string &text, const char *what)
+{
+    int n = 0;
+    for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
+    return n;
+}
+// Every HWR_Lighting call in text, and whether the very next statement is the semibright call
+static void CheckSite(const char *name, const std::string &text, int lightings, bool marked)
+{
+    const std::string lighting = "HWR_Lighting(", call = "HWR_SemiBrightLight(&Surf, spr->mobj);";
+    if (Count(text, lighting.c_str()) != lightings)
+        fprintf(stderr, "%s: %d HWR_Lighting calls, expected %d\n", name, Count(text, lighting.c_str()), lightings);
+    assert(Count(text, lighting.c_str()) == lightings);
+    int marks = 0;
+    for (size_t at = text.find(lighting); at != std::string::npos; at = text.find(lighting, at + 1)) {
+        size_t next = text.find(';', at) + 1;
+        next = text.find_first_not_of(" \t\r\n", next);
+        const bool follows = text.compare(next, call.size(), call) == 0;
+        if (follows != marked) fprintf(stderr, "%s: the HWR_Lighting call at offset %zu %s followed by %s\n", name, at, follows ? "is" : "is not", call.c_str());
+        assert(follows == marked);
+        marks += follows;
+    }
+    // No other semibright call hides anywhere in the function
+    assert(Count(text, "HWR_SemiBrightLight(") == (marked ? lightings : 0));
+    assert(marks == (marked ? lightings : 0));
+}
+int main()
+{
+    assert((HWR_LIGHT_SEMIBRIGHT & 255) == 0 && HWR_LIGHT_SEMIBRIGHT > 255);
+    fovtan[0] = FRACUNIT;
+    mobj_t plain = {}, byFlag = {}, byFrame = {}, fullbright = {};
+    byFlag.renderflags = RF_SEMIBRIGHT;
+    byFrame.frame = FF_SEMIBRIGHT;
+    fullbright.renderflags = RF_FULLBRIGHT;
+    struct Thing { mobj_t *mobj; bool semibright; const char *name; };
+    const Thing things[] = {{&plain, false, "plain"}, {&byFlag, true, "RF_SEMIBRIGHT"}, {&byFrame, true, "FF_SEMIBRIGHT"},
+        {&fullbright, false, "RF_FULLBRIGHT"}};
+    int cases = 0;
+    for (bool shaders : {false, true}) {
+        cv_glshaders.value = shaders;
+        for (const Thing &thing : things) {
+            gl_vissprite_t spr = {};
+            spr.mobj = thing.mobj;
+            // The semibright test itself is the production function: only the flag and frame it reads differ here
+            assert(R_ThingIsSemiBright(thing.mobj) == thing.semibright);
+            const bool lit = kDirect3D12 && shaders; // the shaders light it, so the level stays and the driver is told
+            for (int level = 0; level < 256; ++level) {
+                // HWR_ObjectLightLevelPost: the raised light level, kept except where the shaders do the work
+                INT32 lightlevel = level;
+                ObjectLightLevelPost(&spr, &lightlevel);
+                const INT32 expected = thing.semibright && !lit ? 192 + (level >> 1) : level;
+                if (lightlevel != expected)
+                    fprintf(stderr, "%s shaders=%d level=%d: light level %d, expected %d\n", thing.name, shaders, level, lightlevel, expected);
+                assert(lightlevel == expected);
+                // HWR_SemiBrightLight: sets exactly the bit, keeps the 0..255 level and touches nothing else
+                FSurfaceInfo surface = {};
+                surface.LightInfo.light_level = level;
+                surface.LightInfo.fade_start = 3;
+                surface.LightInfo.fade_end = 29;
+                surface.LightInfo.directional = true;
+                HWR_SemiBrightLight(&surface, thing.mobj);
+                const FUINT want = level | (thing.semibright && lit ? HWR_LIGHT_SEMIBRIGHT : 0);
+                if (surface.LightInfo.light_level != want)
+                    fprintf(stderr, "%s shaders=%d level=%d: surface light %u, expected %u\n", thing.name, shaders, level,
+                        (unsigned)surface.LightInfo.light_level, (unsigned)want);
+                assert(surface.LightInfo.light_level == want);
+                assert((surface.LightInfo.light_level & 255) == (FUINT)level);
+                assert(surface.LightInfo.fade_start == 3 && surface.LightInfo.fade_end == 29 && surface.LightInfo.directional);
+                // Marking again changes nothing
+                HWR_SemiBrightLight(&surface, thing.mobj);
+                assert(surface.LightInfo.light_level == want);
+                // Either way a semibright sprite is lit once: the raised level and the bit never come together
+                assert(!(lightlevel != level && (surface.LightInfo.light_level & HWR_LIGHT_SEMIBRIGHT)));
+                ++cases;
+            }
+        }
+    }
+    // The semibright call comes straight after each sprite and model HWR_Lighting call, and nowhere else: precipitation
+    // sprites and drop shadows are never semibright, so they have none. (HWR_SplitSprite has two, one per kind of piece.)
+    CheckSite("HWR_SplitSprite", kSplitSprite, 2, true);
+    CheckSite("HWR_DrawSprite", kDrawSprite, 1, true);
+    CheckSite("HWR_DrawModel", kDrawModel, 1, true);
+    CheckSite("HWR_DrawPrecipitationSprite", kDrawPrecipitation, 1, false);
+    CheckSite("HWR_DrawDropShadow", kDrawDropShadow, 1, false);
+    printf("%d semibright light cases (%s); call sites present where intended\n", cases, kDirect3D12 ? "Direct3D 12 build" : "build without Direct3D 12");
+}
+// Placed last, so the production text inside the raw strings doesn't shift the line numbers above
+const char *const kSplitSprite = R"RRTEXT(@@SPLIT_SPRITE@@)RRTEXT";
+const char *const kDrawSprite = R"RRTEXT(@@DRAW_SPRITE@@)RRTEXT";
+const char *const kDrawModel = R"RRTEXT(@@DRAW_MODEL@@)RRTEXT";
+const char *const kDrawPrecipitation = R"RRTEXT(@@DRAW_PRECIPITATION@@)RRTEXT";
+const char *const kDrawDropShadow = R"RRTEXT(@@DRAW_DROP_SHADOW@@)RRTEXT";

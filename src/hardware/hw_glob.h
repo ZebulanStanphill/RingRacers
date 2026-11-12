@@ -109,6 +109,7 @@ typedef struct gl_vissprite_s
 } gl_vissprite_t;
 
 void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32 *lightlevel, boolean model);
+void HWR_SemiBrightLight(FSurfaceInfo *surface, mobj_t *thing);
 
 // --------
 // hw_bsp.c

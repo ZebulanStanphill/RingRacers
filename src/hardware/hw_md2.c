@@ -1581,6 +1581,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			HWR_ObjectLightLevelPost(spr, sector, &lightlevel, true);
 
 		HWR_Lighting(&Surf, lightlevel, colormap, P_SectorUsesDirectionalLighting(sector) && !R_ThingIsFullBright(spr->mobj) && R_ThingModelUsesDirectionalLighting(spr->mobj));
+		HWR_SemiBrightLight(&Surf, spr->mobj);
 	}
 	else
 		Surf.PolyColor.rgba = 0xFFFFFFFF;

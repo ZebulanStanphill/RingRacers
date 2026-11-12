@@ -1221,10 +1221,29 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 		}
 	}
 
+	// [UWP]: Only an approximation of Software, which keeps the sector's light and moves a semibright sprite's distance
+	// into the nearer half of the table: in a dim sector this is far brighter. Direct3D 12's shaders follow Software
+	// (HWR_SemiBrightLight); without shaders nothing is lit by distance, and the approximation stays.
+#ifdef HAVE_D3D12
+	if (semibright && !HWR_UseShader())
+#else
 	if (semibright)
+#endif
 	{
 		*lightlevel = 192 + (*lightlevel >> 1);
 	}
+}
+
+// [UWP]: Marks a surface that HWR_Lighting has just lit as a semibright sprite's, for the driver
+void HWR_SemiBrightLight(FSurfaceInfo *surface, mobj_t *thing)
+{
+#ifdef HAVE_D3D12
+	if (HWR_UseShader() && R_ThingIsSemiBright(thing))
+		surface->LightInfo.light_level |= HWR_LIGHT_SEMIBRIGHT;
+#else
+	(void)surface;
+	(void)thing;
+#endif
 }
 
 // A bounded approximation of Software's inward fog boundary remapping. Cache
@@ -5585,6 +5604,7 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 		}
 
 		HWR_Lighting(&Surf, lightlevel, colormap, P_SectorUsesDirectionalLighting(sector) && !R_ThingIsFullBright(spr->mobj));
+		HWR_SemiBrightLight(&Surf, spr->mobj);
 
 		Surf.PolyColor.s.alpha = alpha;
 
@@ -5614,6 +5634,7 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 	wallVerts[1].y = endbot;
 
 	HWR_Lighting(&Surf, lightlevel, colormap, P_SectorUsesDirectionalLighting(sector));
+	HWR_SemiBrightLight(&Surf, spr->mobj);
 
 	Surf.PolyColor.s.alpha = alpha;
 
@@ -5946,6 +5967,7 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 			HWR_ObjectLightLevelPost(spr, sector, &lightlevel, false);
 
 		HWR_Lighting(&Surf, lightlevel, colormap, P_SectorUsesDirectionalLighting(sector) && !R_ThingIsFullBright(spr->mobj));
+		HWR_SemiBrightLight(&Surf, spr->mobj);
 	}
 
 	{

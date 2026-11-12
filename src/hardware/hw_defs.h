@@ -282,6 +282,10 @@ struct FTextureInfo
 };
 typedef struct FTextureInfo FTextureInfo;
 
+// [UWP]: Set in FLightInfo.light_level, above its 0 to 255 range, for a semibright sprite that the shaders light. The
+// Direct3D 12 driver then takes the sprite's colormap row from Software's rule for it, not from a raised light level.
+#define HWR_LIGHT_SEMIBRIGHT 0x100
+
 struct FLightInfo
 {
 	FUINT			light_level;

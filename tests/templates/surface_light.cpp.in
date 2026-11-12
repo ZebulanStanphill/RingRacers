@@ -8,6 +8,7 @@
 #include "r_main.h"
 #include "hardware/hw_defs.h"
 #include "i_video.h"
+#include "r_things.h"
 #undef min
 #undef max
 #undef clamp
@@ -20,6 +21,9 @@ static lighttable_t maps[NUMCOLORMAPS*256];
 lighttable_t *colormaps=maps;
 lighttable_t *scalelight[LIGHTLEVELS][MAXLIGHTSCALE], *zlight[LIGHTLEVELS][MAXLIGHTZ];
 viddef_t vid;
+// LIGHTRESOLUTIONFIX reads these: the first view at a 90-degree field of view, where tan(45) is one, as the test below assumes
+fixed_t fovtan[MAXSPLITSCREENPLAYERS]={FRACUNIT};
+UINT8 viewssnum;
 INT32 viewwidth;
 @@FIXED_DIV@@
 @@SOFTWARE_Z@@
@@ -31,6 +35,34 @@ static int u_light_plane;
 static float u_light_view_ratio;
 @@FOG_ROW@@
 @@SURFACE_ROW@@
+// R_ProjectSprite's and R_SplitSprite's choice of a sprite's scale index, as the engine writes it. Only the fields
+// those lines read exist here, and cut is an int so that a test can pass a cut with or without SC_SEMIBRIGHT.
+static struct { int cut; } projected, *vis = &projected;
+static struct { fixed_t xscale; int cut; } piece, newPiece, *sprite = &piece, *newsprite = &newPiece;
+static INT32 ProjectedIndex(fixed_t xscale, int cut) {
+    INT32 lindex;
+    vis->cut = cut;
+@@PROJECT_INDEX@@
+    return lindex;
+}
+static INT32 SplitIndex(fixed_t xscale, int cut) {
+    INT32 lindex;
+    sprite->xscale = xscale;
+    newsprite->cut = cut;
+@@SPLIT_INDEX@@
+    return lindex;
+}
+@@PROGRAM_UNIFORMS@@
+static ProgramUniforms g_uniforms[NUMBASESHADERS];
+// SetUniforms' light lines, for a surface or for none
+static ProgramUniforms LightUniforms(const FSurfaceInfo *surface) {
+    ProgramUniforms stub = {};
+    ProgramUniforms &u = stub;
+    boolean directional = false;
+@@UNIFORM_LIGHT@@
+    (void)directional;
+    return u;
+}
 static int g_program, g_screenWidth;
 static struct { int viewport[4]; } g_gl;
 static struct { INT32 lightPlane; float lightViewRatio; } c;
@@ -48,6 +80,44 @@ int main() {
             assert(c.lightViewRatio==(screen>0 && width>0 ? float(width)/screen : 1.f));
         }
     }
+    // A semibright surface: its light level carries HWR_LIGHT_SEMIBRIGHT above the 0..255 range. The extracted uniform lines
+    // strip the bit and remember it, and the extracted constants lines choose lightPlane 2 for walls, sprites and models.
+    assert(HWR_LIGHT_SEMIBRIGHT>255 && (HWR_LIGHT_SEMIBRIGHT&255)==0 && (HWR_LIGHT_SEMIBRIGHT&(HWR_LIGHT_SEMIBRIGHT-1))==0);
+    for(int level : {0,64,160,255}) {
+        FSurfaceInfo plain={}, marked={};
+        plain.LightInfo.light_level=level;
+        marked.LightInfo.light_level=level|HWR_LIGHT_SEMIBRIGHT;
+        const ProgramUniforms a=LightUniforms(&plain), b=LightUniforms(&marked);
+        assert(a.lighting==float(level) && !a.semibright);
+        assert(b.lighting==float(level) && b.semibright);
+    }
+    {
+        // No surface: fully lit and never semibright
+        const ProgramUniforms none=LightUniforms(nullptr);
+        assert(none.lighting==255.f && !none.semibright);
+    }
+    for(int shader : {SHADER_FLOOR,SHADER_WATER,SHADER_FOG,SHADER_DEFAULT,
+        SHADER_WALL,SHADER_SPRITE,SHADER_SPRITECLIPHACK,SHADER_MODEL,SHADER_MODEL_LIGHTING}) {
+        g_program=shader;
+        const bool plane=shader==SHADER_FLOOR || shader==SHADER_WATER || shader==SHADER_FOG || shader==SHADER_DEFAULT;
+        for(int level : {0,64,255}) for(bool semibright : {false,true}) {
+            FSurfaceInfo surf={};
+            surf.LightInfo.light_level=level|(semibright?HWR_LIGHT_SEMIBRIGHT:0);
+            for(int screen : {0,640}) for(int width : {0,320,640}) {
+                g_screenWidth=screen; g_gl.viewport[2]=width;
+                g_uniforms[shader]=LightUniforms(&surf);
+                ApplyLightConstants();
+                // Planes keep their table even when the bit is set; only a wall, sprite or model changes
+                assert(c.lightPlane==(plane ? 1 : (semibright ? 2 : 0)));
+                assert(c.lightViewRatio==(screen>0 && width>0 ? float(width)/screen : 1.f));
+            }
+        }
+        // A surface that was drawn without any (uniforms rebuilt with none) is not semibright
+        g_uniforms[shader]=LightUniforms(nullptr);
+        ApplyLightConstants();
+        assert(c.lightPlane==(plane ? 1 : 0));
+        g_uniforms[shader]=ProgramUniforms{};
+    }
     R_InitLightTables();
     // The observed kind of regression: dim wall/sprite, well away from clamps.
     vid.width=viewwidth=640; InitScale();
@@ -57,6 +127,37 @@ int main() {
     const float wallActual=R_DoomColormap(160.f,200.125f);
     if(wallActual!=wallRow) fprintf(stderr,"dim wall: got %.9g expected %d\n",wallActual,wallRow);
     assert(wallActual==wallRow);
+    // Literal rows for a semibright sprite (plane 2), with the same sector light and distance for the plain wall/sprite
+    // mode: light 160 -> lightnum 20 -> start 22, scale index 25 at 200.125: plain 22-25/2=10; semibright index
+    // 24+25/2=36, 22-36/2=4. Light 64 -> lightnum 8 -> start 46: at 150 the scale index is 34, plain 46-34/2=29 and
+    // semibright index 24+34/2=41, 46-41/2=26; at 200.125 the plain row 46-25/2=34 is past the table's last row, 31, and the semibright row is 28;
+    // at 2000 the scale index is 2 and both rows are past the end, 31. At 60 the scale index is clamped to 47, where both agree, 23.
+    {
+        struct Pin { float light, distance; int plain, semibright; };
+        const Pin pins[]={{160.f,200.125f,10,4},{64.f,150.f,29,26},{64.f,200.125f,31,28},{64.f,2000.f,31,31},{64.f,60.f,23,23}};
+        for(const Pin &pin : pins) {
+            u_light_plane=0; u_light_view_ratio=1.f;
+            const float plain=R_DoomColormap(pin.light,pin.distance);
+            u_light_plane=2;
+            const float semibright=R_DoomColormap(pin.light,pin.distance);
+            if(plain!=pin.plain || semibright!=pin.semibright)
+                fprintf(stderr,"pin light=%g distance=%g: plain %.9g (expected %d) semibright %.9g (expected %d)\n",pin.light,pin.distance,plain,pin.plain,semibright,pin.semibright);
+            assert(plain==pin.plain);
+            assert(semibright==pin.semibright);
+            // Software's own tables say the same
+            vid.width=viewwidth=640; InitScale();
+            const fixed_t scale=FixedDiv((viewwidth/2)*FRACUNIT,fixed_t(pin.distance*FRACUNIT));
+            const int plainTable=(scalelight[int(pin.light)>>3][ProjectedIndex(scale,0)]-maps)/256;
+            const int semiTable=(scalelight[int(pin.light)>>3][ProjectedIndex(scale,SC_SEMIBRIGHT)]-maps)/256;
+            if(plainTable!=pin.plain || semiTable!=pin.semibright)
+                fprintf(stderr,"pin light=%g distance=%g: Software's tables give %d and %d\n",pin.light,pin.distance,plainTable,semiTable);
+            assert(plainTable==pin.plain);
+            assert(semiTable==pin.semibright);
+        }
+        // A semibright sprite is darker than the raised-light approximation it replaced, in a dim sector
+        assert(R_DoomColormap(64.f,150.f)==26);
+        u_light_plane=0; assert(R_DoomColormap(64.f,150.f)==29);
+    }
     int cases=1;
     for(int split : {1,2}) {
         vid.width=640; viewwidth=640/split; InitScale();
@@ -73,17 +174,25 @@ int main() {
                 distances.push_back(min(30000.f,5120.f/split/(bucket+offset)));
         for(int light=0;light<256;++light) for(float distance : distances) {
             const fixed_t z=fixed_t(distance*FRACUNIT);
-            for(int plane : {0,1}) {
+            for(int plane : {0,1,2}) {
                 u_light_plane=plane;
                 int index;
-                if(plane) index=min(z>>LIGHTZSHIFT,MAXLIGHTZ-1);
+                if(plane==1) index=min(z>>LIGHTZSHIFT,MAXLIGHTZ-1);
                 else {
                     // Software's projection at a 90-degree FOV, then its real
                     // FixedMul(scale, LIGHTRESOLUTIONFIX) >> LIGHTSCALESHIFT.
                     fixed_t scale=FixedDiv((viewwidth/2)*FRACUNIT,z);
                     index=min(FixedMul(scale,640*FRACUNIT/vid.width)>>LIGHTSCALESHIFT,MAXLIGHTSCALE-1);
+                    // The engine's own index lines must agree with the one above, and the semibright statement is
+                    // the one extracted from R_ProjectSprite (and R_SplitSprite, for pieces of a sprite)
+                    assert(ProjectedIndex(scale,0)==index && SplitIndex(scale,0)==index);
+                    if(plane==2) {
+                        index=ProjectedIndex(scale,SC_SEMIBRIGHT);
+                        assert(index==SplitIndex(scale,SC_SEMIBRIGHT));
+                        assert(index>=MAXLIGHTSCALE/2 && index<MAXLIGHTSCALE);
+                    }
                 }
-                int expected=((plane?zlight[light>>3][index]:scalelight[light>>3][index])-maps)/256;
+                int expected=((plane==1?zlight[light>>3][index]:scalelight[light>>3][index])-maps)/256;
                 float actual=R_DoomColormap(float(light),distance);
                 if(actual!=expected) fprintf(stderr,"surface light=%d distance=%.9g plane=%d ratio=%g: got %.9g expected %d\n",light,distance,plane,u_light_view_ratio,actual,expected);
                 assert(actual==expected);
@@ -91,5 +200,5 @@ int main() {
             }
         }
     }
-    printf("%d surface rows match production Software tables; light constants match all shader types\n",cases);
+    printf("%d surface rows match production Software tables (planes, walls, sprites, semibright sprites); light constants match all shader types and the semibright bit\n",cases);
 }

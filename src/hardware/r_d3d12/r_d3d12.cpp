@@ -332,6 +332,7 @@ struct ProgramUniforms
 	float lightDir[3];
 	float lightContrast, lightBacklight;
 	float leveltime;
+	bool semibright; // HWR_LIGHT_SEMIBRIGHT was set in the surface's light level
 };
 ProgramUniforms g_uniforms[NUMBASESHADERS];
 
@@ -367,7 +368,7 @@ struct Constants
 	INT32 alphaFunc;
 	INT32 texMode;
 	INT32 palette; // palette rendering, with a light table
-	INT32 lightPlane; // Software lights planes by distance, and walls and sprites by scale
+	INT32 lightPlane; // Software lights planes by distance (1), walls and sprites by scale (0), semibright sprites by a halved scale (2)
 	float lightViewRatio;
 	float clipPlane[4];
 	float fullscreenDepth, portalPad[3];
@@ -415,7 +416,8 @@ void SetUniforms(const FSurfaceInfo *surface, const float *poly, const float *ti
 
 	if (surface != NULL)
 	{
-		u.lighting = (float)surface->LightInfo.light_level;
+		u.lighting = (float)(surface->LightInfo.light_level & ~(FUINT)HWR_LIGHT_SEMIBRIGHT);
+		u.semibright = (surface->LightInfo.light_level & HWR_LIGHT_SEMIBRIGHT) != 0;
 		u.fadeStart = (float)surface->LightInfo.fade_start;
 		u.fadeEnd = (float)surface->LightInfo.fade_end;
 		directional = surface->LightInfo.directional;
@@ -423,6 +425,7 @@ void SetUniforms(const FSurfaceInfo *surface, const float *poly, const float *ti
 	else
 	{
 		u.lighting = 255.0f;
+		u.semibright = false;
 		u.fadeStart = 0.0f;
 		u.fadeEnd = 31.0f;
 	}
@@ -1504,6 +1507,8 @@ bool ApplyConstants(bool custom)
 	c.palette = (g_paletteRendering && g_paletteLookup.res && g_currentLightTable) ? 1 : 0;
 	c.lightPlane = !(g_program == SHADER_WALL || g_program == SHADER_SPRITE || g_program == SHADER_SPRITECLIPHACK
 		|| g_program == SHADER_MODEL || g_program == SHADER_MODEL_LIGHTING);
+	if (!c.lightPlane && g_uniforms[g_program].semibright)
+		c.lightPlane = 2;
 	c.lightViewRatio = g_gl.viewport[2] > 0 && g_screenWidth > 0 ? (float)g_gl.viewport[2] / g_screenWidth : 1.0f;
 	const bool updateView = custom && (!g_customViewConstants || g_customViewFrame != g_frameCounter
 		|| g_customViewHeight != g_rtHeight || g_customViewConstants.generation != g_constantRing.Generation());
