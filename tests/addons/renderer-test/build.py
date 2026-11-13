@@ -764,7 +764,6 @@ NORTH, SOUTH = (704, 1472), (-1472, -704)
 SKY_ROOM = (-3600, -512, -2576, 512)
 SKY_CENTER = ((SKY_ROOM[0] + SKY_ROOM[2]) // 2, (SKY_ROOM[1] + SKY_ROOM[3]) // 2)
 SKY_CAMERA_HEIGHT = 64
-CHECKPOINT_X, CHECKPOINT_TAG, CHECKPOINT_ID = -850, 70, 1
 # The sky pit, off the hall's east end: a covered doorway and viewing area (ordinary ceiling, so no rain
 # there) looking onto a sector whose floor is sky and whose ceiling is not, so it gets no rain either.
 PIT_DOOR = (1280, -256, 1408, 256)
@@ -909,7 +908,7 @@ def build_geometry():
     g.edge((SKY_PIT[0], SKY_PIT[1]), (SKY_PIT[0], SKY_PIT[3]), blocking=True)
 
     # 10. Software parity wing. Enter through Brightmaps, then turn east.
-    # All adjoining floors meet at zero; the race/checkpoint loop stays in the hall.
+    # All adjoining floors meet at zero.
     g.sector("parity_entry", rect(576, -1792, 1088, -1472), wall="RTN00", lightlevel=200)
     g.sector("parity_hall", rect(448, -2048, 9472, -1792), wall="RTN00", lightlevel=200)
 
@@ -1008,24 +1007,13 @@ def build_geometry():
         g.sector(f"ctl_{name}", square, wall=wall, **props)
         g.edge((x, 0), (x + 64, 0), special=special, args=args)
 
-    # The finish line, just in front of the starts (the first waypoint is the finish line's).
-    g.free_line((-950, -640), (-950, 640), "hall", special=2001, playercross=True, repeatspecial=True,
-                sides=({}, {}))
-    # The race checkpoint just past the finish line. A lap-0 player is ignored by the checkpoints, so it
-    # has to lie beyond the line; crossing it makes the item boxes appear. Crossing it again on the way
-    # back is ignored (same checkpoint), and finishing the lap does not need it.
-    g.free_line((CHECKPOINT_X, -640), (CHECKPOINT_X, 640), "hall", id=CHECKPOINT_TAG, sides=({}, {}))
-
-    # Things: the hall's starts, waypoint loop, item boxes and skybox, then each room's contents.
+    # Things: the hall's starts, item boxes and skybox, then each room's contents. The map is for driving
+    # around freely, so it has no finish line, checkpoint or waypoints: without waypoints the engine shows
+    # the item boxes from the start, never calls a direction wrong (no pointing hand) and respawns at a start.
     for n, (x, y) in enumerate([(-1150, -150), (-1150, 150), (-1050, -50), (-1050, 50)]):
         g.thing(n + 1, x, y)
-    loop = [(-950, -400), (0, -400), (1000, -400), (1000, 0), (1000, 400), (0, 400), (-950, 400), (-950, 0)]
-    for n, (x, y) in enumerate(loop, 1):
-        g.thing(2001, x, y, id=n, thingarg0=n % len(loop) + 1, thingarg1=256, thingarg2=8 if n == 1 else 0)
     for x, y in [(-1000, -250), (-1000, 250), (-700, 0), (1100, -300), (1100, 300), (300, 0)]:
         g.thing(2000, x, y, 24)
-    for y in (-600, 600):  # the checkpoint's two posts: same ID and angle, aimed at the tagged line
-        g.thing(2030, CHECKPOINT_X, y, 0, thingarg0=CHECKPOINT_ID, thingarg1=CHECKPOINT_TAG)
     # The skybox viewpoint, at camera height in the middle of the skybox room. There is no centre point,
     # so the sky camera stays here and only turns with the player.
     g.thing(780, *SKY_CENTER, SKY_CAMERA_HEIGHT, id=0, thingarg0=0)
@@ -1297,24 +1285,11 @@ def validate_map(tm, image_names, entries_png):
         assert all(set(sides[lines[n]["sidefront"]]) == {"sector", "texturemiddle"} for n in loop), \
             "polyobject walls take a middle texture only"
         polyobject_lines |= loop
-    # Waypoints: every next id exists, and exactly one is the finish line.
-    waypoints = [t for t in things if t["type"] == 2001]
-    ids = {t["id"] for t in waypoints}
-    assert len(ids) == len(waypoints) >= 3 and all(t["thingarg0"] in ids for t in waypoints)
-    assert sum(1 for t in waypoints if t.get("thingarg2", 0) & 8) == 1
+    # Free driving: four starts, and no waypoints (2001), checkpoint posts (2030) or finish line (special
+    # 2001). Any waypoint would bring back the wrong-way hand and hide the item boxes until a checkpoint.
     assert {1, 2, 3, 4} <= {t["type"] for t in things}
-    # Checkpoints (item boxes stay hidden until one is crossed): the two posts of each pair share a
-    # non-zero ID and an angle, and aim at a line tag that some line has.
-    posts = {}
-    for t in things:
-        if t["type"] == 2030:
-            posts.setdefault(t["thingarg0"], []).append(t)
-    assert posts and 0 not in posts, "the map needs a checkpoint, with a non-zero ID"
-    line_tags = {l["id"] for l in lines if "id" in l}
-    for number, pair in posts.items():
-        assert len(pair) == 2, f"checkpoint {number} needs exactly two posts"
-        assert pair[0].get("angle", 0) == pair[1].get("angle", 0), f"checkpoint {number}: angles differ"
-        assert pair[0]["thingarg1"] == pair[1]["thingarg1"] in line_tags, f"checkpoint {number}: no such line tag"
+    assert not any(t["type"] in (2001, 2030) for t in things), "no waypoints or checkpoints"
+    assert not any(l.get("special") == 2001 for l in lines), "no finish line"
     # The skybox viewpoint (no centre point, so the sky camera stays put) lies in a sector with a sky ceiling.
     views = [t for t in things if t["type"] == 780]
     assert len(views) == 1 and views[0]["thingarg0"] == 0 and views[0]["id"] == 0, "one skybox viewpoint, ID 0"

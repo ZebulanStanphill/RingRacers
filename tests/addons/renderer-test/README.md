@@ -34,8 +34,10 @@ behaves correctly.
    console command is `addfile "E:\ringracers\addons\D_RenderTest_v1.pk3"`.
 4. Open the console and run `cheats on`, then `map RR_RENDERTEST`, or
    `map RR_RENDERTEST -e` for Encore. For the split-screen
-   variants, start the game with two local players first. The map is a one-lap
-   race with no music.
+   variants, start the game with two local players first. The map has no music
+   and nothing to finish: it is a Race map with no finish line, checkpoint or
+   waypoints, for driving around freely. Loading it prints three errors about
+   the missing waypoints and finish line, which are expected (see Hall).
 
 The add-on removes AI racers when this map loads and during play, so you can
 test without bots driving around or using items. Human players, including all
@@ -47,15 +49,13 @@ rain. There are three doorways on the left (north) side, west to east: **Fog**,
 **Water**, **Polyobjects**, and three on the right (south): **Light slices**,
 **Transparency**, **Brightmaps**. A doorway in the middle of the east wall, at
 the far end, leads to the **Sky pit** (see Hall). Item boxes sit near the start
-and far down the hall; they stay hidden until you cross the checkpoint just past
-the start line (see Hall).
+and far down the hall.
 
 A new **parity wing** leaves the south wall of Brightmaps (between x=576 and
 1088). Follow its corridor east, y=-1920. Numbered coloured wall panels identify
 rooms 1 through 9; 0 marks the entrance/corridor. Rooms 1 to 6 open off the
 corridor's south wall, room 7 is at its east end, and rooms 8 and 9 open off its
-north wall (east of x=3400). Every room returns to this corridor, and the hall's
-finish, checkpoint and waypoint loop are unchanged.
+north wall (east of x=3400). Every room returns to this corridor.
 
 ## What to look at
 
@@ -90,14 +90,17 @@ streaks in front of the room's floor or walls in the pit. If the pit instead
 shows the hall, or nothing but a plain sky texture, the skybox is not being
 drawn, and the check tells you nothing.
 
-The six item boxes stay hidden until you cross the checkpoint 100 units past
-the start line, a line across the whole hall with a post at each end. The engine
-hides them until a racer has crossed a first checkpoint, and the finish line
-only counts as one from the second lap, which this one-lap map never reaches.
-Two of the boxes are just west of the checkpoint and four are east of it, so most
-appear ahead of you. Crossing the checkpoint again on the way back changes
-nothing, and finishing the lap does not need it. The boxes turn into a plain
-textured box when `models.dat` is installed: a 3D model that borrows its sprite
+The map has no finish line, checkpoint or waypoints, so the round never ends
+and you can drive anywhere in any order. Without waypoints the engine shows the
+six item boxes from the start (in a race with waypoints it hides them until a
+first checkpoint is crossed), never judges your direction, so the pointing hand
+that marks the wrong way doesn't appear, and respawns you at a start position.
+It also logs three errors each time the map loads, all expected: `No waypoints
+in map.`, `Waypoints were not able to be setup! Player positions will not work
+correctly.` and `No valid finish line beam setup could be found.`
+
+The boxes turn into a plain textured box when `models.dat` is installed: a 3D
+model that borrows its sprite
 for a texture, so it also checks the sprite-patch preparation and the mipmaps
 at near and far range. Without the files they stay the usual sprites. Toggle
 **Models**.
@@ -352,9 +355,9 @@ instead. `--validate` (also run by the others, and needing no ZDBSP) re-parses
 the TEXTMAP and checks what the engine requires: the namespace and version
 first, valid vertex, line and sidedef references, closed sector boundaries with
 no lines crossing or touching mid-line, 3D-floor specials aimed at sectors that
-exist, polyobject loops with their anchor and spawn things, waypoints that link,
-every texture shipped, each checkpoint's two posts (same ID and angle, aimed at
-a line tag that exists), the skybox viewpoint inside a sector with a sky
+exist, polyobject loops with their anchor and spawn things, four player starts
+and no waypoint, checkpoint or finish line, every texture shipped, the skybox
+viewpoint inside a sector with a sky
 ceiling, the sky pit's sky floors under non-sky ceilings with every line into
 them blocking karts, and in the nodes the original vertex count, seg line
 numbers, one seg per polyobject line, and each polyobject's spawn spot inside
@@ -435,9 +438,9 @@ two sprites (`RBOX`, the ring box, and `RNDM`, the random item) at scale 2.0.
 Raise or lower that scale if the box looks too small or large.
 
 The offline checks do not verify the effects in gameplay. In particular the
-SOC, `BRIGHT` and `SPRTINFO` text, the polyobject rotation trigger (crossing the
-doorway line), the finish line, the checkpoint and the waypoint loop still need
-gameplay validation; their definitions were checked against the engine source.
+SOC, `BRIGHT` and `SPRTINFO` text and the polyobject rotation trigger (crossing
+the doorway line) still need gameplay validation; their definitions were checked
+against the engine source.
 
 Parity rooms 1 to 7 were rendered in Software and in the UWP hardware paths
 using the local invisible-window macOS harness, with the `sw-parity-walls`
@@ -452,4 +455,4 @@ The harness loads the map with `-warp RR_RENDERTEST -file
 For the ruler, append `-splitscreen 2` to start two local players. Harness
 lighting comparisons can use `RR_DARK=0` and `RR_DARK=0.142857` at identical
 poses; normal driving and `rendertest_darkness` use the engine's own timers.
-These captures do not replace driving the new route/checkpoint on Xbox.
+These captures do not replace driving the map on Xbox.
