@@ -1,0 +1,65 @@
+#include <cassert>
+#include <cstdio>
+#include <string>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "d_player.h"
+#include "p_local.h"
+#include "r_main.h"
+#include "g_demo.h"
+#include "k_bot.h"
+extern "C" {
+struct demovars_s demo;
+consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS];
+camera_t camera[MAXSPLITSCREENPLAYERS];
+tic_t leveltime, introtime;
+static bool steered;
+static int asked, forces;
+static angle_t forced;
+// Stands in for the finish line, the podium and Lua's PlayerUsesBotMovement hook.
+boolean K_PlayerUsesBotMovement(const player_t *player) { ++asked; return steered || player->exiting || player->bot; }
+void P_ForceLocalAngle(player_t *, angle_t angle) { ++forces; forced = angle; }
+}
+@@HELPER@@
+// The part of P_MoveChaseCamera from the fix to first person's early return.
+static boolean Tick(player_t *player, camera_t *thiscam, mobj_t *mo, UINT8 num) {
+@@CALL@@
+	return false;
+}
+static int failures;
+static void Check(const char *name, bool chase, bool playback, bool bot, bool exiting, bool lua,
+	bool wantForce, bool wantReturn, int wantAsked) {
+	player_t player{}; mobj_t mo{};
+	player.mo = &mo; player.bot = bot; player.exiting = exiting ? 1 : 0;
+	mo.angle = 0x12345678;
+	camera[0] = camera_t{}; camera[0].chase = chase;
+	cv_chasecam[0].value = chase;
+	demo.playback = playback; steered = lua;
+	asked = forces = 0; forced = 0;
+	leveltime = 100; introtime = 10;
+	const boolean returned = Tick(&player, &camera[0], &mo, 0);
+	const bool ok = (forces == (wantForce ? 1 : 0)) && (!wantForce || forced == mo.angle)
+		&& (!!returned == wantReturn) && asked == wantAsked;
+	if (!ok) {
+		fprintf(stderr, "%s: forces=%d angle=%08x returned=%d asked=%d\n", name, forces, (unsigned)forced, (int)returned, asked);
+		++failures;
+	}
+}
+int main() {
+	//    name                          chase  demo   bot    exit   lua    force  return asked
+	// After the finish line the game steers the kart; first person must turn with it.
+	Check("first person, finished",     false, false, false, true,  false, true,  false, 1);
+	// Lua steering outside a finish: first person returns early, so the copy has to come before that.
+	Check("first person, Lua steers",   false, false, false, false, true,  true,  true,  1);
+	// The player's own steering already moves the local angle.
+	Check("first person, driving",      false, false, false, false, false, false, true,  1);
+	// The chase camera keeps its own copy further down, and must not ask Lua twice a tic.
+	Check("chase camera, finished",     true,  false, false, true,  false, false, false, 0);
+	Check("chase camera, driving",      true,  false, false, false, false, false, false, 0);
+	// Replays take the view angle from the kart, not the local angle.
+	Check("replay, first person",       false, true,  false, true,  false, false, false, 0);
+	// A real bot shown in a view has no local angle to keep.
+	Check("bot in first person",        false, false, true,  false, false, false, true,  0);
+	if (failures) return 1;
+	puts("first person: the local angle follows a kart the game is steering");
+}

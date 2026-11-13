@@ -399,6 +399,12 @@ def generate(engine, output):
         "SW_SIDE": function_section(segs, "R_RenderThickSideRange",
             "\t\t// Get correct light level!", "\n\t\tif (lightnum < 0)"),
     }, output / "translucent_wall_light.cpp")
+    user = Source(engine / "src/p_user.c")
+    render(templates / "first_person_angle.cpp.in", {
+        "HELPER": user.function("P_FirstPersonFollowsKart"),
+        "CALL": function_section(user, "P_MoveChaseCamera",
+            "\tif (P_FirstPersonFollowsKart(player, thiscam))", "\n\tif (!thiscam->chase && !resetcalled)"),
+    }, output / "first_person_angle.cpp")
     things = Source(engine / "src/r_things.cpp")
     batching = Source(engine / "src/hardware/hw_batching.c")
     batch_helper = batching.function("HWR_SetBatchTextures")

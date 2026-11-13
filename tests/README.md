@@ -220,6 +220,14 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   than by the engine's `P_GetLightZAt`; every submitted piece must have height; draw stubs check opaque/queued/fog
   dispatch, texture IDs, colormaps and alpha. These tests verify submitted
   geometry, not Xbox visuals or performance.
+- **First-person view after the finish:** `first_person_angle` runs the extracted
+  `P_FirstPersonFollowsKart` and the part of `P_MoveChaseCamera` from its call to
+  first person's early return. The local angle must take the kart's angle when the
+  game steers a human's kart in first person (finished, or Lua's bot movement,
+  where the function returns straight after), and must be left alone while the
+  player drives, with the chase camera (which keeps its own copy and must not run
+  Lua's hook a second time), in replays and for real bots. It doesn't run a race
+  or check the picture. Run with `ctest -R '^first_person_angle$'`.
 - **Translucent wall lighting:** `translucent_wall_light` compares extracted hardware
   middle-texture and 3D-floor side lighting with Software, including light lists,
   fog colormaps, fog lights, NOSHADE, opaque walls, tripwires and the alpha 242/243

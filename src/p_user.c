@@ -3254,6 +3254,16 @@ void P_ResetCamera(player_t *player, camera_t *thiscam)
 	while (!P_MoveChaseCamera(player,thiscam,true) && ++tries < 2*TICRATE);
 }
 
+// First person shows the local angle, which only the player's own steering moves.
+// When the game steers the kart instead (after the finish line, on the podium, or
+// through Lua), the chase camera's code copies the kart's angle into it further
+// down P_MoveChaseCamera, but first person returns before reaching that, so its
+// view stopped turning with the kart.
+static boolean P_FirstPersonFollowsKart(const player_t *player, const camera_t *thiscam)
+{
+	return !demo.playback && !thiscam->chase && !player->bot && K_PlayerUsesBotMovement(player);
+}
+
 boolean P_MoveChaseCamera(player_t *player, camera_t *thiscam, boolean resetcalled)
 {
 	static boolean lookbackactive[MAXSPLITSCREENPLAYERS];
@@ -3348,6 +3358,9 @@ boolean P_MoveChaseCamera(player_t *player, camera_t *thiscam, boolean resetcall
 		timeover = (player->karthud[khud_timeovercam] > 2*TICRATE ? 2 : 1);
 	else
 		timeover = 0;
+
+	if (P_FirstPersonFollowsKart(player, thiscam))
+		P_ForceLocalAngle(player, mo->angle);
 
 	if (!(player->playerstate == PST_DEAD || player->exiting || leveltime < introtime))
 	{
