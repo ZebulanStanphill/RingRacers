@@ -43,6 +43,9 @@ menuitem_t OPTIONS_Video[] =
 	{IT_STRING | IT_SUBMENU, "Color Profile...", "Adjust the color profile of the game's display.",
 		NULL, {.submenu = &OPTIONS_VideoColorProfileDef}, 0, 0},
 
+	{IT_STRING | IT_SUBMENU, "Camera Position...", "Give each local player a 3rd person or 1st person view.",
+		NULL, {.submenu = &OPTIONS_VideoCameraDef}, 0, 0},
+
 	{IT_NOTHING|IT_SPACE, NULL, NULL,
 		NULL, {NULL}, 0, 0},
 

@@ -28,6 +28,7 @@ target_sources(SRB2SDL2 PRIVATE
 	options-sound.cpp
 	options-video-1.c
 	options-video-advanced.c
+	options-video-camera.c
 	options-video-colorprofile.c
 	options-video-modes.c
 	options-voice.cpp

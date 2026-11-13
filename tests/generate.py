@@ -405,6 +405,15 @@ def generate(engine, output):
         "CALL": function_section(user, "P_MoveChaseCamera",
             "\tif (P_FirstPersonFollowsKart(player, thiscam))", "\n\tif (!thiscam->chase && !resetcalled)"),
     }, output / "first_person_angle.cpp")
+    render(templates / "camera_position.cpp.in", {
+        "CAMERA_MENU": Source(engine / "src/menus/options-video-camera.c").section(
+            "// The rows show cv_dummycameraposition", "\tNULL,\n\tNULL,\n};") + "\tNULL,\n\tNULL,\n};\n",
+        "VIDEO_MENU": Source(engine / "src/menus/options-video-1.c").section(
+            "// options menu\nmenuitem_t OPTIONS_Video[] =", "\n};\n\nmenu_t") + "};\n"
+            + Source(engine / "src/menus/options-video-1.c").section("menu_t OPTIONS_VideoDef = {", "\n};\n") + "};\n",
+        "CVARS": Source(engine / "src/cvars.cpp").section(
+            "consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS] = {", "\nconsvar_t cv_deadzone"),
+    }, output / "camera_position.cpp")
     things = Source(engine / "src/r_things.cpp")
     batching = Source(engine / "src/hardware/hw_batching.c")
     batch_helper = batching.function("HWR_SetBatchTextures")

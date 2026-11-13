@@ -1,0 +1,112 @@
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include "doomdef.h"
+#include "k_menu.h"
+#include "r_main.h"
+#include "r_fps.h"
+#include "screen.h"
+#include "v_video.h"
+#include "i_video.h"
+#ifdef __clang__
+// The menu tables are C: designated initializers for the item's action.
+#pragma clang diagnostic ignored "-Wc++20-designator"
+#pragma clang diagnostic ignored "-Wc99-designator"
+#endif
+extern "C" {
+consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS], cv_dummycameraposition[MAXSPLITSCREENPLAYERS];
+consvar_t cv_fullscreen, cv_scr_scaling, cv_vidwait, cv_fpscap, cv_scr_effect;
+menu_t OPTIONS_MainDef, OPTIONS_VideoModesDef, OPTIONS_VideoColorProfileDef, OPTIONS_VideoAdvancedDef;
+static int sets, stealths, ticks;
+static consvar_t *lastset;
+// The real CV_SetValue runs the variable's change function; chasecam's does nothing.
+void CV_SetValue(consvar_t *var, INT32 value) { ++sets; lastset = var; var->value = value; }
+void CV_StealthSetValue(consvar_t *var, INT32 value) { ++stealths; var->value = value; }
+void M_OptionsTick(void) { ++ticks; }
+void M_DrawGenericOptions(void) {}
+void M_DrawOptionsCogs(void) {}
+@@CAMERA_MENU@@
+@@VIDEO_MENU@@
+}
+static const char *definitions = R"cvars(
+@@CVARS@@
+)cvars";
+static void Set(int a, int b, int c, int d, consvar_t *vars) {
+	const int v[] = {a, b, c, d};
+	for (int i = 0; i < MAXSPLITSCREENPLAYERS; ++i) vars[i].value = v[i];
+}
+static bool Are(int a, int b, int c, int d, const consvar_t *vars) {
+	const int v[] = {a, b, c, d};
+	for (int i = 0; i < MAXSPLITSCREENPLAYERS; ++i) if (vars[i].value != v[i]) return false;
+	return true;
+}
+int main() {
+	// Video Options: Color Profile, Camera Position, a gap, Advanced.
+	const int count = OPTIONS_VideoDef.numitems;
+	int colour = -1;
+	for (int i = 0; i < count; ++i)
+		if (OPTIONS_Video[i].text && !strcmp(OPTIONS_Video[i].text, "Color Profile...")) colour = i;
+	assert(colour >= 0 && colour + 3 < count);
+	const menuitem_t &row = OPTIONS_Video[colour + 1];
+	assert(!strcmp(row.text, "Camera Position..."));
+	assert(row.status == (IT_STRING | IT_SUBMENU) && row.itemaction.submenu == &OPTIONS_VideoCameraDef);
+	assert(row.tooltip && *row.tooltip);
+	assert(OPTIONS_Video[colour + 2].status == (IT_NOTHING | IT_SPACE));
+	assert(!strcmp(OPTIONS_Video[colour + 3].text, "Advanced...") && colour + 4 == count);
+
+	// One row per local player, each on that player's menu variable, and Back returns to Video Options.
+	assert(OPTIONS_VideoCameraDef.numitems == MAXSPLITSCREENPLAYERS && MAXSPLITSCREENPLAYERS == 4);
+	assert(OPTIONS_VideoCameraDef.prevMenu == &OPTIONS_VideoDef);
+	assert(OPTIONS_VideoCameraDef.menuitems == OPTIONS_VideoCamera);
+	for (int i = 0; i < 4; ++i) {
+		char name[16];
+		snprintf(name, sizeof name, "Player %d", i + 1);
+		assert(!strcmp(OPTIONS_VideoCamera[i].text, name));
+		assert(OPTIONS_VideoCamera[i].status == (IT_STRING | IT_CVAR));
+		assert(OPTIONS_VideoCamera[i].itemaction.cvar == &cv_dummycameraposition[i]);
+		assert(strstr(OPTIONS_VideoCamera[i].tooltip, name));
+	}
+
+	// Opening the menu shows what chasecam is, without setting chasecam.
+	Set(1, 0, 1, 0, cv_chasecam); Set(1, 1, 1, 1, cv_dummycameraposition);
+	assert(OPTIONS_VideoCameraDef.initroutine);
+	OPTIONS_VideoCameraDef.initroutine();
+	assert(Are(1, 0, 1, 0, cv_dummycameraposition) && Are(1, 0, 1, 0, cv_chasecam));
+	assert(sets == 0 && stealths == 2);
+
+	// Changing a row moves only that player's chasecam.
+	cv_dummycameraposition[2].value = 0;
+	CameraPosition_OnChange();
+	assert(Are(1, 0, 0, 0, cv_chasecam) && sets == 1 && lastset == &cv_chasecam[2]);
+	cv_dummycameraposition[1].value = 1;
+	CameraPosition_OnChange();
+	assert(Are(1, 1, 0, 0, cv_chasecam) && sets == 2 && lastset == &cv_chasecam[1]);
+	CameraPosition_OnChange(); // nothing differs
+	assert(sets == 2);
+
+	// chasecam set from the console while the menu is open: the rows follow, and the menu still ticks.
+	stealths = 0;
+	cv_chasecam[0].value = 0;
+	assert(OPTIONS_VideoCameraDef.tickroutine);
+	OPTIONS_VideoCameraDef.tickroutine();
+	assert(Are(0, 1, 0, 0, cv_dummycameraposition) && ticks == 1 && stealths == 1 && sets == 2);
+	OPTIONS_VideoCameraDef.tickroutine();
+	assert(ticks == 2 && stealths == 1);
+
+	// chasecam is saved and keeps On/Off; the rows' variables are menu-only and read 3rd/1st Person.
+	const std::string text = definitions;
+	const size_t chase = text.find("consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS]");
+	const size_t dummy = text.find("consvar_t cv_dummycameraposition[MAXSPLITSCREENPLAYERS]");
+	assert(chase != std::string::npos && dummy != std::string::npos && chase < dummy);
+	const std::string chasecam = text.substr(chase, text.find("};", chase) - chase);
+	const std::string rows = text.substr(dummy, text.find("};", dummy) - dummy);
+	size_t n = 0;
+	for (size_t at = 0; (at = chasecam.find("Player(\"chasecam", at)) != std::string::npos; ++at) ++n;
+	assert(n == 4 && chasecam.find("dont_save") == std::string::npos && chasecam.find(".on_off()") != std::string::npos);
+	n = 0;
+	for (size_t at = 0; (at = rows.find("MenuDummy(\"dummycameraposition", at)) != std::string::npos; ++at) ++n;
+	assert(n == 4 && rows.find("Player(") == std::string::npos);
+	assert(text.find("{{1, \"3rd Person\"}, {0, \"1st Person\"}, {0, NULL}}") != std::string::npos);
+	puts("camera position: menu rows, chasecam both ways, saved setting");
+}

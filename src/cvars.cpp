@@ -1183,11 +1183,22 @@ void ChaseCam2_OnChange(void);
 void ChaseCam3_OnChange(void);
 void ChaseCam4_OnChange(void);
 
+// Saved, unlike upstream's: Options -> Video -> Camera Position sets them.
 consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS] = {
-	Player("chasecam", "On").on_off().onchange(ChaseCam_OnChange).dont_save(),
-	Player("chasecam2", "On").on_off().onchange(ChaseCam2_OnChange).dont_save(),
-	Player("chasecam3", "On").on_off().onchange(ChaseCam3_OnChange).dont_save(),
-	Player("chasecam4", "On").on_off().onchange(ChaseCam4_OnChange).dont_save(),
+	Player("chasecam", "On").on_off().onchange(ChaseCam_OnChange),
+	Player("chasecam2", "On").on_off().onchange(ChaseCam2_OnChange),
+	Player("chasecam3", "On").on_off().onchange(ChaseCam3_OnChange),
+	Player("chasecam4", "On").on_off().onchange(ChaseCam4_OnChange),
+};
+
+// What that menu's rows show, so that chasecam keeps its On and Off values.
+void CameraPosition_OnChange(void);
+static CV_PossibleValue_t cameraposition_cons_t[] = {{1, "3rd Person"}, {0, "1st Person"}, {0, NULL}};
+consvar_t cv_dummycameraposition[MAXSPLITSCREENPLAYERS] = {
+	MenuDummy("dummycameraposition", "3rd Person").values(cameraposition_cons_t).onchange_noinit(CameraPosition_OnChange),
+	MenuDummy("dummycameraposition2", "3rd Person").values(cameraposition_cons_t).onchange_noinit(CameraPosition_OnChange),
+	MenuDummy("dummycameraposition3", "3rd Person").values(cameraposition_cons_t).onchange_noinit(CameraPosition_OnChange),
+	MenuDummy("dummycameraposition4", "3rd Person").values(cameraposition_cons_t).onchange_noinit(CameraPosition_OnChange),
 };
 
 consvar_t cv_deadzone[MAXSPLITSCREENPLAYERS] = {

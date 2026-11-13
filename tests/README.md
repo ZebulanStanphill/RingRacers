@@ -228,6 +228,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   player drives, with the chase camera (which keeps its own copy and must not run
   Lua's hook a second time), in replays and for real bots. It doesn't run a race
   or check the picture. Run with `ctest -R '^first_person_angle$'`.
+- **Camera Position menu:** `camera_position` compiles the extracted
+  `options-video-camera.c` and Video Options table. Camera Position must sit
+  between Color Profile and the gap before Advanced, with one row per local
+  player on that player's menu variable. Opening the menu and its ticker must
+  copy `chasecam` into the rows without setting it, changing a row must set only
+  that player's `chasecam`, and the definitions in `cvars.cpp` must keep
+  `chasecam` On/Off and saved, with the rows' variables menu-only. Variable
+  storage and menu drawing are mocks; it doesn't draw the menu or load a config.
+  Run with `ctest -R '^camera_position$'`.
 - **Translucent wall lighting:** `translucent_wall_light` compares extracted hardware
   middle-texture and 3D-floor side lighting with Software, including light lists,
   fog colormaps, fog lights, NOSHADE, opaque walls, tripwires and the alpha 242/243

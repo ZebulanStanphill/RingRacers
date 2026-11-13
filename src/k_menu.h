@@ -478,6 +478,10 @@ extern menu_t OPTIONS_VideoModesDef;
 extern menuitem_t OPTIONS_VideoColorProfile[];
 extern menu_t OPTIONS_VideoColorProfileDef;
 
+extern menuitem_t OPTIONS_VideoCamera[];
+extern menu_t OPTIONS_VideoCameraDef;
+extern consvar_t cv_dummycameraposition[MAXSPLITSCREENPLAYERS];
+
 extern menuitem_t OPTIONS_VideoAdvanced[];
 extern menu_t OPTIONS_VideoAdvancedDef;
 
