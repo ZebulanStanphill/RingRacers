@@ -405,6 +405,12 @@ def generate(engine, output):
         "CALL": function_section(user, "P_MoveChaseCamera",
             "\tif (P_FirstPersonFollowsKart(player, thiscam))", "\n\tif (!thiscam->chase && !resetcalled)"),
     }, output / "first_person_angle.cpp")
+    main = Source(engine / "src/r_main.cpp")
+    render(templates / "first_person_title.cpp.in", {
+        "HELPER": main.function("R_ViewNeedsCamera"),
+        "CHOICE": function_section(main, "R_SetupFrame",
+            "\tif (player->spectator)", "\n\tnewview->sky = false;"),
+    }, output / "first_person_title.cpp")
     render(templates / "camera_position.cpp.in", {
         "CAMERA_MENU": Source(engine / "src/menus/options-video-camera.c").section(
             "// The rows show cv_dummycameraposition", "\tNULL,\n\tNULL,\n};") + "\tNULL,\n\tNULL,\n};\n",

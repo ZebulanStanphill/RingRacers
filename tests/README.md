@@ -228,6 +228,14 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   player drives, with the chase camera (which keeps its own copy and must not run
   Lua's hook a second time), in replays and for real bots. It doesn't run a race
   or check the picture. Run with `ctest -R '^first_person_angle$'`.
+- **First person on the title screen:** `first_person_title` runs the extracted
+  `R_ViewNeedsCamera` and the part of `R_SetupFrame` that settles on the camera
+  or the player's eyes. With 1st Person set, the title screen (arriving from a
+  level or at startup) and a level view of a player with no kart must use the
+  camera, since first person reads the player's kart; a player with a kart must
+  stay in first person. It doesn't load the title map: that was checked by hand,
+  where leaving a level for the title screen in first person crashed before the
+  fix in both renderers. Run with `ctest -R '^first_person_title$'`.
 - **Camera Position menu:** `camera_position` compiles the extracted
   `options-video-camera.c` and Video Options table. Camera Position must sit
   between Color Profile and the gap before Advanced, with one row per local

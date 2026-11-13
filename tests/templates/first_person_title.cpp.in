@@ -1,0 +1,48 @@
+#include <cassert>
+#include <cstdio>
+#include <string>
+#include "doomdef.h"
+#include "doomstat.h"
+#include "d_player.h"
+#include "p_local.h"
+#include "g_state.h"
+extern "C" {
+gamestate_t gamestate;
+static int resets;
+// The real one returns at once for a player with no kart, and otherwise sets chase itself.
+void P_ResetCamera(player_t *player, camera_t *thiscam) { ++resets; if (player->mo) thiscam->chase = !player->spectator; }
+}
+@@HELPER@@
+// R_SetupFrame from its spectator rule to where it has settled on the camera or the player's eyes.
+static bool Setup(player_t *player, camera_t *thiscam, boolean chasecam) {
+@@CHOICE@@
+	return chasecam && thiscam->chase; // false: the first-person branch, which reads player->mo
+}
+static int failures;
+static void Check(const char *name, gamestate_t state, bool kart, bool spectator, bool setting, bool wasChasing, bool wantCamera) {
+	player_t player{}; mobj_t mo{}; camera_t cam{};
+	player.mo = kart ? &mo : nullptr; player.spectator = spectator;
+	cam.chase = wasChasing; gamestate = state;
+	const bool camera = Setup(&player, &cam, setting);
+	// Whatever is chosen, first person must never be left looking through a missing kart.
+	if (camera != wantCamera || (!camera && !player.mo)) {
+		fprintf(stderr, "%s: camera=%d expected %d (kart=%d)\n", name, camera, wantCamera, kart);
+		++failures;
+	}
+}
+int main() {
+	//    name                                   state            kart   spec   3rd    was    camera
+	// The crash: 1st Person saved, then the title screen's map, which has no karts.
+	Check("title, 1st person, from a level",     GS_TITLESCREEN,  false, false, false, false, true);
+	Check("title, 1st person, at startup",       GS_TITLESCREEN,  false, false, false, true,  true);
+	Check("title, 3rd person",                   GS_TITLESCREEN,  false, false, true,  false, true);
+	// Any other view of a player with no kart.
+	Check("level, 1st person, no kart",          GS_LEVEL,        false, false, false, false, true);
+	// First person stays first person where there is a kart to look out of.
+	Check("level, 1st person",                   GS_LEVEL,        true,  false, false, false, false);
+	Check("level, 1st person after 3rd",         GS_LEVEL,        true,  false, false, true,  false);
+	Check("level, 3rd person",                   GS_LEVEL,        true,  false, true,  false, true);
+	Check("level, spectator in 1st person",      GS_LEVEL,        true,  true,  false, true,  true);
+	if (failures) return 1;
+	puts("first person: the title screen and kartless views use the camera");
+}

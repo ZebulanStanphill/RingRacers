@@ -1379,6 +1379,14 @@ static void R_SetupAimingFrame(int s)
 	}
 }
 
+// First person looks out of the player's kart. The title screen's map has no
+// karts, so a first-person view of it read a null object and crashed; the
+// same goes for any other view whose player has no kart. Use the camera there.
+static boolean R_ViewNeedsCamera(const player_t *player)
+{
+	return gamestate == GS_TITLESCREEN || player->mo == NULL;
+}
+
 void R_SetupFrame(int s)
 {
 	player_t *player = &players[displayplayers[s]];
@@ -1391,6 +1399,11 @@ void R_SetupFrame(int s)
 	{
 		// Free flying spectator uses demo freecam. This
 		// requires chasecam to be enabled.
+		chasecam = true;
+	}
+
+	if (R_ViewNeedsCamera(player))
+	{
 		chasecam = true;
 	}
 
