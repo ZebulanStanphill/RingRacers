@@ -527,8 +527,6 @@ def generate(engine, output):
             "\tvis->rotated = false;", "\n\tvis->mobj = thing;"),
         "PROJECT_PRECIP": function_section(hardware, "HWR_ProjectPrecipitationSprite",
             "\tvis->gpatch =", "\n\tvis->flip ="),
-        "LINKDRAW": function_section(hardware, "HWR_LinkDrawHackFinish",
-            "\t\tHWR_GetPatch(linkdrawlist[i].spr->gpatch);", "\n\t\tHWR_DrawSpringPolygon"),
         "CURRENT_TEXTURE": batching.function("HWR_SetCurrentTexture") + batch_helper,
         "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
             "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
@@ -852,7 +850,6 @@ def generate(engine, output):
         "SPRITE_SHADOW": hardware.function("HWR_DrawSpriteShadow"),
         "DRAW_SPRITE": hardware.function("HWR_DrawVisSprite"),
         "DRAW_SPRITES": hardware.function("HWR_DrawSprites"),
-        "LINK_ADD": hardware.function("HWR_LinkDrawHackAdd"),
     }, output / "transparency.cpp")
 
 

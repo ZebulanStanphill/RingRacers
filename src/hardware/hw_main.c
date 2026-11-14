@@ -4994,58 +4994,6 @@ static gl_vissprite_t *HWR_NewVisSprite(void)
 	return HWR_GetVisSprite(gl_visspritecount++);
 }
 
-// A hack solution for transparent surfaces appearing on top of linkdraw sprites.
-// Keep a list of linkdraw sprites and draw their shapes to the z-buffer after all other
-// sprite drawing is done. (effectively the z-buffer drawing of linkdraw sprites is delayed)
-// NOTE: This will no longer be necessary once full translucent sorting is implemented, where
-// translucent sprites and surfaces are sorted together.
-
-typedef struct
-{
-	FOutVector verts[4];
-	gl_vissprite_t *spr;
-} zbuffersprite_t;
-
-// this list is used to store data about linkdraw sprites
-zbuffersprite_t linkdrawlist[MAXVISSPRITES];
-UINT32 linkdrawcount = 0;
-
-// add the necessary data to the list for delayed z-buffer drawing
-static void HWR_LinkDrawHackAdd(FOutVector *verts, gl_vissprite_t *spr)
-{
-	if (cv_glbettertransparency.value)
-		return; // Linkdraw shapes participate in the shared order instead.
-	if (linkdrawcount < MAXVISSPRITES)
-	{
-		memcpy(linkdrawlist[linkdrawcount].verts, verts, sizeof(FOutVector) * 4);
-		linkdrawlist[linkdrawcount].spr = spr;
-		linkdrawcount++;
-	}
-}
-
-// process and clear the list of sprites for delayed z-buffer drawing
-static void HWR_LinkDrawHackFinish(void)
-{
-	UINT32 i;
-	FSurfaceInfo surf;
-	surf.PolyColor.rgba = 0xFFFFFFFF;
-	surf.TintColor.rgba = 0xFFFFFFFF;
-	surf.FadeColor.rgba = 0xFFFFFFFF;
-	surf.LightInfo.light_level = 0;
-	surf.LightInfo.fade_start = 0;
-	surf.LightInfo.fade_end = 31;
-	for (i = 0; i < linkdrawcount; i++)
-	{
-		// draw sprite shape, only to z-buffer
-		HWR_GetPatch(linkdrawlist[i].spr->gpatch);
-		if (linkdrawlist[i].spr->gbright)
-			HWR_GetSpriteBrightmap(linkdrawlist[i].spr->gbright);
-		HWR_DrawSpringPolygon(&surf, linkdrawlist[i].verts, PF_Translucent|PF_Occlude|PF_Invisible, 0, linkdrawlist[i].spr);
-	}
-	// reset list
-	linkdrawcount = 0;
-}
-
 //
 // HWR_DoCulling
 // Hardware version of R_DoCulling
@@ -5343,7 +5291,6 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 	FBITFIELD blend = 0;
 	FBITFIELD occlusion;
 	INT32 shader = SHADER_DEFAULT;
-	boolean use_linkdraw_hack = false;
 	UINT8 alpha;
 
 	INT32 i;
@@ -5468,7 +5415,6 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 			// Hurdler: PF_Environement would be cool, but we need to fix
 			//          the issue with the fog before
 			blend |= occlusion;
-			if (!occlusion) use_linkdraw_hack = true;
 		}
 	}
 
@@ -5604,9 +5550,6 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 
 		HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);
 
-		if (use_linkdraw_hack)
-			HWR_LinkDrawHackAdd(wallVerts, spr);
-
 		top = bot;
 		endtop = endbot;
 	}
@@ -5633,9 +5576,6 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 	Surf.PolyColor.s.alpha = alpha;
 
 	HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);
-
-	if (use_linkdraw_hack)
-		HWR_LinkDrawHackAdd(wallVerts, spr);
 }
 
 static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
@@ -5971,7 +5911,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 		INT32 shader = SHADER_DEFAULT;
 		FBITFIELD blend = 0;
 		FBITFIELD occlusion;
-		boolean use_linkdraw_hack = false;
 
 		// if sprite has linkdraw, then dont write to z-buffer (by not using PF_Occlude)
 		// this will result in sprites drawn afterwards to be drawn on top like intended when using linkdraw.
@@ -6010,7 +5949,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 				// Hurdler: PF_Environement would be cool, but we need to fix
 				//          the issue with the fog before
 				blend |= occlusion;
-				if (!occlusion) use_linkdraw_hack = true;
 			}
 		}
 
@@ -6023,7 +5961,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 			Surf.PolyColor.s.alpha = (UINT8)(alpha);
 			blend = PF_Translucent|occlusion;
-			if (!occlusion) use_linkdraw_hack = true;
 		}
 
 		if (HWR_UseShader())
@@ -6036,9 +5973,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 		}
 
 		HWR_DrawSpringPolygon(&Surf, wallVerts, blend|PF_Modulated, shader, spr);
-
-		if (use_linkdraw_hack)
-			HWR_LinkDrawHackAdd(wallVerts, spr);
 	}
 }
 
@@ -6650,9 +6584,8 @@ static size_t HWR_TransparentSpriteCount(void)
 {
 	size_t count = 0;
 	UINT32 i;
-	if (cv_glbettertransparency.value)
-		for (i = 0; i < gl_visspritecount; ++i)
-			count += HWR_SpriteNeedsSorting(HWR_GetVisSprite(i));
+	for (i = 0; i < gl_visspritecount; ++i)
+		count += HWR_SpriteNeedsSorting(HWR_GetVisSprite(i));
 	return count;
 }
 
@@ -6915,12 +6848,8 @@ static void HWR_EndSpriteDraw(void)
 {
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 0);
 
-	// At the end of sprite drawing, draw shapes of linkdraw sprites to z-buffer, so they
-	// don't get drawn over by transparent surfaces.
-	HWR_LinkDrawHackFinish();
 	// Work around a r_opengl.c bug with PF_Invisible by making this SetBlend call
 	// where PF_Invisible is off and PF_Masked is on.
-	// (Other states probably don't matter. Here I left them same as in LinkDrawHackFinish)
 	// Without this workaround the rest of the draw calls in this frame (including UI, screen texture)
 	// can get drawn using an incorrect glBlendFunc, resulting in a occasional black screen.
 	HWD.pfnSetBlend(PF_Translucent|PF_Occlude|PF_Masked);
@@ -7002,7 +6931,7 @@ static void HWR_DrawSprites(void)
 		gl_vissprite_t *spr = gl_vsprorder[i];
 		// Shadows stay on the ground pass so water/fog in front can affect them.
 		HWR_DrawSpriteShadow(spr, &skipshadow);
-		if (!cv_glbettertransparency.value || !HWR_SpriteNeedsSorting(spr))
+		if (!HWR_SpriteNeedsSorting(spr))
 			HWR_DrawVisSprite(spr);
 	}
 	HWR_EndSpriteDraw();

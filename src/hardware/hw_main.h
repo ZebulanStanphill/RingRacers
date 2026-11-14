@@ -133,7 +133,7 @@ extern consvar_t cv_glshearing;
 extern consvar_t cv_glspritebillboarding;
 extern consvar_t cv_glskydome;
 
-extern consvar_t cv_glbatching, cv_glbettertransparency;
+extern consvar_t cv_glbatching;
 
 extern float gl_viewwidth, gl_viewheight, gl_baseviewwindowy;
 

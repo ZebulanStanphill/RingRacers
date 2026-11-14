@@ -103,9 +103,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
 		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
 
-	{IT_STRING | IT_CVAR, "Better transparency ordering", "Sort transparent objects with water, fog & walls. Costs extra CPU time.",
-		NULL, {.cvar = &cv_glbettertransparency}, 0, 0},
-
 #ifdef HAVE_D3D12
 	// [UWP]: Texture Quality only picks Legacy GL's OpenGL texture format;
 	// Direct3D 12 always uses 32-bit textures, so its row offers the filter.

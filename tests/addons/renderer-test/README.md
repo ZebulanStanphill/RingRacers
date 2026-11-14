@@ -142,13 +142,13 @@ translucent platform at 128 to 160 with its own light level. Look for clean
 bands with no inverted or missing slices, and for sprites and the platform
 taking the bands. Split-screen is the case that remains untested.
 
-**Transparency** *(Better transparency ordering; **not** Fill transparency).*
+**Transparency** *(transparency ordering; **not** Fill transparency).*
 Three stacked translucent solids on a platform (translucent, additive,
 subtractive), two translucent walls across the room, and six translucent
 sprites in front of, behind and between them, plus two item boxes (model
-included). Compare `gr_bettertransparency` Off and On from several angles: On
-should order sprites, models and planes correctly where Off shows them popping
-in front of or behind the wrong plane. Fill transparency (HUD fills) is not
+included). Look from several angles: the hardware renderers should order
+sprites, models and planes correctly, with none popping in front of or behind
+the wrong plane, as Software does. Fill transparency (HUD fills) is not
 covered here.
 
 **Brightmaps** *(Brightmaps).* A dim blue room (light level 32) whose walls are
@@ -319,7 +319,6 @@ outside but unchanged from inside, and the fog rooms keep their red and blue.
 | Renderer | Options, Video, Advanced: **Software** or **VibeRant D3D** |
 | Shaders | Options, Video, Advanced (`gr_shaders`): On, Off, Ignore custom shaders |
 | Reduce Effects | Profile Setup, your profile, Accessibility (`reducevfx`; the Guest profile can't be edited, so use the console there) |
-| Better transparency ordering | `gr_bettertransparency` |
 | Palette Rendering | `gr_paletterendering` |
 | Models | `gr_models` |
 

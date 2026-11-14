@@ -29,7 +29,7 @@ using std::min;
 using std::max;
 using std::isfinite;
 
-consvar_t cv_glbettertransparency{}, cv_glmodels{}, cv_shadow{}, cv_glspritebillboarding{}, cv_debugrender_spriteclip{};
+consvar_t cv_glmodels{}, cv_shadow{}, cv_glspritebillboarding{}, cv_debugrender_spriteclip{};
 static float gl_viewx, gl_viewy, gl_viewz, gl_viewludsin = 1, gl_viewludcos, gl_fovlud = 1;
 float gl_viewsin, gl_viewcos = 1;
 angle_t viewangle;
@@ -86,11 +86,8 @@ static gl_vissprite_t *HWR_GetVisSprite(UINT32 n) { assert(n < 64); return &test
 void HWR_GetLevelFlat(levelflat_t *, boolean) {}
 void *M_Memcpy(void *dest, const void *src, size_t size) { return memcpy(dest, src, size); }
 GLMapTexture_t *HWR_GetTexture(INT32, INT32) { return nullptr; }
-static UINT32 linkdrawcount;
-static struct { FOutVector verts[4]; gl_vissprite_t *spr; } linkdrawlist[MAXVISSPRITES];
-static int hackFinishes, modelLighting, modelsDrawn, modelAttempts, shadowDraws;
+static int modelLighting, modelsDrawn, modelAttempts, shadowDraws;
 static bool modelSucceeds = true;
-static void HWR_LinkDrawHackFinish() { ++hackFinishes; linkdrawcount = 0; }
 static std::vector<int> waterStates;
 static int waterState;
 static void State(hwdspecialstate_t state, INT32 value) {
@@ -134,7 +131,6 @@ boolean HWR_DrawModel(gl_vissprite_t *spr) {
 @@BILLBOARD@@
 @@SHADOW_SHEAR@@
 @@SPRITE_VERTICES@@
-@@LINK_ADD@@
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 @@DRAW_NODES@@
 @@ADD_WALL@@
@@ -184,12 +180,12 @@ static void reset() {
     wallinfo = nullptr; planeinfo = nullptr; polyplaneinfo = nullptr;
     numwalls = numplanes = numpolyplanes = 0;
     sortnode = nullptr; sortindex = nullptr;
-    cv_glbettertransparency.value = 1; cv_glmodels.value = 0;
+    cv_glmodels.value = 0;
     cv_glspritebillboarding.value = cv_shadow.value = cv_debugrender_spriteclip.value = 0;
-    modelSucceeds = true; hackFinishes = modelsDrawn = modelAttempts = shadowDraws = 0;
+    modelSucceeds = true; modelsDrawn = modelAttempts = shadowDraws = 0;
     gl_viewx = gl_viewy = gl_viewz = 0; viewz = 0;
     gl_viewludsin = gl_viewcos = gl_fovlud = 1; gl_viewludcos = gl_viewsin = 0;
-    draws.clear(); colors.clear(); pixel = {0,0,1}; linkdrawcount = 0;
+    draws.clear(); colors.clear(); pixel = {0,0,1};
     waterStates.clear(); waterState=0;
     fogFaces.clear(); reverseSortTies=false;
 }
@@ -210,7 +206,7 @@ static void wall(float depth, int id = 1, float lateral = 0, float height = 0) {
 }
 static void finish() {
     HWR_DrawSprites(); HWR_CreateDrawNodes();
-    assert(modelLighting == 0 && linkdrawcount == 0);
+    assert(modelLighting == 0);
     assert(numwalls == 0 && numplanes == 0 && numpolyplanes == 0);
     release(wallinfo); release(planeinfo); release(polyplaneinfo);
     assert(allocations.empty());
@@ -247,9 +243,6 @@ static void Run(bool d3d12) {
     samePixel({0.5f,0.25f,0.25f}); ++cases;
     reset(); sprite(96); wall(64); finish(); order({0,-1});
     samePixel({0.25f,0.5f,0.25f}); ++cases;
-    // Toggle Off retains the previous path, including its near-object overlap.
-    reset(); cv_glbettertransparency.value=0; sprite(32); wall(64); finish(); order({0,-1});
-    samePixel({0.25f,0.5f,0.25f}); ++cases;
     // Far to near across three faces. Alpha amount must not determine priority.
     reset(); sprite(16, FF_TRANS10); sprite(160, FF_TRANS90); sprite(80); sprite(112);
     wall(32,1); wall(64,2); wall(128,3); finish(); order({1,-3,3,2,-2,-1,0}); ++cases;
@@ -268,15 +261,10 @@ static void Run(bool d3d12) {
     // An on-top object is last even if it is farther away or nominally opaque.
     reset(); sprite(96,0); mobjs[0].renderflags=RF_ALWAYSONTOP; sprite(32); wall(64);
     finish(); order({-1,1,0}); ++cases;
-    // The linkdraw workaround must not insert opaque depth masks into the sorted pass.
-    for (int enabled : {0,1}) {
-        reset(); cv_glbettertransparency.value=enabled;
-        sprite(32,0); mobjs[0].flags2=MF2_LINKDRAW; mobjs[0].tracer=&mobjs[1];
-        assert(HWR_SpriteNeedsSorting(&testSprites[0]));
-        FOutVector v[4]{}; HWR_LinkDrawHackAdd(v,&testSprites[0]);
-        assert(linkdrawcount == (enabled ? 0u : 1u));
-        finish(); order({0}); ++cases;
-    }
+    // A linkdraw attachment is sorted with the faces, not drawn in the ordinary pass.
+    reset(); sprite(32,0); mobjs[0].flags2=MF2_LINKDRAW; mobjs[0].tracer=&mobjs[1];
+    assert(HWR_SpriteNeedsSorting(&testSprites[0]));
+    wall(64); finish(); order({-1,0}); ++cases;
     // Deterministic equal-depth priority and parent-anchored linkdraw ordering.
     reset(); sprite(64); sprite(64); sprite(64); sprite(64);
     testSprites[1].dispoffset=-1; testSprites[3].dispoffset=1;
@@ -435,8 +423,8 @@ static void Run(bool d3d12) {
     }
     // Exercise the merged production dispatcher: neighboring water pieces share
     // a capture, but an inserted sprite/model must end it before the next piece.
-    for (int enabled : {0,1}) for (int object : {0,1,2}) {
-        reset(); cv_glbettertransparency.value=enabled; gl_viewz=8;
+    for (int object : {0,1,2}) {
+        reset(); gl_viewz=8;
         cv_glmodels.value=object==2;
         PlaneStorage nearWater{4,{{16,-4,0},{48,-4,0},{48,4,0},{16,4,0}}};
         PlaneStorage farWater{4,{{80,-4,0},{112,-4,0},{112,4,0},{80,4,0}}};
@@ -448,11 +436,10 @@ static void Run(bool d3d12) {
         HWR_AddTransparentFloor(nullptr,&farSub,false,0,255,128,&waterSector,flags,false,nullptr);
         if(object) { sprite(64); testSprites[0].gz=-4; testSprites[0].gzt=4; }
         finish();
-        if(enabled && object) order({-255,0,-255});
-        else if(object) order({0,-255,-255});
+        if(object) order({-255,0,-255});
         else order({-255,-255});
         if(d3d12) {
-            if(enabled && object) assert((waterStates==std::vector<int>{1,0,1,0}));
+            if(object) assert((waterStates==std::vector<int>{1,0,1,0}));
             else assert((waterStates==std::vector<int>{1,2,0}));
             assert(waterState==0);
         } else assert(waterStates.empty());
@@ -463,9 +450,9 @@ static void Run(bool d3d12) {
     // survive CUTEXTRA's strict interior check. Submit blue before red, at each
     // height, even as other visible planes change the length/content of a run.
     unsigned fogCases = 0;
-    for (bool reverse : {false,true}) for (int enabled : {0,1})
+    for (bool reverse : {false,true})
     for (int eye : {16,64,112}) for (int surrounding : {0,1,2,3,8,17,33}) {
-        reset(); reverseSortTies=reverse; cv_glbettertransparency.value=enabled;
+        reset(); reverseSortTies=reverse;
         viewz=eye*FRACUNIT;
         sector_t red{}, blue{};
         extracolormap_t redMap{}, blueMap{};

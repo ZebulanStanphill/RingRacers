@@ -430,7 +430,6 @@ typedef enum
 	vaopt_3dmodels,
 	vaopt_shaders,
 	vaopt_paletterendering, // [UWP]
-	vaopt_bettertransparency,
 	vaopt_texturequal, // Texture Filter under HAVE_D3D12
 	vaopt_anisotropic,
 	vaopt_billboarding,

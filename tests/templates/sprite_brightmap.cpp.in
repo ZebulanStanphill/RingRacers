@@ -211,11 +211,6 @@ static void precip(gl_vissprite_t *spr) {
     patch_t *gpatch = spr->gpatch;
 @@PRECIP@@
 }
-static void linkdraw(gl_vissprite_t *spr) {
-    struct { gl_vissprite_t *spr; } linkdrawlist[] = {{spr}};
-    unsigned i = 0;
-@@LINKDRAW@@
-}
 // Exercise the renderer's actual first-batch and texture-transition blocks.
 static void replayFirst() {
     auto *currentTexture = current_texture;
@@ -332,7 +327,7 @@ int main(int argc, char **argv) {
     assert(g_units[0] == nullptr && g_units[1] == FindTexture(resident->downloaded));
 
     unsigned cases = 0;
-    for (bool batching : {false, true}) for (auto dispatch : {draw, split, precip, linkdraw}) {
+    for (bool batching : {false, true}) for (auto dispatch : {draw, split, precip}) {
         resetGPU(); currently_batching = batching;
         UINT8 colormap[256]{};
         gl_vissprite_t spr{}; spr.gpatch = &base; spr.gbright = &specific; spr.colormap = colormap;
@@ -342,7 +337,7 @@ int main(int argc, char **argv) {
         assert(makes == 2 && uploads.size() == 2);
         assert(!(uploads[0]->flags & TF_BRIGHTMAP) && (uploads[1]->flags & TF_BRIGHTMAP));
         assert(brightMip->colormap == nullptr && (brightMip->flags & TF_TRANSPARENT));
-        if (dispatch != linkdraw) assert(lastColormap == colormap);
+        assert(lastColormap == colormap);
         if (batching) {
             assert(current_texture == baseMip && current_brightmap == brightMip);
             replayFirst();
@@ -573,7 +568,7 @@ static int rotationCases() {
             lumps.erase("ROTATED");
             auto absent = project(&thing,rot); assert(absent.gpatch == rot && absent.gbright == nullptr);
             lumps["ROTATED"] = bright;
-            if (angle == 1) for (bool batching : {false,true}) for (auto dispatch : {draw,split,linkdraw}) {
+            if (angle == 1) for (bool batching : {false,true}) for (auto dispatch : {draw,split}) {
                 currently_batching = batching; dispatch(&vis);
                 auto *baseMip = static_cast<GLPatch_t *>(rot->hardware)->mipmap;
                 auto *brightMip = static_cast<GLPatch_t *>(vis.gbright->hardware)->mipmap;
