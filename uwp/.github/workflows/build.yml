@@ -25,6 +25,23 @@ jobs:
         with:
           submodules: true
 
+      # A build is a release of the fork only if a tag named after its version (2.4_Z1) points at the engine commit;
+      # the checkout above doesn't fetch tags, and without one the title screen says -dev. An annotated tag's commit
+      # is on its peeled line (^{}).
+      - name: Fetch the engine commit's tags
+        shell: pwsh
+        run: |
+          $sha = git -C RingRacers rev-parse HEAD
+          $remote = git -C RingRacers ls-remote --tags origin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($line in $remote) {
+            if ($line -match "^$sha\s+refs/tags/(.+?)(\^\{\})?$") {
+              git -C RingRacers tag -f $Matches[1] $sha
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              Write-Host "The engine commit is tagged $($Matches[1])"
+            }
+          }
+
       - name: Find the engine commit
         id: engine
         shell: pwsh
