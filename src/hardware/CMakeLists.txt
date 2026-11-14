@@ -15,7 +15,8 @@ target_sources(SRB2SDL2 PRIVATE
 )
 
 if(SRB2_CONFIG_D3D12)
-	# VibeRant D3D: Legacy GL's Direct3D 12 driver (Windows only), whose shaders fxc compiles to headers
+	# VibeRant D3D: Legacy GL's Direct3D 12 driver (Windows only: UWP, and desktop if SRB2_CONFIG_D3D12 is turned on), whose
+	# shaders fxc compiles to headers
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_D3D12)
 	find_program(SRB2_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
 	if(NOT SRB2_FXC)
@@ -56,7 +57,15 @@ if(SRB2_CONFIG_D3D12)
 
 	include(r_d3d12/custom_shaders.cmake)
 	target_sources(SRB2SDL2 PRIVATE r_d3d12/custom_shader.cpp r_d3d12/d3d12_pipeline.cpp r_d3d12/d3d12_prewarm.cpp
-		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_upload.cpp r_d3d12/d3d12_present.cpp r_d3d12/r_d3d12.cpp)
+		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_upload.cpp r_d3d12/r_d3d12.cpp)
 	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl d3dcompiler)
+	# The one platform-specific file: the swap chain on UWP's CoreWindow (taken from ANGLE), or on a child window of the SDL window
+	if(SRB2_CONFIG_UWP)
+		target_sources(SRB2SDL2 PRIVATE r_d3d12/d3d12_present.cpp)
+	else()
+		target_sources(SRB2SDL2 PRIVATE r_d3d12/d3d12_present_win32.cpp)
+		# UWP gets these from its own dependency set
+		target_link_libraries(SRB2SDL2 PRIVATE d3d12 dxgi dxguid user32)
+	endif()
 	target_include_directories(SRB2SDL2 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

@@ -46,6 +46,19 @@ if ($LASTEXITCODE -eq 77) {
     & $Exe
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
+# The desktop presenter, d3d12_present_win32.cpp, is the one driver file that isn't built with _UWP (the UWP one, d3d12_present.cpp,
+# is the harness's stub above), so it and the device core it presents on are compiled without it, into a second executable with
+# its own stubs: SDL's window lookup hands it a real top-level window that is never shown. The engine headers it includes
+# compile without _UWP, as they do in the desktop game.
+$PresentOutput = Join-Path $Output 'present'
+New-Item -ItemType Directory -Force $PresentOutput | Out-Null
+$PresentFiles = @((Join-Path $PSScriptRoot 'd3d12-present.cpp'), "$Driver\d3d12_core.cpp", "$Driver\d3d12_present_win32.cpp")
+$PresentIncludes = @("/I$PSScriptRoot\d3d12-present-stubs") + $Includes
+$PresentExe = Join-Path $PresentOutput 'd3d12-present.exe'
+& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /DHAVE_D3D12 /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @PresentIncludes "/Fe:$PresentExe" "/Fo:$PresentOutput\" @PresentFiles /link d3d12.lib dxgi.lib dxguid.lib user32.lib
+if ($LASTEXITCODE -ne 0) { throw "Desktop D3D12 presenter compilation failed" }
+& $PresentExe
+if ($LASTEXITCODE -ne 0) { throw "Desktop D3D12 presenter regression failed (exit $LASTEXITCODE)" }
 # The full run above checks its own oracles (a self-test of every kind of comparison, and a registry of the scenes whose
 # oracle ran), so the negative controls left are the ones that change the code under test: the oracle stays correct and
 # must reject the regression. Each is its own process that replays the scenes up to the one that rejects it, with the

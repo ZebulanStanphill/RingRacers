@@ -221,7 +221,7 @@ jobs:
   windows:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: Windows desktop build (no Direct3D 12)
+    name: Windows desktop build (with Direct3D 12)
     runs-on: windows-2022
     # A cold vcpkg cache builds SDL2, libvpx, curl and the rest of vcpkg.json's dependencies from source.
     timeout-minutes: 60
@@ -246,7 +246,10 @@ jobs:
           if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $vsLlvm "clang-cl.exe"))) {
             $env:PATH = "$vsLlvm;$env:PATH"
           }
-          Get-Command cl.exe, clang-cl.exe, cmake.exe, ninja.exe -ErrorAction Stop | Select-Object Name, Source
+          # fxc compiles the Direct3D 12 driver's shaders: the developer shell has it on PATH, and CMake also looks in
+          # WindowsSdkVerBinPath
+          Get-Command cl.exe, clang-cl.exe, cmake.exe, ninja.exe, fxc.exe -ErrorAction Stop | Select-Object Name, Source
+          "WindowsSdkVerBinPath=$env:WindowsSdkVerBinPath"
           clang-cl --version
           "RR_IMAGE_VERSION=$env:ImageOS-$env:ImageVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           # Each step starts a new shell; preserve the developer environment, except VCPKG_ROOT, which the developer
@@ -276,20 +279,30 @@ jobs:
             vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-
             vcpkg-${{ runner.os }}-
 
-      # The Direct3D 12 driver is UWP-only for now (SRB2_CONFIG_D3D12), so this build doesn't have it.
+      # The Direct3D 12 driver is off by default on the desktop (SRB2_CONFIG_D3D12) until it is a run-time choice, so this
+      # job turns it on: it replaces the OpenGL driver at compile time, and presents on a child window of the SDL window.
       - name: Configure
         shell: pwsh
         run: >-
           cmake --preset ninja-x64_windows_vcpkg-release
           -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
           -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+          -DSRB2_CONFIG_D3D12=ON
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Check that the Direct3D 12 driver is left out
+      # Its presenter is the desktop one, not UWP's
+      - name: Check that the Direct3D 12 driver is included
         shell: pwsh
         run: |
-          if (Select-String -Path build/ninja-x64_windows_vcpkg-release/compile_commands.json -Pattern HAVE_D3D12 -Quiet -ErrorAction Stop) {
-            Write-Error "A Windows desktop build must not include the Direct3D 12 driver"; exit 1
+          $commands = "build/ninja-x64_windows_vcpkg-release/compile_commands.json"
+          if (-not (Select-String -Path $commands -Pattern HAVE_D3D12 -Quiet -ErrorAction Stop)) {
+            Write-Error "A Windows desktop build with SRB2_CONFIG_D3D12 must define HAVE_D3D12"; exit 1
+          }
+          if (-not (Select-String -Path $commands -Pattern 'd3d12_present_win32\.cpp' -Quiet -ErrorAction Stop)) {
+            Write-Error "The desktop build must compile d3d12_present_win32.cpp"; exit 1
+          }
+          if (Select-String -Path $commands -Pattern 'd3d12_present\.cpp' -Quiet -ErrorAction Stop) {
+            Write-Error "The desktop build must not compile the UWP presenter, d3d12_present.cpp"; exit 1
           }
 
       - name: Build
@@ -297,11 +310,11 @@ jobs:
         run: cmake --build --preset ninja-x64_windows_vcpkg-release --parallel 4
 
       # The executable is named after the git branch unless it is master (CMakeLists.txt); the build copies the DLLs it
-      # needs next to it.
+      # needs next to it. The driver replaces OpenGL in this build: Legacy GL draws with Direct3D 12.
       - name: Upload Windows desktop build
         uses: actions/upload-artifact@v7
         with:
-          name: windows-desktop
+          name: windows-desktop-d3d12
           path: |
             build/ninja-x64_windows_vcpkg-release/bin/*.exe
             build/ninja-x64_windows_vcpkg-release/bin/*.dll

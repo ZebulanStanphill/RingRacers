@@ -25,10 +25,13 @@ builds have the Direct3D 12 driver by default; engine code under `HAVE_D3D12`
 does not assume `_UWP` (see "Direct3D 12 without `_UWP`" under Coverage). The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
-The Direct3D 12 driver has no desktop variant: engine CMake enables it only
-with `SRB2_CONFIG_UWP`, which defines `_UWP`. All built-in shader compilation
-commands define `_UWP` and `RR_D3D12`; the driver and HLSL therefore keep only
-those active branches. The Windows WARP harness uses the same definitions.
+The native tests have no desktop variant of the Direct3D 12 driver: engine CMake
+enables it by default only with `SRB2_CONFIG_UWP`, which defines `_UWP`, and a Windows
+desktop build opts in with `-DSRB2_CONFIG_D3D12=ON` (the `windows` job does, and builds
+the desktop presenter). All built-in shader compilation commands define `_UWP` and
+`RR_D3D12`, in desktop builds too; the HLSL therefore keeps only those active branches.
+The Windows WARP harness uses the same definitions, except that its second
+executable, which runs the desktop presenter, is compiled without `_UWP` (below).
 
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
@@ -589,7 +592,8 @@ untouched padding.
   reports an error. It guards that the engine code under `HAVE_D3D12` (portals, wall light slices,
   post-processing, palette rendering) does not depend on `_UWP`, so the driver can be built into
   Windows desktop builds; Xbox-only code inside it has its own `_UWP` guard. The `linux` job runs it.
-  The driver itself and the Windows desktop build are not checked here.
+  The driver itself is not checked here: the `windows` job builds it into the desktop game, and the
+  `warp` job runs the desktop presenter.
 
 Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
 not copied into the tests. `#line` directives point compiler/sanitizer diagnostics
@@ -728,6 +732,30 @@ frame's edges. Direct3D filters with fixed-point weights, so a pixel between tex
 off and the rest one. Pixels that differ from the nearest texel by more than eight levels must exist in each case, so that
 point sampling fails. The self-test places the red quad's frame at the right rectangle, and requires a rectangle a column
 off or a size off to be rejected, as well as a flat frame, which can't tell the filters apart. A screen with no size must place nothing.
+Desktop presenter checks (`d3d12-present.cpp`, run by `run-d3d12.ps1` after the scenes) are their own
+executable, `d3d12-present.exe`, because the presenter, `d3d12_present_win32.cpp`, is the one driver file that must not be
+compiled with `_UWP`, and the scenes' executable is. It compiles that file and `d3d12_core.cpp`, the device and queue it
+presents on, without `_UWP`, against the real engine headers, and runs on WARP with the debug layer (not GPU-based
+validation: there is no shader work). Stubs supply the engine services, `cv_scr_scaling`, and what stands in for SDL's window
+lookup (`d3d12-present-stubs/SDL.h` and `SDL_syswm.h`, with `SDL_GetWindowWMInfo` defined by the test): it hands the presenter
+the `HWND` of a real popup window, created hidden and never shown, whose client area is its size. The driver's `PlaceFrame`
+is replaced by a stub that records the placement, target size and source state it is called with, checks the target is a
+buffer of the swap chain's size and format, and clears it, so what's checked is the presenter, not the pixels, which the
+`scaling-fit` scene covers for the real `PlaceFrame`. The checks, each with the debug layer and `Core_Errors` clean:
+taking succeeds and makes exactly one child window (visible, disabled, `WS_EX_NOACTIVATE`, `HTTRANSPARENT` for
+`WM_NCHITTEST`, 1 for `WM_ERASEBKGND`) as large as the parent's client area, with a swap chain of that size
+(`Present_SwapChainBytes`); frames are presented with and without vsync at Fit, Integer and 1:1, and the rectangle and `k`
+the presenter asks the driver for are those worked out by hand at 320×200, 500×300 and 160×100 (a 64×48 frame), and for a
+640×480 frame larger than the window, which Integer and 1:1 fit; the child and the swap chain follow the parent's client
+size, resized once each time; a window with no client area (0×0) places and presents nothing and keeps its swap chain; releasing
+destroys the child and the swap chain, twice without harm; a second and a third take work, the first at the window's current
+size; a frame the driver can't place (the stub returns false) is logged once and from then on frames are copied to a swap chain
+of the frame's size while the child keeps the window's size, until the window is taken again, and a missing placement function
+is the same failure; no `Present` failed (read from the perf line, `Present_LogPerf`, and the log); and shutting down leaves
+nothing for the debug layer to report and no child. It exits 77 if the debug layer isn't installed, and `run-d3d12.ps1` fails.
+Presenting is only observed through the API, not on a display: the window is hidden, so whether DWM
+shows the frames, and how the child window behaves over a window with an OpenGL pixel format on real hardware,
+aren't tested here. Likewise tearing (`DXGI_PRESENT_ALLOW_TEARING`) is used only if the runner's WARP allows it, and the log says whether it did.
 Invisible-geometry scenes run all 100 pairs of blend modes through a depth-only draw: after a
 translucent sprite silhouette and an untextured sky wall (both Invisible, depth writing), the
 target keeps its color (`blend-invisible`), a farther visible surface is hidden by the depth they
@@ -828,12 +856,19 @@ the Direct3D 12 WARP regressions, depends on it passing. CTest's JUnit report an
 detailed run log are uploaded as `regression-results`, including when a test fails.
 The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
 that `compile_commands.json` has no `HAVE_D3D12`, so those builds cannot gain the
-Direct3D 12 driver. The `windows` job does the same for the ordinary (not UWP) Windows
-desktop game: it builds with the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
+Direct3D 12 driver. The `windows` job builds the ordinary (not UWP) Windows desktop game
+with the driver included (`-DSRB2_CONFIG_D3D12=ON`, which replaces the OpenGL driver in
+that build): it checks that `compile_commands.json` has `HAVE_D3D12` and compiles
+`d3d12_present_win32.cpp`, the desktop presenter, and not `d3d12_present.cpp`, UWP's. It builds with
+the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
 from Visual Studio and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
 vcpkg's binary cache stored by runner image, triplet and the hash of `vcpkg.json` and
-the overlay ports. It uploads the executable and the DLLs the build copies next to it as
-`windows-desktop`, a game build without assets for testing.
+the overlay ports. `fxc`, which compiles the driver's shaders, comes from the developer shell
+(it is on `PATH` and in `WindowsSdkVerBinPath`, which CMake searches), whose environment
+the job exports to its later steps; the job's first step fails if `fxc` isn't found.
+It uploads the executable and the DLLs the build copies next to it as
+`windows-desktop-d3d12`, a game build without assets for testing. The build is only
+compiled and linked: nothing runs the game, so what it draws on a display is untested.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its
 observable result. Test the relevant platform variants and important boundaries.
