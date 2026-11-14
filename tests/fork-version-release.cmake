@@ -53,36 +53,41 @@ make_repo(no_tag)
 expect(no_tag FALSE 2.4 1)
 
 make_repo(tag_clean)
-git("${WORK_DIR}/tag_clean" tag 2.4_Z1)
+git("${WORK_DIR}/tag_clean" tag 2.4_z1)
 expect(tag_clean TRUE 2.4 1)
 
 make_repo(tag_clean_v)
-git("${WORK_DIR}/tag_clean_v" tag v2.4_Z1)
+git("${WORK_DIR}/tag_clean_v" tag v2.4_z1)
 expect(tag_clean_v TRUE 2.4 1)
 
 make_repo(tag_annotated_point)
-git("${WORK_DIR}/tag_annotated_point" tag -a -m release v2.4_Z1.1)
+git("${WORK_DIR}/tag_annotated_point" tag -a -m release v2.4_z1.1)
 expect(tag_annotated_point TRUE 2.4 1.1)
 
 make_repo(tag_dirty)
-git("${WORK_DIR}/tag_dirty" tag 2.4_Z1)
+git("${WORK_DIR}/tag_dirty" tag 2.4_z1)
 file(WRITE "${WORK_DIR}/tag_dirty/file.txt" "changed\n")
 expect(tag_dirty FALSE 2.4 1)
 
 make_repo(tag_on_parent)
-git("${WORK_DIR}/tag_on_parent" tag 2.4_Z1 HEAD~1)
+git("${WORK_DIR}/tag_on_parent" tag 2.4_z1 HEAD~1)
 expect(tag_on_parent FALSE 2.4 1)
 
 make_repo(other_fork_version)
-git("${WORK_DIR}/other_fork_version" tag 2.4_Z2)
+git("${WORK_DIR}/other_fork_version" tag 2.4_z2)
 expect(other_fork_version FALSE 2.4 1)
 
 make_repo(other_base_version)
-git("${WORK_DIR}/other_base_version" tag 2.3_Z1)
+git("${WORK_DIR}/other_base_version" tag 2.3_z1)
 expect(other_base_version FALSE 2.4 1)
 
+# The letter is lowercase; a tag with the earlier capital Z is not a release.
+make_repo(capital_letter)
+git("${WORK_DIR}/capital_letter" tag 2.4_Z1)
+expect(capital_letter FALSE 2.4 1)
+
 make_repo(zero)
-git("${WORK_DIR}/zero" tag 2.4_Z0)
+git("${WORK_DIR}/zero" tag 2.4_z0)
 expect(zero FALSE 2.4 0)
 
 # Not a repository, and git missing.

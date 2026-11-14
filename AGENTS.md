@@ -43,16 +43,16 @@ replay:
 # Versioning
 
 The fork's version is on top of the Ring Racers version, as
-`<Ring Racers version>_Z<fork version>`: `2.4_Z1` is the first release,
-`2.4_Z1.1` a bugfix release after it, `2.4.1_Z1` the first release based on
+`<Ring Racers version>_z<fork version>`: `2.4_z1` is the first release,
+`2.4_z1.1` a bugfix release after it, `2.4.1_z1` the first release based on
 Ring Racers 2.4.1.
 
 To release, make a commit that raises `FORKVERSION` in `src/fork_version.h`, tag
-it `<Ring Racers version>_Z<fork version>` (`v` before it also works) and push the
+it `<Ring Racers version>_z<fork version>` (`v` before it also works) and push the
 tag. A build is a release only from a clean checkout of a commit with that tag
 (`cmake/Modules/ForkVersion.cmake`). Builds from any other commit are
 development builds, and the title screen, `version` and the startup log say
-`-dev` and the commit, e.g. `v2.4_Z1-dev (1a2b3c4d)`.
+`-dev` and the commit, e.g. `v2.4_z1-dev (1a2b3c4d)`.
 
 `FORKVERSION` goes back to `"0"` (no release yet on that Ring Racers version) when
 the fork is rebased onto a new Ring Racers version.

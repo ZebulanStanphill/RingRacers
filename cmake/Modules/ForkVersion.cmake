@@ -22,7 +22,7 @@ endfunction()
 
 # Sets variable to TRUE only if all hold: forkversion is not "0", the working
 # tree of the repository in source_dir is clean, and a tag named
-# <srb2version>_Z<forkversion> or v<srb2version>_Z<forkversion> points at HEAD.
+# <srb2version>_z<forkversion> or v<srb2version>_z<forkversion> points at HEAD.
 # Anything else, including git being unavailable, gives FALSE.
 # Needs GIT_EXECUTABLE.
 function(fork_version_is_release variable source_dir srb2version forkversion)
@@ -66,7 +66,7 @@ function(fork_version_is_release variable source_dir srb2version forkversion)
 	endif()
 
 	string(REPLACE "\n" ";" tags "${tags}")
-	set(release_tag "${srb2version}_Z${forkversion}")
+	set(release_tag "${srb2version}_z${forkversion}")
 	foreach(tag IN LISTS tags)
 		string(STRIP "${tag}" tag)
 		if(tag STREQUAL "${release_tag}" OR tag STREQUAL "v${release_tag}")

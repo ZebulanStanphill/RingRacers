@@ -589,16 +589,16 @@ untouched padding.
   `maps/`) and high-bit bytes. The texture-id memo's key (the first 8 characters, uppercased) is checked to match
   exactly when the old memo scan's `strncasecmp` over 8 characters matched.
 - **Fork version text:** `fork_version` compiles the production `src/fork_version.h`, which formats the version shown on
-  the title screen, in `version` and in the startup log, under ASan and UBSan with no engine. Check a release (`v2.4_Z1`,
-  `v2.4_Z1.1`, `v2.4.1_Z1`, whatever the revision), a development build (`v2.4_Z1-dev (1a2b3c4d)`, also before any release
-  as `_Z0`, with a longer hash cut to 8 characters, a shorter one kept as is and either case), a revision that is empty,
+  the title screen, in `version` and in the startup log, under ASan and UBSan with no engine. Check a release (`v2.4_z1`,
+  `v2.4_z1.1`, `v2.4.1_z1`, whatever the revision), a development build (`v2.4_z1-dev (1a2b3c4d)`, also before any release
+  as `_z0`, with a longer hash cut to 8 characters, a shorter one kept as is and either case), a revision that is empty,
   null or not a hash (upstream's `illegal` and `Unknown`), which leaves out the parentheses, and truncation into a small
   buffer, which stays terminated and writes nothing past it.
 - **Fork release detection:** `fork_version_release` runs `cmake/Modules/ForkVersion.cmake` (the function that
   `cmake/Comptime.cmake` calls at every build) in CMake script mode against temporary git repositories made with their own
   user name and email, ignoring the developer's git configuration. A build is a release only with a `FORKVERSION` other than
-  `0`, a clean tracked tree and a tag `<SRB2VERSION>_Z<FORKVERSION>` or `v<SRB2VERSION>_Z<FORKVERSION>` on `HEAD`. Check that
-  no tag, a tag on the parent commit only, a tag for another fork or Ring Racers version, a dirty tree, a `_Z0` tag with
+  `0`, a clean tracked tree and a tag `<SRB2VERSION>_z<FORKVERSION>` or `v<SRB2VERSION>_z<FORKVERSION>` on `HEAD`. Check that
+  no tag, a tag on the parent commit only, a tag for another fork or Ring Racers version, a tag with a capital `Z`, a dirty tree, a `_z0` tag with
   `FORKVERSION` `"0"`, a directory that is not a repository and a missing git are development builds, and that both tag
   spellings (and an annotated tag) are releases. Also checks that the two versions are read from `src/version.h` and
   `src/fork_version.h`. Runs when git is found.

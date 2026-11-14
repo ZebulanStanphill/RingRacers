@@ -23,30 +23,30 @@ int main(void)
 	char buf[64];
 
 	/* Releases ignore the revision. */
-	CHECK_FMT("v2.4_Z1", "2.4", "1", 1, "1a2b3c4d5e6f");
-	CHECK_FMT("v2.4_Z1", "2.4", "1", 1, "illegal");
-	CHECK_FMT("v2.4_Z1.1", "2.4", "1.1", 1, NULL);
-	CHECK_FMT("v2.4.1_Z1", "2.4.1", "1", 1, "");
+	CHECK_FMT("v2.4_z1", "2.4", "1", 1, "1a2b3c4d5e6f");
+	CHECK_FMT("v2.4_z1", "2.4", "1", 1, "illegal");
+	CHECK_FMT("v2.4_z1.1", "2.4", "1.1", 1, NULL);
+	CHECK_FMT("v2.4.1_z1", "2.4.1", "1", 1, "");
 
 	/* Development builds name the first 8 characters of the commit. */
-	CHECK_FMT("v2.4_Z1-dev (1a2b3c4d)", "2.4", "1", 0, "1a2b3c4d5e6f7a8b");
-	CHECK_FMT("v2.4_Z1-dev (1a2b3c4d)", "2.4", "1", 0, "1a2b3c4d");
-	CHECK_FMT("v2.4_Z1-dev (1a2b3c4)", "2.4", "1", 0, "1a2b3c4"); /* short hash as is */
-	CHECK_FMT("v2.4_Z1-dev (1A2B3C4D)", "2.4", "1", 0, "1A2B3C4D5E");
-	CHECK_FMT("v2.4_Z0-dev (1a2b3c4d)", "2.4", "0", 0, "1a2b3c4d5e6f");
-	CHECK_FMT("v2.4.1_Z1.1-dev (0123abcd)", "2.4.1", "1.1", 0, "0123abcdef");
+	CHECK_FMT("v2.4_z1-dev (1a2b3c4d)", "2.4", "1", 0, "1a2b3c4d5e6f7a8b");
+	CHECK_FMT("v2.4_z1-dev (1a2b3c4d)", "2.4", "1", 0, "1a2b3c4d");
+	CHECK_FMT("v2.4_z1-dev (1a2b3c4)", "2.4", "1", 0, "1a2b3c4"); /* short hash as is */
+	CHECK_FMT("v2.4_z1-dev (1A2B3C4D)", "2.4", "1", 0, "1A2B3C4D5E");
+	CHECK_FMT("v2.4_z0-dev (1a2b3c4d)", "2.4", "0", 0, "1a2b3c4d5e6f");
+	CHECK_FMT("v2.4.1_z1.1-dev (0123abcd)", "2.4.1", "1.1", 0, "0123abcdef");
 
 	/* Not a commit: just -dev. */
-	CHECK_FMT("v2.4_Z1-dev", "2.4", "1", 0, "");
-	CHECK_FMT("v2.4_Z1-dev", "2.4", "1", 0, NULL);
-	CHECK_FMT("v2.4_Z1-dev", "2.4", "1", 0, "illegal");
-	CHECK_FMT("v2.4_Z0-dev", "2.4", "0", 0, "Unknown");
-	CHECK_FMT("v2.4_Z1-dev", "2.4", "1", 0, "1a2b3c4g");
+	CHECK_FMT("v2.4_z1-dev", "2.4", "1", 0, "");
+	CHECK_FMT("v2.4_z1-dev", "2.4", "1", 0, NULL);
+	CHECK_FMT("v2.4_z1-dev", "2.4", "1", 0, "illegal");
+	CHECK_FMT("v2.4_z0-dev", "2.4", "0", 0, "Unknown");
+	CHECK_FMT("v2.4_z1-dev", "2.4", "1", 0, "1a2b3c4g");
 
 	/* Truncation: always terminated, never written past the buffer. */
 	memset(buf, 'x', sizeof buf);
 	ForkVersion_Format(buf, 8, "2.4", "1", 0, "1a2b3c4d5e");
-	assert(strcmp(buf, "v2.4_Z1") == 0);
+	assert(strcmp(buf, "v2.4_z1") == 0);
 	assert(buf[8] == 'x');
 	memset(buf, 'x', sizeof buf);
 	ForkVersion_Format(buf, 5, "2.4", "1", 1, NULL);
