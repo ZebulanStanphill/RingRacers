@@ -767,6 +767,8 @@ def generate(engine, output):
         "ROLL_ZOOM": hardware.function("HWR_SoftwareRollZoom"),
         "CLIP_AIM": Source(engine / "src/g_game.c").function("G_SoftwareClipAimingPitch"),
         "WALL_FILLS": hardware.function("HWR_WallFillsView"),
+        "ADD_LINE_RULE": function_section(hardware, "HWR_AddLine",
+            "\t\telse if (HWR_D3D12() && portaloccludes && (voidwalls", "\n#endif\n\t\t// Reject empty lines"),
     }, output / "void_wall.cpp")
 
     render(templates / "batch_sort.cpp.in", {

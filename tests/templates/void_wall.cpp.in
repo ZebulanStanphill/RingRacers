@@ -45,6 +45,38 @@ static side_t side;
 static seg_t seg;
 static sector_t front, back;
 
+// The rule's place in HWR_AddLine: what it does with a seg HWR_WallFillsView accepts.
+static int clipranges, voiddraws;
+static boolean checkforemptylines, hwr_portalsearch;
+static sector_t *gl_frontsector, *gl_backsector;
+static void gld_clipper_SafeAddClipRange(angle_t, angle_t) { ++clipranges; }
+static void HWR_DrawVoidWall(seg_t *, sector_t *, UINT8 walls) { voiddraws += walls; }
+#undef HWR_D3D12
+#define HWR_D3D12() 1
+static void AddLineRule(seg_t *line, boolean portaloccludes)
+{
+    UINT8 voidwalls = 0;
+    const angle_t angle1 = 0, angle2 = 0;
+    (void)angle1; (void)angle2; (void)voidwalls;
+    if (false)
+    {
+    }
+@@ADD_LINE_RULE@@
+}
+
+static void CheckAddLine(const char *what, boolean portaloccludes, boolean search, int wantdraws, boolean wantempty)
+{
+    clipranges = voiddraws = 0; checkforemptylines = true; hwr_portalsearch = search;
+    gl_frontsector = &front; gl_backsector = &back;
+    AddLineRule(&seg, portaloccludes);
+    if (clipranges || voiddraws != wantdraws || checkforemptylines != wantempty)
+        std::printf("%s: %d clip ranges, void walls %d, empty-line check %d\n", what, clipranges, voiddraws, (int)checkforemptylines);
+    std::fflush(stdout);
+    // Never solid in the clipper: this view can see past the wall's far edge where Software's can't
+    assert(clipranges == 0);
+    assert(voiddraws == wantdraws && checkforemptylines == wantempty);
+}
+
 static void Camera(float x, float y, float z, double yawdeg, double aimdeg)
 {
     gl_viewx = x; gl_viewy = y; gl_viewz = z;
@@ -139,6 +171,10 @@ int main()
     pv1 = {64, 200, 0}; pv2 = {64, -200, 0};
     front.floorheight = 300 * FRACUNIT; back.floorheight = 600 * FRACUNIT;
     Camera(0, 0, 100, 0, 0); Check("underground step"); assert(empty == 1);
+    // In HWR_AddLine the black is drawn and the seg stays open, so what is behind above the wall is still drawn
+    CheckAddLine("underground step", true, false, 1, false);
+    CheckAddLine("underground step, portal search", true, true, 0, false);
+    CheckAddLine("underground step behind a portal exit", false, false, 0, true);
     Camera(0, 0, 400, 0, 0); Check("above the front floor"); assert(empty == 1); // never from above the floor
     side.bottomtexture = 0; Camera(0, 0, 100, 0, 0); Check("no lower texture"); assert(empty == 1);
     side.bottomtexture = 3; front.floorpic = back.floorpic = skyflatnum; Check("both floors sky"); assert(empty == 1);
@@ -146,6 +182,7 @@ int main()
     back.floorpic = 2;
     // A low step far away: the wall top is on screen.
     pv1 = {2000, 2000, 0}; pv2 = {2000, -2000, 0}; back.floorheight = 320 * FRACUNIT; Check("wall top on screen"); assert(empty == 2);
+    CheckAddLine("wall top on screen", true, false, 0, true);
     // The ceiling case: camera above the front ceiling, upper wall's bottom below the screen.
     Reset(); pv1 = {64, 200, 0}; pv2 = {64, -200, 0};
     front.ceilingheight = 300 * FRACUNIT; back.ceilingheight = 0;

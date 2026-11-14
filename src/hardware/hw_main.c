@@ -3998,8 +3998,12 @@ static void HWR_AddLine(seg_t * line)
 #ifdef HAVE_D3D12
 		else if (HWR_D3D12() && portaloccludes && (voidwalls = HWR_WallFillsView(line, gl_frontsector, gl_backsector)) != 0)
 		{
-			// Software draws this seg, then treats it as solid and leaves the rest of its columns empty
-			gld_clipper_SafeAddClipRange(angle2, angle1);
+			// Software draws this seg, then treats it as solid and leaves the rest of its columns empty: black along
+			// it. The seg stays open in the clipper here, though. The black and the wall hide what is behind them, and
+			// what is behind past the wall's far edge (above a lower wall's top, below an upper wall's bottom) is
+			// outside Software's view by this very rule but can be inside this one, which pitches in true perspective
+			// where Software shears and is the taller of the two looking up or down. Clipped as solid, nothing behind
+			// was drawn there either: black above Green Hills Zone's blocks instead of their sky.
 			checkforemptylines = false;
 			if (!hwr_portalsearch)
 				HWR_DrawVoidWall(line, gl_frontsector, voidwalls);

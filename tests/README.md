@@ -954,9 +954,14 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   still on screen). Sweeps vary distance, wall height, pitch (including beyond ±80 degrees), yaw,
   roll (0, 19.33, 45 and -27 degrees), FOV, split-screen, segs reaching past the screen's edges and a sloped back floor, and must decide
   like the model in every case, lower and upper walls apart. Flipping the pitch term or dropping the below-the-floor
-  condition fails it. The black the rule draws, the clipper and the Xbox view are not covered; the decision and the
-  black wall were compared with Software on macOS (Legacy GL on OpenGL) at the Green Hills Zone pose of the user's
-  report and four others.
+  condition fails it. The test also runs the rule's own branch of `HWR_AddLine`: an accepted seg gets its black wall
+  (none during the portal search, and nothing at all behind a portal exit or for a seg the rule rejects) and is never
+  added to the clipper as solid, which would stop everything behind it from being drawn, including what this view can
+  see above the wall where Software's can't; adding the clip range back fails it. The black the rule draws and the
+  Xbox view are not covered; the decision and the black wall were compared with Software on macOS (Legacy GL on
+  OpenGL) at the Green Hills Zone pose of the user's report and four others, and the open clipper with VibeRant D3D
+  under Wine at the pose of a later Xbox report (640x480, pitch 31 degrees, roll -10 degrees), where the sky above two
+  blocks had been black.
 - **Horizon visibility:** use all 23 horizon boundaries from vanilla 2.4 Water Palace's TEXTMAP, with source/archive identity recorded in `fixtures/water-palace-horizons.json`. Compare the actual hardware horizon draw condition and helper to Software's production line acceptance, fake-flat and empty-line functions. Check its 22 empty sky boundaries, the remaining real boundary, lighting/texture/colormap/tag/slope changes, camera side, fake-flat control sectors (a chase camera makes `R_FakeFlat` substitute the back sector's heights and flat, which flips the decision in both directions; a first-person camera leaves it unchanged), minisegs, one-sided horizons and ordinary non-sky horizons. The old unconditional horizon condition fails. This verifies the renderer's geometry decision, not rendered pixels.
 
 - **Internal FOF visibility:** extract Software's actual `R_DrawSinglePlane` rejection block, the hardware helper, and both face-admission conditions. Compare 945 decisions using real engine FOF structures, all CUTEXTRA/EXTRA/water/fog combinations, touching boundaries, moving control heights, and all 29 overlapping-water sectors recorded from vanilla 2.4 Water Palace in `fixtures/water-palace-water.json`. The old hardware height checks admit 15 internal water boundaries that Software suppresses. Removing the new condition from either face fails this test. This verifies the visibility decision; the reported scenery artifacts still require an Xbox retest.
