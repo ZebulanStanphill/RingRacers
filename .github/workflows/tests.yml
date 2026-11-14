@@ -217,3 +217,92 @@ jobs:
 
       - name: Build
         run: cmake --build build/ninja-release --parallel 4
+
+  windows:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: Windows desktop build (no Direct3D 12)
+    runs-on: windows-2022
+    # A cold vcpkg cache builds SDL2, libvpx, curl and the rest of vcpkg.json's dependencies from source.
+    timeout-minutes: 60
+
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # As in the warp job, plus Visual Studio's bundled clang-cl, which the developer shell doesn't always put on PATH.
+      - name: Set up x64 MSVC environment and clang-cl
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or !$vs) { throw "Visual Studio C++ tools were not found" }
+          $before = [Environment]::GetEnvironmentVariables('Process')
+          & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          $vsLlvm = Join-Path $env:VCINSTALLDIR "Tools\Llvm\x64\bin"
+          if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $vsLlvm "clang-cl.exe"))) {
+            $env:PATH = "$vsLlvm;$env:PATH"
+          }
+          Get-Command cl.exe, clang-cl.exe, cmake.exe, ninja.exe -ErrorAction Stop | Select-Object Name, Source
+          clang-cl --version
+          "RR_IMAGE_VERSION=$env:ImageOS-$env:ImageVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Each step starts a new shell; preserve the developer environment, except VCPKG_ROOT, which the developer
+          # shell points at Visual Studio's bundled vcpkg: this job uses its own full clone.
+          foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+            if ($entry.Key -ne 'VCPKG_ROOT' -and $before[$entry.Key] -cne $entry.Value) {
+              "$($entry.Key)=$($entry.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+
+      # Full clone: vcpkg.json pins a builtin-baseline commit.
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'thirdparty/overlay-ports/**') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-
+            vcpkg-${{ runner.os }}-
+
+      # The Direct3D 12 driver is UWP-only for now (SRB2_CONFIG_D3D12), so this build doesn't have it.
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake --preset ninja-x64_windows_vcpkg-release
+          -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
+          -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Check that the Direct3D 12 driver is left out
+        shell: pwsh
+        run: |
+          if (Select-String -Path build/ninja-x64_windows_vcpkg-release/compile_commands.json -Pattern HAVE_D3D12 -Quiet -ErrorAction Stop) {
+            Write-Error "A Windows desktop build must not include the Direct3D 12 driver"; exit 1
+          }
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset ninja-x64_windows_vcpkg-release --parallel 4
+
+      # The executable is named after the git branch unless it is master (CMakeLists.txt); the build copies the DLLs it
+      # needs next to it.
+      - name: Upload Windows desktop build
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-desktop
+          path: |
+            build/ninja-x64_windows_vcpkg-release/bin/*.exe
+            build/ninja-x64_windows_vcpkg-release/bin/*.dll
+          if-no-files-found: error

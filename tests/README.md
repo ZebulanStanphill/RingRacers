@@ -812,6 +812,14 @@ and skips the ZDBSP build; a miss fetches and builds them normally.
 The Windows `warp` job, which compiles the translated add-on shader fixtures and runs
 the Direct3D 12 WARP regressions, depends on it passing. CTest's JUnit report and
 detailed run log are uploaded as `regression-results`, including when a test fails.
+The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
+that `compile_commands.json` has no `HAVE_D3D12`, so those builds cannot gain the
+Direct3D 12 driver. The `windows` job does the same for the ordinary (not UWP) Windows
+desktop game: it builds with the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
+from Visual Studio and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
+vcpkg's binary cache stored by runner image, triplet and the hash of `vcpkg.json` and
+the overlay ports. It uploads the executable and the DLLs the build copies next to it as
+`windows-desktop`, a game build without assets for testing.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its
 observable result. Test the relevant platform variants and important boundaries.

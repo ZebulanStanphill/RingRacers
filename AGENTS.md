@@ -57,8 +57,8 @@ the unmodified game.
 
 `tests/README.md` describes the native regression tests (Linux or macOS, with
 sanitizers) and the Direct3D 12 WARP harness (Windows).
-`.github/workflows/tests.yml` runs both, and checks that Linux and macOS still
-build. The UWP app build and Xbox testing happen in ringracers-uwp.
+`.github/workflows/tests.yml` runs both, and checks that Linux, macOS and
+Windows desktop (not UWP) still build, without the Direct3D 12 driver. The UWP app build and Xbox testing happen in ringracers-uwp.
 
 # Commit attribution
 
