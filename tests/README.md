@@ -84,14 +84,19 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   event, so the pad's input was ignored. Also checks a removal and a second pad
   across an overflow, and bookkeeping that posts an event of its own.
 
-- **Renderer setting at startup:** `renderer_setting` executes the production
-  `SCR_ChangeRenderer` through the UWP startup order: the setting's default,
-  VibeRant D3D, queues a switch while Software runs, then the config sets
-  Software. The queued switch must be dropped; the pre-fix function keeps it and
-  starts the hardware renderer with the setting reading Software. Also checks
-  that a saved VibeRant D3D keeps the switch, two changes before the next frame,
-  a renderer named on the command line and a hardware renderer that failed to
-  load.
+- **Renderer setting at startup:** `renderer_setting`, `renderer_setting_uwp`
+  and `renderer_setting_both` execute production setting callbacks and the SDL
+  command-line selection block with real renderer mappings and driver lifetime
+  bookkeeping. Fresh child processes check every saved setting, `-software`,
+  `-opengl`, `-d3d12` where available, and `-renderer` with every listed name.
+  Config-only cases execute the callback and model application of its queued
+  setting; they do not create SDL contexts or initialize a GPU driver.
+  Check stale startup queues, repeated changes before a frame, command-line
+  priority and load failure. Both-driver cases start each driver separately,
+  switch through Software, then select the other driver: no switch is queued,
+  the saved setting survives, and the exact restart notice is printed. A failed
+  start cannot unlock the driver choice. These native tests do not verify real
+  Windows driver initialization, menu drawing/popups, or presentation.
 
 - **D3D12 rolled sprites:** `sprite_brightmap` also executes the geometry-only
   helper and the extracted HLSL integer `RollSource` function. For all angles

@@ -5,6 +5,15 @@
 #include "hw_driver.h"
 
 #if defined(HAVE_D3D12) && !defined(_UWP)
-// Direct3D 12 is the only driver there is on a build with it for now
-boolean hwr_d3d12 = true;
+boolean hwr_d3d12 = false;
+static boolean driver_started = false;
+
+boolean HWR_DriverStarted(void) { return driver_started; }
+void HWR_StartDriver(boolean d3d12)
+{
+	if (driver_started)
+		return;
+	hwr_d3d12 = d3d12;
+	driver_started = true;
+}
 #endif

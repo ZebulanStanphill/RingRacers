@@ -15,6 +15,43 @@
 #define __SCREEN_H__
 
 #include "command.h"
+#include "hardware/hw_driver.h"
+
+// Settings and rendermode coincide except for Direct3D 12 on desktop.
+static inline INT32 SCR_RendererMode(INT32 setting)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	return setting == 3 ? 2 : setting;
+#else
+	return setting;
+#endif
+}
+static inline boolean SCR_RendererD3D12(INT32 setting)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	return setting == 3;
+#else
+	return setting == 2 && HWR_D3D12();
+#endif
+}
+static inline INT32 SCR_RendererSetting(INT32 mode)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	return mode == 2 && HWR_D3D12() ? 3 : mode;
+#else
+	return mode;
+#endif
+}
+static inline boolean SCR_RendererNeedsRestart(INT32 setting)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	return SCR_RendererMode(setting) == 2 && HWR_DriverStarted()
+		&& SCR_RendererD3D12(setting) != HWR_D3D12();
+#else
+	(void)setting;
+	return false;
+#endif
+}
 
 #if defined (_WIN32) && !defined (__CYGWIN__)
 #define RPC_NO_WINDOWS_H

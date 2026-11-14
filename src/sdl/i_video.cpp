@@ -116,7 +116,7 @@ static INT32 numVidModes = -1;
 static char vidModeName[33][32]; // allow 33 different modes
 
 rendermode_t rendermode = render_soft;
-rendermode_t chosenrendermode = render_none; // set by command line arguments
+rendererchoice_t chosenrendermode = RENDERER_UNCHOSEN; // set by command line arguments
 
 UINT8 graphics_started = 0; // Is used in console.c and screen.c
 
@@ -257,10 +257,11 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 	if (rendermode == render_opengl)
 	{
 #ifdef HAVE_D3D12
-		D3D12_Surface(vid.width, vid.height);
-#else
-		OglSdlSurface(vid.width, vid.height);
+		if (HWR_D3D12())
+			D3D12_Surface(vid.width, vid.height);
+		else
 #endif
+		OglSdlSurface(vid.width, vid.height);
 	}
 	else
 #endif
@@ -1136,10 +1137,13 @@ void I_UpdateNoBlit(void)
 		if (rendermode == render_opengl)
 		{
 #ifdef HAVE_D3D12
-			D3D12_FinishUpdate(cv_vidwait.value);
-#else
-			OglSdlFinishUpdate(cv_vidwait.value);
+			if (HWR_D3D12())
+			{
+				D3D12_FinishUpdate(cv_vidwait.value);
+			}
+			else
 #endif
+			OglSdlFinishUpdate(cv_vidwait.value);
 		}
 #endif
 	}
@@ -1406,8 +1410,8 @@ static SDL_bool Impl_CreateContext(void)
 {
 	// [UWP]: Legacy GL draws and presents with Direct3D 12, which takes the window from the RHI's OpenGL ES context
 	// when it starts, so it needs no context of its own
-#if defined(HWRENDER) && !defined(HAVE_D3D12)
-	if (rendermode == render_opengl)
+#ifdef HWRENDER
+	if (rendermode == render_opengl && !HWR_D3D12())
 	{
 		if (!g_legacy_gl_context)
 		{
@@ -1479,14 +1483,18 @@ boolean VID_CheckRenderer(void)
 
 	if (setrenderneeded)
 	{
-		rendermode = static_cast<rendermode_t>(setrenderneeded);
+#if defined(HAVE_D3D12) && !defined(_UWP)
+		if (SCR_RendererMode(setrenderneeded) == render_opengl)
+			HWR_StartDriver(SCR_RendererD3D12(setrenderneeded));
+#endif
+		rendermode = static_cast<rendermode_t>(SCR_RendererMode(setrenderneeded));
 		rendererchanged = true;
 
 #ifdef HAVE_D3D12
 		// Legacy GL presents with a swap chain of Direct3D 12's own: on UWP on the window, which ANGLE needs back to draw
 		// Software's frames; on the desktop on a child window, which has to go for Software's frames to show. Starting Legacy
 		// GL again takes it again
-		if (rendermode != render_opengl)
+		if (HWR_D3D12() && rendermode != render_opengl)
 			D3D12_ReleaseWindow();
 #endif
 
@@ -1674,7 +1682,7 @@ void I_StartupGraphics(void)
 		{
 			if (!stricmp(modeparm, renderer_list[i].strvalue))
 			{
-				chosenrendermode = static_cast<rendermode_t>(renderer_list[i].value);
+				chosenrendermode = static_cast<rendererchoice_t>(renderer_list[i].value);
 				break;
 			}
 			i++;
@@ -1690,17 +1698,34 @@ void I_StartupGraphics(void)
 	else if (M_CheckParm("-opengl"))
 		chosenrendermode = render_opengl;
 
+#ifdef HAVE_D3D12
+	else if (M_CheckParm("-d3d12"))
+		chosenrendermode = static_cast<rendererchoice_t>(
+#ifdef _UWP
+			2
+#else
+			3
+#endif
+		);
+#endif
+
 	// Don't startup OpenGL
 	if (M_CheckParm("-nogl"))
 	{
 		vid.glstate = VID_GL_LIBRARY_ERROR;
-		if (chosenrendermode == render_opengl)
-			chosenrendermode = render_none;
+		if (SCR_RendererMode(chosenrendermode) == render_opengl)
+			chosenrendermode = RENDERER_UNCHOSEN;
 	}
 #endif
 
-	if (chosenrendermode != render_none)
-		rendermode = chosenrendermode;
+	if (chosenrendermode != RENDERER_UNCHOSEN)
+	{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+		if (SCR_RendererMode(chosenrendermode) == render_opengl)
+			HWR_StartDriver(SCR_RendererD3D12(chosenrendermode));
+#endif
+		rendermode = static_cast<rendermode_t>(SCR_RendererMode(chosenrendermode));
+	}
 
 	borderlesswindow = M_CheckParm("-borderless") ? SDL_TRUE : SDL_FALSE;
 
@@ -1785,12 +1810,15 @@ void VID_StartupOpenGL(void)
 		*(void**)&HWD.pfnLoadCustomShader = hwSym("LoadCustomShader",NULL);
 
 #ifdef HAVE_D3D12
-		// [UWP]: Palette rendering, which the Direct3D 12 driver supports
-		*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
-		*(void**)&HWD.pfnSetPaletteLookup = hwSym("SetPaletteLookup",NULL);
-		*(void**)&HWD.pfnCreateLightTable = hwSym("CreateLightTable",NULL);
-		*(void**)&HWD.pfnUpdateLightTable = hwSym("UpdateLightTable",NULL);
-		*(void**)&HWD.pfnClearLightTables = hwSym("ClearLightTables",NULL);
+		if (HWR_D3D12())
+		{
+			// [UWP]: Palette rendering, which the Direct3D 12 driver supports
+			*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
+			*(void**)&HWD.pfnSetPaletteLookup = hwSym("SetPaletteLookup",NULL);
+			*(void**)&HWD.pfnCreateLightTable = hwSym("CreateLightTable",NULL);
+			*(void**)&HWD.pfnUpdateLightTable = hwSym("UpdateLightTable",NULL);
+			*(void**)&HWD.pfnClearLightTables = hwSym("ClearLightTables",NULL);
+		}
 #endif
 		glstartup = true;
 	}

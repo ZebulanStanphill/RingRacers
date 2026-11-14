@@ -15,7 +15,7 @@
 #include "../i_video.h"
 
 rendermode_t rendermode = render_none;
-rendermode_t chosenrendermode = render_none;
+rendererchoice_t chosenrendermode = RENDERER_UNCHOSEN;
 
 boolean highcolor = false;
 

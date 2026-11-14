@@ -932,7 +932,11 @@ static void M_PNGText(png_structp png_ptr, png_infop png_info_ptr, PNG_CONST png
 #else
 	 "Unknown";
 #endif
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	char rendermodetxt[16];
+#else
 	char rendermodetxt[9];
+#endif
 	char maptext[MAXMAPLUMPNAME];
 	char lvlttltext[48];
 	char locationtxt[40];
@@ -946,7 +950,11 @@ static void M_PNGText(png_structp png_ptr, png_infop png_info_ptr, PNG_CONST png
 			strcpy(rendermodetxt, "Software");
 			break;
 		case render_opengl:
+#if defined(HAVE_D3D12) && !defined(_UWP)
+			strcpy(rendermodetxt, HWR_D3D12() ? "VibeRant D3D" : "OpenGL");
+#else
 			strcpy(rendermodetxt, "OpenGL");
+#endif
 			break;
 		default: // Just in case
 			strcpy(rendermodetxt, "None");

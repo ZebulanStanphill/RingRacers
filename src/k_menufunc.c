@@ -16,6 +16,7 @@
 #endif
 
 #include "k_menu.h"
+#include "screen.h"
 
 #include "doomdef.h"
 #include "d_main.h"
@@ -180,7 +181,16 @@ void M_ChangeCvarDirect(INT32 choice, consvar_t *cv)
 
 		CV_AddValue(cv, choice);
 	}
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	if (cv == &cv_renderer && SCR_RendererNeedsRestart(cv->value))
+		M_StartMessage("Renderer", va("%s will be used the next time the game starts.",
+			cv->value == 3 ? "VibeRant D3D" : "Legacy GL"), NULL, MM_NOTHING, NULL, NULL);
+#endif
 }
+
+#if defined(HAVE_D3D12) && !defined(_UWP)
+static INT32 renderer_menu_choice;
+#endif
 
 static void M_ChangeCvarResponse(INT32 choice)
 {
@@ -188,6 +198,10 @@ static void M_ChangeCvarResponse(INT32 choice)
 		return;
 
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	if (cvar == &cv_renderer)
+		choice = renderer_menu_choice;
+#endif
 	M_ChangeCvarDirect(choice, cvar);
 }
 
@@ -195,12 +209,19 @@ static void M_ChangeCvar(INT32 choice)
 {
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
 
-#if defined(HWRENDER) && !defined(HAVE_D3D12) // VibeRant D3D has close to Software's features, so switching to it doesn't ask
+#if defined(HWRENDER) && !defined(_UWP)
+#if defined(HAVE_D3D12)
+	renderer_menu_choice = choice;
+	if (cvar == &cv_renderer && choice != -1 &&
+		((cv_renderer.value == 3 && choice == 1) ||
+		 (cv_renderer.value == 1 && choice == 0)))
+#else
 	if (cvar == &cv_renderer &&
 		// Switching from Software [to Legacy GL]
 		cv_renderer.value == 1 &&
 		// Not setting to default (ie changing the value)
 		choice != -1)
+#endif
 	{
 		M_StartMessage(
 			"Switching to Legacy GL",

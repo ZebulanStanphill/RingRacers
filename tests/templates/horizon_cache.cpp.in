@@ -25,6 +25,9 @@ void Sky(const subsector_t *subsector) {
     { ++scans; }
 }
 int main() {
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    hwr_d3d12 = true; // The first cases exercise Direct3D 12 explicitly.
+#endif
     subsector_t subs[3]{}; seg_t sg[4]{}; line_t lines[2]{};
     subsectors=subs; segs=sg; numsubsectors=3;
     subs[0].numlines=2; subs[1].firstline=2; subs[1].numlines=1;

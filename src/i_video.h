@@ -53,7 +53,15 @@ extern rendermode_t rendermode;
 
 /**	\brief render mode set by command line arguments
 */
-extern rendermode_t chosenrendermode;
+#if defined(HAVE_D3D12) && !defined(_UWP)
+typedef INT32 rendererchoice_t;
+#define RENDERER_UNCHOSEN 0
+#else
+typedef rendermode_t rendererchoice_t;
+#define RENDERER_UNCHOSEN render_none
+#endif
+// A setting value, not a rendermode (3 is Direct3D 12 in a both-driver build).
+extern rendererchoice_t chosenrendermode;
 
 /**	\brief setup video mode
 */

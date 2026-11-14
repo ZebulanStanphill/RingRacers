@@ -181,11 +181,14 @@ static void finish_legacy_ogl_update()
 	temp_legacy_finishupdate_draws();
 #ifdef HAVE_D3D12
 	// [UWP]: Follows the palette rendering setting, which the driver applies as it presents
-	HWR_UpdatePaletteRendering();
-	D3D12_FinishUpdate(cv_vidwait.value);
-#else
-	OglSdlFinishUpdate(cv_vidwait.value);
+	if (HWR_D3D12())
+	{
+		HWR_UpdatePaletteRendering();
+		D3D12_FinishUpdate(cv_vidwait.value);
+	}
+	else
 #endif
+		OglSdlFinishUpdate(cv_vidwait.value);
 }
 #endif
 

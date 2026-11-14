@@ -19,7 +19,7 @@
 #include "utils/Log.h"
 
 rendermode_t rendermode = render_soft;
-rendermode_t chosenrendermode = render_none;
+rendererchoice_t chosenrendermode = RENDERER_UNCHOSEN;
 
 boolean highcolor = false;
 

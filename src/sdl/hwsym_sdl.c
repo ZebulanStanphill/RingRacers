@@ -19,6 +19,7 @@
 
 #include "hwsym_sdl.h"
 #include "../doomdef.h"
+#include "../hardware/hw_driver.h"
 
 #ifdef _MSC_VER
 #pragma warning(disable : 4214 4244)
@@ -73,7 +74,12 @@ void *hwSym(const char *funcName,void *handle)
 	void *funcPointer = NULL;
 #ifdef HAVE_D3D12
 	// [UWP]: Legacy GL draws with Direct3D 12, since ANGLE has no desktop OpenGL
+#if defined(_UWP)
 	return D3D12_GetDriverFunction(funcName);
+#else
+	if (HWR_D3D12() && !handle)
+		return D3D12_GetDriverFunction(funcName);
+#endif
 #endif
 #ifdef HWRENDER
 	if (0 == strcmp("SetPalette", funcName))

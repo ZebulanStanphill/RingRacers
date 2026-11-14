@@ -24,6 +24,9 @@ static void Submit(subsector_t *sub, sector_t *gl_frontsector,
 }
 int main()
 {
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    hwr_d3d12 = true; // The first cases exercise Direct3D 12 explicitly.
+#endif
     sector_t sector{};
     subsector_t sub{};
     pslope_t floorSlope{}, ceilingSlope{};

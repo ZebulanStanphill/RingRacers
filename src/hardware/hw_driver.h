@@ -16,6 +16,9 @@ extern "C" {
 // Set by the video code before the hardware renderer first starts, then fixed for the run of the game: the
 // hardware renderer is never re-initialized with the other driver.
 extern boolean hwr_d3d12;
+// A failed start also fixes the choice: resources cannot be restarted with another driver.
+boolean HWR_DriverStarted(void);
+void HWR_StartDriver(boolean d3d12);
 #ifdef __cplusplus
 }
 #endif

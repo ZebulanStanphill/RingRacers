@@ -69,6 +69,8 @@ def generate(engine, output):
     }, output / "event_queue.cpp")
     render(templates / "renderer_setting.cpp.in", {
         "CHANGE": Source(engine / "src/screen.c").function("SCR_ChangeRenderer"),
+        "VALUES": Source(engine / "src/screen.c").section("CV_PossibleValue_t cv_renderer_t[]", "// ========================================================================="),
+        "STARTUP": Source(engine / "src/sdl/i_video.cpp").section("\t// Renderer choices", "\tborderlesswindow ="),
     }, output / "renderer_setting.cpp")
     render(templates / "overlay_blend.cpp.in", {
         "BLEND": Source(engine / "src/hardware/hw_main.c").section("FBITFIELD HWR_GetBlendModeFlag(INT32 ast)", "FBITFIELD HWR_TranstableToAlpha"),

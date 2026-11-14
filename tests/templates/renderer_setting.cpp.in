@@ -1,5 +1,11 @@
 #include <cassert>
 #include <cstdio>
+#include <cstring>
+#include <cstdarg>
+#include <string>
+#include <sys/wait.h>
+#include <unistd.h>
+#define stricmp strcasecmp
 #include "doomdef.h"
 #include "command.h"
 #include "console.h"
@@ -7,16 +13,30 @@
 #include "m_argv.h"
 #include "screen.h"
 
-rendermode_t rendermode, chosenrendermode;
+rendermode_t rendermode;
+rendererchoice_t chosenrendermode;
 viddef_t vid;
 consvar_t cv_renderer;
 UINT8 setrenderneeded;
-static unsigned cleared, alerts;
-INT32 M_CheckParm(const char *) { return 0; }
+static unsigned cleared, alerts, notices;
+void M_RefreshAdvancedVideoOptions(void) {}
+static char notice[256];
+void CONS_Printf(const char *format, ...) {
+    ++notices;
+    va_list args; va_start(args, format);
+    vsnprintf(notice, sizeof notice, format, args); va_end(args);
+}
+static std::string argument, renderer_name;
+INT32 M_CheckParm(const char *s) { return argument == s; }
+const char *M_GetNextParm(void) { return renderer_name.c_str(); }
+@@VALUES@@
+static void startup() {
+@@STARTUP@@
+}
 void CONS_Alert(alerttype_t, const char *, ...) { ++alerts; }
 static void HWR_ClearAllTextures(void) { ++cleared; }
 @@CHANGE@@
-static void boot(rendermode_t running, rendermode_t chosen, INT32 glstate)
+static void boot(rendermode_t running, rendererchoice_t chosen, INT32 glstate)
 {
     rendermode = running;
     chosenrendermode = chosen;
@@ -32,19 +52,68 @@ static UINT8 set(INT32 value)
 }
 int main()
 {
+    // Each startup is a fresh process, including the production driver lifetime state.
+    for (int setting = 1; setting <=
+#if defined(HAVE_D3D12) && !defined(_UWP)
+        3
+#else
+        2
+#endif
+        ; ++setting)
+    {
+        for (int cli = 0; cli < 5; ++cli)
+        {
+#ifndef HAVE_D3D12
+            if (cli == 3) continue;
+#endif
+            pid_t pid = fork();
+            assert(pid >= 0);
+            if (!pid) {
+                boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_NOTLOADED);
+                cv_renderer.value = setting;
+                SCR_ChangeRenderer();
+                argument = cli == 1 ? "-software" : cli == 2 ? "-opengl" : cli == 3 ? "-d3d12" : cli == 4 ? "-renderer" : "";
+                for (auto *v = cv_renderer_t; v->strvalue; ++v)
+                    if (v->value == setting) renderer_name = v->strvalue;
+                startup();
+                int expected = cli == 1 ? 1 : cli == 2 ? 2 : cli == 3 ?
+#if defined(HAVE_D3D12) && !defined(_UWP)
+                    3
+#else
+                    2
+#endif
+                    : setting;
+                if (cli == 0) {
+                    assert(chosenrendermode == RENDERER_UNCHOSEN);
+                    assert(setrenderneeded == (setting == 1 ? 0 : setting));
+#if defined(HAVE_D3D12) && !defined(_UWP)
+                    if (setrenderneeded) HWR_StartDriver(SCR_RendererD3D12(setrenderneeded));
+#endif
+                    rendermode = static_cast<rendermode_t>(SCR_RendererMode(setting));
+                }
+                assert(rendermode == SCR_RendererMode(expected));
+                assert(SCR_RendererSetting(rendermode) == expected);
+                _exit(0);
+            }
+            int status;
+            assert(waitpid(pid, &status, 0) == pid);
+            assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        }
+    }
+
     // UWP startup with Software saved: registering the setting applies its default, VibeRant D3D,
     // and the config then names the renderer that is already running.
-    boot(render_soft, render_none, VID_GL_LIBRARY_NOTLOADED);
+    boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_NOTLOADED);
     assert(set(render_opengl) == render_opengl);
     assert(set(render_soft) == 0);
 
     // The same startup with VibeRant D3D saved keeps the switch.
-    boot(render_soft, render_none, VID_GL_LIBRARY_NOTLOADED);
+    boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_NOTLOADED);
     assert(set(render_opengl) == render_opengl);
     assert(set(render_opengl) == render_opengl);
 
     // Changing the setting twice before the next frame, while hardware runs.
-    boot(render_opengl, render_none, VID_GL_LIBRARY_LOADED);
+    boot(render_opengl, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
     assert(set(render_soft) == render_soft && cleared == 1);
     assert(set(render_opengl) == 0 && cleared == 1);
     assert(set(render_soft) == render_soft && cleared == 2);
@@ -56,9 +125,41 @@ int main()
     assert(set(render_soft) == render_opengl);
 
     // A hardware renderer that failed to load is refused.
-    boot(render_soft, render_none, VID_GL_LIBRARY_ERROR);
+    boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_ERROR);
     assert(set(render_opengl) == 0 && alerts == 1);
     assert(set(render_soft) == 0 && alerts == 1);
 
-    puts("renderer setting: 11 decisions passed");
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    assert(SCR_RendererMode(3) == render_opengl);
+    assert(SCR_RendererMode(2) == render_opengl);
+    assert(SCR_RendererMode(1) == render_soft);
+    assert(SCR_RendererD3D12(3) && !SCR_RendererD3D12(2));
+    for (bool d3d : {false, true}) {
+        pid_t pid = fork(); assert(pid >= 0);
+        if (!pid) {
+            HWR_StartDriver(d3d);
+            int started = d3d ? 3 : 2, other = d3d ? 2 : 3;
+            assert(HWR_DriverStarted() && HWR_D3D12() == d3d);
+            boot(render_opengl, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
+            assert(set(1) == 1);
+            unsigned before = notices;
+            assert(set(other) == 0 && cv_renderer.value == other && notices == before + 1);
+            assert(std::string(notice) == std::string(d3d ? "Legacy GL" : "VibeRant D3D") + " will be used the next time the game starts.\n");
+            assert(set(1) == 1);
+            assert(set(started) == 0);
+            boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
+            assert(set(started) == started);
+            assert(set(other) == 0 && cv_renderer.value == other);
+            boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_ERROR);
+            assert(set(other) == 0 && cv_renderer.value == other);
+            assert(set(started) == 0 && alerts == 1);
+            HWR_StartDriver(!d3d);
+            assert(HWR_D3D12() == d3d);
+            _exit(0);
+        }
+        int status; assert(waitpid(pid, &status, 0) == pid);
+        assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
+#endif
+    puts("renderer setting decisions passed");
 }

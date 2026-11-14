@@ -14,6 +14,9 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "screen.h"
+#if defined(HAVE_D3D12) && !defined(_UWP)
+#include "k_menu.h"
+#endif
 #include "console.h"
 #include "am_map.h"
 #include "i_time.h"
@@ -58,7 +61,10 @@ UINT8 setrenderneeded = 0;
 
 CV_PossibleValue_t cv_renderer_t[] = {
 	{1, "Software"},
-#ifdef HAVE_D3D12 // Legacy GL draws with Direct3D 12 (hardware/r_d3d12), not OpenGL
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	{3, "VibeRant D3D"},
+	{2, "Legacy GL"},
+#elif defined(HAVE_D3D12)
 	{2, "VibeRant D3D"},
 #elif defined(HWRENDER)
 	{2, "Legacy GL"},
@@ -407,14 +413,17 @@ void SCR_CheckDefaultMode(void)
 		setmodeneeded = VID_GetModeForSize(cv_scr_width.value, cv_scr_height.value) + 1;
 	}
 
-	if (cv_renderer.value != (signed)rendermode)
+	if (cv_renderer.value != SCR_RendererSetting(rendermode))
 	{
-		if (chosenrendermode == render_none) // nothing set at command line
+		if (chosenrendermode == RENDERER_UNCHOSEN) // nothing set at command line
 			SCR_ChangeRenderer();
 		else
+#if defined(HAVE_D3D12) && !defined(_UWP)
+		if (!SCR_RendererNeedsRestart(cv_renderer.value))
+#endif
 		{
 			// Set cv_renderer to the current render mode
-			CV_StealthSetValue(&cv_renderer, rendermode);
+			CV_StealthSetValue(&cv_renderer, SCR_RendererSetting(rendermode));
 		}
 	}
 }
@@ -448,24 +457,41 @@ void SCR_ChangeFullscreen(void)
 
 void SCR_ChangeRenderer(void)
 {
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	M_RefreshAdvancedVideoOptions();
+	if (SCR_RendererNeedsRestart(cv_renderer.value))
+	{
+		setrenderneeded = 0;
+		CONS_Printf("%s will be used the next time the game starts.\n",
+			cv_renderer.value == 3 ? "VibeRant D3D" : "Legacy GL");
+		return;
+	}
+#endif
 	// [UWP]: The setting is back at the running renderer, so a queued switch is stale. Startup queues
 	// one for the default, VibeRant D3D, before the config's Software is read
-	if (chosenrendermode == render_none && (signed)rendermode == cv_renderer.value)
+	if (chosenrendermode == RENDERER_UNCHOSEN && SCR_RendererSetting(rendermode) == cv_renderer.value)
 		setrenderneeded = 0;
 
-	if (chosenrendermode != render_none
-	|| (signed)rendermode == cv_renderer.value)
+	if (chosenrendermode != RENDERER_UNCHOSEN
+	|| SCR_RendererSetting(rendermode) == cv_renderer.value)
 		return;
 
 #ifdef HWRENDER
 	// Check if OpenGL loaded successfully (or wasn't disabled) before switching to it.
 	if ((vid.glstate == VID_GL_LIBRARY_ERROR)
-	&& (cv_renderer.value == render_opengl))
+	&& (SCR_RendererMode(cv_renderer.value) == render_opengl))
 	{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+		if (M_CheckParm("-nogl"))
+			CONS_Alert(CONS_ERROR, "%s rendering was disabled!\n", SCR_RendererD3D12(cv_renderer.value) ? "VibeRant D3D" : "OpenGL");
+		else
+			CONS_Alert(CONS_ERROR, "%s never loaded\n", HWR_D3D12() ? "VibeRant D3D" : "OpenGL");
+#else
 		if (M_CheckParm("-nogl"))
 			CONS_Alert(CONS_ERROR, "OpenGL rendering was disabled!\n");
 		else
 			CONS_Alert(CONS_ERROR, "OpenGL never loaded\n");
+#endif
 		return;
 	}
 
