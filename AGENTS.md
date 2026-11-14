@@ -24,8 +24,8 @@ replay:
   code. Don't reformat, rename or reorder upstream code you aren't changing.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
   UWP build, and `HAVE_D3D12` for builds that contain the Direct3D 12 driver
-  (`src/hardware/r_d3d12`, `SRB2_CONFIG_D3D12`), which only UWP builds can have for
-  now. A UWP build has it as its only hardware driver; a build with `HAVE_D3D12`
+  (`src/hardware/r_d3d12`, `SRB2_CONFIG_D3D12`), which UWP builds have by default and
+  Windows desktop builds can opt into. A UWP build has it as its only hardware driver; a build with `HAVE_D3D12`
   but not `_UWP` has both it and OpenGL, and the video code picks one per run
   of the game. Behaviour that depends on the driver (what the hardware renderer
   draws or how it walks the level, calls into the driver) therefore checks
@@ -66,8 +66,9 @@ the unmodified game.
 
 `tests/README.md` describes the native regression tests (Linux or macOS, with
 sanitizers) and the Direct3D 12 WARP harness (Windows).
-`.github/workflows/tests.yml` runs both, and checks that Linux, macOS and
-Windows desktop (not UWP) still build, without the Direct3D 12 driver. The UWP app build and Xbox testing happen in ringracers-uwp.
+`.github/workflows/tests.yml` runs both, and checks that Linux and macOS still build
+without the Direct3D 12 driver, and that Windows desktop (not UWP) builds with it
+(`SRB2_CONFIG_D3D12=ON`, using the desktop presenter). The UWP app build and Xbox testing happen in ringracers-uwp.
 
 # Commit attribution
 
