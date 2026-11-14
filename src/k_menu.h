@@ -1177,6 +1177,7 @@ void M_SoundOptions(INT32 choice);
 void M_GameplayOptions(INT32 choice);
 void M_ServerOptions(INT32 choice);
 
+void M_RefreshVideoOptions(void);
 void M_RefreshAdvancedVideoOptions(void);
 
 void M_HandleItemToggles(INT32 choice);	// For item toggling

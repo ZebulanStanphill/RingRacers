@@ -89,3 +89,8 @@ void I_BeginRead(void){}
 
 void I_EndRead(void){}
 
+// Only Xbox consoles always display full screen.
+boolean I_VideoAlwaysFullscreen(void)
+{
+	return false;
+}

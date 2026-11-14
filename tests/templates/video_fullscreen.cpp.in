@@ -1,0 +1,82 @@
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+#include "doomdef.h"
+#include "k_menu.h"
+#include "r_fps.h"
+#include "v_video.h"
+#include "i_video.h"
+#pragma clang diagnostic ignored "-Wc++20-designator"
+#pragma clang diagnostic ignored "-Wc99-designator"
+// SDL is a dependency stub; the production query must distinguish every family.
+enum SDL_WinRT_DeviceFamily {
+	SDL_WINRT_DEVICEFAMILY_UNKNOWN, SDL_WINRT_DEVICEFAMILY_DESKTOP,
+	SDL_WINRT_DEVICEFAMILY_MOBILE, SDL_WINRT_DEVICEFAMILY_XBOX
+};
+static SDL_WinRT_DeviceFamily family;
+static SDL_WinRT_DeviceFamily SDL_WinRTGetDeviceFamily(void) { return family; }
+extern "C" {
+consvar_t cv_fullscreen, cv_scr_scaling, cv_vidwait, cv_fpscap, cv_scr_effect;
+menu_t OPTIONS_MainDef, OPTIONS_VideoModesDef, OPTIONS_VideoColorProfileDef;
+menu_t OPTIONS_VideoAdvancedDef, OPTIONS_VideoCameraDef;
+void M_OptionsTick(void) {}
+void M_DrawGenericOptions(void) {}
+void M_DrawOptionsCogs(void) {}
+@@QUERY@@
+@@MENU@@
+@@HELPER@@
+@@REFRESH@@
+}
+static void OpenOptions(INT32 choice)
+{
+@@OPEN@@
+}
+static bool Same(const menuitem_t &a, const menuitem_t &b)
+{
+	return a.status == b.status && a.text == b.text && a.tooltip == b.tooltip
+		&& !memcmp(&a.itemaction, &b.itemaction, sizeof a.itemaction);
+}
+int main()
+{
+	const INT16 count = OPTIONS_VideoDef.numitems;
+	const std::vector<menuitem_t> original(OPTIONS_Video, OPTIONS_Video + count);
+	for (int f = 0; f < 4; ++f)
+	{
+		family = static_cast<SDL_WinRT_DeviceFamily>(f);
+		std::copy(original.begin(), original.end(), OPTIONS_Video);
+		OPTIONS_VideoDef.numitems = count;
+#ifdef _UWP
+		const bool hide = family == SDL_WINRT_DEVICEFAMILY_XBOX;
+#else
+		const bool hide = false;
+#endif
+		assert(!!I_VideoAlwaysFullscreen() == hide);
+		for (int call = 0; call < 2; ++call)
+		{
+			OpenOptions(0);
+			assert(OPTIONS_VideoDef.numitems == count - (hide ? 1 : 0));
+			int dst = 0, removed = 0;
+			for (const auto &row : original)
+			{
+				if (hide && (row.status & IT_TYPE) == IT_CVAR && row.itemaction.cvar == &cv_fullscreen)
+				{ ++removed; continue; }
+				assert(Same(row, OPTIONS_Video[dst++]));
+			}
+			assert(removed == (hide ? 1 : 0));
+			assert(!strcmp(OPTIONS_Video[0].text, "Resolution..."));
+			assert(OPTIONS_Video[1].status == (IT_NOTHING | IT_SPACE));
+			assert(!strcmp(OPTIONS_Video[hide ? 2 : 3].text, "Screen Scaling"));
+		}
+	}
+	// Pure helper boundaries: absent row, empty array, first and last item.
+	assert(M_RemoveVideoCvar(nullptr, 0, &cv_fullscreen) == 0);
+	menuitem_t items[2] = {original[2], original[3]};
+	assert(M_RemoveVideoCvar(items, 2, &cv_vidwait) == 2);
+	assert(M_RemoveVideoCvar(items, 2, &cv_fullscreen) == 1);
+	assert(Same(items[0], original[3]));
+	items[1] = original[2];
+	assert(M_RemoveVideoCvar(items, 2, &cv_fullscreen) == 1);
+	assert(Same(items[0], original[3]));
+	puts("fullscreen row: only Xbox hides it, compactly and idempotently");
+}

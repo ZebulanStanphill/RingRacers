@@ -107,6 +107,8 @@ void M_InitOptions(INT32 choice)
 {
 	(void)choice;
 
+	M_RefreshVideoOptions();
+
 	OPTIONS_MainDef.menuitems[mopt_gameplay].status = IT_STRING | IT_TRANSTEXT;
 	OPTIONS_MainDef.menuitems[mopt_server].status = IT_STRING | IT_TRANSTEXT;
 

@@ -84,6 +84,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   event, so the pad's input was ignored. Also checks a removal and a second pad
   across an overflow, and bookkeeping that posts an event of its own.
 
+- **Xbox Fullscreen row:** `video_fullscreen` and `video_fullscreen_uwp` execute
+  the production SDL device-family query, menu definition, removal helper and
+  refresh function through the opening hook in `M_InitOptions`. Only Xbox in the UWP variant removes Fullscreen; desktop,
+  mobile and unknown UWP families retain it. Check all other rows stay in order,
+  the spacer directly precedes Screen Scaling after removal, repeated refreshes
+  do nothing, and the helper handles empty, absent, first and last items.
+  SDL's device-family result is mocked; real device detection and menu drawing
+  require the UWP app on a device.
+
 - **Renderer setting at startup:** `renderer_setting`, `renderer_setting_uwp`
   and `renderer_setting_both` execute production setting callbacks and the SDL
   command-line selection block with real renderer mappings and driver lifetime

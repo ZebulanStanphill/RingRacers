@@ -67,6 +67,16 @@ def generate(engine, output):
         "DEVICE": events.function("HandleGamepadDeviceEvents"),
         "POST": events.function("D_PostEvent"),
     }, output / "event_queue.cpp")
+    video_menu = Source(engine / "src/menus/options-video-1.c")
+    render(templates / "video_fullscreen.cpp.in", {
+        "QUERY": Source(engine / "src/sdl/i_video.cpp").function("I_VideoAlwaysFullscreen"),
+        "HELPER": video_menu.function("M_RemoveVideoCvar"),
+        "REFRESH": video_menu.function("M_RefreshVideoOptions"),
+        "OPEN": function_section(Source(engine / "src/menus/options-1.c"), "M_InitOptions",
+            "\t(void)choice;", "\n\tOPTIONS_MainDef.menuitems"),
+        "MENU": video_menu.section("// options menu\nmenuitem_t OPTIONS_Video[] =", "\n};\n\nmenu_t") + "};\n"
+            + video_menu.section("menu_t OPTIONS_VideoDef = {", "\n};\n") + "};\n",
+    }, output / "video_fullscreen.cpp")
     render(templates / "renderer_setting.cpp.in", {
         "CHANGE": Source(engine / "src/screen.c").function("SCR_ChangeRenderer"),
         "VALUES": Source(engine / "src/screen.c").section("CV_PossibleValue_t cv_renderer_t[]", "// ========================================================================="),

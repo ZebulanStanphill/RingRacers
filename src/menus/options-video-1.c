@@ -10,6 +10,7 @@
 /// \brief Video Options
 
 #include "../k_menu.h"
+#include "../i_video.h"
 #include "../v_video.h" // cv_globalgamma
 #include "../r_fps.h" // fps cvars
 
@@ -71,3 +72,28 @@ menu_t OPTIONS_VideoDef = {
 	NULL,
 	NULL,
 };
+
+// Compact the live items so removing a setting leaves no empty menu row.
+static INT16 M_RemoveVideoCvar(menuitem_t *items, INT16 count, const consvar_t *cvar)
+{
+	INT16 i, j;
+
+	for (i = 0; i < count; i++)
+	{
+		if ((items[i].status & IT_TYPE) != IT_CVAR || items[i].itemaction.cvar != cvar)
+			continue;
+
+		for (j = i; j + 1 < count; j++)
+			items[j] = items[j + 1];
+		return count - 1;
+	}
+
+	return count;
+}
+
+void M_RefreshVideoOptions(void)
+{
+	if (I_VideoAlwaysFullscreen())
+		OPTIONS_VideoDef.numitems = M_RemoveVideoCvar(
+			OPTIONS_Video, OPTIONS_VideoDef.numitems, &cv_fullscreen);
+}

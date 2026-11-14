@@ -174,6 +174,11 @@ void I_BeginRead(void);
 */
 void I_EndRead(void);
 
+// Whether the system always shows the game full screen regardless of the
+// Fullscreen setting. True only on Xbox consoles; other UWP devices and all
+// other platforms return false.
+boolean I_VideoAlwaysFullscreen(void);
+
 UINT32 I_GetRefreshRate(void);
 
 void I_CaptureVideoFrame(void);

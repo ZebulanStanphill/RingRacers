@@ -38,6 +38,20 @@ extern "C" __declspec(dllimport) void  uwp_SetScreenSize(int, int);
 #ifdef HAVE_SDL
 #define _MATH_DEFINES_DEFINED
 #include "SDL.h"
+#ifdef _UWP
+#include "SDL_system.h"
+// This build does not define __WINRT__, so SDL hides these declarations.
+#ifndef __WINRT__
+typedef enum SDL_WinRT_DeviceFamily
+{
+	SDL_WINRT_DEVICEFAMILY_UNKNOWN,
+	SDL_WINRT_DEVICEFAMILY_DESKTOP,
+	SDL_WINRT_DEVICEFAMILY_MOBILE,
+	SDL_WINRT_DEVICEFAMILY_XBOX
+} SDL_WinRT_DeviceFamily;
+extern "C" __declspec(dllimport) SDL_WinRT_DeviceFamily SDLCALL SDL_WinRTGetDeviceFamily(void);
+#endif
+#endif
 
 #ifdef _MSC_VER
 #define WIN32_LEAN_AND_MEAN
@@ -1876,6 +1890,15 @@ rhi::Rhi* srb2::sys::get_rhi(rhi::Handle<rhi::Rhi> handle)
 }
 
 #endif
+
+boolean I_VideoAlwaysFullscreen(void)
+{
+#ifdef _UWP
+	return SDL_WinRTGetDeviceFamily() == SDL_WINRT_DEVICEFAMILY_XBOX;
+#else
+	return false;
+#endif
+}
 
 UINT32 I_GetRefreshRate(void)
 {

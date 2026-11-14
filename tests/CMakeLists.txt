@@ -42,6 +42,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_screens.inc"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_captures.inc"
     "${RR_SOURCE_DIR}/src/menus/options-1.c"
+    "${RR_SOURCE_DIR}/src/menus/options-video-1.c"
     "${RR_SOURCE_DIR}/src/d_main.cpp"
     "${RR_SOURCE_DIR}/src/d_frame_schedule.h"
     "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
@@ -177,6 +178,8 @@ if(RR_SANITIZERS)
 endif()
 regression(wall_light_slices wall_light _UWP HWRENDER)
 regression(translucent_wall_light translucent_wall_light _UWP HWRENDER)
+regression(video_fullscreen video_fullscreen HAVE_SDL)
+regression(video_fullscreen_uwp video_fullscreen HAVE_SDL _UWP)
 regression(first_person_angle first_person_angle)
 regression(camera_position camera_position)
 regression(first_person_title first_person_title)
