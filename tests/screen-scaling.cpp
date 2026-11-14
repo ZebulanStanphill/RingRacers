@@ -149,12 +149,125 @@ static void sweepTests()
 	assert(integerPlaced > 1000 && oneToOnePlaced > 1000 && fits > 1000);
 }
 
+// FitRect's rectangle, worked out by hand: not fit, k 0 (scaled by a factor that isn't a whole number)
+static void expectFitRect(int frameW, int frameH, int screenW, int screenH, int x, int y, int w, int h)
+{
+	const Placement p = FitRect(frameW, frameH, screenW, screenH);
+	if (p.fit || p.k != 0 || p.x != x || p.y != y || p.w != w || p.h != h)
+	{
+		std::fprintf(stderr, "%dx%d in %dx%d, FitRect: got fit %d (%d, %d) %dx%d k=%d, expected (%d, %d) %dx%d k=0\n",
+			frameW, frameH, screenW, screenH, p.fit, p.x, p.y, p.w, p.h, p.k, x, y, w, h);
+		assert(false);
+	}
+}
+
+// A size that makes no sense gives what Compute gives: the whole screen (0 where it isn't positive), for the renderer to scale
+static void expectFitRectWhole(int frameW, int frameH, int screenW, int screenH)
+{
+	const Placement p = FitRect(frameW, frameH, screenW, screenH);
+	const Placement c = Compute(frameW, frameH, screenW, screenH, kFit);
+	if (!p.fit || p.x != 0 || p.y != 0 || p.k != 0 || p.w != (screenW > 0 ? screenW : 0) || p.h != (screenH > 0 ? screenH : 0)
+		|| p.fit != c.fit || p.x != c.x || p.y != c.y || p.w != c.w || p.h != c.h || p.k != c.k)
+	{
+		std::fprintf(stderr, "%dx%d in %dx%d, FitRect: expected the whole screen, got fit %d (%d, %d) %dx%d k=%d\n",
+			frameW, frameH, screenW, screenH, p.fit, p.x, p.y, p.w, p.h, p.k);
+		assert(false);
+	}
+}
+
+static void fitRectTests()
+{
+	// A screen wider than the frame's aspect ratio: the frame fills the height, with bars at the sides
+	expectFitRect(640, 400, 1920, 1080, 96, 0, 1728, 1080);
+	expectFitRect(640, 400, 2000, 400, 680, 0, 640, 400);
+	// Taller: it fills the width, with bars above and below
+	expectFitRect(640, 400, 1000, 1000, 0, 187, 1000, 625);
+	expectFitRect(1280, 720, 1000, 1500, 0, 469, 1000, 562);
+	// Exactly the frame's aspect ratio, at the frame's size and at other sizes: no bars
+	expectFitRect(640, 400, 640, 400, 0, 0, 640, 400);
+	expectFitRect(640, 400, 1280, 800, 0, 0, 1280, 800);
+	expectFitRect(1280, 720, 1920, 1080, 0, 0, 1920, 1080);
+	expectFitRect(320, 200, 160, 100, 0, 0, 160, 100);
+	// The frame isn't the one 16:9 case: 4:3 in 16:9
+	expectFitRect(640, 480, 1920, 1080, 240, 0, 1440, 1080);
+	// A frame larger than the screen is scaled down
+	expectFitRect(1920, 1080, 640, 400, 0, 20, 640, 360);
+	// Odd remainders: the extra pixel is on the right and the bottom
+	expectFitRect(320, 200, 1000, 601, 19, 0, 961, 601);
+	expectFitRect(640, 400, 1001, 700, 0, 37, 1001, 625);
+	expectFitRect(100, 100, 201, 101, 50, 0, 101, 101);
+	// The size along the other side is rounded down: 854x480 in 1366x768 is 767.77 high
+	expectFitRect(854, 480, 1366, 768, 0, 0, 1366, 767);
+	// A side is never less than 1
+	expectFitRect(1000, 1, 10, 10, 0, 4, 10, 1);
+	expectFitRect(1, 1000, 10, 10, 4, 0, 1, 10);
+	expectFitRect(1, 1, 1, 1, 0, 0, 1, 1);
+	// A size that makes no sense is the whole screen, like Compute's Fit
+	expectFitRectWhole(0, 400, 1920, 1080);
+	expectFitRectWhole(640, 0, 1920, 1080);
+	expectFitRectWhole(-640, 400, 1920, 1080);
+	expectFitRectWhole(640, 400, 0, 1080);
+	expectFitRectWhole(640, 400, 1920, -5);
+	expectFitRectWhole(640, 400, 0, 0);
+	expectFitRectWhole(0, 0, 0, 0);
+	expectFitRectWhole(-1, -1, 640, 400);
+}
+
+// The results hold for any sizes: the rectangle is inside the screen, spans it along one side and has the frame's aspect
+// ratio along the other, rounded down; the remainder is split with the extra pixel at the right and bottom.
+static void fitRectSweepTests()
+{
+	const int frames[][2] = {{1, 1}, {2, 3}, {3, 2}, {64, 64}, {320, 200}, {320, 224}, {640, 400}, {854, 480}, {1280, 720}, {1920, 1080}};
+	int wider = 0, taller = 0, exact = 0;
+	for (const auto &frame : frames)
+	{
+		for (int screenW = 1; screenW <= 2200; screenW += (screenW < 70 ? 1 : 37))
+		{
+			for (int screenH = 1; screenH <= 1300; screenH += (screenH < 70 ? 1 : 41))
+			{
+				const Placement p = FitRect(frame[0], frame[1], screenW, screenH);
+				assert(!p.fit && p.k == 0);
+				assert(p.w >= 1 && p.h >= 1 && p.w <= screenW && p.h <= screenH);
+				assert(p.w == screenW || p.h == screenH);
+				assert(p.x == (screenW - p.w) / 2 && p.y == (screenH - p.h) / 2);
+				const int right = screenW - p.w - p.x, bottom = screenH - p.h - p.y;
+				assert(right == p.x || right == p.x + 1);
+				assert(bottom == p.y || bottom == p.y + 1);
+				// The aspect ratio, to within what whole pixels allow: the side that isn't the screen's is the frame's
+				// proportion of the one that is, rounded down, unless that is below 1
+				const long long fw = frame[0], fh = frame[1];
+				if (p.h == screenH && p.w != screenW)
+				{
+					assert(p.w == 1 || ((long long)p.w * fh <= (long long)p.h * fw && (long long)(p.w + 1) * fh > (long long)p.h * fw));
+					wider++;
+				}
+				else if (p.w == screenW && p.h != screenH)
+				{
+					assert(p.h == 1 || ((long long)p.h * fw <= (long long)p.w * fh && (long long)(p.h + 1) * fw > (long long)p.w * fh));
+					taller++;
+				}
+				else
+				{
+					// Fills both sides: the screen has the frame's aspect ratio, or one side is so thin it was held at 1
+					assert(p.x == 0 && p.y == 0);
+					exact++;
+				}
+			}
+		}
+	}
+	assert(wider > 1000 && taller > 1000 && exact > 10);
+}
+
 int main()
 {
 	// The calculation is usable at compile time
 	constexpr Placement compileTime = Compute(640, 400, 1920, 1080, kInteger);
 	static_assert(!compileTime.fit && compileTime.k == 2 && compileTime.x == 320 && compileTime.y == 140, "Compute");
+	constexpr Placement compileTimeFit = FitRect(640, 400, 1920, 1080);
+	static_assert(!compileTimeFit.fit && compileTimeFit.k == 0 && compileTimeFit.x == 96 && compileTimeFit.w == 1728, "FitRect");
 	fitTests();
+	fitRectTests();
+	fitRectSweepTests();
 	integerTests();
 	oneToOneTests();
 	sweepTests();

@@ -39,6 +39,10 @@ void D3D12_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 height,
 // false, reading nothing, for Fit or a frame the mode doesn't fit, which the system scales instead.
 boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width,
 	INT32 height, INT32 dst_stride, UINT16 *dst_data);
+// The same for Fit as a desktop swap chain shows it: the frame in screen_scaling::FitRect's rectangle of the target, scaled
+// with linear filtering. Returns false, reading nothing, for a size that is not positive.
+boolean D3D12_ReadFitRectForTest(INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width, INT32 height,
+	INT32 dst_stride, UINT16 *dst_data);
 
 void *D3D12_GetDriverFunction(const char *name);
 boolean D3D12_Surface(INT32 w, INT32 h);
