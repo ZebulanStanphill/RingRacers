@@ -66,6 +66,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_picformats.c"
     "${RR_SOURCE_DIR}/src/p_mobj.c"
     "${RR_SOURCE_DIR}/src/p_user.c"
+    "${RR_SOURCE_DIR}/src/p_tick.c"
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/shaders.hlsl")
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate.py"

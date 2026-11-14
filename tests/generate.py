@@ -403,9 +403,8 @@ def generate(engine, output):
     }, output / "translucent_wall_light.cpp")
     user = Source(engine / "src/p_user.c")
     render(templates / "first_person_angle.cpp.in", {
-        "HELPER": user.function("P_FirstPersonFollowsKart"),
-        "CALL": function_section(user, "P_MoveChaseCamera",
-            "\tif (P_FirstPersonFollowsKart(player, thiscam))", "\n\tif (!thiscam->chase && !resetcalled)"),
+        "HELPER": user.function("P_FirstPersonFollowKart"),
+        "TICK": Source(engine / "src/p_tick.c").function("P_RunChaseCameras"),
     }, output / "first_person_angle.cpp")
     main = Source(engine / "src/r_main.cpp")
     render(templates / "first_person_title.cpp.in", {

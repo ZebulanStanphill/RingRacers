@@ -241,13 +241,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   dispatch, texture IDs, colormaps and alpha. These tests verify submitted
   geometry, not Xbox visuals or performance.
 - **First-person view after the finish:** `first_person_angle` runs the extracted
-  `P_FirstPersonFollowsKart` and the part of `P_MoveChaseCamera` from its call to
-  first person's early return. The local angle must take the kart's angle when the
-  game steers a human's kart in first person (finished, or Lua's bot movement,
-  where the function returns straight after), and must be left alone while the
-  player drives, with the chase camera (which keeps its own copy and must not run
-  Lua's hook a second time), in replays and for real bots. It doesn't run a race
-  or check the picture. Run with `ctest -R '^first_person_angle$'`.
+  `P_FirstPersonFollowKart` and full `P_RunChaseCameras` loop. First-person
+  views must follow a game-steered human kart every tic (finish or Lua), while
+  driving, replay, bot and missing-object views stay unchanged. Chase views run
+  their existing path without calling Lua twice. Split views use their displayed
+  players independently, including on a second tic. This checks local view state,
+  not a rendered race. Run with `ctest -R '^first_person_angle$'`.
 - **First person on the title screen:** `first_person_title` runs the extracted
   `R_ViewNeedsCamera` and the part of `R_SetupFrame` that settles on the camera
   or the player's eyes. With 1st Person set, the title screen (arriving from a
