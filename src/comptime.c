@@ -24,13 +24,16 @@ const char *comprevision = SRB2_COMP_REVISION;
 const char *compnote = SRB2_COMP_NOTE;
 const char *comptype = CMAKE_BUILD_TYPE;
 const int compoptimized = SRB2_COMP_OPTIMIZED;
+const int compforkrelease = SRB2_COMP_FORK_RELEASE;
 
 #elif (defined(COMPVERSION))
 #include "comptime.h"
+const int compforkrelease = 0;
 
 #else
 const char *compbranch = "Unknown";
 const char *comprevision = "illegal";
+const int compforkrelease = 0;
 
 #endif
 

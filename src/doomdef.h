@@ -669,7 +669,8 @@ extern const char
 	*comptype;
 extern int
 	compuncommitted,
-	compoptimized;
+	compoptimized,
+	compforkrelease; // fork_version.h
 
 // Disabled code and code under testing
 // None of these that are disabled in the normal build are guaranteed to work perfectly

@@ -2,6 +2,8 @@ include(CheckCXXCompilerFlag)
 
 set(SRB2_MAIN_SOURCES
 	comptime.c
+	fork_version.c
+	fork_version.h
 	cxxutil.hpp
 	md5.c
 	config.h.in

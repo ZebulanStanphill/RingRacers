@@ -14,6 +14,7 @@
 ///	       like console commands, other miscellaneous commands (at the end)
 
 #include "doomdef.h"
+#include "fork_version.h"
 
 #include "console.h"
 #include "command.h"
@@ -5140,7 +5141,7 @@ static void Command_Version_f(void)
 #ifdef DEVELOP
 	CONS_Printf("Ring Racers %s %s %s (%s %s)\n", D_GetFancyBranchName(), comprevision, compnote, compdate, comptime);
 #else
-	CONS_Printf("Ring Racers %s (%s %s %s %s) ", VERSIONSTRING, compdate, comptime, comprevision, D_GetFancyBranchName());
+	CONS_Printf("Ring Racers %s (%s %s %s %s) ", ForkVersion_String(), compdate, comptime, comprevision, D_GetFancyBranchName());
 #endif
 
 	// Base library

@@ -281,6 +281,30 @@ add_test(NAME name_index COMMAND name_index)
 set_tests_properties(name_index PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
+# The fork's version text is a header of its own, with no dependencies beyond the C library.
+add_executable(fork_version fork-version.cpp)
+target_compile_features(fork_version PRIVATE cxx_std_17)
+target_include_directories(fork_version PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(fork_version PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(fork_version PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(fork_version PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME fork_version COMMAND fork_version)
+set_tests_properties(fork_version PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
+# Whether a build is a release of the fork, decided by cmake/Modules/ForkVersion.cmake in temporary git repositories.
+find_package(Git)
+if(GIT_FOUND)
+    add_test(NAME fork_version_release COMMAND "${CMAKE_COMMAND}"
+        -DGIT_EXECUTABLE=${GIT_EXECUTABLE} -DRR_SOURCE_DIR=${RR_SOURCE_DIR}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/fork-version-release
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/fork-version-release.cmake")
+    set_tests_properties(fork_version_release PROPERTIES TIMEOUT 120)
+endif()
+
 regression(frame_schedule frame_schedule _UWP)
 
 regression(horizon_cache horizon_cache _UWP HWRENDER)

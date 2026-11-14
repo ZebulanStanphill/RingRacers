@@ -39,6 +39,7 @@
 #endif
 
 #include "doomdef.h"
+#include "fork_version.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #include "i_uwpdata.h"
@@ -1938,6 +1939,7 @@ void D_SRB2Main(void)
 	"Dr. Robotnik and related characters are trademarks of SEGA.\n"
 	"We do not claim ownership of SEGA's intellectual property used\n"
 	"in this program.\n\n");
+	CONS_Printf("Ring Racers %s\n", ForkVersion_String());
 
 	// keep error messages until the final flush(stderr)
 #if !defined(NOTERMIOS)

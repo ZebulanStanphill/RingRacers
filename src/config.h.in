@@ -23,6 +23,7 @@
 
 #define CMAKE_BUILD_TYPE         "${CMAKE_BUILD_TYPE}"
 #cmakedefine01 SRB2_COMP_OPTIMIZED
+#cmakedefine01 SRB2_COMP_FORK_RELEASE
 
 #endif
 

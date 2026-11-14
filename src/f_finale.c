@@ -13,6 +13,7 @@
 /// \brief Title screen, intro, game evaluation, and credits.
 
 #include "doomdef.h"
+#include "fork_version.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #endif
@@ -1912,7 +1913,7 @@ void F_VersionDrawer(void)
 		}
 
 #else // Regular build
-		addtext(trans, va("%s", VERSIONSTRING));
+		addtext(trans, va("%s", ForkVersion_String()));
 #endif
 
 		if (compuncommitted)
