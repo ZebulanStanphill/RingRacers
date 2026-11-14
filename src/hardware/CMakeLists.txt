@@ -16,8 +16,8 @@ target_sources(SRB2SDL2 PRIVATE
 )
 
 if(SRB2_CONFIG_D3D12)
-	# VibeRant D3D: Legacy GL's Direct3D 12 driver (Windows only: UWP, and desktop if SRB2_CONFIG_D3D12 is turned on), whose
-	# shaders fxc compiles to headers
+	# VibeRant D3D: Legacy GL's Direct3D 12 driver (Windows only; beside OpenGL in desktop builds), whose shaders fxc
+	# compiles to headers
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_D3D12)
 	find_program(SRB2_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
 	if(NOT SRB2_FXC)

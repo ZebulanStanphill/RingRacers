@@ -35,9 +35,9 @@ built with `HAVE_D3D12` only, links the engine's own `hw_driver.c` (through
 executable, expecting the `_uwp` results and then the `_desktop` ones.
 
 The native tests have no desktop variant of the Direct3D 12 driver: engine CMake
-enables it by default only with `SRB2_CONFIG_UWP`, which defines `_UWP`, and a Windows
-desktop build opts in with `-DSRB2_CONFIG_D3D12=ON` (the `windows` job does, and builds
-the desktop presenter). All built-in shader compilation commands define `_UWP` and
+enables it by default with `SRB2_CONFIG_UWP`, which defines `_UWP`, and in Windows
+desktop builds made with MSVC or clang-cl (the `windows` job's, which builds the desktop
+presenter). All built-in shader compilation commands define `_UWP` and
 `RR_D3D12`, in desktop builds too; the HLSL therefore keeps only those active branches.
 The Windows WARP harness uses the same definitions, except that its second
 executable, which runs the desktop presenter, is compiled without `_UWP` (below).
@@ -876,8 +876,8 @@ detailed run log are uploaded as `regression-results`, including when a test fai
 The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
 that `compile_commands.json` has no `HAVE_D3D12`, so those builds cannot gain the
 Direct3D 12 driver. The `windows` job builds the ordinary (not UWP) Windows desktop game
-with the driver included (`-DSRB2_CONFIG_D3D12=ON`, which replaces the OpenGL driver in
-that build): it checks that `compile_commands.json` has `HAVE_D3D12` and compiles
+in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_D3D12` is on by
+default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_D3D12` and compiles
 `d3d12_present_win32.cpp`, the desktop presenter, and not `d3d12_present.cpp`, UWP's. It builds with
 the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
 from Visual Studio and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
@@ -886,7 +886,7 @@ the overlay ports. `fxc`, which compiles the driver's shaders, comes from the de
 (it is on `PATH` and in `WindowsSdkVerBinPath`, which CMake searches), whose environment
 the job exports to its later steps; the job's first step fails if `fxc` isn't found.
 It uploads the executable and the DLLs the build copies next to it as
-`windows-desktop-d3d12`, a game build without assets for testing. The build is only
+`windows-desktop`, a game build without assets for testing, which offers Software, VibeRant D3D and Legacy GL. The build is only
 compiled and linked: nothing runs the game, so what it draws on a display is untested.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its

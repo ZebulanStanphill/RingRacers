@@ -92,11 +92,16 @@ option(SRB2_CONFIG_PROFILEMODE "Compile for profiling (GCC only)." OFF)
 option(SRB2_CONFIG_TRACY "Compile with Tracy profiling enabled" OFF)
 option(SRB2_CONFIG_ASAN "Compile with AddressSanitizer (libasan)." OFF)
 option(SRB2_CONFIG_UWP "Compile in UWP compatibility mode (static lib for external launch)." OFF)
-# VibeRant D3D, Legacy GL's Direct3D 12 driver (src/hardware/r_d3d12). It replaces the OpenGL driver at compile time, and
-# presents with a swap chain of its own: on a CoreWindow taken from ANGLE in UWP builds, and on a child window of the SDL
-# window in other Windows builds. On by default for UWP only; Windows desktop builds opt in until the driver is a run-time
-# choice beside OpenGL.
-cmake_dependent_option(SRB2_CONFIG_D3D12 "Draw Legacy GL with Direct3D 12 (VibeRant D3D) instead of OpenGL. Windows only; on by default for UWP." "${SRB2_CONFIG_UWP}"
+# VibeRant D3D, the hardware renderer's Direct3D 12 driver (src/hardware/r_d3d12). It presents with a swap chain of its
+# own: on a CoreWindow taken from ANGLE in UWP builds, and on a child window of the SDL window in other Windows builds.
+# A UWP build has it as its only hardware driver; a desktop build has it beside OpenGL, and the Renderer setting picks
+# one. On by default where its shaders can be compiled: fxc comes with the Windows SDK, which MSVC and clang-cl builds
+# have and MinGW builds don't.
+set(SRB2_CONFIG_D3D12_DEFAULT OFF)
+if(SRB2_CONFIG_UWP OR MSVC)
+	set(SRB2_CONFIG_D3D12_DEFAULT ON)
+endif()
+cmake_dependent_option(SRB2_CONFIG_D3D12 "Build the Direct3D 12 hardware driver (VibeRant D3D). Windows only; needs fxc from the Windows SDK." "${SRB2_CONFIG_D3D12_DEFAULT}"
 	"WIN32;SRB2_CONFIG_HWRENDER" OFF)
 set(SRB2_CONFIG_ASSET_DIRECTORY "" CACHE PATH "Path to directory that contains all asset files for the installer. If set, assets will be part of installation and cpack.")
 

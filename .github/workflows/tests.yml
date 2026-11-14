@@ -221,7 +221,7 @@ jobs:
   windows:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: Windows desktop build (with Direct3D 12)
+    name: Windows desktop build (OpenGL and Direct3D 12)
     runs-on: windows-2022
     # A cold vcpkg cache builds SDL2, libvpx, curl and the rest of vcpkg.json's dependencies from source.
     timeout-minutes: 60
@@ -279,15 +279,14 @@ jobs:
             vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-
             vcpkg-${{ runner.os }}-
 
-      # The Direct3D 12 driver is off by default on the desktop (SRB2_CONFIG_D3D12) until it is a run-time choice, so this
-      # job turns it on: it replaces the OpenGL driver at compile time, and presents on a child window of the SDL window.
+      # MSVC-compatible desktop builds have the Direct3D 12 driver by default (SRB2_CONFIG_D3D12), beside OpenGL: the
+      # Renderer setting picks one, and it presents on a child window of the SDL window.
       - name: Configure
         shell: pwsh
         run: >-
           cmake --preset ninja-x64_windows_vcpkg-release
           -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
           -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
-          -DSRB2_CONFIG_D3D12=ON
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       # Its presenter is the desktop one, not UWP's
@@ -296,7 +295,7 @@ jobs:
         run: |
           $commands = "build/ninja-x64_windows_vcpkg-release/compile_commands.json"
           if (-not (Select-String -Path $commands -Pattern HAVE_D3D12 -Quiet -ErrorAction Stop)) {
-            Write-Error "A Windows desktop build with SRB2_CONFIG_D3D12 must define HAVE_D3D12"; exit 1
+            Write-Error "A Windows desktop build made with clang-cl must define HAVE_D3D12 by default"; exit 1
           }
           if (-not (Select-String -Path $commands -Pattern 'd3d12_present_win32\.cpp' -Quiet -ErrorAction Stop)) {
             Write-Error "The desktop build must compile d3d12_present_win32.cpp"; exit 1
@@ -310,11 +309,11 @@ jobs:
         run: cmake --build --preset ninja-x64_windows_vcpkg-release --parallel 4
 
       # The executable is named after the git branch unless it is master (CMakeLists.txt); the build copies the DLLs it
-      # needs next to it. The driver replaces OpenGL in this build: Legacy GL draws with Direct3D 12.
+      # needs next to it. It offers Software, VibeRant D3D and Legacy GL.
       - name: Upload Windows desktop build
         uses: actions/upload-artifact@v7
         with:
-          name: windows-desktop-d3d12
+          name: windows-desktop
           path: |
             build/ninja-x64_windows_vcpkg-release/bin/*.exe
             build/ninja-x64_windows_vcpkg-release/bin/*.dll
