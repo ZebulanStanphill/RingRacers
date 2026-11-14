@@ -1,6 +1,7 @@
 #include <cassert>
 #include <vector>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "r_defs.h"
 
 struct extrasubsector_t {};
@@ -63,4 +64,14 @@ int main()
     check(1, 1, 8*unit, true, false);
     check(1, 1, unit, false, false, 6);
     check(1, 1, unit, true, true, 8);
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    // With OpenGL as the driver nothing claims the sky, wherever the camera is
+    hwr_d3d12 = false;
+    for (fixed_t camera : {-unit, 0, unit, 7*unit, 8*unit, 9*unit})
+        for (int floorpic : {0, 1})
+            for (int ceilingpic : {0, 1})
+                check(floorpic, ceilingpic, camera, false, false);
+    hwr_d3d12 = true;
+    check(1, 1, unit, true, true);
+#endif
 }

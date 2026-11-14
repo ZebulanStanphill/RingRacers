@@ -44,6 +44,7 @@
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h"
+#include "hardware/hw_driver.h"
 #endif
 
 // SRB2Kart
@@ -1619,8 +1620,10 @@ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
 	if (rendermode == render_opengl)
 	{
 #ifdef HAVE_D3D12
-		HWR_DrawCustomFadeMap(lump, strength);
-#else
+		if (HWR_D3D12())
+			HWR_DrawCustomFadeMap(lump, strength);
+		else
+#endif
 		HWR_DrawCustomFadeScreen(
 			(strcmp(lump, "FADEMAP1") != 0
 				? 31
@@ -1628,7 +1631,6 @@ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
 			),
 			strength
 		);
-#endif
 		return;
 	}
 #endif

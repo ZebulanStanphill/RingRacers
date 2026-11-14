@@ -29,6 +29,7 @@
 #include "r_fps.h"
 #include "screen.h"
 #ifdef HAVE_D3D12
+#include "hardware/hw_driver.h"
 #include "hardware/r_d3d12/r_d3d12.h"
 #endif
 #endif
@@ -892,7 +893,7 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 	}
 
 #ifdef HAVE_D3D12
-	if (rendermode == render_opengl)
+	if (HWR_D3D12() && rendermode == render_opengl)
 		D3D12_LogPerf(seconds);
 #endif
 

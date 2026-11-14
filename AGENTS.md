@@ -23,9 +23,18 @@ replay:
 - Prefer new files and small, contained hooks over edits spread through upstream
   code. Don't reformat, rename or reorder upstream code you aren't changing.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
-  UWP build, and `HAVE_D3D12` for code that calls the Direct3D 12 driver
-  (`src/hardware/r_d3d12`) or that the driver's output depends on, which only UWP
-  builds can have for now (`SRB2_CONFIG_D3D12`). Code under `HAVE_D3D12` must
+  UWP build, and `HAVE_D3D12` for builds that contain the Direct3D 12 driver
+  (`src/hardware/r_d3d12`, `SRB2_CONFIG_D3D12`), which only UWP builds can have for
+  now. A UWP build has it as its only hardware driver; a build with `HAVE_D3D12`
+  but not `_UWP` has both it and OpenGL, and the video code picks one per run
+  of the game. Behaviour that depends on the driver (what the hardware renderer
+  draws or how it walks the level, calls into the driver) therefore checks
+  `HWR_D3D12()` (`src/hardware/hw_driver.h`) at run time: it is the constant 1 with
+  `_UWP`, the constant 0 without `HAVE_D3D12`, and `hwr_d3d12` between them.
+  `#ifdef HAVE_D3D12` is only for what has to be compiled out without the driver:
+  includes, types, struct fields, enum values, prototypes, function definitions, a
+  call of a Direct3D 12 function (with the `HWR_D3D12()` check around it), and
+  bookkeeping that doesn't depend on the driver. Code under `HAVE_D3D12` must
   compile without `_UWP` (Xbox-only things inside it get their own `_UWP`
   guard). Linux, macOS and other Windows builds must build without either.
 - A fix to a change that has its own commit can be made with

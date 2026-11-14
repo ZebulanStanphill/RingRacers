@@ -6,6 +6,7 @@
 #include <cstring>
 #include <vector>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "r_defs.h"
 #include "p_local.h"
 #include "p_slopes.h"

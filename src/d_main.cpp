@@ -111,6 +111,7 @@
 
 #ifdef HWRENDER
 #include "hardware/hw_main.h" // 3D View Rendering
+#include "hardware/hw_driver.h"
 #ifdef HAVE_D3D12
 #include "hardware/hw_glob.h"
 #include "hardware/r_d3d12/r_d3d12.h"
@@ -593,7 +594,7 @@ static void UWPTraceFinishFrame(bool wipe, bool presented)
 		INT32 copied = -1, shown = -1;
 		UINT32 copyframe = 0, showframe = 0;
 #ifdef HAVE_D3D12
-		if (presented && rendermode == render_opengl)
+		if (HWR_D3D12() && presented && rendermode == render_opengl)
 			D3D12_GetPresentTrace(&copied, &shown, &copyframe, &showframe);
 #endif
 		char line[640];
@@ -690,7 +691,7 @@ static bool D_Display(bool world)
 
 #ifdef HAVE_D3D12
 	// Before any frame drawing or wipe capture: no in-flight batches hold GLMipmap pointers here.
-	if (rendermode == render_opengl && D3D12_TakeTextureFlushRequest())
+	if (HWR_D3D12() && rendermode == render_opengl && D3D12_TakeTextureFlushRequest())
 		HWR_ClearAllTextures();
 #endif
 

@@ -18,6 +18,7 @@
 #include "hw_glob.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
+#include "hw_driver.h"
 #ifdef HAVE_D3D12
 #include "r_d3d12/r_d3d12.h"
 #endif
@@ -1020,7 +1021,8 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 		HWD.pfnSetTexture(&grtex->mipmap);
 	HWR_SetCurrentTexture(&grtex->mipmap);
 #ifdef HAVE_D3D12
-	D3D12_SurfaceProbeTexture(textures[tex]->name);
+	if (HWR_D3D12())
+		D3D12_SurfaceProbeTexture(textures[tex]->name);
 #endif
 
 	// The system-memory data can be purged now.
@@ -1288,8 +1290,9 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 	else // set no texture
 		HWR_SetCurrentTexture(NULL);
 #ifdef HAVE_D3D12
-	D3D12_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
-		? textures[levelflat->u.texture.num]->name : levelflat->name);
+	if (HWR_D3D12())
+		D3D12_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
+			? textures[levelflat->u.texture.num]->name : levelflat->name);
 #endif
 }
 

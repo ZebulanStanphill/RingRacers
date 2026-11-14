@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include "hardware/hw_glob.h"
+#include "hardware/hw_driver.h"
 #include "r_state.h"
 #include "m_bbox.h"
 #undef HWR_LOADING_SCREEN

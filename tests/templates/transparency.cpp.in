@@ -9,6 +9,7 @@
 #include <set>
 #include <vector>
 #include "doomstat.h"
+#include "hardware/hw_driver.h"
 #include "p_local.h"
 #include "p_polyobj.h"
 #include "p_slopes.h"
@@ -225,7 +226,17 @@ static hwr_transbounds_t bounds(const std::vector<FOutVector> &v) {
     for (auto &point : v) HWR_TransparencyBoundsVertex(&result, &point);
     HWR_TransparencyBoundsFinish(&result); return result;
 }
-int main() {
+// The drivers a build can draw with: only Direct3D 12 for UWP (transparency_uwp), only OpenGL without the Direct3D 12
+// driver (transparency_desktop), and both, one after the other through hwr_d3d12, with the driver but not _UWP
+// (transparency_both).
+#if defined(HAVE_D3D12) && !defined(_UWP)
+static const std::initializer_list<bool> kDrivers = {true, false};
+#elif defined(HAVE_D3D12)
+static const std::initializer_list<bool> kDrivers = {true};
+#else
+static const std::initializer_list<bool> kDrivers = {false};
+#endif
+static void Run(bool d3d12) {
     HWD.pfnSetSpecialState = State; HWD.pfnSetBlend = Blend;
     HWD.pfnSetTransform = Transform; HWD.pfnSetShader = Shader;
     unsigned cases = 0;
@@ -440,13 +451,11 @@ int main() {
         if(enabled && object) order({-255,0,-255});
         else if(object) order({0,-255,-255});
         else order({-255,-255});
-#ifdef _UWP
-        if(enabled && object) assert((waterStates==std::vector<int>{1,0,1,0}));
-        else assert((waterStates==std::vector<int>{1,2,0}));
-        assert(waterState==0);
-#else
-        assert(waterStates.empty());
-#endif
+        if(d3d12) {
+            if(enabled && object) assert((waterStates==std::vector<int>{1,0,1,0}));
+            else assert((waterStates==std::vector<int>{1,2,0}));
+            assert(waterState==0);
+        } else assert(waterStates.empty());
         ++cases;
     }
     // Renderer-test fog_1: red's control line creates its rover before blue's.
@@ -506,4 +515,13 @@ int main() {
         assert(fogFaces==expectedFaces); ++fogCases;
     }
     printf("%u shared draw-order, compositing, model, attachment and bounds cases passed; %u coincident fog order cases passed\n", cases, fogCases);
+}
+int main() {
+    for (bool d3d12 : kDrivers) {
+#if defined(HAVE_D3D12) && !defined(_UWP)
+        hwr_d3d12 = d3d12;
+#endif
+        assert(HWR_D3D12() == d3d12);
+        Run(d3d12);
+    }
 }

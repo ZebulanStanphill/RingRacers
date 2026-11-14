@@ -25,6 +25,15 @@ builds have the Direct3D 12 driver by default; engine code under `HAVE_D3D12`
 does not assume `_UWP` (see "Direct3D 12 without `_UWP`" under Coverage). The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
+Which hardware driver draws is decided at run time by `HWR_D3D12()`
+(`src/hardware/hw_driver.h`): the constant 1 with `_UWP`, the constant 0 without
+`HAVE_D3D12`, and the setting `hwr_d3d12` with `HAVE_D3D12` but not `_UWP`, a build
+that has both drivers. The `_uwp` and `_desktop` variants therefore run the
+Direct3D 12 and the OpenGL behaviour respectively. A variant named `_both` is
+built with `HAVE_D3D12` only, links the engine's own `hw_driver.c` (through
+`tests/hw-driver.cpp`) and sets `hwr_d3d12` to true and then false in one
+executable, expecting the `_uwp` results and then the `_desktop` ones.
+
 The Direct3D 12 driver has no desktop variant: engine CMake enables it only
 with `SRB2_CONFIG_UWP`, which defines `_UWP`. All built-in shader compilation
 commands define `_UWP` and `RR_D3D12`; the driver and HLSL therefore keep only
@@ -33,6 +42,8 @@ those active branches. The Windows WARP harness uses the same definitions.
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
 builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop`, `front_bbox_desktop` and `semibright_light_desktop`.
+The code that now picks a driver at run time also has `_both` variants: `transparency_both`, `front_bbox_both`,
+`semibright_light_both`, `sky_claim_both` and `horizon_cache_both`.
 Where the preprocessed code is identical, a second executable would only repeat
 the first, so the test runs the cases for each runtime setting (for example both
 renderers) in one executable.
@@ -388,6 +399,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `R_ThingIsSemiBright` and the end of `HWR_ObjectLightLevelPost`. With the Direct3D 12 driver and shaders the
   level is left alone and only the bit is added (level 0 to 255 kept); without shaders, and in the
   desktop build, the old `192 + level / 2` applies and the bit is never set; other things get neither.
+  `semibright_light_both` runs both cases in one executable, switching `hwr_d3d12`.
   Where the calls are made is checked as text, because the sprite and model draw functions need a map
   and a renderer to run: `HWR_SplitSprite` (both pieces), `HWR_DrawSprite` and `HWR_DrawModel` call it right after each
   `HWR_Lighting`, and `HWR_DrawPrecipitationSprite` and `HWR_DrawDropShadow` do not. WARP's
@@ -584,7 +596,8 @@ untouched padding.
   command of every `src/hardware/*.c` file with `-DHAVE_D3D12 -fsyntax-only` added and fails if any
   reports an error. It guards that the engine code under `HAVE_D3D12` (portals, wall light slices,
   post-processing, palette rendering) does not depend on `_UWP`, so the driver can be built into
-  Windows desktop builds; Xbox-only code inside it has its own `_UWP` guard. The `linux` job runs it.
+  Windows desktop builds; Xbox-only code inside it has its own `_UWP` guard. That code is only
+  compiled in by `#ifdef HAVE_D3D12`; whether it runs is decided by `HWR_D3D12()`. The `linux` job runs it.
   The driver itself and the Windows desktop build are not checked here.
 
 Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
@@ -851,6 +864,8 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   and at equality, non-sky flats, both planes together and the validcount guard.
   Cull heights represent the plane at the camera's x,y, independently of the
   submitted local heights (including slopes). The old unconditional claims fail.
+  `sky_claim_both` also checks that with OpenGL as the driver nothing is claimed,
+  for every combination of flats and camera heights.
   Software creates sky visplanes from either side, but from the far side only
   fills beyond marking seg edges; hardware's sky walls reproduce that area.
   Claiming the plane itself hid the lower skybox buildings on prison map 157
@@ -908,7 +923,9 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 - **Horizon scan cache:** `horizon_cache` executes the production D3D12 cache
   and both plane/sky admission gates. Cover minisegs, null linedefs, ordinary and
   horizon lines, cache reuse, runtime changes, zone teardown and replacement
-  levels. See [the invalidation notes](../docs/uwp-horizon-cache.md). These checks use
+  levels. `horizon_cache_both` also checks that with OpenGL as the driver every
+  subsector's lines are scanned, as upstream does, and the cache is never built.
+  See [the invalidation notes](../docs/uwp-horizon-cache.md). These checks use
   ASan/UBSan and verify scan admission rather than GPU pixels or Xbox timings.
 
 - **UWP PGO capture lifecycle:** not part of ctest; run `python3 tests/check-pgo.py`
@@ -923,7 +940,8 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 - **Hidden front BSP children:** `front_bbox_uwp` and `front_bbox_desktop` execute
   production `HWR_RenderBSPNode` on a two-level tree. Check hidden front-subtree
   rejection, visible back siblings, front-to-back order, portal rejection and each
-  visited leaf's own `hwbbox`. Desktop retains unconditional front traversal. The
+  visited leaf's own `hwbbox`. Desktop retains unconditional front traversal.
+  `front_bbox_both` walks the tree with each driver in turn. The
   pre-fix UWP walk fails the hidden-subtree case. These checks cover traversal,
   not rendered pixels or Xbox output.
 

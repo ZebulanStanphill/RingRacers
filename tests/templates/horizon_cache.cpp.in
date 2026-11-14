@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cstdlib>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "r_defs.h"
 #include "hardware/hw_horizon.h"
 subsector_t *subsectors;
@@ -56,4 +57,13 @@ int main() {
     Z_Free(hwr_horizonflags); numsubsectors=1;
     Plane(&subs[0]); assert(scans==6 && allocations==7);
     Z_Free(hwr_horizonflags);
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    // With OpenGL as the driver every subsector's lines are scanned, as upstream does, and the cache is never built
+    hwr_d3d12 = false;
+    const int scansBefore = scans, allocationsBefore = allocations;
+    numsubsectors = 3;
+    Plane(&subs[0]); Plane(&subs[1]); Plane(&subs[2]);
+    assert(scans == scansBefore + 3 && allocations == allocationsBefore);
+    hwr_d3d12 = true;
+#endif
 }

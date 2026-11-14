@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 #include "r_patchrotation.h"
+#include "hardware/hw_driver.h"
 #include "byteptr.h"
 #include "m_swap.h"
 #include "r_things.h"

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "doomstat.h"
 #include "f_finale.h"
 #include "g_game.h"

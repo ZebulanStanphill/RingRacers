@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "doomstat.h"
 #include "i_video.h"
 #include "v_video.h"

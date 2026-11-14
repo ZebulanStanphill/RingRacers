@@ -355,7 +355,7 @@ def generate(engine, output):
             "SPECIFIC_TEST": specific,
             "WATER_GROUPING": (templates / "water_grouping.cpp.in").read_text() if kind == "Water" else "",
             "CONTINUES": hardware.function("HWR_WaterPlaneContinues") if kind == "Water" else "",
-            "DISPATCH": hardware.section("\t\tconst planeinfo_t *plane = sortnode[sortindex[i]].plane;", "\n#endif") if kind == "Water" else "",
+            "DISPATCH": hardware.section("\t\t\tconst planeinfo_t *plane = sortnode[sortindex[i]].plane;", "\n\t\t}\n#endif") if kind == "Water" else "",
             "SINE_FAILURE": "failSine=true;assert(!Capture(&surface,PF_Translucent,poly,4));failSine=false;" if kind == "Water" else "",
         }, output / (kind.lower() + "_capture_d3d12.cpp"))
         generated = output / (kind.lower() + "_capture_d3d12.cpp")
@@ -522,7 +522,7 @@ def generate(engine, output):
         "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
             "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
         "BATCH_ROLL": function_section(batching, "HWR_RenderBatches",
-            "#ifdef HAVE_D3D12\n\t\t\tif (((currentPolyFlags", "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
+            "#ifdef HAVE_D3D12\n\t\t\tif (HWR_D3D12() && (((currentPolyFlags", "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
         "BATCH_CHANGE": function_section(batching, "HWR_RenderBatches",
             "\t\t\tif (currentTexture != nextTexture || currentBrightmap != nextBrightmap)",
             "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
@@ -722,7 +722,7 @@ def generate(engine, output):
     }, output / "midtexture_sky.cpp")
     render(templates / "sky_claim.cpp.in", {
         "SKY_GATE": function_section(hardware, "HWR_Subsector",
-            "\tif (sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",
+            "\tif (HWR_D3D12() && sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",
             "\n#endif"),
     }, output / "sky_claim.cpp")
     render(templates / "horizon_cache.cpp.in", {

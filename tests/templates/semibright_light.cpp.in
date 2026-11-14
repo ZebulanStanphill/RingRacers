@@ -1,18 +1,31 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "r_things.h"
 #include "hardware/hw_glob.h"
 #include "hardware/hw_main.h"
-// A desktop build has no Direct3D 12 driver, so HWR_SemiBrightLight does nothing there and the raised light level stays;
-// this test runs both ways (semibright_light_uwp and semibright_light_desktop).
-#ifdef HAVE_D3D12
-static const bool kDirect3D12 = true;
+// With OpenGL as the driver HWR_SemiBrightLight does nothing and the raised light level stays. The drivers a build can draw
+// with: only Direct3D 12 for UWP (semibright_light_uwp), only OpenGL without the Direct3D 12 driver
+// (semibright_light_desktop), and both, one after the other through hwr_d3d12, with the driver but not _UWP
+// (semibright_light_both).
+#if defined(HAVE_D3D12) && !defined(_UWP)
+static const std::initializer_list<bool> kDrivers = {true, false};
+#elif defined(HAVE_D3D12)
+static const std::initializer_list<bool> kDrivers = {true};
 #else
-static const bool kDirect3D12 = false;
+static const std::initializer_list<bool> kDrivers = {false};
 #endif
+static void UseDriver(bool d3d12)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    hwr_d3d12 = d3d12;
+#endif
+    assert(HWR_D3D12() == d3d12);
+}
 // Dependencies of the extracted code: the shader setting that HWR_UseShader reads, and the globals r_things.h's inline
 // helpers name
 consvar_t cv_glshaders;
@@ -70,7 +83,9 @@ int main()
     const Thing things[] = {{&plain, false, "plain"}, {&byFlag, true, "RF_SEMIBRIGHT"}, {&byFrame, true, "FF_SEMIBRIGHT"},
         {&fullbright, false, "RF_FULLBRIGHT"}};
     int cases = 0;
+    for (bool kDirect3D12 : kDrivers)
     for (bool shaders : {false, true}) {
+        UseDriver(kDirect3D12);
         cv_glshaders.value = shaders;
         for (const Thing &thing : things) {
             gl_vissprite_t spr = {};
@@ -116,7 +131,7 @@ int main()
     CheckSite("HWR_DrawModel", kDrawModel, 1, true);
     CheckSite("HWR_DrawPrecipitationSprite", kDrawPrecipitation, 1, false);
     CheckSite("HWR_DrawDropShadow", kDrawDropShadow, 1, false);
-    printf("%d semibright light cases (%s); call sites present where intended\n", cases, kDirect3D12 ? "Direct3D 12 build" : "build without Direct3D 12");
+    printf("%d semibright light cases over %zu driver(s); call sites present where intended\n", cases, kDrivers.size());
 }
 // Placed last, so the production text inside the raw strings doesn't shift the line numbers above
 const char *const kSplitSprite = R"RRTEXT(@@SPLIT_SPRITE@@)RRTEXT";

@@ -13,6 +13,7 @@
 #ifdef HWRENDER
 #include "hw_glob.h"
 #include "hw_batching.h"
+#include "hw_driver.h"
 #include "../i_system.h"
 
 // The texture for the next polygon given to HWR_ProcessPolygon.
@@ -429,9 +430,9 @@ void HWR_RenderBatches(void)
 				changeTexture = true;
 			}
 #ifdef HAVE_D3D12
-			if (((currentPolyFlags ^ nextPolyFlags) & PF_RollSprite)
+			if (HWR_D3D12() && (((currentPolyFlags ^ nextPolyFlags) & PF_RollSprite)
 				|| ((currentPolyFlags & nextPolyFlags & PF_RollSprite)
-				&& memcmp(currentSurfaceInfo.roll, nextSurfaceInfo.roll, sizeof(currentSurfaceInfo.roll))))
+				&& memcmp(currentSurfaceInfo.roll, nextSurfaceInfo.roll, sizeof(currentSurfaceInfo.roll)))))
 				changeState = changeSurfaceInfo = true;
 #endif
 			if (currentPolyFlags != nextPolyFlags)

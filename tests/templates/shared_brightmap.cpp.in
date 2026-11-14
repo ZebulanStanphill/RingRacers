@@ -4,6 +4,7 @@
 #include <cstring>
 #include <array>
 #include "hardware/hw_glob.h"
+#include "hardware/hw_driver.h"
 #include "hardware/hw_batching.h"
 #include "r_data.h"
 #include "r_state.h"

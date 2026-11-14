@@ -1,6 +1,8 @@
 #include <cassert>
+#include <initializer_list>
 #include <vector>
 #include "doomdef.h"
+#include "hardware/hw_driver.h"
 #include "r_defs.h"
 
 // Production forms a node pointer before testing the subsector bit. Keep that
@@ -28,8 +30,25 @@ static void HWR_Subsector(INT32 leaf)
 }
 @@BSP_WALK@@
 
+// The drivers a build can draw with: only Direct3D 12 for UWP (front_bbox_uwp), only OpenGL without the Direct3D 12
+// driver (front_bbox_desktop), and both, one after the other through hwr_d3d12, with the driver but not _UWP
+// (front_bbox_both).
+#if defined(HAVE_D3D12) && !defined(_UWP)
+static const std::initializer_list<bool> kDrivers = {true, false};
+#elif defined(HAVE_D3D12)
+static const std::initializer_list<bool> kDrivers = {true};
+#else
+static const std::initializer_list<bool> kDrivers = {false};
+#endif
+
 int main()
 {
+    for (bool d3d12 : kDrivers)
+    {
+#if defined(HAVE_D3D12) && !defined(_UWP)
+    hwr_d3d12 = d3d12;
+#endif
+    assert(HWR_D3D12() == d3d12);
     // Root front is an internal node with two leaves; root back is leaf 2.
     // Repeat with the viewer on either side to exercise both box slots.
     for (frontSide = 0; frontSide < 2; ++frontSide)
@@ -50,20 +69,14 @@ int main()
             ps_numbspcalls = 0;
             hwbbox = nullptr;
             HWR_RenderBSPNode(0);
-#ifdef _UWP
-            const bool frontVisited = boxPasses && portalPasses;
-#else
-            const bool frontVisited = true;
-#endif
+            const bool frontVisited = d3d12 ? boxPasses && portalPasses : true;
             const std::vector<int> expected = frontVisited
                 ? std::vector<int>{0, 1, 2} : std::vector<int>{2};
             assert(visits == expected);
-#ifdef _UWP
             // The box test must precede (and short-circuit) the portal test.
-            if (!boxPasses)
+            if (d3d12 && !boxPasses)
                 for (auto *box : portalChecks)
                     assert(box != root.bbox[frontSide]);
-#endif
             assert(ps_numbspcalls == (frontVisited ? 5u : 2u));
             size_t i = 0;
             if (frontVisited)
@@ -76,5 +89,6 @@ int main()
         run(false, true);
         run(true, true);
         run(true, false);
+    }
     }
 }

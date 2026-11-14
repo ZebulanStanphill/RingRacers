@@ -8,6 +8,7 @@
 #include <cstring>
 #include <vector>
 #include "doomstat.h"
+#include "hardware/hw_driver.h"
 #include "r_main.h"
 #include "r_textures.h"
 #include "r_bsp.h"

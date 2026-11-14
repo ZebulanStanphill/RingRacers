@@ -6,6 +6,7 @@
 #include <array>
 #include <vector>
 #include "hardware/hw_glob.h"
+#include "hardware/hw_driver.h"
 #include "hardware/hw_batching.h"
 #undef min
 #undef max

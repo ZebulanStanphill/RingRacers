@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "hardware/hw_defs.h"
+#include "hardware/hw_driver.h"
 #include "r_defs.h"
 #include "r_patchrotation.h"
 #include "p_mobj.h"

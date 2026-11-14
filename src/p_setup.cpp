@@ -90,6 +90,7 @@
 #include "hardware/hw_main.h"
 #include "hardware/hw_light.h"
 #include "hardware/hw_model.h"
+#include "hardware/hw_driver.h"
 #endif
 
 #include "p_slopes.h"
@@ -8853,8 +8854,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	{
 		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette, NULL, 0);
 	}
-#if defined (HWRENDER) && defined (HAVE_D3D12)
-	if (rendermode == render_opengl)
+#ifdef HWRENDER
+	if (HWR_D3D12() && rendermode == render_opengl)
 		HWR_UWPSetEncoreMap(encoremap);
 #endif
 	CON_SetupBackColormap();
