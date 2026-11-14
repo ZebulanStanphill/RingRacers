@@ -17,6 +17,8 @@
 #include "../doomstat.h"
 #ifdef _UWP
 #include "../sdl/i_uwptrace.h"
+#endif
+#ifdef HAVE_D3D12
 #include "../console.h"
 #endif
 
@@ -1015,9 +1017,11 @@ int ps_hw_numcolors = 0;
 precise_t ps_hw_batchsorttime = 0;
 precise_t ps_hw_batchdrawtime = 0;
 
+#ifdef HAVE_D3D12
 #ifdef _UWP
 precise_t ps_hw_portaltime = 0;
 INT32 ps_hw_portals = 0;
+#endif
 
 typedef struct hwr_portal_s
 {
@@ -1262,7 +1266,7 @@ static sector_t *HWR_FindViewFog(void)
 {
 	ffloor_t *rover;
 	sector_t *control = NULL;
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	// Shader fog remaps at its actual boundaries, including camera exit faces.
 	if (HWR_UseShader())
 		return NULL;
@@ -1857,7 +1861,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		if (PolyFlags & PF_Fog)
 		{
 			shader = SHADER_FOG;
-#ifdef _UWP
+#ifdef HAVE_D3D12
 			PolyFlags |= PF_FogPlane;
 #endif
 		}
@@ -2174,7 +2178,7 @@ static void HWR_DrawCutVoid(const FOutVector *piece)
 }
 #endif
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 // Intersect each light band with the ORIGINAL wall. A band can miss one end
 // of a sloped wall entirely; drawing an inverted quad there fills a huge false
 // triangle. Split at every crossing of the four linear height boundaries so
@@ -2266,14 +2270,14 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	 of the wall that can't be seen */
 
 	float realbot, top, bot;
-#ifndef _UWP
+#ifndef HAVE_D3D12
 	float realtop;
 	float pegt, pegb, pegmul;
 #endif
 	float height = 0.0f, bheight = 0.0f;
 
 	float endrealbot, endtop, endbot;
-#ifndef _UWP
+#ifndef HAVE_D3D12
 	float endrealtop;
 	float endpegt, endpegb, endpegmul;
 #endif
@@ -2291,7 +2295,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	INT32 solid, i;
 	lightlist_t *  list = sector->lightlist;
 	const UINT8 alpha = Surf->PolyColor.s.alpha;
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	FOutVector original[4];
 	M_Memcpy(original, wallVerts, sizeof original);
 #endif
@@ -2299,22 +2303,22 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	extracolormap_t *colormap = NULL;
 
 	top = wallVerts[3].y;
-#ifndef _UWP
+#ifndef HAVE_D3D12
 	realtop = top;
 #endif
 	realbot = bot = wallVerts[0].y;
-#ifndef _UWP
+#ifndef HAVE_D3D12
 	pegt = wallVerts[3].t;
 	pegb = wallVerts[0].t;
 	pegmul = (pegb - pegt) / (top - bot);
 #endif
 
 	endtop = wallVerts[2].y;
-#ifndef _UWP
+#ifndef HAVE_D3D12
 	endrealtop = endtop;
 #endif
 	endrealbot = endbot = wallVerts[1].y;
-#ifndef _UWP
+#ifndef HAVE_D3D12
 	endpegt = wallVerts[2].t;
 	endpegb = wallVerts[1].t;
 	endpegmul = (endpegb - endpegt) / (endtop - endbot);
@@ -2410,21 +2414,21 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		//Found a break;
 		bot = bheight;
 
-#ifndef _UWP
+#ifndef HAVE_D3D12
 		if (bot < realbot)
 			bot = realbot;
 #endif
 
 		endbot = endbheight;
 
-#ifndef _UWP
+#ifndef HAVE_D3D12
 		if (endbot < endrealbot)
 			endbot = endrealbot;
 #endif
 
 		Surf->PolyColor.s.alpha = alpha;
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap);
 #else
 		wallVerts[3].t = pegt + ((realtop - top) * pegmul);
@@ -2457,7 +2461,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 
 	Surf->PolyColor.s.alpha = alpha;
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap);
 #else
 	wallVerts[3].t = pegt + ((realtop - top) * pegmul);
@@ -3889,7 +3893,7 @@ static void HWR_DrawVoidWall(seg_t *line, sector_t *front, UINT8 walls)
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	boolean portaloccludes = true;
 #endif
 #ifdef HAVE_D3D12
@@ -3910,7 +3914,7 @@ static void HWR_AddLine(seg_t * line)
 	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
 	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	// Behind the exit, or the exit line itself, which lies on the clip plane: Software's traversal starts in the exit's
 	// front sector, so it doesn't draw it either
 	if (hwr_portalexit && (line->linedef == hwr_portalexit
@@ -3934,7 +3938,7 @@ static void HWR_AddLine(seg_t * line)
 		return;
 	}
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	if (line->side == 0 && line->linedef->special == 40 && hwr_portalpartners
 		&& hwr_portalpartners[line->linedef-lines] >= 0)
 	{
@@ -3956,7 +3960,7 @@ static void HWR_AddLine(seg_t * line)
 	checkforemptylines = true;
 
 	gl_backsector = line->backsector;
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	// FOF sides may sample the adjacent sector before its first BSP visit.
 	// Prepare the real sector; keep moved flags for the usual fake-flat refresh.
 	if (!hwr_portalsearch && gl_backsector && gl_backsector->ffloors
@@ -3966,7 +3970,7 @@ static void HWR_AddLine(seg_t * line)
 
 	if (!line->backsector)
 	{
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		if (portaloccludes)
 #endif
 			gld_clipper_SafeAddClipRange(angle2, angle1);
@@ -3990,7 +3994,7 @@ static void HWR_AddLine(seg_t * line)
 					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
 				return; // line is empty, don't even bother
 			// treat like wide open window instead
-#ifdef _UWP
+#ifdef HAVE_D3D12
 			if (!hwr_portalsearch)
 #endif
 				HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
@@ -3999,7 +4003,7 @@ static void HWR_AddLine(seg_t * line)
 
 		if (CheckClip(line, gl_frontsector, gl_backsector))
 		{
-#ifdef _UWP
+#ifdef HAVE_D3D12
 			if (portaloccludes)
 #endif
 				gld_clipper_SafeAddClipRange(angle2, angle1);
@@ -4023,7 +4027,7 @@ static void HWR_AddLine(seg_t * line)
 			return;
 	}
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	if (!hwr_portalsearch)
 #endif
 		HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
@@ -4434,7 +4438,7 @@ static void HWR_Subsector(size_t num)
 		line = NULL;
 	}
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	if (hwr_portalsearch)
 	{
 		while (count--)
@@ -4843,7 +4847,7 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 	hwbbox = bsp->bbox[side];
 
 	// Recursively divide front space.
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	// [UWP]: Software clips all segs of a hidden front subsector and draws nothing.
 	// Hardware draws its planes whole; a horizon line has no wall to cover them.
 	if (HWR_CheckBBox(bsp->bbox[side]) && HWR_PortalBBox(bsp->bbox[side]))
@@ -4852,7 +4856,7 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 
 	// Possibly divide back space.
 	if (HWR_CheckBBox(bsp->bbox[side^1])
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		&& HWR_PortalBBox(bsp->bbox[side^1])
 #endif
 	)
@@ -6457,7 +6461,7 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
 	return sortnode[n2].plane->drawcount - sortnode[n1].plane->drawcount;
 }
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 // Coplanar ripple polygons are pieces of one surface, not stacked water layers.
 // Keep their background immutable even when subsector polygons overlap. A wall,
 // polyobject, non-ripple plane or a different slope/height starts a new capture.
@@ -6839,7 +6843,7 @@ static void HWR_CreateDrawNodes(void)
 
 	for (i = 0; i < p; i++)
 	{
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		const planeinfo_t *plane = sortnode[sortindex[i]].plane;
 		const planeinfo_t *previous = i ? sortnode[sortindex[i-1]].plane : NULL;
 		HWD.pfnSetSpecialState(HWD_SET_WATER_SURFACE,
@@ -6880,7 +6884,7 @@ static void HWR_CreateDrawNodes(void)
 	}
 	if (sprites) HWR_EndSpriteDraw();
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	HWD.pfnSetSpecialState(HWD_SET_WATER_SURFACE, 0);
 #endif
 
@@ -7211,7 +7215,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
 	}
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	// Software tests the interpolated origin before hitlag/sprite offsets.
 	if (hwr_portalexit && P_PointOnLineSide(interp.x,interp.y,hwr_portalexit) != 0)
 		return;
@@ -7752,7 +7756,7 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	interpmobjstate_t interp = {0};
 
 	// okay... this is a hack, but weather isn't networked, so it should be ok
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	if (hwr_portallevel == 0 && !P_PrecipThinker(thing))
 #else
 	if (!P_PrecipThinker(thing))
@@ -8360,7 +8364,7 @@ static void HWR_DrawViewFogSky(void)
 	HWD.pfnDrawPolygon(&surf, v, 4, PF_Modulated|PF_Multiplicative|PF_NoTexture|PF_NoDepthTest);
 }
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 #ifdef HAVE_D3D12
 static void HWR_RenderPortalViews(player_t *player);
 #endif
@@ -8432,11 +8436,11 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
 
 	//------------------------------------------------------------------------
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	if (hwr_portallevel == 0)
 #endif
 		HWR_ClearView(); // Whole-screen depth/stencil clear only outside recursion
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	else
 		HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
 			(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
@@ -8458,7 +8462,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = r_splitscreen;
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	HWD.pfnSetTransform(&atransform);
 #ifdef HAVE_D3D12
 	D3D12_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
@@ -8495,7 +8499,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
 		gld_clipper_Clear();
 		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		if (hwr_portalexit)
 			gld_clipper_SafeAddClipRange(hwr_portalangle1,hwr_portalangle2);
 #endif
@@ -8599,7 +8603,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 		HWR_CreateDrawNodes();
 	}
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	HWR_FreePortalViews();
 #ifdef HAVE_D3D12
 	D3D12_SetPortalPlane(NULL);
@@ -8676,8 +8680,10 @@ static void HWR_RestorePortalView(const hwr_viewcontext_t *c)
 static void HWR_RenderPortalViews(player_t *player)
 {
 	hwr_portal_t *portal;
+#ifdef _UWP
 	const precise_t start = I_GetPreciseTime();
 	const boolean root = hwr_portallevel == 0;
+#endif
 	angle_t frustum = gld_FrustumAngle(gl_aimingangle);
 	gld_clipper_Clear();
 	gld_clipper_SafeAddClipRange(viewangle+frustum,viewangle-frustum);
@@ -8708,7 +8714,9 @@ static void HWR_RenderPortalViews(player_t *player)
 		hwr_portalplane[3]=-hwr_portalplane[0]*FIXED_TO_FLOAT(exit->v1->x)
 			-hwr_portalplane[2]*FIXED_TO_FLOAT(exit->v1->y);
 		hwr_portallist=NULL;
+#ifdef _UWP
 		ps_hw_portals++;
+#endif
 		// Software adds skybox portals once, after the MAIN traversal. Line
 		// portal children therefore use the regular sky, not another skybox.
 		HWR_RenderViewPass(player,true,false);
@@ -8718,12 +8726,14 @@ static void HWR_RenderPortalViews(player_t *player)
 		D3D12_DrawPortalAperture(portal->aperture,hwr_portallevel,true);
 		portal->rendered=true;
 	}
+#ifdef _UWP
 	// Only root accounts elapsed recursion, avoiding double-counting children.
 	if (root) ps_hw_portaltime += I_GetPreciseTime()-start;
+#endif
 }
 #endif
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 static void HWR_FreePortalViews(void)
 {
 	while (hwr_portallist)
@@ -8748,7 +8758,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 #endif
 	}
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	hwr_portallevel=0;
 	hwr_portalexit=NULL;
 	hwr_portallist=NULL;
@@ -8860,7 +8870,7 @@ void HWR_LoadLevel(void)
 	// [UWP]: Specials and BSP may have changed even when level sizes match.
 	HWR_InvalidateHorizonCache();
 #endif
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	size_t i;
 	hwr_maphasportals=false;
 	Z_Free(hwr_portalpartners);
@@ -9206,7 +9216,7 @@ void HWR_DoPostProcessor(player_t *player)
 	if(gamestate != GS_INTERMISSION)
 		HWD.pfnMakeScreenTexture();
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 	if (cv_reducevfx.value) // Match Software's accessibility gating for water and heat.
 		return;
 #else
@@ -9219,7 +9229,7 @@ void HWR_DoPostProcessor(player_t *player)
 	{
 		// 10 by 10 grid. 2 coordinates (xy)
 		float v[SCREENVERTS][SCREENVERTS][2];
-#ifndef _UWP
+#ifndef HAVE_D3D12
 		static double disStart = 0;
 
 		UINT8 x, y;
@@ -9254,15 +9264,15 @@ void HWR_DoPostProcessor(player_t *player)
 		// D3D samples in its pixel shader; the driver ignores the legacy grid.
 		memset(v, 0, sizeof v);
 #endif
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		HWD.pfnGClipRect((INT32)gl_viewwindowx, (INT32)gl_viewwindowy,
 			(INT32)(gl_viewwindowx + gl_viewwidth), (INT32)(gl_viewwindowy + gl_viewheight), NZCLIP_PLANE);
 #endif
 		HWD.pfnPostImgRedraw(v);
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 #endif
-#ifndef _UWP
+#ifndef HAVE_D3D12
 		if (!(paused || P_AutoPause()))
 			disStart += FIXED_TO_FLOAT(renderdeltatics);
 #endif

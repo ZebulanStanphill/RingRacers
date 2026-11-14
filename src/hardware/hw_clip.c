@@ -320,7 +320,7 @@ void gld_clipper_Clear(void)
 	cliphead = NULL;
 }
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 void *gld_clipper_SaveState(void)
 {
 	void *state = cliphead;

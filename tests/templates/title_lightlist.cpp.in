@@ -94,7 +94,9 @@ fixed_t *finecosine=&finesine[FINEANGLES/4];
 @@SLOPE_BUILD@@
 
 #undef _UWP
+#undef HAVE_D3D12 // the portal clipper state is not under test, and is C
 @@CLIPPER@@
+#define HAVE_D3D12 1
 
 fixed_t R_FOV(int){return 90*FRACUNIT;}
 @@BSP_VISIBILITY@@

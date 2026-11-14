@@ -3317,7 +3317,9 @@ void D3D12_LogPerf(double seconds)
 		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
 		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
 		(unsigned)g_staticDedicated, (unsigned long long)s.mipsGenerated, s.mipMs);
+#ifdef _UWP
 	I_OutputMsg("UWP perf:   D3D12: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
+#endif
 	I_OutputMsg("UWP perf:   D3D12: texture heaps: %llu placed, %llu dedicated, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
 		(unsigned long long)g_placedCreated, (unsigned long long)g_dedicatedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
 		g_textureHeapUsed / 1048576.0, g_textureHeaps.size() * kTextureHeapBytes / 1048576.0, g_textureHeapPeak / 1048576.0,

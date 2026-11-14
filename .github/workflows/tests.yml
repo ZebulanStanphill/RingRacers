@@ -183,6 +183,9 @@ jobs:
             echo "A Linux build must not include the Direct3D 12 driver"; exit 1
           fi
 
+      - name: Check that the hardware renderer compiles with HAVE_D3D12 but not _UWP
+        run: python3 tests/check-d3d12-desktop.py build/ninja-release/compile_commands.json
+
       - name: Build
         run: cmake --build build/ninja-release --parallel 4
 

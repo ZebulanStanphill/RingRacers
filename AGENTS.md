@@ -24,9 +24,10 @@ replay:
   code. Don't reformat, rename or reorder upstream code you aren't changing.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
   UWP build, and `HAVE_D3D12` for code that calls the Direct3D 12 driver
-  (`src/hardware/r_d3d12`), which only UWP builds can have
-  (`SRB2_CONFIG_D3D12`). Linux, macOS and other Windows builds must build without
-  either.
+  (`src/hardware/r_d3d12`) or that the driver's output depends on, which only UWP
+  builds can have for now (`SRB2_CONFIG_D3D12`). Code under `HAVE_D3D12` must
+  compile without `_UWP` (Xbox-only things inside it get their own `_UWP`
+  guard). Linux, macOS and other Windows builds must build without either.
 - A fix to a change that has its own commit can be made with
   `git commit --fixup=<commit>`, to be squashed into it at the next rebase.
 

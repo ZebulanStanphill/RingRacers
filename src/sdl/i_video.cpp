@@ -1783,7 +1783,7 @@ void VID_StartupOpenGL(void)
 		*(void**)&HWD.pfnSetShaderInfo    = hwSym("SetShaderInfo",NULL);
 		*(void**)&HWD.pfnLoadCustomShader = hwSym("LoadCustomShader",NULL);
 
-#ifdef _UWP
+#ifdef HAVE_D3D12
 		// [UWP]: Palette rendering, which the Direct3D 12 driver supports
 		*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
 		*(void**)&HWD.pfnSetPaletteLookup = hwSym("SetPaletteLookup",NULL);

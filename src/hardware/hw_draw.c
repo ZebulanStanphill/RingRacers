@@ -786,13 +786,17 @@ void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength)
 		if (size >= 256 && size % 256 == 0 && size / 256 <= 256
 			&& D3D12_ApplyFadeMap(W_CacheLumpNum(lumpnum, PU_CACHE), size, lumpnum, strength))
 		{
+#ifdef _UWP
 			UWPTraceFade("HWR_DrawCustomFadeMap path=exact lump=%s strength=%u row=%u rows=%u",
 				lump, strength, (unsigned)min((size_t)strength, size / 256 - 1), (unsigned)(size / 256));
+#endif
 			return;
 		}
 	}
 
+#ifdef _UWP
 	UWPTraceFade("HWR_DrawCustomFadeMap path=overlay lump=%s strength=%u", lump ? lump : "NULL", strength);
+#endif
 	HWR_DrawCustomFadeScreen(lump && strcmp(lump, "FADEMAP1") == 0 ? 0 : 31, strength);
 }
 #endif

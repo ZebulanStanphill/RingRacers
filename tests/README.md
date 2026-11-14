@@ -21,7 +21,8 @@ ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 The tests extract production code from this checkout; set `RR_SOURCE_DIR` to test
 another one. `cmake --build` regenerates harnesses when tested engine files or
 templates change. Variants built with `_UWP` also define `HAVE_D3D12`, as UWP
-builds have the Direct3D 12 driver by default. The standalone test project does not configure the
+builds have the Direct3D 12 driver by default; engine code under `HAVE_D3D12`
+does not assume `_UWP` (see "Direct3D 12 without `_UWP`" under Coverage). The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
 The Direct3D 12 driver has no desktop variant: engine CMake enables it only
@@ -578,6 +579,13 @@ untouched padding.
   consistent. Whether the real race hit rate improves is measured on Xbox, not here.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
+- **Direct3D 12 without `_UWP`:** `python3 tests/check-d3d12-desktop.py build/ninja-release/compile_commands.json`
+  takes the compile database of a normal (Linux or macOS) game build, re-runs the recorded compile
+  command of every `src/hardware/*.c` file with `-DHAVE_D3D12 -fsyntax-only` added and fails if any
+  reports an error. It guards that the engine code under `HAVE_D3D12` (portals, wall light slices,
+  post-processing, palette rendering) does not depend on `_UWP`, so the driver can be built into
+  Windows desktop builds; Xbox-only code inside it has its own `_UWP` guard. The `linux` job runs it.
+  The driver itself and the Windows desktop build are not checked here.
 
 Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
 not copied into the tests. `#line` directives point compiler/sanitizer diagnostics
