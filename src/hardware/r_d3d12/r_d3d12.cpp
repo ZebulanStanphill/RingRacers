@@ -3382,10 +3382,10 @@ void D3D12_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 height,
 	ReadRectFrom(ApplyScreenEffect(palette), x, y, width, height, dst_stride, dst_data);
 }
 
-boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width,
-	INT32 height, INT32 dst_stride, UINT16 *dst_data)
+// The frame as Present_Frame places it, read from a screenWidth by screenHeight target
+static boolean ReadPlacedRect(const screen_scaling::Placement &placement, INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y,
+	INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)
 {
-	const screen_scaling::Placement placement = screen_scaling::Compute((int)g_rtWidth, (int)g_rtHeight, screenWidth, screenHeight, mode);
 	if (placement.fit || !CanDraw())
 		return false;
 
@@ -3417,6 +3417,20 @@ boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenH
 		return false;
 	ReadRectFrom(g_placeTestTarget.Get(), x, y, width, height, dst_stride, dst_data, (UINT)screenWidth, (UINT)screenHeight);
 	return true;
+}
+
+boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width,
+	INT32 height, INT32 dst_stride, UINT16 *dst_data)
+{
+	return ReadPlacedRect(screen_scaling::Compute((int)g_rtWidth, (int)g_rtHeight, screenWidth, screenHeight, mode), screenWidth,
+		screenHeight, x, y, width, height, dst_stride, dst_data);
+}
+
+boolean D3D12_ReadFitRectForTest(INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width, INT32 height,
+	INT32 dst_stride, UINT16 *dst_data)
+{
+	return ReadPlacedRect(screen_scaling::FitRect((int)g_rtWidth, (int)g_rtHeight, screenWidth, screenHeight), screenWidth,
+		screenHeight, x, y, width, height, dst_stride, dst_data);
 }
 
 void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant)

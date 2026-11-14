@@ -5,14 +5,19 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file d3d12_placement.inc
-/// \brief [UWP]: Puts the finished frame at a rectangle of the swap chain, for Screen Scaling's Integer and 1:1 modes
+/// \brief Puts the finished frame at a rectangle of the swap chain, for Screen Scaling's Integer and 1:1 modes (and Fit, where the presenter has no system scaling)
 
 // Included by r_d3d12.cpp after the screen effect. Options > Video > Screen Scaling (cv_scr_scaling) is 0 Fit, 1 Integer
-// or 2 1:1 (screen_scaling.hpp). Fit copies the frame into a swap chain of the frame's size, which the system scales to
-// the window. The other two have the swap chain at the screen's size, and Present_Frame hands the back buffer to
-// PlaceFrame: it is cleared to black and the frame, whatever the screen effect left (the screen, the palette step's
+// or 2 1:1 (screen_scaling.hpp). On UWP, Fit copies the frame into a swap chain of the frame's size, which the system
+// scales to the window. The other two have the swap chain at the screen's size, and Present_Frame hands the back buffer
+// to PlaceFrame: it is cleared to black and the frame, whatever the screen effect left (the screen, the palette step's
 // texture or the effect's target), is drawn point-sampled over the placement's rectangle. 1:1 is the same draw with
 // the rectangle as large as the frame, which samples every texel at its center, so a copy would give the same pixels.
+//
+// A placement with k 0 (screen_scaling::FitRect's, which is not fit either) is scaled by a factor that is not a whole
+// number, so it's drawn with a linear-filtered sampler instead. Only the desktop presenter asks for it, to show Fit in a
+// swap chain the size of the window: the UWP presenter's placements are Compute's, whose k is at least 1, so it never
+// uses the second sampler.
 //
 // The pipeline is compiled when first needed, from the sources below, against the driver's root signature. If it
 // can't be made, PlaceFrame returns false, having recorded nothing, and Present_Frame goes back to Fit.
@@ -42,6 +47,7 @@ struct PlacePass
 	enum State { UNTRIED, READY, FAILED } state = UNTRIED;
 	ComPtr<ID3D12PipelineState> pso;
 	UINT sampler = UINT32_MAX; // point filtered, clamped
+	UINT linearSampler = UINT32_MAX; // linear filtered, clamped, for placements that aren't scaled by a whole number
 };
 PlacePass g_placePass;
 
@@ -80,7 +86,8 @@ bool PreparePlacePass()
 		return false;
 	pass.pso->SetName(L"screen scaling");
 	pass.sampler = CreateEffectSampler(D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_FILTER_MIN_MAG_MIP_POINT);
-	if (pass.sampler == UINT32_MAX)
+	pass.linearSampler = CreateEffectSampler(D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_FILTER_MIN_MAG_MIP_LINEAR);
+	if (pass.sampler == UINT32_MAX || pass.linearSampler == UINT32_MAX)
 	{
 		Log("Screen Scaling can't place frames: no room for its sampler");
 		pass.pso.Reset();
@@ -150,7 +157,8 @@ bool PlaceFrame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, ID3D1
 	// The root signature and descriptor heaps are set whenever the list opens (BindRenderTarget)
 	list->SetGraphicsRootConstantBufferView(0, g_zeroConstants->GetGPUVirtualAddress());
 	list->SetGraphicsRootDescriptorTable(1, SrvGpu(srv)); // t0: the frame
-	list->SetGraphicsRootDescriptorTable(2, SamplerGpu(g_placePass.sampler)); // s0: point, clamped
+	// s0: point, clamped; or linear, clamped, when the frame isn't scaled by a whole number (k 0, see above)
+	list->SetGraphicsRootDescriptorTable(2, SamplerGpu(placement.k == 0 ? g_placePass.linearSampler : g_placePass.sampler));
 	list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	list->RSSetViewports(1, &viewport);
 	list->RSSetScissorRects(1, &scissor);

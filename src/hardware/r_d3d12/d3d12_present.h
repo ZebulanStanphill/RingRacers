@@ -23,8 +23,9 @@ namespace rr_d3d12
 bool Present_TakeWindow();
 
 // Records the clearing of target (a swap chain buffer, in RENDER_TARGET, whose view is rtv) to black, and the drawing of
-// source (in sourceState, which it's left in) point-sampled over the placement's rectangle of the targetWidth by
-// targetHeight target, which are the screen scaling's Integer and 1:1 modes. The driver provides it. Returns false,
+// source (in sourceState, which it's left in) over the placement's rectangle of the targetWidth by targetHeight
+// target: point-sampled for the screen scaling's Integer and 1:1 modes, linear-filtered when the placement's k is 0
+// (screen_scaling::FitRect's). The driver provides it. Returns false,
 // having recorded nothing, if it can't.
 typedef bool (*PlaceFrameFn)(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, ID3D12Resource *target,
 	D3D12_CPU_DESCRIPTOR_HANDLE rtv, const screen_scaling::Placement &placement, UINT targetWidth, UINT targetHeight);

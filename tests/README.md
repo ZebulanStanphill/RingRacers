@@ -515,7 +515,11 @@ untouched padding.
   (limited by the width or the height), odd remainders (the extra pixel is at the right and the bottom), wider and taller
   screens, 1:1, and the fallbacks to Fit when the frame is larger than the screen in either dimension, for an unlisted mode
   and for sizes that are not positive. A sweep of 9 frame sizes over about 12,000 screens checks the rectangle,
-  centering, maximal k and the fallbacks. The Direct3D 12 WARP scenes below draw the placement.
+  centering, maximal k and the fallbacks. `FitRect`, the rectangle a renderer that draws Fit itself (the desktop
+  Direct3D 12 presenter) uses, is checked the same way: wider and taller screens, exact fits, a frame larger than the
+  screen, odd remainders, the side that is rounded down, a side held at 1, the sizes that are not positive (which give
+  what `Compute` gives), and a sweep of 10 frame sizes over the same screens that checks it spans the screen along one
+  side, has the frame's aspect ratio along the other and is centered. The Direct3D 12 WARP scenes below draw the placement.
 - **Map preview cache:** `map_preview_cache` compiles the production `src/map_preview_cache.hpp`, which the UWP build uses to
   keep each map WAD's thumbnail and minimap bytes and each staff ghost's parsed brief on disk between launches, under ASan and
   UBSan with no engine. Check a round trip of maps (both lumps, the picture only, neither, an empty lump) and ghosts (valid
@@ -714,6 +718,16 @@ the rectangle's position worked out by hand (including the odd remainders). Inte
 (and Fit) must place nothing. With SalCRT on, the placed pixels are the effect's output. The harness stubs `Present_Frame`, so the swap chain
 (its size, buffer states and render target views) is not exercised, nor is the black border of a real swap chain's
 buffers on Xbox.
+`scaling-fit` draws Fit as the desktop presenter does, in a swap chain the size of the window: `FitRect`'s rectangle,
+scaled with the second, linear-filtered sampler (`k` of 0). The frame has 64 columns shading from red to green and a top
+half with less blue than its bottom half, so there is a boundary to blend along both axes. At 100×100, 200×100, 101×200,
+130×70, 40×30 and 64×64 (a factor of 1.5625, bars at the sides, bars above and below with an odd remainder, 70/64, a frame
+scaled down, and the frame's own size), the oracle compares every pixel of a magenta-filled target: black outside the
+rectangle, worked out by hand, and inside it a bilinear sample of the frame read earlier at each pixel's center, clamped at the
+frame's edges. Direct3D filters with fixed-point weights, so a pixel between texels of different colors may be two levels
+off and the rest one. Pixels that differ from the nearest texel by more than eight levels must exist in each case, so that
+point sampling fails. The self-test places the red quad's frame at the right rectangle, and requires a rectangle a column
+off or a size off to be rejected, as well as a flat frame, which can't tell the filters apart. A screen with no size must place nothing.
 Invisible-geometry scenes run all 100 pairs of blend modes through a depth-only draw: after a
 translucent sprite silhouette and an untextured sky wall (both Invisible, depth writing), the
 target keeps its color (`blend-invisible`), a farther visible surface is hidden by the depth they

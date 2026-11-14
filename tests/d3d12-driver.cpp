@@ -173,6 +173,44 @@ static void expectNotPlaced(const char *scene,int mode,int screenWidth,int scree
     validate(validationQueue);
     require(scene,!placed,"the driver placed a frame that is left to the system");
 }
+// The frame as the driver draws it for Fit in a swap chain the size of the window (the desktop presenter): scaled, with linear
+// filtering and clamped at its edges, into the rectangle at (x0, y0) of size w by h that screen_scaling::FitRect gives, which each
+// scene works out by hand, on a screenWidth by screenHeight target filled with magenta beforehand; black around it. The expected
+// pixels are bilinear samples of the frame read earlier, at the centers of the target's pixels. Direct3D filters with fixed-point
+// weights, so a pixel between texels of different colors may be two levels off, and one between equal texels may be one off. Some
+// pixels must differ from the nearest texel's by more than that, or point sampling would pass.
+static void expectFitPlaced(const char *scene,int screenWidth,int screenHeight,int x0,int y0,int w,int h,const std::vector<UINT8> &frame) {
+    std::vector<UINT8> p((size_t)screenWidth*screenHeight*3,0xcd);
+    const bool placed=D3D12_ReadFitRectForTest(screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
+    validate(validationQueue);
+    require(scene,placed,"the driver didn't place the frame");
+    int wrong=0, black=0, blended=0, distinguishing=0;
+    for(int y=0;y<screenHeight;y++) for(int x=0;x<screenWidth;x++) {
+        const bool inside=x>=x0 && x<x0+w && y>=y0 && y<y0+h;
+        RGB want={0,0,0}; int tolerance=1;
+        if(inside) {
+            // Texel centers are at whole numbers, so a pixel's center is (x - x0 + 0.5) * W / w - 0.5 texels from the first one
+            const double u=(x-x0+0.5)*W/w-0.5, v=(y-y0+0.5)*H/h-0.5;
+            const int tx=(int)std::floor(u), ty=(int)std::floor(v);
+            const double fx=u-tx, fy=v-ty;
+            RGB texel[4]; double weight[4]={(1-fx)*(1-fy),fx*(1-fy),(1-fx)*fy,fx*fy};
+            for(int i=0;i<4;i++) texel[i]=at(frame,std::clamp(tx+(i&1),0,W-1),std::clamp(ty+(i>>1),0,H-1));
+            bool flat=true; for(int i=1;i<4;i++) flat=flat && texel[i]==texel[0];
+            for(int c=0;c<3;c++) { double sum=0; for(int i=0;i<4;i++) sum+=weight[i]*texel[i][c]; want[c]=(int)std::lround(sum); }
+            if(!flat) { tolerance=2; blended++; }
+            const RGB nearest=at(frame,std::clamp((int)std::floor((x-x0+0.5)*W/w),0,W-1),std::clamp((int)std::floor((y-y0+0.5)*H/h),0,H-1));
+            for(int c=0;c<3;c++) if(abs(want[c]-nearest[c])>8) { distinguishing++; break; }
+        }
+        const RGB got=at(p,x,y,screenWidth);
+        bool ok=true; for(int c=0;c<3;c++) ok=ok && abs(got[c]-want[c])<=tolerance;
+        if(!ok) { if(!quietOracles && wrong<4) fprintf(stderr,"%s: %dx%d pixel %d,%d got %d,%d,%d expected %d,%d,%d\n",scene,screenWidth,screenHeight,x,y,got[0],got[1],got[2],want[0],want[1],want[2]); wrong++; }
+        else if(!inside) black++;
+    }
+    if(!quietOracles && wrong) fprintf(stderr,"%s: %d of %dx%d pixels aren't where the placement puts them\n",scene,wrong,screenWidth,screenHeight);
+    require(scene,wrong==0,"a pixel of the linearly scaled frame or its border is wrong");
+    require(scene,black==screenWidth*screenHeight-w*h,"the border wasn't checked whole");
+    require(scene,w*h>0 && blended>0 && distinguishing>0,"the frame has nothing for linear filtering to tell from point sampling");
+}
 static unsigned occurrences(const std::string &text,const char *what) { unsigned n=0; for(size_t at=0;(at=text.find(what,at))!=std::string::npos;at+=strlen(what)) n++; return n; }
 static void expectPost(const char *scene,RGB want,int x=32,int y=32) { auto p=palettePixels(); validate(validationQueue); same(scene,"palette pixel",x,y,at(p,x,y),want); }
 // Some pixel of rows y0 to y1 in a column: a one-pixel line lies on a raster boundary, so which row holds it isn't pinned
@@ -229,7 +267,7 @@ static const char *const kOracles[]={
     "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane", "indexed", "line",
     "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
-    "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect",
+    "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect", "scaling-fit",
     "texture", "texture-update", "texture-reuse", "mips", "shared-brightmap",
     "palette", "palette-post", "light-table-update", "light-table-update-post", "surface-light", "surface-light-semibright", "brightmap-palette", "fog-palette", "brightmap-smooth", "roll-sprite", "light-table-clear", "screen-palette", "palette-off",
     "fog-remap", "water-surface", "water-refraction", "water-group", "water-group-counts", "capture-mixed", "capture-recreate", "capture-skipped",
@@ -277,6 +315,18 @@ static void selfTest() {
     expect("self-test",red); expect("self-test",c,2,2);
     rejects("expect at a pixel the draw covers",pixel,[&] { expect("self-test",c); });
     rejects("expect at a pixel the draw missed",pixel,[&] { expect("self-test",red,2,2); });
+    // expectFitPlaced, on the frame the red quad leaves (whose edges give the linear filter something to blend): the right
+    // rectangle passes, and a rectangle one column off, or a bar that isn't black, is rejected
+    {
+        const std::vector<UINT8> frame=presentedPixels(); validate(validationQueue);
+        expectFitPlaced("self-test",100,100,0,0,100,100,frame); expectFitPlaced("self-test",200,100,50,0,100,100,frame);
+        rejects("expectFitPlaced of a rectangle one column off","a pixel of the linearly scaled frame or its border is wrong",[&] { expectFitPlaced("self-test",200,100,51,0,100,100,frame); });
+        rejects("expectFitPlaced of the wrong size","a pixel of the linearly scaled frame or its border is wrong",[&] { expectFitPlaced("self-test",100,100,0,0,99,100,frame); });
+        // A flat frame is placed right, but would be right with point sampling too, so it proves nothing about the filter
+        reset(c);
+        const std::vector<UINT8> flat=presentedPixels(); validate(validationQueue);
+        rejects("expectFitPlaced of a frame that filtering can't change","the frame has nothing for linear filtering to tell from point sampling",[&] { expectFitPlaced("self-test",100,100,0,0,100,100,flat); });
+    }
     // The palette step's buffer is untouched while Palette Rendering is off (the palette-off scene pins that), so it reads 0xcd
     expectPost("self-test",{205,205,205}); expectPost("self-test",{204,206,205});
     rejects("expectPost",pixel,[&] { expectPost("self-test",{205,205,207}); });
@@ -643,6 +693,26 @@ int main(int argc,char **argv) {
             check("scaling-effect",shaded,16,16,shadedTl); check("scaling-effect",shaded,48,16,shadedTr); check("scaling-effect",shaded,16,48,shadedBl); check("scaling-effect",shaded,48,48,shadedBr);
             expectPlaced("scaling-effect",1,201,151,36,11,2,shaded);
             cv_scr_effect.value=0;
+            // Fit in a swap chain the size of the window: the frame goes in the largest rectangle of its aspect ratio, linearly
+            // filtered. Its 64 columns shade from red to green, and its top half has less blue than its bottom half, so there is
+            // something to blend along both axes.
+            reset({0,0,0});
+            for(int x=0;x<W;x++) {
+                fillRect(-1+x/32.f,-1+(x+1)/32.f,0,1,{3*x,240-3*x,40});
+                fillRect(-1+x/32.f,-1+(x+1)/32.f,-1,0,{3*x,240-3*x,200});
+            }
+            const std::vector<UINT8> gradient=presentedPixels(); validate(validationQueue);
+            check("scaling-fit",gradient,0,0,{0,240,40}); check("scaling-fit",gradient,63,63,{189,51,200}); check("scaling-fit",gradient,10,10,{30,210,40});
+            expectFitPlaced("scaling-fit",100,100,0,0,100,100,gradient);   // the frame's aspect ratio: no bars, a factor of 1.5625
+            expectFitPlaced("scaling-fit",200,100,50,0,100,100,gradient);  // wider: bars at the sides
+            expectFitPlaced("scaling-fit",101,200,0,49,101,101,gradient);  // taller, with an odd remainder: 99 / 2 is 49, the extra row is at the bottom
+            expectFitPlaced("scaling-fit",130,70,30,0,70,70,gradient);     // wider again, scaled by 70 / 64
+            expectFitPlaced("scaling-fit",40,30,5,0,30,30,gradient);       // smaller than the frame
+            expectFitPlaced("scaling-fit",64,64,0,0,64,64,gradient);       // the frame's own size: every pixel at a texel's center
+            // Sizes that make no sense are left alone
+            { std::vector<UINT8> unused((size_t)100*3,0xcd);
+              require("scaling-fit",!D3D12_ReadFitRectForTest(0,100,0,0,1,1,3,reinterpret_cast<UINT16 *>(unused.data()))
+                && !D3D12_ReadFitRectForTest(100,-1,0,0,1,1,3,reinterpret_cast<UINT16 *>(unused.data())),"the driver placed a frame in a screen with no size"); }
         }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};
         GLMipmap_t tex={}; tex.format=GL_TEXFMT_RGBA; tex.width=tex.height=2; tex.data=texels.data();
