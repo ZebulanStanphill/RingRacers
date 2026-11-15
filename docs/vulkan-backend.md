@@ -85,7 +85,8 @@ Measured on one PC (Radeon Vega 10, with the Windows build's two backends under 
 translated to Vulkan): of 1,002 frames from the 213 maps, the median frame differs in 0.08% of its pixels and the
 worst in 1.4%. Four frames differ by more than texel edges in over 0.1% of their pixels: two of a fine texture far
 away (Daytona Speedway), and two of surfaces in the same plane (a wall in Ice Paradise, a one-tic effect in Haunted
-Ship).
+Ship). The wall in Ice Paradise is one Software doesn't draw, and VibeRant has stopped drawing it since the
+measurement, so the two backends now agree there.
 
 ## Checking it
 
