@@ -25,13 +25,13 @@ samples from active worker threads; these are optimisation hints, not game data.
 
 ## Maintainers
 
-Commit collected files under the app repository's `pgo/` directory. Keep filenames
+Commit collected files under the `uwp/pgo/` directory. Keep filenames
 unique, avoid duplicate submissions (which would overweight a session), and record
 the capture build/toolchain and workload in the commit message. Do not commit the
-merged `build/ringracers.profdata`. Normal push/PR builds automatically use tracked
-`pgo/*.profraw` files when present, otherwise PGO stays off.
+merged `uwp/build/ringracers.profdata`. Normal push/PR builds automatically use tracked
+`uwp/pgo/*.profraw` files when present, otherwise PGO stays off.
 
-From the x64 VS developer shell, `./build.ps1 -Pgo generate`, `-Pgo use`,
+From the x64 VS developer shell, `./uwp/build.ps1 -Pgo generate`, `-Pgo use`,
 `-Pgo off`, or `-Pgo auto` selects the mode; `RR_PGO` supplies the default.
 Explicit `use` fails when there are no tracked captures. Every configure clears
 unused PGO cache settings, so switching modes does not leave instrumentation on.
@@ -47,7 +47,7 @@ error; install compiler-rt for that compiler rather than borrowing another versi
 For profile use, the build first looks for `llvm-profdata.exe` beside `clang-cl`.
 If VS omitted it, the script downloads the **same full LLVM release version**
 from the LLVM project's GitHub release and uses 7-Zip to extract just
-`bin/llvm-profdata.exe` into `deps/llvm-<version>/`. CI's Windows image supplies
+`bin/llvm-profdata.exe` into `uwp/deps/llvm-<version>/`. CI's Windows image supplies
 7-Zip; local builders need `7z` on PATH for this fallback. The tool's reported
 version must exactly match clang-cl's version. No global LLVM installation or
 compiler replacement is performed. A VS-only version without a matching upstream

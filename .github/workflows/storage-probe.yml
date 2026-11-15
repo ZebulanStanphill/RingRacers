@@ -4,11 +4,11 @@ on:
   push:
     branches: [storage-probe]
     paths:
-      - 'tools/storage-probe/**'
+      - 'uwp/tools/storage-probe/**'
       - '.github/workflows/storage-probe.yml'
   pull_request:
     paths:
-      - 'tools/storage-probe/**'
+      - 'uwp/tools/storage-probe/**'
       - '.github/workflows/storage-probe.yml'
   workflow_dispatch:
 
@@ -40,10 +40,10 @@ jobs:
 
       - name: Build and sign the standalone probe
         shell: pwsh
-        run: ./tools/storage-probe/build.ps1
+        run: ./uwp/tools/storage-probe/build.ps1
 
       - uses: actions/upload-artifact@v7
         with:
           name: storage-probe
-          path: tools/storage-probe/out/
+          path: uwp/tools/storage-probe/out/
           if-no-files-found: error

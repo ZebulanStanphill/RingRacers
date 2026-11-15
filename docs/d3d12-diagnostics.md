@@ -45,7 +45,7 @@ The driver takes its samples as follows:
 The driver presents with a swap chain of its own on the window, with no ANGLE in between. A CoreWindow takes
 one swap chain at a time, so the driver takes the window from ANGLE: ANGLE draws to a 1x1 pbuffer, so that it
 lets go of the window's back buffer, and its window surface is destroyed (SDL's `SDL_WinRTReleaseGLSurface`,
-from `patches/sdl-egl-surface-handoff.patch` in ringracers-uwp). Then each frame is copied into the next of three
+from `uwp/patches/sdl-egl-surface-handoff.patch`). Then each frame is copied into the next of three
 back buffers and presented, with `vid_wait` as the sync interval, and the swap chain's frame latency (2)
 enforced by waiting on its waitable object before the copy. Frames whose aspect ratio isn't the window's are
 letterboxed with black bars. There is nothing to configure; the driver is built only for UWP.

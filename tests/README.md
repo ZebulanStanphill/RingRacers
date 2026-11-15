@@ -5,7 +5,7 @@ Direct3D, or vcpkg. Requirements: Python 3.9+, Git, CMake 3.24+, and `clang++`
 with its AddressSanitizer/UndefinedBehaviorSanitizer runtimes. Ubuntu's Clang and
 Apple's Command Line Tools work. Configuration fetches pinned glslang and SPIRV-Cross sources and needs network access on the first run. Native MSVC/clang-cl is not supported by this
 harness; the Windows `warp` job below compiles the Direct3D 12 driver and shaders, and
-[ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp) builds and packages the UWP app.
+the Build workflow (`.github/workflows/build.yml`, `uwp/build.ps1`) builds and packages the UWP app.
 
 ## Running
 
@@ -635,7 +635,7 @@ The transparency tests do not validate GPU depth/stencil, portal clipping, model
 triangle rasterization, or the complete sprite/model drawing implementations.
 These tests do not validate Xbox rendering, frame presentation, deployment, controller
 input, performance, or complete replay/gameplay equivalence. The `warp` job compiles
-the real driver and shader code, and ringracers-uwp's CI builds the UWP app.
+the real driver and shader code, and the Build workflow builds the UWP app.
 
 ## Direct3D 12 WARP harness
 
@@ -1003,7 +1003,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   counter reset after a dump, keeping counters after a failed write, synchronous
   suspend capture and unrelated-event filtering. It tests capture sequencing, not
   compiler-rt itself; Windows linking, real profiles and PGO performance need the
-  Xbox. The app repository's `docs/pgo.md` describes capture and toolchain use.
+  Xbox. `docs/uwp-pgo.md` describes capture and toolchain use.
 
 - **Hidden front BSP children:** `front_bbox_uwp` and `front_bbox_desktop` execute
   production `HWR_RenderBSPNode` on a two-level tree. Check hidden front-subtree

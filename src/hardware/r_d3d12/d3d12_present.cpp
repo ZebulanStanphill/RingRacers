@@ -46,7 +46,7 @@
 
 extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
 
-// ringracers-uwp's patches/sdl-egl-surface-handoff.patch to SDL: destroys and recreates the window's EGL surface,
+// Added to SDL by uwp/patches/sdl-egl-surface-handoff.patch: destroys and recreates the window's EGL surface,
 // ANGLE's swap chain on the CoreWindow, which the SDL headers this is built with don't declare
 extern "C" __declspec(dllimport) int SDLCALL SDL_WinRTReleaseGLSurface(SDL_Window *window);
 extern "C" __declspec(dllimport) int SDLCALL SDL_WinRTRestoreGLSurface(SDL_Window *window);

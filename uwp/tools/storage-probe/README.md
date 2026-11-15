@@ -84,7 +84,7 @@ No submodules or downloads are needed. In an x64 Visual Studio 2022 developer
 PowerShell with UWP C++ tools and Windows SDK 10.0.19041.0:
 
 ```powershell
-./tools/storage-probe/build.ps1
+./uwp/tools/storage-probe/build.ps1
 ```
 
 The standalone CMake project uses C++17, SDK C++/WinRT headers, WindowsApp,

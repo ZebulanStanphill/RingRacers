@@ -2,23 +2,26 @@
 
 `master` is upstream's [Ring Racers](https://github.com/KartKrewDev/RingRacers)
 `maintenance-2.4` branch plus our changes, one commit per change. The UWP (Xbox)
-app that runs it, its launcher, build script and changelog live in
-[ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp), which pins
-this repository as its `RingRacers` submodule.
+app is built from this repository too: `uwp/` holds its launcher, build script,
+SDL patches, profile recordings and tools, and `CHANGES.md` is the user-facing
+changelog. They came from a separate repository,
+[ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp) (archived),
+whose history joins this one at the commit "Merge the UWP app's repository".
 
 # Commit scope
 
 Keep each commit focused: implement one change or fix per commit, with the
 documentation for that change (its commit message, and the docs in `docs/` or
-`tests/README.md` that describe it). Split unrelated changes into separate commits,
-even when they're made in the same session. The user-facing changelog is
-ringracers-uwp's `CHANGES.md`, updated by the commit there that moves the
-submodule to the change.
+`tests/README.md` that describe it) and its `CHANGES.md` entry. Split unrelated
+changes into separate commits, even when they're made in the same session.
 
 # Staying rebaseable
 
 Our commits are rebased onto newer upstream releases, so keep them easy to
-replay:
+replay. Rebase with `git rebase --rebase-merges`: the UWP app's earlier history
+is a second line of commits that joins at one merge, and a plain rebase would
+flatten it into this one and stop on its old conflicts. With `--rebase-merges`
+those commits stay as they are and the merge is made again.
 
 - Prefer new files and small, contained hooks over edits spread through upstream
   code. Don't reformat, rename or reorder upstream code you aren't changing.
@@ -68,7 +71,9 @@ the unmodified game.
 sanitizers) and the Direct3D 12 WARP harness (Windows).
 `.github/workflows/tests.yml` runs both, and checks that Linux and macOS still build
 without the Direct3D 12 driver, and that Windows desktop (not UWP) builds with it
-by default (beside OpenGL, using the desktop presenter). The UWP app build and Xbox testing happen in ringracers-uwp.
+by default (beside OpenGL, using the desktop presenter).
+`.github/workflows/build.yml` builds the UWP app with `uwp/build.ps1` and uploads
+the package that is tested on Xbox; there is no local UWP build outside Windows.
 
 # Commit attribution
 

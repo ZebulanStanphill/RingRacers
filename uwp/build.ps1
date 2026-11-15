@@ -3,13 +3,13 @@
 Builds Ring Racers for UWP (Xbox Dev Mode).
 
 .DESCRIPTION
-Builds the RingRacers submodule (ZebulanStanphill/RingRacers: Ring Racers with this
-port's engine changes) as a static library with the ninja-x64_windows_uwp_vcpkg-release
-preset, builds SDL2 for UWP with OpenGL ES through ANGLE
-(patches/sdl-angle.patch), a fix for controllers showing up twice
+Builds the engine (the repository this folder is in) as a static library with the
+ninja-x64_windows_uwp_vcpkg-release preset, builds SDL2 for UWP with OpenGL ES
+through ANGLE (patches/sdl-angle.patch), a fix for controllers showing up twice
 (patches/sdl-controller-duplicates.patch) and a way for Direct3D 12 to take the
 window from ANGLE and give it back (patches/sdl-egl-surface-handoff.patch),
-downloads ANGLE, then generates and builds the UWP launcher solution in build/.
+downloads ANGLE into deps/, then generates and builds the UWP launcher solution in
+build/. patches/, deps/ and build/ are beside this script, in uwp/.
 
 Run from an x64 Visual Studio 2022 developer shell with VCPKG_ROOT set.
 #>
@@ -19,8 +19,9 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# $Root is uwp/, the launcher and everything only the UWP app needs; $Source is the engine, the repository's top folder
 $Root = $PSScriptRoot
-$Source = Join-Path $Root "RingRacers"
+$Source = Split-Path -Parent $Root
 $Preset = "ninja-x64_windows_uwp_vcpkg-release"
 $LibBuild = Join-Path $Source "build/$Preset"
 $UwpBuild = Join-Path $Root "build"
@@ -63,8 +64,8 @@ if (-not $env:VCPKG_ROOT -or -not (Test-Path (Join-Path $env:VCPKG_ROOT "scripts
 	throw "VCPKG_ROOT must point to a vcpkg checkout."
 }
 
-if (-not (Test-Path (Join-Path $Source "CMakeLists.txt"))) {
-	Exec { git -C $Root submodule update --init RingRacers }
+if (-not (Test-Path (Join-Path $Source "CMakePresets.json"))) {
+	throw "The engine's CMakePresets.json was not found in $Source; run this script from its place in the repository."
 }
 
 # Use only committed training data, never stray captures from a local session.
@@ -160,8 +161,8 @@ if (-not (Test-Path (Join-Path $Angle "bin/UAP/x64/libGLESv2.dll"))) {
 	Expand-Archive -Force $AnglePackage $Angle
 }
 
-Exec { cmake -S (Join-Path $Root "uwp") -B $UwpBuild -G "Visual Studio 17 2022" -A x64 @AppPgo "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
+Exec { cmake -S $Root -B $UwpBuild -G "Visual Studio 17 2022" -A x64 @AppPgo "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
 Exec { cmake --build $UwpBuild --config Release }
 
 Write-Host ""
-Write-Host "Built. Open build\ringracers-uwp.sln in Visual Studio 2022 to deploy to your Xbox or create an app package."
+Write-Host "Built. Open uwp\build\ringracers-uwp.sln in Visual Studio 2022 to deploy to your Xbox or create an app package."
