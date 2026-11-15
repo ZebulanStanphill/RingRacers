@@ -71,7 +71,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_SPACE, "\x85Report visual bugs to GitHub.com/", "",
 		NULL, {NULL}, 0, 0},
 
-	{IT_STRING | IT_SPACE, "\x85ZebulanStanphill/ringracers", "",
+	{IT_STRING | IT_SPACE, "\x85ZebulanStanphill/RingRacers", "",
 		NULL, {NULL}, 0, 0},
 #else
 	{IT_STRING | IT_SPACE, "\x85Legacy GL will eventually be replaced.", "",
@@ -162,7 +162,7 @@ void M_RefreshAdvancedVideoOptions(void)
 	OPTIONS_VideoAdvanced[vaopt_spacer5].text = shown_d3d ? "featuring 3D models, true perspective," : "are missing/broken.";
 	OPTIONS_VideoAdvanced[vaopt_spacer6].text = shown_d3d ? "& high parity with Software." : "";
 	OPTIONS_VideoAdvanced[vaopt_renderer - 3].text = shown_d3d ? "\x85Report visual bugs to GitHub.com/" : "\x85Legacy GL will eventually be replaced.";
-	OPTIONS_VideoAdvanced[vaopt_renderer - 2].text = shown_d3d ? "\x85ZebulanStanphill/ringracers" : "\x85Please don't report visual bugs!";
+	OPTIONS_VideoAdvanced[vaopt_renderer - 2].text = shown_d3d ? "\x85ZebulanStanphill/RingRacers" : "\x85Please don't report visual bugs!";
 	OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = running_d3d ? "VibeRant D3D Options..." : "Legacy GL Options...";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].text = running_d3d ? "Texture Filter" : "Texture Quality";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].tooltip = running_d3d ? "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures." : "Texture depth. Higher values are recommended.";
