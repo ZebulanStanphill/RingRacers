@@ -1073,6 +1073,83 @@ fails the run, as it does on WARP. Where the two runs differ:
   computed by the scene's own per-pass formula, which for the Direct3D run's 120 is
   the color it always expected.
 
+## Metal driver harness (macOS)
+
+The same driver test, `d3d12-driver.cpp`, runs a third time against the Metal backend
+(`src/hardware/r_d3d12/metal`, [`docs/metal-backend.md`](../docs/metal-backend.md)):
+the production driver, mtl12, and the runtime shader translator are built into a
+headless executable (`tests/metal-driver/CMakeLists.txt`) that needs no window, SDL
+library, game assets, or game process. It is the only thing that builds the Metal
+backend so far: the game has no presenter for it yet. On a Mac with Xcode's
+command-line tools, CMake, and Git, from the repository root:
+
+```sh
+tests/run-metal.sh
+```
+
+The script builds (at most three jobs; `RR_METAL_BUILD` overrides the build
+directory, `build/metal-tests` by default, and `RR_METAL_CMAKE_ARGS` adds
+arguments to the configuration), runs the scenes, and then the negative controls.
+The first configuration fetches the production pins of glslang, SPIRV-Cross, and
+DirectX-Headers, and builds glslang and SPIRV-Cross with its Metal target.
+
+Metal code can't be built or run off macOS, so on other systems the way to run
+this is the `metal` CI job, on `macos-15` (arm64). GitHub's runner has a Metal
+device, "Apple Paravirtual device": the virtual machine's GPU, which passes
+commands to the host's. Metal has no CPU implementation, so there is no
+counterpart of WARP or lavapipe, and the test ignores `Core_ForceWarp`. The job
+caches the build of the shader tools by runner image and their pins, and takes
+a little over a minute with the cache; building the tools first adds about a
+minute and a half.
+
+What it covers is what the WARP and Vulkan runs cover: the same scene registry,
+oracle self-test, pixel comparisons (RGB tolerance 1), and capture, ring, and
+lifetime counters, through the production driver's entry points, against the same
+expected colors. No scene is skipped or given another expected color for Metal;
+`water-group` starts from the green the Vulkan run starts from. Where the runs
+differ:
+
+- **Validation** is Metal's own, turned on from outside the program: the script
+  sets `MTL_DEBUG_LAYER=1` (API validation) and `MTL_SHADER_VALIDATION=1`, and the
+  test fails unless mtl12's device line says both are on, which it reads off the
+  classes Metal wrapped the device in (`MTLDebugDevice`, and `MTLGPUDebugDevice`
+  or, on the runner's GPU, `MTLLegacySVDevice`). A failure of API validation stops
+  the program where it happens (an abort, exit status 134), which fails the script,
+  and the script's `MTL_DEBUG_LAYER_WARNING_MODE=assert` makes the debug layer's
+  warnings (a state set twice, a buffer bound and never used) do the same. What
+  shader validation finds comes back with the command buffer; mtl12 writes it to
+  the log and counts it, and `rr_mtl12::ValidationErrors()` being nonzero fails the
+  run at the next check, as does a command buffer that failed for any other reason.
+  `Core_Errors` must stay zero, as on WARP. Both kinds were tried once on the
+  runner with mtl12 broken on purpose (not kept in the tree): a scissor rectangle
+  larger than its target stopped the program in `setScissorRect:`, and textures
+  never given to the encoder made the first command buffer come back with "Null
+  texture access executing fragment function", which the next check turned into
+  "Metal validation error". Without the two variables the test refuses to run.
+- **Waits** are scaled by 20, as on lavapipe, because the runner's GPU is shared
+  and virtual. They haven't been needed: with `RR_METAL_PRODUCTION_WAITS=1`, which
+  keeps the waits production gives the GPU, the run passed on the runner too, and
+  the longest of its 2,356 fence waits took 23 ms; the longest wait of five runs
+  in a row with the scaled waits was 88 ms, against production's 500.
+- **Negative controls** (`metal-controls.py`) are the six of the Vulkan run: add-on
+  shaders turned off, and the five shader defects injected into `shaders.hlsl`,
+  compiled to SPIR-V with the production flags, and translated by mtl12. Each runs
+  as its own process and must fail through its named pixel oracle
+  (`NEGATIVE_ORACLE_REJECTED`) within 120 seconds. The production shaders are
+  rebuilt afterwards.
+- **The presenter's hooks** are checked after the scenes, outside the registry
+  (the other backends have no counterpart): a texture like a drawable's is wrapped
+  with `rr_mtl12::WrapTexture`, cleared through a render target view, copied to a
+  readback buffer, and compared; then a drawable of a `CAMetalLayer` that is on no
+  window is wrapped, cleared, and presented with `PresentWithNextSubmit`, and its
+  submission must complete without a validation error. `metal-objects.mm` makes
+  the texture and the layer, which C++ can't. If the layer gives no drawable, the
+  test says so in capitals and goes on. What a window shows is not tested: there is
+  no presenter and no window.
+- **Not exercised**: the paths of mtl12 that the scenes don't reach, among them a
+  view of fewer mips than its texture, buffer-to-buffer copies and timestamp
+  queries (only the UWP presenter uses them), and a lost device.
+
 ## CI and adding cases
 
 `.github/workflows/tests.yml` runs this suite with ASan and UBSan (the
@@ -1085,6 +1162,10 @@ and skips the ZDBSP build; a miss fetches and builds them normally.
 The Windows `warp` job, which compiles the translated add-on shader fixtures and runs
 the Direct3D 12 WARP regressions, depends on it passing. CTest's JUnit report and
 detailed run log are uploaded as `regression-results`, including when a test fails.
+The `vulkan` and `metal` jobs run the driver test on those backends (see the two
+harness sections above); the `metal` job caches its glslang and SPIRV-Cross build by
+runner image, pins, and the harness's build file, and a hit keeps FetchContent
+disconnected.
 The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
 `compile_commands.json`: the Linux build must have the driver with only its Vulkan backend
 (`HAVE_D3D12` and `HAVE_VULKAN`, no `HAVE_D3D12_NATIVE`), and the macOS build must have no

@@ -55,6 +55,11 @@ those commits stay as they are and the merge is made again.
   guard) and without Windows (Linux builds have `HAVE_D3D12` with only the
   Vulkan backend; `vulkan/vk12_win.h` stands in for the few Win32 calls the
   driver makes). macOS and MinGW builds must build without any of them.
+  `HAVE_METAL` is a third backend, for macOS: `src/hardware/r_d3d12/metal`
+  implements the same interfaces on Metal (`docs/metal-backend.md`), and
+  `Core_Metal()` is where the driver asks. So far only the driver test builds it
+  (`tests/metal-driver`); the game's macOS build has no option for it yet. Its
+  code can only be compiled on macOS, which here means the `metal` CI job.
 - A fix to a change that has its own commit can be made with
   `git commit --fixup=<commit>`, to be squashed into it at the next rebase.
 

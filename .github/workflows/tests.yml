@@ -174,6 +174,37 @@ jobs:
           export VK_DRIVER_FILES="$icd"
           tests/run-vulkan.sh
 
+  metal:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: Metal driver on macOS (API and shader validation)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Record the runner image
+        run: echo "RR_IMAGE_VERSION=$ImageOS-$ImageVersion" >> "$GITHUB_ENV"
+
+      # glslang and SPIRV-Cross take minutes to build and only change with their pins, the harness's build file or the
+      # runner image; the driver, mtl12, and the test are rebuilt by make when their sources are newer.
+      - name: Cache the shader tools' build
+        id: metal-tools-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            build/metal-tests/_deps
+            build/metal-tests/legacy-shader-libs
+            build/metal-tests/build-tools
+          key: metal-shader-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/metal-driver/CMakeLists.txt') }}
+
+      # The script turns on Metal's API validation and shader validation, and the test fails without them. The runner's
+      # GPU is the device: Metal has no CPU implementation.
+      - name: Metal renderer regressions
+        env:
+          RR_METAL_CMAKE_ARGS: -DFETCHCONTENT_FULLY_DISCONNECTED=${{ steps.metal-tools-cache.outputs.cache-hit == 'true' && 'ON' || 'OFF' }}
+        run: tests/run-metal.sh
+
   linux:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository

@@ -25,7 +25,11 @@
 #include <d3d12sdklayers.h>
 #else
 #include <cstdlib>
+#ifdef HAVE_METAL
+#include "hardware/r_d3d12/metal/mtl12.h"
+#else
 #include "hardware/r_d3d12/vulkan/vk12.h"
+#endif
 #endif
 #include <algorithm>
 #include <array>
@@ -265,11 +269,91 @@ static void validate(ID3D12InfoQueue *queue)
         }
     }
     if (failed) throw std::runtime_error("debug warning/error");
+#elif defined(HAVE_METAL)
+    // What Metal reports through command buffers: one that failed, and each fault shader validation logged. A failure of
+    // Metal's API validation never gets here: the debug layer stops the program where it happens.
+    if (rr_mtl12::ValidationErrors() != 0) throw std::runtime_error("Metal validation error");
 #else
     if (rr_vk12::ValidationErrors() != 0) throw std::runtime_error("Vulkan validation error");
 #endif
     if (Core_Errors()) throw std::runtime_error("production Core_Errors nonzero");
 }
+#ifdef HAVE_METAL
+// tests/metal-driver/metal-objects.mm: what only Objective-C can make
+void *MetalTest_NewTexture(void *device,unsigned width,unsigned height);
+void *MetalTest_NextDrawable(void *device,unsigned width,unsigned height,void **texture);
+void MetalTest_Release(void *object);
+// The hooks mtl12 has for a presenter, which doesn't exist yet: the device, a drawable's texture as a resource the driver can
+// clear and copy from, and a drawable presented with a submission. Not a scene: the other backends have no counterpart, and
+// their presenters' use of the same things is tested, or not, elsewhere.
+static void clearWrapped(ID3D12Resource *target,const float color[4],ComPtr<ID3D12DescriptorHeap> &heap) {
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc={}; heapDesc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV; heapDesc.NumDescriptors=1;
+    if(FAILED(Core_Device()->CreateDescriptorHeap(&heapDesc,IID_PPV_ARGS(&heap)))) throw std::runtime_error("Metal presenter hooks: no descriptor heap");
+    const auto rtv=heap->GetCPUDescriptorHandleForHeapStart();
+    Core_Device()->CreateRenderTargetView(target,nullptr,rtv);
+    Core_Transition(target,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET); Core_FlushBarriers();
+    Core_List()->ClearRenderTargetView(rtv,color,0,nullptr);
+}
+static void metalPresenterHooks() {
+    void *device=rr_mtl12::Device();
+    if(!device) throw std::runtime_error("Metal presenter hooks: no device");
+    const float color[4]={32/255.f,96/255.f,160/255.f,1};
+    {
+        void *texture=MetalTest_NewTexture(device,W,H);
+        ComPtr<ID3D12Resource> wrapped; ComPtr<ID3D12DescriptorHeap> heap;
+        if(!texture || FAILED(rr_mtl12::WrapTexture(texture,&wrapped))) throw std::runtime_error("Metal presenter hooks: WrapTexture failed");
+        const auto desc=wrapped->GetDesc();
+        if(desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM || desc.Width!=W || desc.Height!=H || desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D)
+            throw std::runtime_error("Metal presenter hooks: the wrapped texture's description is wrong");
+        const UINT pitch=256; static_assert(W*4<=256,"one 256-byte row holds the frame's width");
+        D3D12_HEAP_PROPERTIES heapProperties={}; heapProperties.Type=D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC bufferDesc={}; bufferDesc.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER; bufferDesc.Width=pitch*H; bufferDesc.Height=1;
+        bufferDesc.DepthOrArraySize=bufferDesc.MipLevels=1; bufferDesc.SampleDesc.Count=1; bufferDesc.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> buffer;
+        if(FAILED(Core_Device()->CreateCommittedResource(&heapProperties,D3D12_HEAP_FLAG_NONE,&bufferDesc,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&buffer))))
+            throw std::runtime_error("Metal presenter hooks: no readback buffer");
+        clearWrapped(wrapped.Get(),color,heap);
+        Core_Transition(wrapped.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_COPY_SOURCE); Core_FlushBarriers();
+        D3D12_TEXTURE_COPY_LOCATION source={}, destination={};
+        source.pResource=wrapped.Get(); source.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destination.pResource=buffer.Get(); destination.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        destination.PlacedFootprint.Footprint={DXGI_FORMAT_B8G8R8A8_UNORM,W,H,1,pitch};
+        Core_List()->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+        Core_Transition(wrapped.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_PRESENT); Core_FlushBarriers();
+        const UINT64 fence=Core_Submit("presenter hooks");
+        if(!fence || !Core_Wait(fence,30000,"presenter hooks")) throw std::runtime_error("Metal presenter hooks: the wrapped texture's commands didn't finish");
+        validate(validationQueue);
+        void *data=nullptr;
+        if(FAILED(buffer->Map(0,nullptr,&data))) throw std::runtime_error("Metal presenter hooks: Map failed");
+        // The texture is BGRA: blue is the first byte of a texel
+        for(int y:{0,H-1}) for(int x:{0,W-1}) {
+            const UINT8 *texel=static_cast<const UINT8 *>(data)+(size_t)y*pitch+x*4;
+            if(!within({texel[2],texel[1],texel[0]},{32,96,160}) || texel[3]!=255) {
+                fprintf(stderr,"Metal presenter hooks: texel %d,%d of the wrapped texture is %d,%d,%d,%d (BGRA)\n",x,y,texel[0],texel[1],texel[2],texel[3]);
+                throw std::runtime_error("Metal presenter hooks: the wrapped texture wasn't cleared, or wasn't read back");
+            }
+        }
+        buffer->Unmap(0,nullptr);
+        wrapped.Reset(); heap.Reset(); buffer.Reset();
+        MetalTest_Release(texture);
+    }
+    {
+        void *texture=nullptr; void *drawable=MetalTest_NextDrawable(device,W,H,&texture);
+        if(!drawable) { puts("Metal presenter hooks: WrapTexture checked; the layer gave no drawable, so PresentWithNextSubmit was NOT exercised"); return; }
+        ComPtr<ID3D12Resource> wrapped; ComPtr<ID3D12DescriptorHeap> heap;
+        if(!texture || FAILED(rr_mtl12::WrapTexture(texture,&wrapped))) throw std::runtime_error("Metal presenter hooks: WrapTexture failed for a drawable");
+        clearWrapped(wrapped.Get(),color,heap);
+        Core_Transition(wrapped.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PRESENT); Core_FlushBarriers();
+        rr_mtl12::PresentWithNextSubmit(drawable);
+        const UINT64 fence=Core_Submit("presenter hooks");
+        if(!fence || !Core_Wait(fence,30000,"presenter hooks")) throw std::runtime_error("Metal presenter hooks: the drawable's commands didn't finish");
+        validate(validationQueue);
+        wrapped.Reset(); heap.Reset();
+        MetalTest_Release(drawable);
+        puts("Metal presenter hooks: WrapTexture checked, and a drawable of a layer without a window presented with a submission");
+    }
+}
+#endif
 // Every scene whose oracle the full run must reach. A scene never reached, or reached but missing here, fails the run, so a
 // renamed, skipped or unlisted oracle can't go unnoticed.
 static const char *const kOracles[]={
@@ -388,6 +472,11 @@ int main(int argc,char **argv) {
     try {
 #ifdef HAVE_D3D12_NATIVE
         Core_ForceWarp(true);
+#elif defined(HAVE_METAL)
+        // Metal has no CPU device: the test runs on the machine's GPU, which on a CI runner is a virtual one shared with
+        // other machines. RR_METAL_PRODUCTION_WAITS keeps the waits production gives the GPU.
+        if(!getenv("RR_METAL_PRODUCTION_WAITS")) Core_ScaleWaitsForTest(20);
+        Core_VulkanValidation(true);
 #else
         Core_ForceWarp(!getenv("RR_VULKAN_HARDWARE"));
         // On a CI runner lavapipe's first readback outlasted the driver's 500 ms wait twice, and the slowest of a passing
@@ -399,6 +488,9 @@ int main(int argc,char **argv) {
         if(!function<boolean (*)()>("Init")() || !D3D12_Surface(W,H)) throw std::runtime_error("Init/Surface failed");
 #ifdef HAVE_D3D12_NATIVE
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
+#elif defined(HAVE_METAL)
+        if(logs.find("API validation on") == std::string::npos || logs.find("shader validation on") == std::string::npos)
+            throw std::runtime_error("Metal's API and shader validation are required (MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1)");
 #else
         if(logs.find(", validation on") == std::string::npos) throw std::runtime_error("Vulkan validation layer required");
 #endif
@@ -1763,6 +1855,9 @@ int main(int argc,char **argv) {
             clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); special(HWD_SET_MODEL_LIGHTING,0);
             deleteTexture(&customTexture); D3D12_FinishUpdate(0);
         }
+#ifdef HAVE_METAL
+        metalPresenterHooks();
+#endif
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(validationQueue);
         D3D12_Shutdown(); validate(validationQueue);
         require("shutdown",Core_Device()==nullptr,"shutdown device lifetime oracle failed");
@@ -1771,6 +1866,8 @@ int main(int argc,char **argv) {
         if(!problems.empty()) throw std::runtime_error("oracles that never ran, or that aren't listed:"+problems);
 #ifdef HAVE_D3D12_NATIVE
         puts("Production D3D12 WARP driver scenes passed (RGB tolerance 1, GBV clean)"); return 0;
+#elif defined(HAVE_METAL)
+        printf("Production Metal driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;
 #else
         printf("Production Vulkan driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;
 #endif
