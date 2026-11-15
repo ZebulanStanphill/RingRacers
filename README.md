@@ -97,7 +97,7 @@ Preparing the drive includes giving Xbox apps access to it. That is needed becau
 - The first command allows the app, through the group "ALL APPLICATION PACKAGES" (`S-1-15-2-1`). A drive formatted by Windows doesn't have this.
 - The second allows the user, through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already has this, but a drive formatted another way may not. The game couldn't open a drive that had only the first grant until the second was added.
 
-`(OI)(CI)` makes files added later get the same access. Xbox Media Drive Helper makes both grants, skips the second where the drive already has it, and saves a journal that can undo them. The Xbox itself doesn't format a media drive or change its permissions.
+`(OI)(CI)` makes files added later get the same access. Xbox Media Drive Helper makes both grants, skips the second where the drive already has it, and saves a journal that can undo them. The Xbox can't do this part for you. The only formatting it does is **Format storage device**, which turns a drive into storage for installed games. A drive used for media is left exactly as it is, permissions included.
 
 Files copied onto the drive on Windows inherit these permissions. Files copied from a Mac or Linux PC through NTFS-3G don't: they get NTFS-3G's own default, which leaves out ALL APPLICATION PACKAGES. After copying files that way, give Xbox apps access to the drive again (in Xbox Media Drive Helper, prepare the drive again and add to the existing journal).
 
