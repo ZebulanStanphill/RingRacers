@@ -13,6 +13,7 @@
 #ifndef RR_D3D12_CORE_H
 #define RR_D3D12_CORE_H
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -24,6 +25,10 @@
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
+#else
+// No Windows SDK: Direct3D 12's declarations from DirectX-Headers, for the Vulkan backend to implement
+#include "vulkan/vk12_win.h"
+#endif
 
 namespace rr_d3d12
 {
@@ -44,8 +49,16 @@ int Core_Errors();
 // failure, it tries again.
 bool Core_Init();
 
-// Test hook: makes Core_Init select WARP rather than a hardware adapter. Set before initialization.
+// Test hook: makes Core_Init select WARP rather than a hardware adapter (with the Vulkan backend, a CPU device such as
+// lavapipe). Set before initialization.
 void Core_ForceWarp(bool force);
+
+// Which backend Core_Init makes the device with: Direct3D 12 itself, or Vulkan through vk12 (VibeRant Vulkan). Set before
+// initialization. A build with only one of them always uses it.
+void Core_UseVulkan(bool vulkan);
+bool Core_Vulkan();
+// With the Vulkan backend: validation layers and their messages in the log. Set before initialization.
+void Core_VulkanValidation(bool validation);
 
 // Releases everything if the GPU is idle (or the device was removed); otherwise keeps it all until exit, since
 // releasing objects a list may still use is undefined. Call after the driver has retired or released its own objects.

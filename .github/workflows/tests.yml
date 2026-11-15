@@ -158,7 +158,7 @@ jobs:
   linux:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: Linux build (no Direct3D 12)
+    name: Linux build (VibeRant Vulkan)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
 
@@ -177,14 +177,17 @@ jobs:
           -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Check that the Direct3D 12 driver is left out
+      # A Linux build has the VibeRant driver with its Vulkan backend by default, and never Direct3D 12 itself. Building it
+      # is also the check that the hardware renderer's engine code compiles with HAVE_D3D12 but not _UWP, off Windows.
+      - name: Check that the driver is built with the Vulkan backend only
         run: |
-          if grep -q HAVE_D3D12 build/ninja-release/compile_commands.json; then
-            echo "A Linux build must not include the Direct3D 12 driver"; exit 1
+          commands=build/ninja-release/compile_commands.json
+          if ! grep -q -e '-DHAVE_D3D12 ' -e '-DHAVE_D3D12"' $commands || ! grep -q HAVE_VULKAN $commands; then
+            echo "A Linux build must include the VibeRant driver (HAVE_D3D12) with its Vulkan backend (HAVE_VULKAN) by default"; exit 1
           fi
-
-      - name: Check that the hardware renderer compiles with HAVE_D3D12 but not _UWP
-        run: python3 tests/check-d3d12-desktop.py build/ninja-release/compile_commands.json
+          if grep -q HAVE_D3D12_NATIVE $commands; then
+            echo "A Linux build must not include the Direct3D 12 backend"; exit 1
+          fi
 
       - name: Build
         run: cmake --build build/ninja-release --parallel 4

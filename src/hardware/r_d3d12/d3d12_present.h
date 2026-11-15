@@ -76,5 +76,19 @@ void Present_FrameDone();
 // The swap chain's buffers
 UINT64 Present_SwapChainBytes();
 
+#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+// A build with both backends has two presenters. The Direct3D 12 one has the names above and hands each call to the
+// Vulkan one (vulkan/vk_present.cpp), under these names, while the device is vk12's.
+bool VkPresent_TakeWindow();
+void VkPresent_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place);
+void VkPresent_ReleaseWindow();
+void VkPresent_Shutdown(bool idle);
+void VkPresent_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe);
+void VkPresent_LogPerf(double frames);
+bool VkPresent_Tracing();
+void VkPresent_FrameDone();
+UINT64 VkPresent_SwapChainBytes();
+#endif
+
 } // namespace rr_d3d12
 #endif

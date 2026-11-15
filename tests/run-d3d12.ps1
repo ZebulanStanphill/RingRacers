@@ -37,7 +37,7 @@ if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator compilation failed' }
 $LegacyLibraries = @((Join-Path $LegacyBuild 'rr_d3d12_legacy.lib'))
 $LegacyLibraries += @(Get-ChildItem (Join-Path $LegacyBuild 'legacy-shader-libs') -Filter '*.lib' | ForEach-Object { $_.FullName })
 $Exe = Join-Path $Output 'd3d12-driver.exe'
-& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_D3D12 /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @Includes "/Fe:$Exe" "/Fo:$Output\" @Files /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
+& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_D3D12 /DHAVE_D3D12_NATIVE /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @Includes "/Fe:$Exe" "/Fo:$Output\" @Files /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 driver compilation failed" }
 & $Exe
 if ($LASTEXITCODE -eq 77) {
@@ -55,7 +55,7 @@ New-Item -ItemType Directory -Force $PresentOutput | Out-Null
 $PresentFiles = @((Join-Path $PSScriptRoot 'd3d12-present.cpp'), "$Driver\d3d12_core.cpp", "$Driver\d3d12_present_win32.cpp")
 $PresentIncludes = @("/I$PSScriptRoot\d3d12-present-stubs") + $Includes
 $PresentExe = Join-Path $PresentOutput 'd3d12-present.exe'
-& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /DHAVE_D3D12 /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @PresentIncludes "/Fe:$PresentExe" "/Fo:$PresentOutput\" @PresentFiles /link d3d12.lib dxgi.lib dxguid.lib user32.lib
+& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /DHAVE_D3D12 /DHAVE_D3D12_NATIVE /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @PresentIncludes "/Fe:$PresentExe" "/Fo:$PresentOutput\" @PresentFiles /link d3d12.lib dxgi.lib dxguid.lib user32.lib
 if ($LASTEXITCODE -ne 0) { throw "Desktop D3D12 presenter compilation failed" }
 & $PresentExe
 if ($LASTEXITCODE -ne 0) { throw "Desktop D3D12 presenter regression failed (exit $LASTEXITCODE)" }
@@ -120,7 +120,7 @@ foreach ($Control in $Controls) {
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) SM5.1 compilation failed" }
     $PipelineObject = Join-Path $ControlDir 'd3d12_pipeline.obj'
     $ControlIncludes = @("/I$ControlDir") + $Includes
-    & cl.exe /nologo /c /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_D3D12 /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @ControlIncludes "/Fo:$PipelineObject" "$Driver\d3d12_pipeline.cpp"
+    & cl.exe /nologo /c /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_D3D12 /DHAVE_D3D12_NATIVE /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @ControlIncludes "/Fo:$PipelineObject" "$Driver\d3d12_pipeline.cpp"
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) pipeline compilation failed" }
     $Objects = @($Files | Where-Object { [IO.Path]::GetFileName($_) -ne 'd3d12_pipeline.cpp' } | ForEach-Object { Join-Path $Output ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj') })
     $ControlExe = Join-Path $ControlDir 'd3d12-driver.exe'

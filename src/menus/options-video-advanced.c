@@ -156,14 +156,15 @@ void M_RefreshAdvancedVideoOptions(void)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
 	boolean shown_d3d = cv_renderer.value != 2;
+	boolean shown_vulkan = cv_renderer.value == 4;
 	boolean running_d3d = HWR_D3D12();
-	OPTIONS_VideoAdvanced[vaopt_spacer3].text = shown_d3d ? "VibeRant D3D is an enhanced port of" : "Legacy GL supports 3D models and true";
-	OPTIONS_VideoAdvanced[vaopt_spacer4].text = shown_d3d ? "the Legacy GL renderer to Direct3D 12," : "perspective, but many visual features";
+	OPTIONS_VideoAdvanced[vaopt_spacer3].text = shown_vulkan ? "VibeRant Vulkan is an enhanced port" : shown_d3d ? "VibeRant D3D is an enhanced port of" : "Legacy GL supports 3D models and true";
+	OPTIONS_VideoAdvanced[vaopt_spacer4].text = shown_vulkan ? "of the Legacy GL renderer to Vulkan," : shown_d3d ? "the Legacy GL renderer to Direct3D 12," : "perspective, but many visual features";
 	OPTIONS_VideoAdvanced[vaopt_spacer5].text = shown_d3d ? "featuring 3D models, true perspective," : "are missing/broken.";
 	OPTIONS_VideoAdvanced[vaopt_spacer6].text = shown_d3d ? "& high parity with Software." : "";
 	OPTIONS_VideoAdvanced[vaopt_renderer - 3].text = shown_d3d ? "\x85Report visual bugs to GitHub.com/" : "\x85Legacy GL will eventually be replaced.";
 	OPTIONS_VideoAdvanced[vaopt_renderer - 2].text = shown_d3d ? "\x85ZebulanStanphill/RingRacers" : "\x85Please don't report visual bugs!";
-	OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = running_d3d ? "VibeRant D3D Options..." : "Legacy GL Options...";
+	OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = running_d3d ? (HWR_Vulkan() ? "VibeRant Vulkan Options..." : "VibeRant D3D Options...") : "Legacy GL Options...";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].text = running_d3d ? "Texture Filter" : "Texture Quality";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].tooltip = running_d3d ? "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures." : "Texture depth. Higher values are recommended.";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].itemaction.cvar = running_d3d ? &cv_glfiltermode : &cv_scr_depth;

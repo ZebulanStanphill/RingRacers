@@ -103,6 +103,15 @@ if(SRB2_CONFIG_UWP OR MSVC)
 endif()
 cmake_dependent_option(SRB2_CONFIG_D3D12 "Build the Direct3D 12 hardware driver (VibeRant D3D). Windows only; needs fxc from the Windows SDK." "${SRB2_CONFIG_D3D12_DEFAULT}"
 	"WIN32;SRB2_CONFIG_HWRENDER" OFF)
+# VibeRant Vulkan: the same driver on Vulkan (src/hardware/r_d3d12/vulkan implements the Direct3D 12 interfaces the
+# driver uses), for platforms without Direct3D 12. Its shaders are shaders.hlsl compiled to SPIR-V by glslang.
+set(SRB2_CONFIG_VULKAN_DEFAULT OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR (MSVC AND NOT SRB2_CONFIG_UWP))
+	# Windows desktop builds have both backends, and the Renderer setting offers VibeRant D3D and VibeRant Vulkan
+	set(SRB2_CONFIG_VULKAN_DEFAULT ON)
+endif()
+cmake_dependent_option(SRB2_CONFIG_VULKAN "Build the Vulkan backend of the hardware driver (VibeRant Vulkan)." "${SRB2_CONFIG_VULKAN_DEFAULT}"
+	"SRB2_CONFIG_HWRENDER;NOT SRB2_CONFIG_UWP" OFF)
 set(SRB2_CONFIG_ASSET_DIRECTORY "" CACHE PATH "Path to directory that contains all asset files for the installer. If set, assets will be part of installation and cpack.")
 
 # Enable CCache

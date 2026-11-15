@@ -389,6 +389,10 @@ void LogLayout(UINT frameWidth, UINT frameHeight, const Layout &layout)
 
 bool Present_TakeWindow()
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+		return VkPresent_TakeWindow();
+#endif
 	if (g_direct.owned)
 		return true;
 	// The driver starts with the video system, before the game's window is made: Present_Frame takes it with the first frame
@@ -402,6 +406,13 @@ bool Present_TakeWindow()
 
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+	{
+		VkPresent_Frame(source, sourceState, width, height, vsync, place);
+		return;
+	}
+#endif
 	g_traceSlot = -1;
 	const bool trace = Present_Tracing();
 
@@ -529,12 +540,26 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 
 void Present_ReleaseWindow()
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+	{
+		VkPresent_ReleaseWindow();
+		return;
+	}
+#endif
 	if (g_direct.owned)
 		GiveBackWindow();
 }
 
 void Present_Shutdown(bool idle)
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+	{
+		VkPresent_Shutdown(idle);
+		return;
+	}
+#endif
 	// The SDL window stays as it was: SDL_DestroyWindow doesn't need anything of ours. The caller's wait didn't cover the last
 	// frame presented.
 	if (idle && g_direct.swapChain)
@@ -549,6 +574,13 @@ void Present_Shutdown(bool idle)
 
 void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+	{
+		VkPresent_GetTrace(copied, shown, copyframe, showframe);
+		return;
+	}
+#endif
 	*copied = g_traceSlot;
 	*shown = g_traceSlot;
 	*copyframe = 0; // there is no frame id to report off the Xbox
@@ -557,6 +589,13 @@ void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *sh
 
 void Present_LogPerf(double frames)
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+	{
+		VkPresent_LogPerf(frames);
+		return;
+	}
+#endif
 	const PresentStats &s = g_stats;
 	const double n = frames > 0 ? frames : 1;
 	I_OutputMsg("UWP perf:   D3D12: present: window swap chain (%u buffers, latency %u, %ux%u, tearing %s); per frame draw %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures\n",
@@ -568,17 +607,32 @@ void Present_LogPerf(double frames)
 
 bool Present_Tracing()
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+		return VkPresent_Tracing();
+#endif
 	return g_tracedFrames < kTraceFrames;
 }
 
 void Present_FrameDone()
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+	{
+		VkPresent_FrameDone();
+		return;
+	}
+#endif
 	if (g_tracedFrames < kTraceFrames)
 		g_tracedFrames++;
 }
 
 UINT64 Present_SwapChainBytes()
 {
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+		return VkPresent_SwapChainBytes();
+#endif
 	if (g_direct.swapChain)
 		return (UINT64)kBuffers * g_direct.width * g_direct.height * 4;
 	return 0;

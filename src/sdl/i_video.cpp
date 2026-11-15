@@ -1506,7 +1506,7 @@ boolean VID_CheckRenderer(void)
 	{
 #if defined(HAVE_D3D12) && !defined(_UWP)
 		if (SCR_RendererMode(setrenderneeded) == render_opengl)
-			HWR_StartDriver(SCR_RendererD3D12(setrenderneeded));
+			HWR_StartDriver(SCR_RendererD3D12(setrenderneeded), SCR_RendererVulkan(setrenderneeded));
 #endif
 		rendermode = static_cast<rendermode_t>(SCR_RendererMode(setrenderneeded));
 		rendererchanged = true;
@@ -1652,6 +1652,13 @@ static void Impl_SetWindowIcon(void)
 		SDL_SetWindowIcon(window, icoSurface);
 }
 
+// For a window that stands in for the game's (VibeRant Vulkan's)
+void VID_SetWindowIcon(SDL_Window *target)
+{
+	if (target && icoSurface)
+		SDL_SetWindowIcon(target, icoSurface);
+}
+
 static void Impl_VideoSetupBuffer(void)
 {
 	// Set up game's software render buffer
@@ -1724,7 +1731,7 @@ void I_StartupGraphics(void)
 	else if (M_CheckParm("-opengl"))
 		chosenrendermode = render_opengl;
 
-#ifdef HAVE_D3D12
+#if defined(HAVE_D3D12) && (defined(_UWP) || defined(HAVE_D3D12_NATIVE))
 	else if (M_CheckParm("-d3d12"))
 		chosenrendermode = static_cast<rendererchoice_t>(
 #ifdef _UWP
@@ -1733,6 +1740,10 @@ void I_StartupGraphics(void)
 			3
 #endif
 		);
+#endif
+#ifdef HAVE_VULKAN
+	else if (M_CheckParm("-vulkan"))
+		chosenrendermode = static_cast<rendererchoice_t>(4);
 #endif
 
 	// Don't startup OpenGL
@@ -1748,7 +1759,7 @@ void I_StartupGraphics(void)
 	{
 #if defined(HAVE_D3D12) && !defined(_UWP)
 		if (SCR_RendererMode(chosenrendermode) == render_opengl)
-			HWR_StartDriver(SCR_RendererD3D12(chosenrendermode));
+			HWR_StartDriver(SCR_RendererD3D12(chosenrendermode), SCR_RendererVulkan(chosenrendermode));
 #endif
 		rendermode = static_cast<rendermode_t>(SCR_RendererMode(chosenrendermode));
 	}
@@ -1797,6 +1808,11 @@ void VID_StartupOpenGL(void)
 	if (!glstartup)
 	{
 		CONS_Printf("VID_StartupOpenGL()...\n");
+#if defined(HAVE_D3D12) && !defined(_UWP)
+		// -vkdebug: Vulkan's validation layers, whose messages go to the log
+		if (HWR_D3D12())
+			D3D12_SelectBackend(HWR_Vulkan(), M_CheckParm("-vkdebug") != 0);
+#endif
 		*(void**)&HWD.pfnInit             = hwSym("Init",NULL);
 		*(void**)&HWD.pfnFinishUpdate     = NULL;
 		*(void**)&HWD.pfnDraw2DLine       = hwSym("Draw2DLine",NULL);
@@ -1854,6 +1870,11 @@ void VID_StartupOpenGL(void)
 
 	if (vid.glstate == VID_GL_LIBRARY_ERROR)
 	{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+		if (HWR_D3D12())
+			CONS_Alert(CONS_WARNING, "%s couldn't start (the log says why), so the game is using the Software renderer.\n",
+				HWR_VIBERANT_NAME(HWR_Vulkan()));
+#endif
 		rendermode = render_soft;
 		setrenderneeded = 0;
 	}

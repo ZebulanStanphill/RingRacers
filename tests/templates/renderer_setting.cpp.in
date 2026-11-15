@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <string>
+#include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
 #define stricmp strcasecmp
@@ -50,21 +51,33 @@ static UINT8 set(INT32 value)
     SCR_ChangeRenderer();
     return setrenderneeded;
 }
+// The settings this build lists, and which of them are hardware renderers
+static std::vector<int> settings()
+{
+    std::vector<int> values;
+    for (auto *v = cv_renderer_t; v->strvalue; ++v) values.push_back(v->value);
+    return values;
+}
+static const char *name_of(int setting)
+{
+    for (auto *v = cv_renderer_t; v->strvalue; ++v)
+        if (v->value == setting) return v->strvalue;
+    return "";
+}
+
 int main()
 {
     // Each startup is a fresh process, including the production driver lifetime state.
-    for (int setting = 1; setting <=
-#if defined(HAVE_D3D12) && !defined(_UWP)
-        3
-#else
-        2
-#endif
-        ; ++setting)
+    for (int setting : settings())
     {
-        for (int cli = 0; cli < 5; ++cli)
+        // "", -software, -opengl, -d3d12, -vulkan, -renderer <the setting's name>
+        for (int cli = 0; cli < 6; ++cli)
         {
-#ifndef HAVE_D3D12
+#if !(defined(HAVE_D3D12) && (defined(_UWP) || defined(HAVE_D3D12_NATIVE)))
             if (cli == 3) continue;
+#endif
+#ifndef HAVE_VULKAN
+            if (cli == 4) continue;
 #endif
             pid_t pid = fork();
             assert(pid >= 0);
@@ -72,9 +85,9 @@ int main()
                 boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_NOTLOADED);
                 cv_renderer.value = setting;
                 SCR_ChangeRenderer();
-                argument = cli == 1 ? "-software" : cli == 2 ? "-opengl" : cli == 3 ? "-d3d12" : cli == 4 ? "-renderer" : "";
-                for (auto *v = cv_renderer_t; v->strvalue; ++v)
-                    if (v->value == setting) renderer_name = v->strvalue;
+                argument = cli == 1 ? "-software" : cli == 2 ? "-opengl" : cli == 3 ? "-d3d12" : cli == 4 ? "-vulkan"
+                    : cli == 5 ? "-renderer" : "";
+                renderer_name = name_of(setting);
                 startup();
                 int expected = cli == 1 ? 1 : cli == 2 ? 2 : cli == 3 ?
 #if defined(HAVE_D3D12) && !defined(_UWP)
@@ -82,17 +95,24 @@ int main()
 #else
                     2
 #endif
-                    : setting;
+                    : cli == 4 ? 4 : setting;
                 if (cli == 0) {
                     assert(chosenrendermode == RENDERER_UNCHOSEN);
                     assert(setrenderneeded == (setting == 1 ? 0 : setting));
 #if defined(HAVE_D3D12) && !defined(_UWP)
-                    if (setrenderneeded) HWR_StartDriver(SCR_RendererD3D12(setrenderneeded));
+                    if (setrenderneeded) HWR_StartDriver(SCR_RendererD3D12(setrenderneeded), SCR_RendererVulkan(setrenderneeded));
 #endif
                     rendermode = static_cast<rendermode_t>(SCR_RendererMode(setting));
                 }
                 assert(rendermode == SCR_RendererMode(expected));
                 assert(SCR_RendererSetting(rendermode) == expected);
+#if defined(HAVE_D3D12) && !defined(_UWP)
+                // The driver and its backend are the ones the setting names
+                if (rendermode == render_opengl) {
+                    assert(HWR_D3D12() == (expected == 3 || expected == 4));
+                    assert(HWR_Vulkan() == (expected == 4));
+                }
+#endif
                 _exit(0);
             }
             int status;
@@ -130,35 +150,47 @@ int main()
     assert(set(render_soft) == 0 && alerts == 1);
 
 #if defined(HAVE_D3D12) && !defined(_UWP)
+    assert(SCR_RendererMode(4) == render_opengl);
     assert(SCR_RendererMode(3) == render_opengl);
     assert(SCR_RendererMode(2) == render_opengl);
     assert(SCR_RendererMode(1) == render_soft);
-    assert(SCR_RendererD3D12(3) && !SCR_RendererD3D12(2));
-    for (bool d3d : {false, true}) {
-        pid_t pid = fork(); assert(pid >= 0);
-        if (!pid) {
-            HWR_StartDriver(d3d);
-            int started = d3d ? 3 : 2, other = d3d ? 2 : 3;
-            assert(HWR_DriverStarted() && HWR_D3D12() == d3d);
-            boot(render_opengl, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
-            assert(set(1) == 1);
-            unsigned before = notices;
-            assert(set(other) == 0 && cv_renderer.value == other && notices == before + 1);
-            assert(std::string(notice) == std::string(d3d ? "Legacy GL" : "VibeRant D3D") + " will be used the next time the game starts.\n");
-            assert(set(1) == 1);
-            assert(set(started) == 0);
-            boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
-            assert(set(started) == started);
-            assert(set(other) == 0 && cv_renderer.value == other);
-            boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_ERROR);
-            assert(set(other) == 0 && cv_renderer.value == other);
-            assert(set(started) == 0 && alerts == 1);
-            HWR_StartDriver(!d3d);
-            assert(HWR_D3D12() == d3d);
-            _exit(0);
+    assert(SCR_RendererD3D12(3) && SCR_RendererD3D12(4) && !SCR_RendererD3D12(2));
+    assert(SCR_RendererVulkan(4) && !SCR_RendererVulkan(3) && !SCR_RendererVulkan(2));
+    assert(!strcmp(SCR_RendererName(4), "VibeRant Vulkan") && !strcmp(SCR_RendererName(3), "VibeRant D3D")
+        && !strcmp(SCR_RendererName(2), "Legacy GL"));
+    // Once a hardware renderer has started, another one (the other driver, or the same driver's other backend) waits
+    // for the next start of the game
+    for (int started : settings()) {
+        if (started == 1) continue;
+        for (int other : settings()) {
+            if (other == 1 || other == started) continue;
+            pid_t pid = fork(); assert(pid >= 0);
+            if (!pid) {
+                HWR_StartDriver(SCR_RendererD3D12(started), SCR_RendererVulkan(started));
+                assert(HWR_DriverStarted() && HWR_D3D12() == SCR_RendererD3D12(started));
+                assert(HWR_Vulkan() == SCR_RendererVulkan(started));
+                boot(render_opengl, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
+                assert(SCR_RendererSetting(render_opengl) == started);
+                assert(set(1) == 1);
+                unsigned before = notices;
+                assert(set(other) == 0 && cv_renderer.value == other && notices == before + 1);
+                assert(std::string(notice) == std::string(name_of(other)) + " will be used the next time the game starts.\n");
+                assert(set(1) == 1);
+                assert(set(started) == 0);
+                boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
+                assert(set(started) == started);
+                assert(set(other) == 0 && cv_renderer.value == other);
+                boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_ERROR);
+                assert(set(other) == 0 && cv_renderer.value == other);
+                assert(set(started) == 0 && alerts == 1);
+                // The first start decides for the whole run
+                HWR_StartDriver(SCR_RendererD3D12(other), SCR_RendererVulkan(other));
+                assert(HWR_D3D12() == SCR_RendererD3D12(started) && HWR_Vulkan() == SCR_RendererVulkan(started));
+                _exit(0);
+            }
+            int status; assert(waitpid(pid, &status, 0) == pid);
+            assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
         }
-        int status; assert(waitpid(pid, &status, 0) == pid);
-        assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     }
 #endif
     puts("renderer setting decisions passed");

@@ -6,7 +6,7 @@
 This fork does two things the official game doesn't:
 
 - It runs on Xbox One and Xbox Series consoles in Dev Mode.
-- It has a new hardware renderer, VibeRant D3D, which uses Direct3D 12 and looks much closer to the Software renderer than the official hardware renderer, Legacy GL, does.
+- It has a new hardware renderer, VibeRant, which looks much closer to the Software renderer than the official hardware renderer, Legacy GL, does. It runs on Direct3D 12 on Xbox and Windows (VibeRant D3D) and on Vulkan on Linux and Windows (VibeRant Vulkan).
 
 The game itself plays the same. Replays, ghosts, and online play with people on the official game work as usual.
 
@@ -18,9 +18,9 @@ Coding agents were used heavily in the development of this fork. I have thorough
 
 ## What's different from the official game
 
-[CHANGES.md](CHANGES.md) lists every change and says which have been tested. All testing was on an Xbox One X. This is what you'll notice.
+[CHANGES.md](CHANGES.md) lists every change and says which have been tested. All Xbox testing was on an Xbox One X. This is what you'll notice.
 
-### VibeRant D3D
+### VibeRant D3D and VibeRant Vulkan
 
 Legacy GL needs desktop OpenGL, which the Xbox doesn't have. VibeRant D3D started as Legacy GL moved to Direct3D 12 and then gained what Legacy GL draws wrongly or not at all:
 
@@ -35,7 +35,11 @@ Legacy GL needs desktop OpenGL, which the Xbox doesn't have. VibeRant D3D starte
 
 It goes past Software in one place: seen from above, rippling water also distorts the track under it, not just the background. The other places where it differs from Software on purpose, such as true perspective when you look up or down, are listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
 
-On Xbox it is the default renderer, and on the Xbox One X it runs faster than Software. Windows desktop builds have it as a third choice beside Software and Legacy GL, but that has only been tested under Wine, not on a real Windows PC.
+On Xbox, VibeRant D3D is the default renderer, and on the Xbox One X it runs faster than Software.
+
+**VibeRant Vulkan** is the same renderer on Vulkan, for PCs. It isn't a second implementation: it shares VibeRant D3D's drawing code and shaders, and draws the same picture. Compared on 1,002 frames from all 213 tracks, the two differ in about one pixel in a thousand, at the edges between texels. It has been tested on one Linux PC, with an AMD Radeon. If Vulkan isn't working on your PC, the game says so and uses Software.
+
+Windows desktop builds have both. Those have only been tested under Wine, not on a real Windows PC.
 
 ### On Xbox
 
@@ -119,6 +123,8 @@ Report bugs on [this repository's issues](https://github.com/ZebulanStanphill/Ri
 - `error.txt`: the last error message, if the game showed one.
 - `uwp-profile.txt`: which code the game spent its time in while racing. Each launch replaces it, so copy it off before launching again.
 
+On a PC, include `latest-log.txt` from the game's own folder (`~/.ringracers` on Linux). For a problem with VibeRant Vulkan, start the game once with `-vkdebug` first if you have Vulkan's validation layers installed: their messages go into that log.
+
 ## Building
 
 ### GitHub Actions
@@ -168,7 +174,7 @@ The vcpkg presets need the `VCPKG_ROOT` environment variable set before the firs
     cmake --preset ninja-x86_mingw_static_vcpkg-develop
     cmake --build --preset ninja-x86_mingw_static_vcpkg-develop
 
-Windows builds made with MSVC or clang-cl include VibeRant D3D (`SRB2_CONFIG_D3D12`). `.github/workflows/tests.yml` has the commands for one.
+Linux builds include VibeRant Vulkan (`SRB2_CONFIG_VULKAN`), and Windows builds made with MSVC or clang-cl include it and VibeRant D3D (`SRB2_CONFIG_D3D12`). Configuring then downloads the pinned sources they are built with (glslang, SPIRV-Cross, Vulkan-Headers, volk, and, off Windows, DirectX-Headers); `-DSRB2_CONFIG_VULKAN=OFF` builds without them. To run, VibeRant Vulkan needs only your system's Vulkan loader and driver. `.github/workflows/tests.yml` has the commands for each platform.
 
 ### Repository layout
 
@@ -179,7 +185,7 @@ Windows builds made with MSVC or clang-cl include VibeRant D3D (`SRB2_CONFIG_D3D
 - `uwp/pgo/`: recordings of play on an Xbox One X, which the build uses to optimize the engine.
 - `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ringracers-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 - [`uwp/tools/storage-probe/`](uwp/tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
-- `src/hardware/r_d3d12/`: the VibeRant D3D driver. Its docs are in `docs/`.
+- `src/hardware/r_d3d12/`: the VibeRant driver, with its Vulkan backend in `vulkan/`. Its docs are in `docs/`.
 - `tests/`: the regression tests and test add-ons.
 
 ## Credits

@@ -163,8 +163,15 @@ bool ReadEffectSources(const char *program, std::vector<std::string> &sources, s
 bool CompileEffectStage(const std::string &hlsl, const char *profile, UINT flags, ComPtr<ID3DBlob> &code, std::string &error)
 {
 	ComPtr<ID3DBlob> messages;
+#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+	// With both backends built, D3DCompile is Direct3D's; vk12 wants SPIR-V
+	const HRESULT result = Core_Vulkan() ? rr_vk12::CompileHlsl(hlsl.data(), hlsl.size(), "main", profile, &code, &messages)
+		: D3DCompile(hlsl.data(), hlsl.size(), "screen effect", nullptr, nullptr, "main", profile,
+			D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3 | flags, 0, &code, &messages);
+#else
 	const HRESULT result = D3DCompile(hlsl.data(), hlsl.size(), "screen effect", nullptr, nullptr, "main", profile,
 		D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3 | flags, 0, &code, &messages);
+#endif
 	if (SUCCEEDED(result))
 		return true;
 	char prefix[64];

@@ -17,11 +17,12 @@
 #include "command.h"
 #include "hardware/hw_driver.h"
 
-// Settings and rendermode coincide except for Direct3D 12 on desktop.
+// Settings and rendermode coincide except for the VibeRant driver on desktop: 3 is VibeRant D3D and 4 is VibeRant
+// Vulkan, both the hardware renderer (2), which is Legacy GL on OpenGL when the setting is 2.
 static inline INT32 SCR_RendererMode(INT32 setting)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	return setting == 3 ? 2 : setting;
+	return setting == 3 || setting == 4 ? 2 : setting;
 #else
 	return setting;
 #endif
@@ -29,15 +30,24 @@ static inline INT32 SCR_RendererMode(INT32 setting)
 static inline boolean SCR_RendererD3D12(INT32 setting)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	return setting == 3;
+	return setting == 3 || setting == 4;
 #else
 	return setting == 2 && HWR_D3D12();
+#endif
+}
+static inline boolean SCR_RendererVulkan(INT32 setting)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	return setting == 4;
+#else
+	(void)setting;
+	return false;
 #endif
 }
 static inline INT32 SCR_RendererSetting(INT32 mode)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	return mode == 2 && HWR_D3D12() ? 3 : mode;
+	return mode == 2 && HWR_D3D12() ? (HWR_Vulkan() ? 4 : 3) : mode;
 #else
 	return mode;
 #endif
@@ -46,11 +56,16 @@ static inline boolean SCR_RendererNeedsRestart(INT32 setting)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
 	return SCR_RendererMode(setting) == 2 && HWR_DriverStarted()
-		&& SCR_RendererD3D12(setting) != HWR_D3D12();
+		&& (SCR_RendererD3D12(setting) != HWR_D3D12() || SCR_RendererVulkan(setting) != HWR_Vulkan());
 #else
 	(void)setting;
 	return false;
 #endif
+}
+// The name of a hardware renderer setting (2, 3 or 4)
+static inline const char *SCR_RendererName(INT32 setting)
+{
+	return setting == 4 ? "VibeRant Vulkan" : setting == 3 ? "VibeRant D3D" : "Legacy GL";
 }
 
 #if defined (_WIN32) && !defined (__CYGWIN__)

@@ -101,17 +101,22 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   SDL's device-family result is mocked; real device detection and menu drawing
   require the UWP app on a device.
 
-- **Renderer setting at startup:** `renderer_setting`, `renderer_setting_uwp`
-  and `renderer_setting_both` execute production setting callbacks and the SDL
-  command-line selection block with real renderer mappings and driver lifetime
-  bookkeeping. Fresh child processes check every saved setting, `-software`,
-  `-opengl`, `-d3d12` where available, and `-renderer` with every listed name.
+- **Renderer setting at startup:** `renderer_setting`, `renderer_setting_uwp`,
+  `renderer_setting_both` (a desktop build with Direct3D 12 only),
+  `renderer_setting_vulkan` (Vulkan only, as on Linux), and
+  `renderer_setting_all` (both backends, as on Windows) execute production
+  setting callbacks and the SDL command-line selection block with real renderer
+  mappings and driver lifetime bookkeeping. Fresh child processes check every
+  setting the build lists, `-software`, `-opengl`, `-d3d12` and `-vulkan` where
+  available, and `-renderer` with every listed name, and that the driver and
+  the backend that start are the ones the setting names.
   Config-only cases execute the callback and model application of its queued
   setting; they do not create SDL contexts or initialize a GPU driver.
   Check stale startup queues, repeated changes before a frame, command-line
-  priority and load failure. Both-driver cases start each driver separately,
-  switch through Software, then select the other driver: no switch is queued,
-  the saved setting survives, and the exact restart notice is printed. A failed
+  priority and load failure. Desktop cases start each hardware renderer
+  separately, switch through Software, then select each other one (the other
+  driver, or VibeRant's other backend): no switch is queued, the saved setting
+  survives, and the exact restart notice is printed. A failed
   start cannot unlock the driver choice. These native tests do not verify real
   Windows driver initialization, menu drawing/popups, or presentation.
 

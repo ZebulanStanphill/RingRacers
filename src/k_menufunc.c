@@ -184,7 +184,7 @@ void M_ChangeCvarDirect(INT32 choice, consvar_t *cv)
 #if defined(HAVE_D3D12) && !defined(_UWP)
 	if (cv == &cv_renderer && SCR_RendererNeedsRestart(cv->value))
 		M_StartMessage("Renderer", va("%s will be used the next time the game starts.",
-			cv->value == 3 ? "VibeRant D3D" : "Legacy GL"), NULL, MM_NOTHING, NULL, NULL);
+			SCR_RendererName(cv->value)), NULL, MM_NOTHING, NULL, NULL);
 #endif
 }
 
@@ -213,7 +213,12 @@ static void M_ChangeCvar(INT32 choice)
 #if defined(HAVE_D3D12)
 	renderer_menu_choice = choice;
 	if (cvar == &cv_renderer && choice != -1 &&
+		// Legacy GL comes after the last VibeRant renderer in the list
+#ifdef HAVE_VULKAN
+		((cv_renderer.value == 4 && choice == 1) ||
+#else
 		((cv_renderer.value == 3 && choice == 1) ||
+#endif
 		 (cv_renderer.value == 1 && choice == 0)))
 #else
 	if (cvar == &cv_renderer &&

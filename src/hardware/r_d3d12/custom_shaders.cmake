@@ -1,10 +1,19 @@
 # Pinned source dependencies for UWP's runtime Legacy GL shader translation.
 include(FetchContent)
-set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+if(NOT SRB2_CONFIG_VULKAN)
+    set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+endif()
 set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
 set(ENABLE_RTTI ON CACHE BOOL "" FORCE)
 set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
-set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+# The Vulkan backend compiles shaders.hlsl, and the HLSL that add-on shaders are translated to, with glslang's HLSL
+# front end, at build time (glslang-standalone) and at run time (the library).
+if(SRB2_CONFIG_VULKAN)
+    set(ENABLE_HLSL ON CACHE BOOL "" FORCE)
+    set(ENABLE_GLSLANG_BINARIES ON CACHE BOOL "" FORCE)
+else()
+    set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+endif()
 set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
 set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
 set(SKIP_GLSLANG_INSTALL ON CACHE BOOL "" FORCE)
@@ -23,6 +32,10 @@ FetchContent_Declare(rr_spirv_cross
     GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
     GIT_TAG 2275d0efc4f2fa46851035d9d3c67c105bc8b99e)
 FetchContent_MakeAvailable(rr_glslang rr_spirv_cross)
+# The glslang program only compiles shaders.hlsl during the build; keep it out of bin/, which is what gets shipped
+if(TARGET glslang-standalone)
+    set_target_properties(glslang-standalone PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build-tools")
+endif()
 # The launcher is configured separately and links these engine-build archives.
 foreach(shader_library glslang MachineIndependent GenericCodeGen OSDependent SPIRV
         glslang-default-resource-limits spirv-cross-core spirv-cross-glsl spirv-cross-hlsl)

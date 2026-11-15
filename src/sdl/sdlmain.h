@@ -72,6 +72,8 @@ void I_OpenStartupGamepads(void);
 
 // Needed for some WIN32 functions
 extern SDL_Window *window;
+// Gives another window the game's icon
+void VID_SetWindowIcon(SDL_Window *target);
 
 #ifdef __cplusplus
 } // extern "C"

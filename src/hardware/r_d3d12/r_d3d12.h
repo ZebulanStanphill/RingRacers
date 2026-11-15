@@ -44,6 +44,9 @@ boolean D3D12_ReadPlacedRectForTest(INT32 mode, INT32 screenWidth, INT32 screenH
 boolean D3D12_ReadFitRectForTest(INT32 screenWidth, INT32 screenHeight, INT32 x, INT32 y, INT32 width, INT32 height,
 	INT32 dst_stride, UINT16 *dst_data);
 
+// Which backend the driver starts on, where the build has both: Vulkan (VibeRant Vulkan) or Direct3D 12 itself. validation
+// turns on Vulkan's validation layers. Call before the driver is first started; later calls change nothing.
+void D3D12_SelectBackend(boolean vulkan, boolean validation);
 void *D3D12_GetDriverFunction(const char *name);
 boolean D3D12_Surface(INT32 w, INT32 h);
 void D3D12_FinishUpdate(INT32 waitvbl);

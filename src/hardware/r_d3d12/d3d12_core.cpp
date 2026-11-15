@@ -11,6 +11,9 @@
 /// complete in order: an allocator or retired object tagged with a value is free once the fence reaches it.
 
 #include "d3d12_core.h"
+#ifdef HAVE_VULKAN
+#include "vulkan/vk12.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -44,6 +47,12 @@ ComPtr<ID3D12DescriptorHeap> g_rtvHeap, g_dsvHeap;
 UINT g_rtvStep = 0, g_dsvStep = 0;
 UINT64 g_frequency = 0;
 bool g_forceWarp = false;
+#if defined(HAVE_VULKAN) && !defined(HAVE_D3D12_NATIVE)
+bool g_vulkan = true; // the only backend
+#else
+bool g_vulkan = false;
+#endif
+bool g_vulkanValidation = false;
 bool g_dred = false;
 HRESULT g_dredResult = S_OK;
 
@@ -145,6 +154,7 @@ const char *DebugName(const char *a, const wchar_t *w, char *buffer, int size)
 
 void EnableDred()
 {
+#ifdef HAVE_D3D12_NATIVE
 	// Must happen before the device is made. Optional: on Xbox it may not exist.
 	ComPtr<ID3D12DeviceRemovedExtendedDataSettings> settings;
 	g_dredResult = D3D12GetDebugInterface(IID_PPV_ARGS(&settings));
@@ -154,6 +164,7 @@ void EnableDred()
 		settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
 		settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
 	}
+#endif
 }
 
 // DRED's record of which operations of each command list finished: for a removed device, and for a wait that timed out
@@ -199,6 +210,7 @@ void LogTimeout(const char *what, double ms)
 	LogBreadcrumbs(dred.Get());
 }
 
+#ifdef HAVE_D3D12_NATIVE
 void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
 {
 	const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0,
@@ -252,6 +264,7 @@ void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
 		SUCCEEDED(rootResult) ? "" : "unknown ", SUCCEEDED(rootResult) ? (unsigned)root.HighestVersion : 0,
 		(unsigned)color.Support1, (unsigned)depth.Support1);
 }
+#endif
 
 void CountSubmission(const char *reason)
 {
@@ -343,7 +356,8 @@ void Core_Log(const char *format, ...)
 	va_start(args, format);
 	vsnprintf(message, sizeof message, format, args);
 	va_end(args);
-	I_OutputMsg("UWP D3D12: %s\n", message);
+	// The Vulkan backend's lines say so: a log from a PC shouldn't read as if Direct3D 12 had been in use
+	I_OutputMsg("%s: %s\n", g_vulkan ? "VibeRant Vulkan" : "UWP D3D12", message);
 }
 
 bool Core_Failed(HRESULT hr, const char *what)
@@ -370,11 +384,50 @@ void Core_ForceWarp(bool force)
 	g_forceWarp = force;
 }
 
+void Core_UseVulkan(bool vulkan)
+{
+#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+	if (!g_device)
+		g_vulkan = vulkan;
+#else
+	(void)vulkan;
+#endif
+}
+
+bool Core_Vulkan()
+{
+	return g_vulkan;
+}
+
+void Core_VulkanValidation(bool validation)
+{
+	g_vulkanValidation = validation;
+}
+
 bool Core_Init()
 {
 	if (g_device)
 		return true;
 
+#ifdef HAVE_VULKAN
+	if (g_vulkan)
+	{
+		Core_Log("starting VibeRant's Vulkan backend");
+		rr_vk12::DeviceOptions options;
+		options.validation = g_vulkanValidation;
+		options.software = g_forceWarp;
+		if (FAILED(rr_vk12::CreateDevice(options, &g_device, &g_memoryAdapter)))
+		{
+			g_device.Reset();
+			return false;
+		}
+		if (!g_memoryAdapter)
+			Core_Log("video memory budgets unavailable (no VK_EXT_memory_budget)");
+	}
+	else
+#endif
+	{
+#ifdef HAVE_D3D12_NATIVE
 	Core_Log("starting VibeRant's Direct3D 12 backend");
 
 	ComPtr<IDXGIFactory4> factory;
@@ -419,6 +472,10 @@ bool Core_Init()
 	if (FAILED(adapter.As(&g_memoryAdapter)))
 		Core_Log("video memory budgets unavailable (IDXGIAdapter3 not supported)");
 	LogCaps(desc);
+#else
+	return false;
+#endif
+	}
 
 	D3D12_COMMAND_QUEUE_DESC queue = {};
 	queue.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -639,6 +696,12 @@ bool Core_Wait(UINT64 value, DWORD ms, const char *what, double *waitedMs)
 		if (elapsed >= ms)
 			break;
 		// An earlier wait that timed out may still set the event, so check the fence after every wake
+#ifdef HAVE_VULKAN
+		// vk12's fence has no event to set; it waits on Vulkan's own fence
+		if (g_vulkan)
+			rr_vk12::WaitFence(g_fence.Get(), value, (DWORD)std::max(1.0, std::ceil(ms - elapsed)));
+		else
+#endif
 		if (!g_event || FAILED(g_fence->SetEventOnCompletion(value, g_event)))
 			Sleep(1);
 		else

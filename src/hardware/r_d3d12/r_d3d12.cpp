@@ -21,9 +21,16 @@
 #include "mips.h"
 #include "custom_shader.h"
 #include "../hw_glsl.h"
+#ifdef _WIN32
 #include <d3dcompiler.h>
+#endif
 #include "texture_repack.h"
+#ifdef HAVE_D3D12_NATIVE
 #include "r_d3d12_shaders/RootSignature.h"
+#endif
+#ifdef HAVE_VULKAN
+#include "vulkan/vk12.h"
+#endif
 
 #include <cmath>
 #include <cfloat>
@@ -1376,7 +1383,16 @@ void Flush()
 bool InitDrawing()
 {
 	ID3D12Device *device = Core_Device();
-	if (Core_Failed(device->CreateRootSignature(0, g_RootSignature, sizeof g_RootSignature,
+	// vk12 has shaders.hlsl's root signature built in, and takes a token in place of Direct3D's serialized one
+	const void *rootBlob = nullptr;
+	size_t rootBytes = 0;
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan()) { rootBlob = rr_vk12::kRootSignature; rootBytes = sizeof rr_vk12::kRootSignature; }
+#endif
+#ifdef HAVE_D3D12_NATIVE
+	if (!rootBlob) { rootBlob = g_RootSignature; rootBytes = sizeof g_RootSignature; }
+#endif
+	if (Core_Failed(device->CreateRootSignature(0, rootBlob, rootBytes,
 		IID_PPV_ARGS(&g_root)), "CreateRootSignature")) return false;
 	g_root->SetName(L"Legacy GL root signature");
 	D3D12_DESCRIPTOR_HEAP_DESC heap = {};
@@ -2684,8 +2700,15 @@ static void AdvanceCustomGeneration()
 static bool CompileCustomStage(const std::string &hlsl, const char *profile, ComPtr<ID3DBlob> &code)
 {
 	ComPtr<ID3DBlob> errors;
+#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+	// With both backends built, D3DCompile is Direct3D's; vk12 wants SPIR-V
+	const HRESULT result = Core_Vulkan() ? rr_vk12::CompileHlsl(hlsl.data(), hlsl.size(), "main", profile, &code, &errors)
+		: D3DCompile(hlsl.data(), hlsl.size(), "Legacy GL add-on", nullptr, nullptr,
+			"main", profile, D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+#else
 	const HRESULT result = D3DCompile(hlsl.data(), hlsl.size(), "Legacy GL add-on", nullptr, nullptr,
 		"main", profile, D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+#endif
 	if (errors)
 		Log("custom %s: %.*s", profile, (int)std::min<size_t>(errors->GetBufferSize(), 8192), (const char *)errors->GetBufferPointer());
 	return !Core_Failed(result, "D3DCompile (custom shader)");
@@ -2940,13 +2963,19 @@ const struct
 
 boolean D3D_CanRollSprite(void) { return CanRollSprite(); }
 
+void D3D12_SelectBackend(boolean vulkan, boolean validation)
+{
+	Core_UseVulkan(vulkan);
+	Core_VulkanValidation(validation);
+}
+
 void *D3D12_GetDriverFunction(const char *name)
 {
 	static bool logged = false;
 	if (!logged)
 	{
 		logged = true;
-		I_OutputMsg("UWP: VibeRant backend: D3D12\n");
+		I_OutputMsg("UWP: VibeRant backend: %s\n", Core_Vulkan() ? "Vulkan" : "D3D12");
 	}
 
 	for (const auto &function : kDriverFunctions)

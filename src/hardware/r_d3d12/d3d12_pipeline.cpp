@@ -7,6 +7,7 @@
 #include "d3d12_pipeline.h"
 #include <climits>
 // [UWP]: Keep these separate from the SM4 headers with the same array names.
+#ifdef HAVE_D3D12_NATIVE
 #include "r_d3d12_shaders/VSPoly.h"
 #include "r_d3d12_shaders/VSPolyClip.h"
 #include "r_d3d12_shaders/VSSky.h"
@@ -29,6 +30,32 @@
 #include "r_d3d12_shaders/PSPalettePostprocess.h"
 #include "r_d3d12_shaders/PSFadeMap.h"
 #include "r_d3d12_shaders/PSPostImage.h"
+#endif
+#ifdef HAVE_VULKAN
+// The same entry points as SPIR-V (g_<entry>_spv), for the Vulkan backend
+#include "r_vulkan_shaders/VSPoly.h"
+#include "r_vulkan_shaders/VSPolyClip.h"
+#include "r_vulkan_shaders/VSSky.h"
+#include "r_vulkan_shaders/VSModel.h"
+#include "r_vulkan_shaders/VSModelLight.h"
+#include "r_vulkan_shaders/VSWipe.h"
+#include "r_vulkan_shaders/VSFullscreen.h"
+#include "r_vulkan_shaders/VSPostImage.h"
+#include "r_vulkan_shaders/PSFixed.h"
+#include "r_vulkan_shaders/PSDefault.h"
+#include "r_vulkan_shaders/PSSoftware.h"
+#include "r_vulkan_shaders/PSSoftwareModelLight.h"
+#include "r_vulkan_shaders/PSWater.h"
+#include "r_vulkan_shaders/PSWaterRefraction.h"
+#include "r_vulkan_shaders/PSFog.h"
+#include "r_vulkan_shaders/PSFogRemap.h"
+#include "r_vulkan_shaders/PSSky.h"
+#include "r_vulkan_shaders/PSWipe.h"
+#include "r_vulkan_shaders/PSWipeFull.h"
+#include "r_vulkan_shaders/PSPalettePostprocess.h"
+#include "r_vulkan_shaders/PSFadeMap.h"
+#include "r_vulkan_shaders/PSPostImage.h"
+#endif
 
 namespace rr_d3d12
 {
@@ -55,6 +82,7 @@ const D3D12_INPUT_LAYOUT_DESC kLayouts[] = {
 	{kModel, ARRAYSIZE(kModel)},
 	{nullptr, 0},
 };
+#ifdef HAVE_D3D12_NATIVE
 const D3D12_SHADER_BYTECODE kVs[] = {
 	{g_VSPoly, sizeof g_VSPoly},
 	{g_VSPolyClip, sizeof g_VSPolyClip},
@@ -65,8 +93,22 @@ const D3D12_SHADER_BYTECODE kVs[] = {
 	{g_VSFullscreen, sizeof g_VSFullscreen},
 	{g_VSPostImage, sizeof g_VSPostImage},
 };
+#endif
+#ifdef HAVE_VULKAN
+const D3D12_SHADER_BYTECODE kVsSpv[] = {
+	{g_VSPoly_spv, sizeof g_VSPoly_spv},
+	{g_VSPolyClip_spv, sizeof g_VSPolyClip_spv},
+	{g_VSSky_spv, sizeof g_VSSky_spv},
+	{g_VSModel_spv, sizeof g_VSModel_spv},
+	{g_VSModelLight_spv, sizeof g_VSModelLight_spv},
+	{g_VSWipe_spv, sizeof g_VSWipe_spv},
+	{g_VSFullscreen_spv, sizeof g_VSFullscreen_spv},
+	{g_VSPostImage_spv, sizeof g_VSPostImage_spv},
+};
+#endif
 const char *kVsNames[] = {"VSPoly",		  "VSPolyClip", "VSSky",		"VSModel",
 						  "VSModelLight", "VSWipe",		"VSFullscreen", "VSPostImage"};
+#ifdef HAVE_D3D12_NATIVE
 const D3D12_SHADER_BYTECODE kPs[] = {
 	{g_PSFixed, sizeof g_PSFixed},		 {g_PSDefault, sizeof g_PSDefault},
 	{g_PSSoftware, sizeof g_PSSoftware}, {g_PSSoftwareModelLight, sizeof g_PSSoftwareModelLight},
@@ -76,6 +118,25 @@ const D3D12_SHADER_BYTECODE kPs[] = {
 	{g_PSWipeFull, sizeof g_PSWipeFull}, {g_PSPalettePostprocess, sizeof g_PSPalettePostprocess},
 	{g_PSFadeMap, sizeof g_PSFadeMap},	 {g_PSPostImage, sizeof g_PSPostImage},
 };
+#endif
+#ifdef HAVE_VULKAN
+const D3D12_SHADER_BYTECODE kPsSpv[] = {
+	{g_PSFixed_spv, sizeof g_PSFixed_spv},
+	{g_PSDefault_spv, sizeof g_PSDefault_spv},
+	{g_PSSoftware_spv, sizeof g_PSSoftware_spv},
+	{g_PSSoftwareModelLight_spv, sizeof g_PSSoftwareModelLight_spv},
+	{g_PSWater_spv, sizeof g_PSWater_spv},
+	{g_PSWaterRefraction_spv, sizeof g_PSWaterRefraction_spv},
+	{g_PSFog_spv, sizeof g_PSFog_spv},
+	{g_PSFogRemap_spv, sizeof g_PSFogRemap_spv},
+	{g_PSSky_spv, sizeof g_PSSky_spv},
+	{g_PSWipe_spv, sizeof g_PSWipe_spv},
+	{g_PSWipeFull_spv, sizeof g_PSWipeFull_spv},
+	{g_PSPalettePostprocess_spv, sizeof g_PSPalettePostprocess_spv},
+	{g_PSFadeMap_spv, sizeof g_PSFadeMap_spv},
+	{g_PSPostImage_spv, sizeof g_PSPostImage_spv},
+};
+#endif
 const char *kPsNames[] = {"PSFixed",	"PSDefault",
 						  "PSSoftware", "PSSoftwareModelLight",
 						  "PSWater",	"PSWaterRefraction",
@@ -83,8 +144,41 @@ const char *kPsNames[] = {"PSFixed",	"PSDefault",
 						  "PSSky",		"PSWipe",
 						  "PSWipeFull", "PSPalettePostprocess",
 						  "PSFadeMap",	"PSPostImage"};
+#ifdef HAVE_D3D12_NATIVE
 static_assert(ARRAYSIZE(kVs) == NUMVS, "Every built-in vertex shader needs bytecode");
 static_assert(ARRAYSIZE(kPs) == NUMPS, "Every built-in pixel shader needs bytecode");
+#endif
+#ifdef HAVE_VULKAN
+static_assert(ARRAYSIZE(kVsSpv) == NUMVS, "Every built-in vertex shader needs SPIR-V");
+static_assert(ARRAYSIZE(kPsSpv) == NUMPS, "Every built-in pixel shader needs SPIR-V");
+#endif
+
+// The built-in shaders for the backend the device was made with
+const D3D12_SHADER_BYTECODE &BuiltInVs(unsigned kind)
+{
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+		return kVsSpv[kind];
+#endif
+#ifdef HAVE_D3D12_NATIVE
+	return kVs[kind];
+#else
+	return kVsSpv[kind];
+#endif
+}
+
+const D3D12_SHADER_BYTECODE &BuiltInPs(unsigned kind)
+{
+#ifdef HAVE_VULKAN
+	if (Core_Vulkan())
+		return kPsSpv[kind];
+#endif
+#ifdef HAVE_D3D12_NATIVE
+	return kPs[kind];
+#else
+	return kPsSpv[kind];
+#endif
+}
 static_assert(ARRAYSIZE(kVsNames) == NUMVS, "Every vertex shader needs a name");
 static_assert(ARRAYSIZE(kPsNames) == NUMPS, "Every pixel shader needs a name");
 static_assert(ARRAYSIZE(kLayouts) == LAYOUT_NONE + 1, "Every layout needs a descriptor");
@@ -159,10 +253,10 @@ D3D12_GRAPHICS_PIPELINE_STATE_DESC BuildPipelineDesc(ID3D12RootSignature *root, 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
 	d.pRootSignature = root;
 	if (k.vs < NUMVS)
-		d.VS = kVs[k.vs];
+		d.VS = BuiltInVs(k.vs);
 	else if (customVs) d.VS = *customVs;
 	if (k.ps < NUMPS)
-		d.PS = kPs[k.ps];
+		d.PS = BuiltInPs(k.ps);
 	else if (customPs) d.PS = *customPs;
 	if (k.layout <= LAYOUT_NONE)
 		d.InputLayout = kLayouts[k.layout];

@@ -62,7 +62,12 @@ UINT8 setrenderneeded = 0;
 CV_PossibleValue_t cv_renderer_t[] = {
 	{1, "Software"},
 #if defined(HAVE_D3D12) && !defined(_UWP)
+#ifdef HAVE_D3D12_NATIVE
 	{3, "VibeRant D3D"},
+#endif
+#ifdef HAVE_VULKAN
+	{4, "VibeRant Vulkan"},
+#endif
 	{2, "Legacy GL"},
 #elif defined(HAVE_D3D12)
 	{2, "VibeRant D3D"},
@@ -463,7 +468,7 @@ void SCR_ChangeRenderer(void)
 	{
 		setrenderneeded = 0;
 		CONS_Printf("%s will be used the next time the game starts.\n",
-			cv_renderer.value == 3 ? "VibeRant D3D" : "Legacy GL");
+			SCR_RendererName(cv_renderer.value));
 		return;
 	}
 #endif
@@ -483,9 +488,9 @@ void SCR_ChangeRenderer(void)
 	{
 #if defined(HAVE_D3D12) && !defined(_UWP)
 		if (M_CheckParm("-nogl"))
-			CONS_Alert(CONS_ERROR, "%s rendering was disabled!\n", SCR_RendererD3D12(cv_renderer.value) ? "VibeRant D3D" : "OpenGL");
+			CONS_Alert(CONS_ERROR, "%s rendering was disabled!\n", SCR_RendererD3D12(cv_renderer.value) ? SCR_RendererName(cv_renderer.value) : "OpenGL");
 		else
-			CONS_Alert(CONS_ERROR, "%s never loaded\n", HWR_D3D12() ? "VibeRant D3D" : "OpenGL");
+			CONS_Alert(CONS_ERROR, "%s never loaded\n", HWR_D3D12() ? HWR_VIBERANT_NAME(HWR_Vulkan()) : "OpenGL");
 #else
 		if (M_CheckParm("-nogl"))
 			CONS_Alert(CONS_ERROR, "OpenGL rendering was disabled!\n");

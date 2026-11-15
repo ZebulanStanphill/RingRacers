@@ -35,7 +35,12 @@
 	"CBV(b3, visibility=SHADER_VISIBILITY_PIXEL), " \
 	"CBV(b4), " \
 	"CBV(b5, visibility=SHADER_VISIBILITY_PIXEL)"
+#ifdef RR_VULKAN
+// The Vulkan backend has this layout built in (vulkan/vk12_commands.cpp's kRoot) and no use for the attribute
+#define RR_RS
+#else
 #define RR_RS [RootSignature(RR_ROOT_SIGNATURE)]
+#endif
 
 // Must match Constants in r_d3d12.cpp
 cbuffer DrawConstants : register(b0)
