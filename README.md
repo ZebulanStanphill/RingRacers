@@ -1,7 +1,7 @@
 # Ring Racers (Zebulan Edition)
 
 > [!IMPORTANT]
-> This is an **unofficial fork** of [Dr. Robotnik's Ring Racers](https://github.com/KartKrewDev/RingRacers) v2.4. Kart Krew Dev didn't make it and doesn't support it. Report bugs [here](https://github.com/ZebulanStanphill/RingRacers/issues), not to them.
+> This is an **unofficial fork** of [Dr. Robotnik's Ring Racers](https://github.com/KartKrewDev/RingRacers) v2.4. Kart Krew Dev neither made nor supports this fork. Report bugs [here](https://github.com/ZebulanStanphill/RingRacers/issues), not to them.
 
 This fork does two things the official game doesn't:
 
@@ -10,9 +10,11 @@ This fork does two things the official game doesn't:
 
 The game itself plays the same. Replays, ghosts and online play with people on the official game work as usual.
 
-I've only tested the Xbox port on an Xbox One X. It should run better on Xbox Series X|S, and it may run on an original Xbox One with lowered graphics settings, but I don't have those consoles to try.
+I've only tested the Xbox port on an Xbox One X. It should run better on Xbox Series X|S, and it may run on an original Xbox One with lowered graphics settings, but I don't have those consoles to try. If you have one of these consoles and can test the game, let me know how it runs!
 
-The Xbox port builds on [worleydl's](https://github.com/worleydl/ringracers-uwp). Coding agents were used heavily in the development of this fork.
+The Xbox port builds on the abandoned one by [worleydl's](https://github.com/worleydl/ringracers-uwp) and goes further beyond, with the aim of providing as seamless an experience as possible.
+
+Coding agents were used heavily in the development of this fork. I have thoroughly playtested it to iron out various bugs and corner cases. (Shout out to Green Hills Zone, which seemed to be a nexus of such issues, for whatever reason.) I intend to actively maintain this fork and keep it up-to-date with future releases of the vanilla game.
 
 ## What's different from the official game
 
@@ -53,9 +55,9 @@ Both are in Options → Video.
 - **Integer** enlarges it by a whole number (2×, 3× and so on), so every game pixel comes out the same size.
 - **1:1** doesn't enlarge it at all.
 
-Integer and 1:1 leave black around the picture.
+Integer and 1:1 can provide a sharper picture for certain resolutions, with the trade-off of a black border/margin surrounding the picture.
 
-**Camera Position** lets each local player pick the usual view from behind the kart (**3rd Person**) or the view from the driver's seat (**1st Person**). The official game can only switch this from the console, with `chasecam`, and forgets it when you quit.
+**Camera Position** lets each local player pick the usual view from behind the kart (**3rd Person**) or a view from the driver's seat (**1st Person**). The official game hides this feature under a console command (`chasecam`), and forgets your setting when you quit.
 
 ## Installing on Xbox
 
@@ -123,7 +125,7 @@ powershell -ExecutionPolicy Bypass -File uwp\build.ps1
 
 This builds the engine, builds SDL2 and downloads ANGLE into `uwp/deps/`, then generates and builds the launcher solution at `uwp/build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
 
-To help optimise future builds with a recording of your own play session, see [docs/uwp-pgo.md](docs/uwp-pgo.md).
+To help optimize future builds with a recording of your own play session, see [docs/uwp-pgo.md](docs/uwp-pgo.md).
 
 ### Desktop game
 
@@ -159,16 +161,14 @@ Windows builds made with MSVC or clang-cl include VibeRant D3D (`SRB2_CONFIG_D3D
 - `src/hardware/r_d3d12/`: the VibeRant D3D driver. Its docs are in `docs/`.
 - `tests/`: the regression tests and test add-ons.
 
-The Xbox app used to be a separate repository, [ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp), now archived. Its history is part of this one.
-
 ## Credits
 
 - [Kart Krew Dev](https://www.kartkrew.org/) made Dr. Robotnik's Ring Racers, which is based on [Sonic Robo Blast 2](https://srb2.org/), itself based on [Doom Legacy](http://doomlegacy.sourceforge.net/). Their source is at [gitlab.com/kart-krew-dev/ring-racers](https://gitlab.com/kart-krew-dev/ring-racers), mirrored at [KartKrewDev/RingRacers](https://github.com/KartKrewDev/RingRacers).
 - [worleydl](https://github.com/worleydl) made the [UWP port](https://github.com/worleydl/ringracers-uwp) this one builds on, along with [SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) and [uwp-dep](https://github.com/worleydl/uwp-dep).
-- VibeRant D3D's portals are inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s, and its palette rendering is ported from Sonic Robo Blast 2.
+- VibeRant D3D's portals implementation is inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s, and its palette rendering is ported from Sonic Robo Blast 2.
 
 ## License and disclaimer
 
-The source code is available under the GNU General Public License version 2.0 or higher, as Ring Racers' is.
+The source code is available under the GNU General Public License version 2.0 or higher, as vanilla Ring Racers' is.
 
 Dr. Robotnik's Ring Racers is a work of fan art made available for free without intent to profit or harm the intellectual property rights of the original works it is based on. Neither Kart Krew Dev nor this fork is affiliated with SEGA Corporation, and neither claims ownership of any of SEGA's intellectual property used in the game.
