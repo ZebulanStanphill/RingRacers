@@ -105,8 +105,11 @@ and replies to the user. Give each subagent a self-contained brief: the
 settled design, constraints, and the commit attribution to use.
 
 - Menial tasks (mechanical edits, searches, log extraction, documentation
-  updates): prefer Haiku 5.5, falling back to the latest GPT Luna model.
+  updates): prefer Claude Haiku, falling back to GPT Luna.
 - Medium tasks (implementing a settled design, focused fixes, writing tests):
-  prefer GPT-6.1-Sol, falling back to Sonnet 5.5.
+  prefer GPT Sol, falling back to Claude Sonnet.
+
+These are model families, not versions: use the latest version of the family that
+is available, which is assumed to be better than the ones before it.
 
 Review a subagent's changes before committing or pushing them.
