@@ -18,7 +18,7 @@ Coding agents were used heavily in the development of this fork. I have thorough
 
 ## What's different from the official game
 
-[CHANGES.md](CHANGES.md) lists every change and says which have been tested on Xbox. This is what you'll notice.
+[CHANGES.md](CHANGES.md) lists every change and says which have been tested. All testing was on an Xbox One X. This is what you'll notice.
 
 ### VibeRant D3D
 
@@ -35,12 +35,12 @@ Legacy GL needs desktop OpenGL, which the Xbox doesn't have. VibeRant D3D starte
 
 It goes past Software in one place: seen from above, rippling water also distorts the track under it, not just the background. The other places where it differs from Software on purpose, such as true perspective when you look up or down, are listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
 
-On Xbox it is the default renderer and runs faster than Software. Windows desktop builds have it as a third choice beside Software and Legacy GL, but that has only been tested under Wine, not on a real Windows PC.
+On Xbox it is the default renderer, and on the Xbox One X it runs faster than Software. Windows desktop builds have it as a third choice beside Software and Legacy GL, but that has only been tested under Wine, not on a real Windows PC.
 
 ### On Xbox
 
 - The game's files, your config, and your saves are on a USB drive, in `E:\ringracers`.
-- Both renderers and the game logic are optimized for the Xbox's CPU, startup is shorter, and each level loads its textures and models up front so that races hitch less.
+- Both renderers and the game logic are optimized for the Xbox One's CPU, which the Xbox Series consoles' CPUs are compatible with, startup is shorter, and each level loads its textures and models up front so that races hitch less.
 - To switch to the Software renderer, use Options → Video → Advanced → Renderer, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`.
 - Voice chat asks for microphone access. If you deny it, voice input stays off.
 - In Software, turning off Screen Tilting (Options → Profile Setup → your profile → Accessibility; the Guest profile can't be edited) saves some time each frame when the camera tilts.
@@ -176,7 +176,7 @@ Windows builds made with MSVC or clang-cl include VibeRant D3D (`SRB2_CONFIG_D3D
 
 - `uwp/`: the Xbox app's launcher and `build.ps1`. The launcher links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore).
 - `uwp/patches/`: changes to [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) that build it for OpenGL ES, stop it from seeing each controller twice, and let Direct3D 12 take the window from ANGLE and give it back.
-- `uwp/pgo/`: recordings from the Xbox that the build uses to optimize the engine.
+- `uwp/pgo/`: recordings of play on an Xbox One X, which the build uses to optimize the engine.
 - `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ringracers-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 - [`uwp/tools/storage-probe/`](uwp/tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
 - `src/hardware/r_d3d12/`: the VibeRant D3D driver. Its docs are in `docs/`.
