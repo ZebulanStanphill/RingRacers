@@ -904,6 +904,76 @@ list parsing has the native test `frame_capture`; the runner, the comparer and t
 [frame-compare/README.md](frame-compare/README.md) for the commands, the sides it takes (a native binary or
 a Windows build under Wine, each with its renderer's arguments), the default replays, and how to read the report.
 
+## Vulkan driver harness (Linux)
+
+The same driver test, `d3d12-driver.cpp`, also runs against the Vulkan backend
+(`src/hardware/r_d3d12/vulkan`, [`docs/vulkan-backend.md`](../docs/vulkan-backend.md)):
+the production driver, vk12, and the runtime shader translator are built into a
+headless executable (`tests/vulkan-driver/CMakeLists.txt`) that needs no window,
+SDL library, game assets, or game process. From the repository root, with CMake, a
+C++17 compiler, Git, the Vulkan loader, a Vulkan device, and
+`VK_LAYER_KHRONOS_validation` installed:
+
+```sh
+tests/run-vulkan.sh
+```
+
+The script builds (at most three jobs; `RR_VULKAN_BUILD` overrides the build
+directory, `build/vulkan-tests` by default), runs the scenes, and then the negative
+controls. The first configuration fetches the production pins of glslang,
+SPIRV-Cross, Vulkan-Headers, volk, and DirectX-Headers, and builds glslang, which
+takes several minutes.
+
+The device is a CPU implementation, normally lavapipe (Mesa's software Vulkan
+driver; `mesa-vulkan-drivers`): the harness asks vk12 for a CPU device, the
+counterpart of forcing WARP, and fails if there is none. The `vulkan` CI job installs `mesa-vulkan-drivers`,
+`vulkan-validationlayers`, and `libvulkan1` on `ubuntu-24.04` and runs the script.
+To use a hardware device instead (for example, the machine's own GPU, with a
+Vulkan SDK's validation layers):
+
+```sh
+sdk="$HOME/.cache/rr-linux/vulkan-sdk/1.4.363.1/x86_64"
+RR_VULKAN_HARDWARE=1 \
+VK_ADD_LAYER_PATH="$sdk/share/vulkan/explicit_layer.d" \
+LD_LIBRARY_PATH="$sdk/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+tests/run-vulkan.sh
+```
+
+What it covers is what the WARP run covers: the same scene registry, oracle
+self-test, pixel comparisons (RGB tolerance 1), and capture, ring, and lifetime
+counters, through the production driver's entry points, against the same expected
+colors. A scene that is never reached, or reached but missing from the registry,
+fails the run, as it does on WARP. Where the two runs differ:
+
+- **Validation** replaces the Direct3D debug layer and GPU-based validation. The
+  harness requires `VK_LAYER_KHRONOS_validation` (it fails if the log doesn't say
+  "validation on"), every validation error fails the run at the next check, and
+  `rr_vk12::ValidationErrors()` counts them for the program's life, so the errors a
+  device's teardown reports are counted too, whatever the log's limit of 200
+  messages. `Core_Errors` must stay zero, as on WARP. The debug-layer message
+  IDs the WARP run ignores or requires have no Vulkan counterpart and aren't used.
+- **Waits** are scaled by 20 on a CPU device (`Core_ScaleWaitsForTest`), so that the
+  driver's 500 ms wait for a readback is ten seconds. On a GitHub runner (4 vCPUs,
+  Mesa 25.2.8, LLVM 20.1.2) lavapipe's first readback of the run outlasted 500 ms in
+  two runs (the driver had logged only its first prewarmed pipeline), so the oracle
+  self-test read an unwritten pixel; the same Mesa, LLVM, and validation layer
+  versions never took longer than 101 ms on a development machine, on one core or
+  four, and the slowest of a passing CI run's 853 readbacks took 252 ms. The
+  cause of the first stall (compiling or loading LLVM on a cold machine, while the
+  prewarm worker does the same) wasn't isolated. A hardware device
+  (`RR_VULKAN_HARDWARE`) keeps the waits production gives it, and the Direct3D run
+  is unchanged.
+- **Negative controls** (`vulkan-controls.py`) are the code-under-test ones of the
+  WARP run: add-on shaders turned off, and the five shader defects of
+  `run-d3d12.ps1` (`water-refraction`, `fog-palette`, `brightmap-palette`,
+  `surface-light`, `surface-light-semibright`) injected into `shaders.hlsl` and
+  compiled to SPIR-V with the production flags. Each runs as its own process and
+  must fail through its named pixel oracle (`NEGATIVE_ORACLE_REJECTED`) within 120
+  seconds. The production shaders are rebuilt afterwards.
+- **Presentation** isn't exercised: the headless presenter stub is the one WARP's
+  `d3d12-driver` uses, and the Vulkan swap chain (`vk_present.cpp`) has no test
+  here. The separate Windows presenter executable is specific to `run-d3d12.ps1`.
+
 ## CI and adding cases
 
 `.github/workflows/tests.yml` runs this suite with ASan and UBSan (the

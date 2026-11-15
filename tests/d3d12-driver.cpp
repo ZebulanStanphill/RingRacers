@@ -21,7 +21,12 @@
 #include "hardware/hw_data.h"
 #include "hardware/hw_model.h"
 #include "hardware/r_d3d12/r_d3d12.h"
+#ifdef HAVE_D3D12_NATIVE
 #include <d3d12sdklayers.h>
+#else
+#include <cstdlib>
+#include "hardware/r_d3d12/vulkan/vk12.h"
+#endif
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -232,6 +237,7 @@ static void quadrants(RGB tl,RGB tr,RGB bl,RGB br) { reset({0,0,0}); fillRect(-1
 static RGB probe(int x,int y,int height) { UINT8 p[3]={0xcd,0xcd,0xcd}; readrect(x,height-1-y,1,1,3,reinterpret_cast<UINT16 *>(p)); return {p[0],p[1],p[2]}; }
 static void validate(ID3D12InfoQueue *queue)
 {
+#ifdef HAVE_D3D12_NATIVE
     bool failed = false;
     static bool clearWarningLogged = false;
     for (UINT64 i = 0; i < queue->GetNumStoredMessages(); i++)
@@ -259,6 +265,9 @@ static void validate(ID3D12InfoQueue *queue)
         }
     }
     if (failed) throw std::runtime_error("debug warning/error");
+#else
+    if (rr_vk12::ValidationErrors() != 0) throw std::runtime_error("Vulkan validation error");
+#endif
     if (Core_Errors()) throw std::runtime_error("production Core_Errors nonzero");
 }
 // Every scene whose oracle the full run must reach. A scene never reached, or reached but missing here, fails the run, so a
@@ -366,6 +375,7 @@ static void selfTest() {
 int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
     else if(argc!=1) return 2;
+#ifdef HAVE_D3D12_NATIVE
     ComPtr<ID3D12Debug> debug; ComPtr<ID3D12Debug1> gbv;
     if(FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))) || FAILED(debug.As(&gbv))) { fputs("D3D12 debug layer/GBV unavailable; install Windows Graphics Tools\n",stderr); return 77; }
     // A negative control injects a known regression (a shader mutant built by run-d3d12.ps1, or add-on shaders turned off) and
@@ -373,10 +383,24 @@ int main(int argc,char **argv) {
     // skip GPU-based validation, which makes WARP several times slower.
     debug->EnableDebugLayer(); if(negative.empty()) gbv->SetEnableGPUBasedValidation(TRUE);
     puts(negative.empty() ? "D3D12 debug layer and GPU-based validation enabled" : "D3D12 debug layer enabled (negative control: GPU-based validation skipped)");
+#endif
     try {
-        Core_ForceWarp(true); D3D12_SetRingBytesForTest(1024,512,2048);
+#ifdef HAVE_D3D12_NATIVE
+        Core_ForceWarp(true);
+#else
+        Core_ForceWarp(!getenv("RR_VULKAN_HARDWARE"));
+        // On a CI runner lavapipe's first readback outlasted the driver's 500 ms wait twice, and the slowest of a passing
+        // run's 853 readbacks took 252 ms. A hardware device gets the waits production gives it.
+        if(!getenv("RR_VULKAN_HARDWARE")) Core_ScaleWaitsForTest(20);
+        Core_VulkanValidation(true);
+#endif
+        D3D12_SetRingBytesForTest(1024,512,2048);
         if(!function<boolean (*)()>("Init")() || !D3D12_Surface(W,H)) throw std::runtime_error("Init/Surface failed");
+#ifdef HAVE_D3D12_NATIVE
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
+#else
+        if(logs.find(", validation on") == std::string::npos) throw std::runtime_error("Vulkan validation layer required");
+#endif
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
         // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
         { reset(); D3D12_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
@@ -469,7 +493,7 @@ int main(int argc,char **argv) {
         reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expectQuad("indexed",{24,180,220});
         reset(); blend(PF_NoDepthTest|PF_NoTexture); F2DCoord p1={-.75f,0},p2={.75f,0}; auto ls=surface({240,160,80}); line(&p1,&p2,ls.PolyColor);
         // A one-pixel line lies on a raster boundary; inspect its known interior coverage, excluding endpoints.
-        { auto p=pixels(); validate(queue.Get()); checkAny("line",p,32,30,33,{240,160,80}); }
+        { auto p=pixels(); validate(validationQueue); checkAny("line",p,32,30,33,{240,160,80}); }
         auto texture = function<void (*)(GLMipmap_t *)>("SetTexture");
         auto updateTexture = function<void (*)(GLMipmap_t *)>("UpdateTexture");
         auto deleteTexture = function<void (*)(GLMipmap_t *)>("DeleteTexture");
@@ -1629,12 +1653,16 @@ int main(int argc,char **argv) {
             clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); special(HWD_SET_MODEL_LIGHTING,0);
             deleteTexture(&customTexture); D3D12_FinishUpdate(0);
         }
-        Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(queue.Get());
-        D3D12_Shutdown(); validate(queue.Get());
+        Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(validationQueue);
+        D3D12_Shutdown(); validate(validationQueue);
         require("shutdown",Core_Device()==nullptr,"shutdown device lifetime oracle failed");
         if(!negative.empty()) throw std::runtime_error("unknown or unexercised negative control");
         const std::string problems=oracleProblems();
         if(!problems.empty()) throw std::runtime_error("oracles that never ran, or that aren't listed:"+problems);
+#ifdef HAVE_D3D12_NATIVE
         puts("Production D3D12 WARP driver scenes passed (RGB tolerance 1, GBV clean)"); return 0;
+#else
+        printf("Production Vulkan driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;
+#endif
     } catch(const std::exception &e) { fprintf(stderr,"FAIL: %s\n",e.what()); D3D12_Shutdown(); if(negativeRejected) fprintf(stderr,"NEGATIVE_ORACLE_REJECTED: %s\n",negative.c_str()); return 1; }
 }
