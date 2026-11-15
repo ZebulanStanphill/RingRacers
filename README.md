@@ -8,11 +8,11 @@ This fork does two things the official game doesn't:
 - It runs on Xbox One and Xbox Series consoles in Dev Mode.
 - It has a new hardware renderer, VibeRant D3D, which uses Direct3D 12 and looks much closer to the Software renderer than the official hardware renderer, Legacy GL, does.
 
-The game itself plays the same. Replays, ghosts and online play with people on the official game work as usual.
+The game itself plays the same. Replays, ghosts, and online play with people on the official game work as usual.
 
 I've only tested the Xbox port on an Xbox One X. It should run better on Xbox Series X|S, and it may run on an original Xbox One with lowered graphics settings, but I don't have those consoles to try. If you have one of these consoles and can test the game, let me know how it runs!
 
-The Xbox port builds on the abandoned one by [worleydl's](https://github.com/worleydl/ringracers-uwp) and goes further beyond, with the aim of providing as seamless an experience as possible.
+The Xbox port builds on the abandoned one by [worleydl](https://github.com/worleydl/ringracers-uwp) and goes further beyond, with the aim of providing as seamless an experience as possible.
 
 Coding agents were used heavily in the development of this fork. I have thoroughly playtested it to iron out various bugs and corner cases. (Shout out to Green Hills Zone, which seemed to be a nexus of such issues, for whatever reason.) I intend to actively maintain this fork and keep it up-to-date with future releases of the vanilla game.
 
@@ -27,10 +27,10 @@ Legacy GL needs desktop OpenGL, which the Xbox doesn't have. VibeRant D3D starte
 - Software's colors and palette flashes (the Palette Rendering option)
 - portals, as in Marble Garden Zone
 - fog volumes
-- Software's screen fades, wipes and Encore inversion
+- Software's screen fades, wipes, and Encore inversion
 - glowing sprite brightmaps
 - underwater and heat distortion as strong as Software's
-- translucent sprites, models, water and other see-through surfaces drawn in the right order
+- translucent sprites, models, water, and other see-through surfaces drawn in the right order
 - add-on shaders
 
 It goes past Software in one place: seen from above, rippling water also distorts the track under it, not just the background. The other places where it differs from Software on purpose, such as true perspective when you look up or down, are listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
@@ -39,7 +39,7 @@ On Xbox it is the default renderer and runs faster than Software. Windows deskto
 
 ### On Xbox
 
-- The game's files, your config and your saves are on a USB drive, in `E:\ringracers`.
+- The game's files, your config, and your saves are on a USB drive, in `E:\ringracers`.
 - Both renderers and the game logic are optimized for the Xbox's CPU, startup is shorter, and each level loads its textures and models up front so that races hitch less.
 - To switch to the Software renderer, use Options → Video → Advanced → Renderer, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`.
 - Voice chat asks for microphone access. If you deny it, voice input stays off.
@@ -52,7 +52,7 @@ Both are in Options → Video.
 **Screen Scaling** decides how the picture is enlarged when the game's resolution is lower than your screen's:
 
 - **Fit** (the default, and what the game did before) enlarges it as far as it will go without changing its shape.
-- **Integer** enlarges it by a whole number (2×, 3× and so on), so every game pixel comes out the same size.
+- **Integer** enlarges it by a whole number (2×, 3×, and so on), so every game pixel comes out the same size.
 - **1:1** doesn't enlarge it at all.
 
 Integer and 1:1 can provide a sharper picture for certain resolutions, with the trade-off of a black border/margin surrounding the picture.
@@ -76,7 +76,7 @@ You need a USB drive and a PC to prepare it: Windows, or a Mac or Linux PC with 
    The game runs in a sandbox, like every app on the Xbox, and Windows lets a sandboxed app open a file only if the file's permissions allow both the app, through "ALL APPLICATION PACKAGES" (`S-1-15-2-1`), and the user it runs as, for example through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already allows Authenticated Users but not ALL APPLICATION PACKAGES, so the first command is the one it needs. The second is for drives prepared some other way, such as our test drive, which allowed only the app side and which the game couldn't open until Authenticated Users was added. `(OI)(CI)` makes files created later, on Windows or by the game, get the same access. On a Mac or Linux PC, Xbox Media Drive Helper's **Prepare for Xbox** makes both grants (skipping the second where the drive already allows the user) and saves a journal that can undo them.
 5. Plug the drive into the Xbox, where it is `E:\`, so the game finds its files in `E:\ringracers`. The Xbox doesn't format a drive it uses for media or change its permissions, so everything the game needs comes from the steps above. A drive of at least 128 GB on USB 3.0 or later makes the Xbox ask how to use it. Choose **Use for media**: **Format storage device** erases it for installed games, after which PCs see it as unformatted. Smaller or slower drives are used for media without asking.
 6. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup). Builds come from [GitHub Actions](#github-actions) or a [local build](#xbox-app-on-windows).
-7. Changing the "App type" that Dev Home shows for the game (App or Game) isn't necessary. The package declares the `expandedResources` capability, which Microsoft documents as granting Game Mode resources on Xbox: CPU cores reserved for the app and a memory partition of at least 4 GB, where plain apps get a share of the cores, 1 GB and, on Xbox One, no Direct3D 12. On an Xbox One X with either type selected, the game got Direct3D 12, the same 5 GB memory budget and the same race speed. The setting does change some behaviour (with Game, controllers are reported twice, which the port's SDL patch handles), so if you do switch it, mention it when reporting a bug.
+7. Changing the "App type" that Dev Home shows for the game (App or Game) isn't necessary. The package declares the `expandedResources` capability, which Microsoft documents as granting Game Mode resources on Xbox: CPU cores reserved for the app and a memory partition of at least 4 GB, where plain apps get a share of the cores, 1 GB and, on Xbox One, no Direct3D 12. On an Xbox One X with either type selected, the game got Direct3D 12, the same 5 GB memory budget, and the same race speed. The setting does change some behaviour (with Game, controllers are reported twice, which the port's SDL patch handles), so if you do switch it, mention it when reporting a bug.
 
 ### If the game can't use the drive
 
@@ -123,24 +123,24 @@ From an **x64 Native Tools Command Prompt for VS 2022**, in a clone of this repo
 powershell -ExecutionPolicy Bypass -File uwp\build.ps1
 ```
 
-This builds the engine, builds SDL2 and downloads ANGLE into `uwp/deps/`, then generates and builds the launcher solution at `uwp/build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
+This builds the engine, builds SDL2, downloads ANGLE into `uwp/deps/`, and then generates and builds the launcher solution at `uwp/build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
 
 To help optimize future builds with a recording of your own play session, see [docs/uwp-pgo.md](docs/uwp-pgo.md).
 
 ### Desktop game
 
-The game for Windows, Linux and macOS builds the way upstream's does. You need a C++ toolchain that supports C++17 and C11 (GCC, MinGW, Clang or Apple Clang), CMake and ninja.
+The game for Windows, Linux, and macOS builds the way upstream's does. You need a C++ toolchain that supports C++17 and C11 (GCC, MinGW, Clang, or Apple Clang), CMake, and ninja.
 
-On Linux you need these libraries on the system: libcurl, zlib, libpng, libogg, libvorbis, libvpx, libyuv, SDL2 and libopus. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
+On Linux you need these libraries on the system: libcurl, zlib, libpng, libogg, libvorbis, libvpx, libyuv, SDL2, and libopus. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
 
 `CMakePresets.json` has [CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html), among them:
 
 - `ninja-debug`: non-optimized, assertions enabled
 - `ninja-develop`: optimized, assertions enabled
 - `ninja-release`: optimized
-- `ninja-x86_mingw_static_vcpkg-debug`, `-develop` and `-release`
-- `ninja-x64_osx_vcpkg-debug`, `-develop` and `-release`
-- `ninja-arm64_osx_vcpkg-debug`, `-develop` and `-release`
+- `ninja-x86_mingw_static_vcpkg-debug`, `-develop`, and `-release`
+- `ninja-x64_osx_vcpkg-debug`, `-develop`, and `-release`
+- `ninja-arm64_osx_vcpkg-debug`, `-develop`, and `-release`
 
 The vcpkg presets need the `VCPKG_ROOT` environment variable set before the first `cmake` run. Their build directories are subdirectories of `build/`. Configure and build with, for example:
 
@@ -155,7 +155,7 @@ Windows builds made with MSVC or clang-cl include VibeRant D3D (`SRB2_CONFIG_D3D
 
 - `uwp/`: the Xbox app's launcher and `build.ps1`. The launcher links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore).
 - `uwp/patches/`: changes to [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) that build it for OpenGL ES, stop it from seeing each controller twice, and let Direct3D 12 take the window from ANGLE and give it back.
-- `uwp/pgo/`: recordings from the Xbox that the build uses to optimise the engine.
+- `uwp/pgo/`: recordings from the Xbox that the build uses to optimize the engine.
 - `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ringracers-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 - [`uwp/tools/storage-probe/`](uwp/tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
 - `src/hardware/r_d3d12/`: the VibeRant D3D driver. Its docs are in `docs/`.
