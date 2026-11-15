@@ -165,6 +165,15 @@ void M_RefreshAdvancedVideoOptions(void)
 	OPTIONS_VideoAdvanced[vaopt_renderer - 3].text = shown_d3d ? "\x85Report visual bugs to GitHub.com/" : "\x85Legacy GL will eventually be replaced.";
 	OPTIONS_VideoAdvanced[vaopt_renderer - 2].text = shown_d3d ? "\x85ZebulanStanphill/RingRacers" : "\x85Please don't report visual bugs!";
 	OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = running_d3d ? (HWR_Vulkan() ? "VibeRant Vulkan Options..." : "VibeRant D3D Options...") : "Legacy GL Options...";
+#ifdef HAVE_METAL
+	if (cv_renderer.value == 5)
+	{
+		OPTIONS_VideoAdvanced[vaopt_spacer3].text = "VibeRant Metal is an enhanced port";
+		OPTIONS_VideoAdvanced[vaopt_spacer4].text = "of the Legacy GL renderer to Metal,";
+	}
+	if (HWR_Metal())
+		OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = "VibeRant Metal Options...";
+#endif
 	OPTIONS_VideoAdvanced[vaopt_texturequal].text = running_d3d ? "Texture Filter" : "Texture Quality";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].tooltip = running_d3d ? "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures." : "Texture depth. Higher values are recommended.";
 	OPTIONS_VideoAdvanced[vaopt_texturequal].itemaction.cvar = running_d3d ? &cv_glfiltermode : &cv_scr_depth;

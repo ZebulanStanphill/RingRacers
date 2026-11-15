@@ -296,7 +296,7 @@ void I_FinishUpdate(void)
 		return;
 	}
 
-#ifdef HAVE_VULKAN
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
 	I_ShowDeferredWindow();
 #endif
 

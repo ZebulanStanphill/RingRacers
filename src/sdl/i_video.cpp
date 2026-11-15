@@ -194,7 +194,7 @@ static INT32 windowedModes[MAXWINMODES][2] =
 
 static void Impl_VideoSetupBuffer(void);
 static SDL_bool Impl_CreateWindow(SDL_bool fullscreen);
-#ifdef HAVE_VULKAN
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
 static SDL_bool g_window_deferred = SDL_FALSE; // the game's window was made hidden and hasn't been shown yet
 #endif
 //static void Impl_SetWindowName(const char *title);
@@ -407,19 +407,20 @@ static boolean IgnoreMouse(void)
 	return false;
 }
 
-#ifdef HAVE_VULKAN
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
 void I_ShowDeferredWindow(void)
 {
 	if (!g_window_deferred || !window)
 		return;
-	// VibeRant Vulkan's own window is the one on screen
-	if (rendermode == render_opengl && HWR_Vulkan())
+	// VibeRant Vulkan's or Metal's own window is the one on screen
+	if (rendermode == render_opengl && (HWR_Vulkan() || HWR_Metal()))
 		return;
-	// The settings ask for VibeRant Vulkan, which hasn't started yet (the config is read after the video system starts):
+	// The settings ask for VibeRant Vulkan or Metal, which hasn't started yet (the config is read after the video system starts):
 	// wait for it rather than show a window it would replace a moment later. If it fails to start, this one is shown.
-	// (A value of 0 is the variable before it is registered, when its default, VibeRant Vulkan, is all there is to go by.)
+	// (A value of 0 is the variable before it is registered, when its default, VibeRant Vulkan or Metal, is all there is to go by.)
 	if (chosenrendermode == RENDERER_UNCHOSEN && vid.glstate != VID_GL_LIBRARY_ERROR
-		&& (SCR_RendererVulkan(cv_renderer.value) || cv_renderer.value == 0) && !HWR_DriverStarted())
+		&& (SCR_RendererVulkan(cv_renderer.value) || SCR_RendererMetal(cv_renderer.value) || cv_renderer.value == 0)
+		&& !HWR_DriverStarted())
 		return;
 	g_window_deferred = SDL_FALSE;
 	SDL_ShowWindow(window);
@@ -1654,8 +1655,8 @@ static SDL_bool Impl_CreateWindow(SDL_bool fullscreen)
 	// RHI: always create window as OPENGL
 	flags |= SDL_WINDOW_OPENGL;
 
-#ifdef HAVE_VULKAN
-	// VibeRant Vulkan presents on a window of its own in this one's place (vk_present.cpp), so this one stays hidden until
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+	// VibeRant Vulkan or Metal presents on a window of its own in this one's place (the presenter), so this one stays hidden until
 	// a renderer that presents on it is the one the game runs with (I_ShowDeferredWindow): starting the game then shows
 	// one window, not two in turn
 	flags |= SDL_WINDOW_HIDDEN;
@@ -1683,7 +1684,7 @@ static void Impl_SetWindowIcon(void)
 		SDL_SetWindowIcon(window, icoSurface);
 }
 
-// For a window that stands in for the game's (VibeRant Vulkan's)
+// For a window that stands in for the game's (VibeRant Vulkan's or Metal's)
 void VID_SetWindowIcon(SDL_Window *target)
 {
 	if (target && icoSurface)
@@ -1776,6 +1777,10 @@ void I_StartupGraphics(void)
 	else if (M_CheckParm("-vulkan"))
 		chosenrendermode = static_cast<rendererchoice_t>(4);
 #endif
+#ifdef HAVE_METAL
+	else if (M_CheckParm("-metal"))
+		chosenrendermode = static_cast<rendererchoice_t>(5);
+#endif
 
 	// Don't startup OpenGL
 	if (M_CheckParm("-nogl"))
@@ -1840,10 +1845,12 @@ void VID_StartupOpenGL(void)
 	{
 		CONS_Printf("VID_StartupOpenGL()...\n");
 #if defined(HAVE_D3D12) && !defined(_UWP)
-		// -vkdebug or -d3ddebug: the backend's validation or debug layer, whose messages go to the log; -warp: a software device
+		// -vkdebug or -d3ddebug: the backend's validation or debug layer, whose messages go to the log; -warp: a software device.
+		// -mtldebug: what Metal reports of a failed command buffer, in detail (Metal's own validation is turned on with
+		// its environment variables)
 		if (HWR_D3D12())
-			D3D12_SelectBackend(HWR_Vulkan(), (M_CheckParm("-vkdebug") || M_CheckParm("-d3ddebug")) != 0,
-				M_CheckParm("-warp") != 0);
+			D3D12_SelectBackend(HWR_Vulkan(), HWR_Metal() ? M_CheckParm("-mtldebug") != 0
+				: (M_CheckParm("-vkdebug") || M_CheckParm("-d3ddebug")) != 0, M_CheckParm("-warp") != 0);
 #endif
 		*(void**)&HWD.pfnInit             = hwSym("Init",NULL);
 		*(void**)&HWD.pfnFinishUpdate     = NULL;

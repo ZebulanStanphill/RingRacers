@@ -7,7 +7,7 @@
 // Which driver the hardware renderer (rendermode == render_opengl) draws with. The engine code around it behaves
 // as Software does where the VibeRant driver (src/hardware/r_d3d12) is the driver, and as upstream's Legacy GL does
 // where OpenGL is, so it asks HWR_D3D12() instead of deciding when it is compiled. HWR_D3D12() is true for the
-// VibeRant driver on either of its backends, Direct3D 12 or Vulkan.
+// VibeRant driver on any of its backends: Direct3D 12, Vulkan, or Metal.
 #if defined(HAVE_D3D12) && defined(_UWP)
 #define HWR_D3D12() 1 // Xbox/UWP: the only driver
 #elif defined(HAVE_D3D12)
@@ -37,6 +37,13 @@ void HWR_StartDriver(boolean d3d12, boolean vulkan);
 #else
 #define HWR_Vulkan() 0
 #endif
+// A build with the Metal backend (macOS) has no other, so there the VibeRant driver is VibeRant Metal
+#if defined(HAVE_D3D12) && !defined(_UWP) && defined(HAVE_METAL)
+#define HWR_Metal() (hwr_d3d12)
+#define HWR_VIBERANT_NAME(vulkan) ((void)(vulkan), "VibeRant Metal")
+#else
+#define HWR_Metal() 0
 #define HWR_VIBERANT_NAME(vulkan) ((vulkan) ? "VibeRant Vulkan" : "VibeRant D3D")
+#endif
 
 #endif

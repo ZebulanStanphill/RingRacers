@@ -24,6 +24,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/sdl/i_video.cpp"
     "${RR_SOURCE_DIR}/src/sdl/i_system.cpp"
     "${RR_SOURCE_DIR}/src/screen.c"
+    "${RR_SOURCE_DIR}/src/cvars.cpp"
     "${RR_SOURCE_DIR}/src/i_tcp.c"
     "${RR_SOURCE_DIR}/src/i_tcp_detail.h"
     "${RR_SOURCE_DIR}/src/d_clisrv.c"
@@ -127,6 +128,7 @@ regression(renderer_setting_uwp renderer_setting HWRENDER _UWP)
 # Desktop builds with the VibeRant driver: Direct3D 12 only, Vulkan only (Linux), and both (Windows)
 regression(renderer_setting_both renderer_setting HWRENDER HAVE_D3D12 HAVE_D3D12_NATIVE)
 regression(renderer_setting_vulkan renderer_setting HWRENDER HAVE_D3D12 HAVE_VULKAN)
+regression(renderer_setting_metal renderer_setting HWRENDER HAVE_D3D12 HAVE_METAL)
 regression(renderer_setting_all renderer_setting HWRENDER HAVE_D3D12 HAVE_D3D12_NATIVE HAVE_VULKAN)
 regression(event_queue event_queue)
 regression(quit_signal quit_signal)

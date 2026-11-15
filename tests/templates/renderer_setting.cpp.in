@@ -31,6 +31,18 @@ static std::string argument, renderer_name;
 INT32 M_CheckParm(const char *s) { return argument == s; }
 const char *M_GetNextParm(void) { return renderer_name.c_str(); }
 @@VALUES@@
+namespace default_setting {
+struct Default {
+    const char *name;
+    Default flags(int) { return *this; }
+    Default values(CV_PossibleValue_t *) { return *this; }
+    Default onchange(void (*)(void)) { return *this; }
+};
+using consvar_t = Default;
+static Default Player(const char *, const char *name) { return {name}; }
+@@DEFAULT@@
+}
+
 static void startup() {
 @@STARTUP@@
 }
@@ -67,17 +79,48 @@ static const char *name_of(int setting)
 
 int main()
 {
+#if defined(HAVE_METAL)
+    assert(settings() == std::vector<int>({1, 5, 2}));
+    assert(!strcmp(name_of(5), "VibeRant Metal"));
+    assert(!strcmp(default_setting::cv_renderer.name, "VibeRant Metal"));
+#else
+    assert(!strcmp(name_of(5), ""));
+#endif
+#ifndef HAVE_D3D12_NATIVE
+#ifndef _UWP
+    assert(!strcmp(name_of(3), ""));
+#endif
+#endif
+#ifndef HAVE_VULKAN
+    assert(!strcmp(name_of(4), ""));
+#endif
+    // Unknown names, including saved values absent from this build, cannot select a renderer.
+    for (int absent : {3, 4, 5}) {
+        if (*name_of(absent)) continue;
+#ifdef _UWP
+        if (absent == 3) continue; // UWP calls renderer 2 VibeRant D3D.
+#endif
+        boot(render_soft, RENDERER_UNCHOSEN, VID_GL_LIBRARY_NOTLOADED);
+        argument = "-renderer";
+        renderer_name = absent == 3 ? "VibeRant D3D" : absent == 4 ? "VibeRant Vulkan" : "VibeRant Metal";
+        startup();
+        assert(chosenrendermode == RENDERER_UNCHOSEN && rendermode == render_soft);
+    }
+
     // Each startup is a fresh process, including the production driver lifetime state.
     for (int setting : settings())
     {
-        // "", -software, -opengl, -d3d12, -vulkan, -renderer <the setting's name>
-        for (int cli = 0; cli < 6; ++cli)
+        // "", -software, -opengl, -d3d12, -vulkan, -metal, -renderer <the setting's name>
+        for (int cli = 0; cli < 7; ++cli)
         {
 #if !(defined(HAVE_D3D12) && (defined(_UWP) || defined(HAVE_D3D12_NATIVE)))
             if (cli == 3) continue;
 #endif
 #ifndef HAVE_VULKAN
             if (cli == 4) continue;
+#endif
+#ifndef HAVE_METAL
+            if (cli == 5) continue;
 #endif
             pid_t pid = fork();
             assert(pid >= 0);
@@ -86,7 +129,7 @@ int main()
                 cv_renderer.value = setting;
                 SCR_ChangeRenderer();
                 argument = cli == 1 ? "-software" : cli == 2 ? "-opengl" : cli == 3 ? "-d3d12" : cli == 4 ? "-vulkan"
-                    : cli == 5 ? "-renderer" : "";
+                    : cli == 5 ? "-metal" : cli == 6 ? "-renderer" : "";
                 renderer_name = name_of(setting);
                 startup();
                 int expected = cli == 1 ? 1 : cli == 2 ? 2 : cli == 3 ?
@@ -95,7 +138,7 @@ int main()
 #else
                     2
 #endif
-                    : cli == 4 ? 4 : setting;
+                    : cli == 4 ? 4 : cli == 5 ? 5 : setting;
                 if (cli == 0) {
                     assert(chosenrendermode == RENDERER_UNCHOSEN);
                     assert(setrenderneeded == (setting == 1 ? 0 : setting));
@@ -109,8 +152,9 @@ int main()
 #if defined(HAVE_D3D12) && !defined(_UWP)
                 // The driver and its backend are the ones the setting names
                 if (rendermode == render_opengl) {
-                    assert(HWR_D3D12() == (expected == 3 || expected == 4));
+                    assert(HWR_D3D12() == (expected == 3 || expected == 4 || expected == 5));
                     assert(HWR_Vulkan() == (expected == 4));
+                    assert(HWR_Metal() == (expected == 5));
                 }
 #endif
                 _exit(0);
@@ -150,6 +194,12 @@ int main()
     assert(set(render_soft) == 0 && alerts == 1);
 
 #if defined(HAVE_D3D12) && !defined(_UWP)
+#ifdef HAVE_METAL
+    assert(SCR_RendererMode(5) == render_opengl);
+    assert(SCR_RendererD3D12(5));
+    assert(SCR_RendererMetal(5) && !SCR_RendererMetal(4) && !SCR_RendererMetal(3) && !SCR_RendererMetal(2));
+    assert(!strcmp(SCR_RendererName(5), "VibeRant Metal"));
+#endif
     assert(SCR_RendererMode(4) == render_opengl);
     assert(SCR_RendererMode(3) == render_opengl);
     assert(SCR_RendererMode(2) == render_opengl);
@@ -169,6 +219,9 @@ int main()
                 HWR_StartDriver(SCR_RendererD3D12(started), SCR_RendererVulkan(started));
                 assert(HWR_DriverStarted() && HWR_D3D12() == SCR_RendererD3D12(started));
                 assert(HWR_Vulkan() == SCR_RendererVulkan(started));
+                assert(HWR_Metal() == SCR_RendererMetal(started));
+                assert(!SCR_RendererNeedsRestart(started));
+                if (started == 5) assert(!strcmp(HWR_VIBERANT_NAME(HWR_Vulkan()), "VibeRant Metal"));
                 boot(render_opengl, RENDERER_UNCHOSEN, VID_GL_LIBRARY_LOADED);
                 assert(SCR_RendererSetting(render_opengl) == started);
                 assert(set(1) == 1);

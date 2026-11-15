@@ -148,13 +148,17 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 - **Renderer setting at startup:** `renderer_setting`, `renderer_setting_uwp`,
   `renderer_setting_both` (a desktop build with Direct3D 12 only),
-  `renderer_setting_vulkan` (Vulkan only, as on Linux), and
+  `renderer_setting_vulkan` (Vulkan only, as on Linux),
+  `renderer_setting_metal` (Metal only, as on macOS), and
   `renderer_setting_all` (both backends, as on Windows) execute production
   setting callbacks and the SDL command-line selection block with real renderer
   mappings and driver lifetime bookkeeping. Fresh child processes check every
-  setting the build lists, `-software`, `-opengl`, `-d3d12` and `-vulkan` where
+  setting the build lists, `-software`, `-opengl`, `-d3d12`, `-vulkan`, and `-metal` where
   available, and `-renderer` with every listed name, and that the driver and
   the backend that start are the ones the setting names.
+  The Metal-only case also checks the exact list of settings and the default the
+  production `cvars.cpp` gives the variable, and every variant checks that the
+  name of a renderer the build doesn't list selects nothing.
   Config-only cases execute the callback and model application of its queued
   setting; they do not create SDL contexts or initialize a GPU driver.
   Check stale startup queues, repeated changes before a frame, command-line

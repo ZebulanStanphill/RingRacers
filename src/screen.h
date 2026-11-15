@@ -18,11 +18,11 @@
 #include "hardware/hw_driver.h"
 
 // Settings and rendermode coincide except for the VibeRant driver on desktop: 3 is VibeRant D3D and 4 is VibeRant
-// Vulkan, both the hardware renderer (2), which is Legacy GL on OpenGL when the setting is 2.
+// Vulkan, and 5 is VibeRant Metal. All are the hardware renderer (2), which is Legacy GL on OpenGL when the setting is 2.
 static inline INT32 SCR_RendererMode(INT32 setting)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	return setting == 3 || setting == 4 ? 2 : setting;
+	return setting == 3 || setting == 4 || setting == 5 ? 2 : setting;
 #else
 	return setting;
 #endif
@@ -30,7 +30,7 @@ static inline INT32 SCR_RendererMode(INT32 setting)
 static inline boolean SCR_RendererD3D12(INT32 setting)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	return setting == 3 || setting == 4;
+	return setting == 3 || setting == 4 || setting == 5;
 #else
 	return setting == 2 && HWR_D3D12();
 #endif
@@ -44,10 +44,19 @@ static inline boolean SCR_RendererVulkan(INT32 setting)
 	return false;
 #endif
 }
+static inline boolean SCR_RendererMetal(INT32 setting)
+{
+#if defined(HAVE_D3D12) && !defined(_UWP)
+	return setting == 5;
+#else
+	(void)setting;
+	return false;
+#endif
+}
 static inline INT32 SCR_RendererSetting(INT32 mode)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	return mode == 2 && HWR_D3D12() ? (HWR_Vulkan() ? 4 : 3) : mode;
+	return mode == 2 && HWR_D3D12() ? (HWR_Metal() ? 5 : HWR_Vulkan() ? 4 : 3) : mode;
 #else
 	return mode;
 #endif
@@ -62,10 +71,10 @@ static inline boolean SCR_RendererNeedsRestart(INT32 setting)
 	return false;
 #endif
 }
-// The name of a hardware renderer setting (2, 3 or 4)
+// The name of a hardware renderer setting (2, 3, 4, or 5)
 static inline const char *SCR_RendererName(INT32 setting)
 {
-	return setting == 4 ? "VibeRant Vulkan" : setting == 3 ? "VibeRant D3D" : "Legacy GL";
+	return setting == 5 ? "VibeRant Metal" : setting == 4 ? "VibeRant Vulkan" : setting == 3 ? "VibeRant D3D" : "Legacy GL";
 }
 
 #if defined (_WIN32) && !defined (__CYGWIN__)

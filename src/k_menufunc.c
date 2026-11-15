@@ -214,7 +214,9 @@ static void M_ChangeCvar(INT32 choice)
 	renderer_menu_choice = choice;
 	if (cvar == &cv_renderer && choice != -1 &&
 		// Legacy GL comes after the last VibeRant renderer in the list
-#ifdef HAVE_VULKAN
+#ifdef HAVE_METAL
+		((cv_renderer.value == 5 && choice == 1) ||
+#elif defined(HAVE_VULKAN)
 		((cv_renderer.value == 4 && choice == 1) ||
 #else
 		((cv_renderer.value == 3 && choice == 1) ||

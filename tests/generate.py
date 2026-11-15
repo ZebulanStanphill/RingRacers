@@ -90,6 +90,8 @@ def generate(engine, output):
     }, output / "video_fullscreen.cpp")
     render(templates / "renderer_setting.cpp.in", {
         "CHANGE": Source(engine / "src/screen.c").function("SCR_ChangeRenderer"),
+        "DEFAULT": Source(engine / "src/cvars.cpp").section(
+            "#if defined(HAVE_D3D12) && defined(_UWP) // [UWP]: Default", "consvar_t cv_parallelsoftware"),
         "VALUES": Source(engine / "src/screen.c").section("CV_PossibleValue_t cv_renderer_t[]", "// ========================================================================="),
         "STARTUP": Source(engine / "src/sdl/i_video.cpp").section("\t// Renderer choices", "\tborderlesswindow ="),
     }, output / "renderer_setting.cpp")

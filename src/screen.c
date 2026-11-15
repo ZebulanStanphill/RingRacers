@@ -68,6 +68,9 @@ CV_PossibleValue_t cv_renderer_t[] = {
 #ifdef HAVE_VULKAN
 	{4, "VibeRant Vulkan"},
 #endif
+#ifdef HAVE_METAL
+	{5, "VibeRant Metal"},
+#endif
 	{2, "Legacy GL"},
 #elif defined(HAVE_D3D12)
 	{2, "VibeRant D3D"},
