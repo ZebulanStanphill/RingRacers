@@ -15,6 +15,11 @@ documentation for that change (its commit message, and the docs in `docs/` or
 `tests/README.md` that describe it) and its `CHANGES.md` entry. Split unrelated
 changes into separate commits, even when they're made in the same session.
 
+# Writing style
+
+Use the Oxford comma ("fades, wipes, and Encore inversion") in documentation,
+`CHANGES.md` entries, in-game text, and commit messages.
+
 # Staying rebaseable
 
 Our commits are rebased onto newer upstream releases, so keep them easy to
