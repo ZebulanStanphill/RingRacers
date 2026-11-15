@@ -1,43 +1,61 @@
 # Ring Racers (Zebulan Edition)
 
 > [!IMPORTANT]
-> This is an **unofficial fork** of [Dr. Robotnik's Ring Racers](https://github.com/KartKrewDev/RingRacers) **v2.4**. It is not a Kart Krew Dev project and Kart Krew doesn't support it, so report its bugs [here](https://github.com/ZebulanStanphill/RingRacers/issues), not to them.
+> This is an **unofficial fork** of [Dr. Robotnik's Ring Racers](https://github.com/KartKrewDev/RingRacers) v2.4. Kart Krew Dev didn't make it and doesn't support it. Report bugs [here](https://github.com/ZebulanStanphill/RingRacers/issues), not to them.
 
-Dr. Robotnik's Ring Racers is a kart racing game by [Kart Krew Dev](https://www.kartkrew.org/). This fork adds an Xbox port and a Direct3D 12 hardware renderer to it, and makes the game faster on the Xbox's CPU. It stays compatible with the unmodified game: game logic gives the same results, so replays, ghosts and netplay with PC players work as usual.
+This fork does two things the official game doesn't:
 
-The Xbox port is a UWP app for Xbox One and Xbox Series consoles in Dev Mode, based on [worleydl's port](https://github.com/worleydl/ringracers-uwp). It has only been tested on an Xbox One X. It should also work (even better) on Xbox Series X|S, and it may work (with lowered graphics settings) on an original Xbox One, but I don't have those consoles to test it on.
+- It runs on Xbox One and Xbox Series consoles in Dev Mode.
+- It has a new hardware renderer, VibeRant D3D, which uses Direct3D 12 and looks much closer to the Software renderer than the official hardware renderer, Legacy GL, does.
 
-Coding agents were used heavily in the development of this fork.
+The game itself plays the same. Replays, ghosts and online play with people on the official game work as usual.
 
-## What this fork adds
+I've only tested the Xbox port on an Xbox One X. It should run better on Xbox Series X|S, and it may run on an original Xbox One with lowered graphics settings, but I don't have those consoles to try.
 
-[CHANGES.md](CHANGES.md) lists every change in detail and says which have been tested on Xbox. The ones you'll notice:
+The Xbox port builds on [worleydl's](https://github.com/worleydl/ringracers-uwp). Coding agents were used heavily in the development of this fork.
 
-- **An Xbox port.** The game runs on Xbox consoles in Dev Mode, with its files, config and saves on a USB drive. See [Installing on Xbox](#installing-on-xbox).
-- **VibeRant D3D, a Direct3D 12 renderer.** Vanilla's hardware renderer, Legacy GL, needs desktop OpenGL, which the Xbox doesn't have, so this fork redid it on Direct3D 12. It is the default on Xbox, where it runs faster than Software, and it fills in much of what vanilla's Legacy GL lacks:
-  - Software-style colors and palette flashes (the Palette Rendering option)
-  - portals, as in Marble Garden Zone
-  - fog volumes
-  - Software's screen fades, wipes and Encore inversion
-  - glowing sprite brightmaps
-  - Software-strength underwater and heat distortion
-  - translucent sprites and models sorted, among water and other see-through surfaces
-  - add-on shaders
-  - Water surfaces go beyond Software: viewed from above, their ripples also distort the track beneath the water, not just the background.
+## What's different from the official game
 
-  It aims to look like Software. Where it differs on purpose, such as true perspective when looking up or down, is listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
-- **VibeRant D3D on Windows PCs.** Windows desktop builds have it as a third renderer beside Software and Legacy GL. This has only been tested under Wine, not on a real Windows PC.
-- **Faster performance on Xbox.** The Software renderer, the game logic and the VibeRant D3D renderer are optimized for the Xbox's CPU, startup is shorter, and levels preload their textures and models to reduce hitches during races.
-- **New video options.** **Screen Scaling** (Fit, Integer or 1:1) places the picture on the screen, and **Camera Position** gives each local player a 3rd Person or 1st Person view.
-- **Logs for bug reports.** On Xbox the game writes a log, the last error message and a performance profile to the USB drive. See [Reporting problems](#reporting-problems).
+[CHANGES.md](CHANGES.md) lists every change and says which have been tested on Xbox. This is what you'll notice.
 
-Things to know on Xbox:
+### VibeRant D3D
 
-- **Renderer.** To go back to Software, change Options → Video → Advanced → Renderer, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`. A config saved by an earlier build keeps its renderer.
-- **Startup file check in the background.** The game files are checked while the game loads instead of before.
-- **Files on the USB drive.** Config and saves are in `E:\ringracers\ringracers\`.
-- **Voice chat** asks for microphone access. If you deny it, voice input stays off.
-- **Tip:** in Software, turning off Screen Tilting (Options → Profile Setup → your profile → Accessibility; the Guest profile can't be edited) saves some time each frame when the camera tilts.
+Legacy GL needs desktop OpenGL, which the Xbox doesn't have. VibeRant D3D started as Legacy GL moved to Direct3D 12 and then gained what Legacy GL draws wrongly or not at all:
+
+- Software's colors and palette flashes (the Palette Rendering option)
+- portals, as in Marble Garden Zone
+- fog volumes
+- Software's screen fades, wipes and Encore inversion
+- glowing sprite brightmaps
+- underwater and heat distortion as strong as Software's
+- translucent sprites, models, water and other see-through surfaces drawn in the right order
+- add-on shaders
+
+It goes past Software in one place: seen from above, rippling water also distorts the track under it, not just the background. The other places where it differs from Software on purpose, such as true perspective when you look up or down, are listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
+
+On Xbox it is the default renderer and runs faster than Software. Windows desktop builds have it as a third choice beside Software and Legacy GL, but that has only been tested under Wine, not on a real Windows PC.
+
+### On Xbox
+
+- The game's files, your config and your saves are on a USB drive, in `E:\ringracers`.
+- Both renderers and the game logic are optimized for the Xbox's CPU, startup is shorter, and each level loads its textures and models up front so that races hitch less.
+- To switch to the Software renderer, use Options → Video → Advanced → Renderer, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`.
+- Voice chat asks for microphone access. If you deny it, voice input stays off.
+- In Software, turning off Screen Tilting (Options → Profile Setup → your profile → Accessibility; the Guest profile can't be edited) saves some time each frame when the camera tilts.
+
+### New video options
+
+Both are in Options → Video.
+
+**Screen Scaling** decides how the picture is enlarged when the game's resolution is lower than your screen's:
+
+- **Fit** (the default, and what the game did before) enlarges it as far as it will go without changing its shape.
+- **Integer** enlarges it by a whole number (2×, 3× and so on), so every game pixel comes out the same size.
+- **1:1** doesn't enlarge it at all.
+
+Integer and 1:1 leave black around the picture.
+
+**Camera Position** lets each local player pick the usual view from behind the kart (**3rd Person**) or the view from the driver's seat (**1st Person**). The official game can only switch this from the console, with `chasecam`, and forgets it when you quit.
 
 ## Installing on Xbox
 
@@ -103,17 +121,17 @@ From an **x64 Native Tools Command Prompt for VS 2022**, in a clone of this repo
 powershell -ExecutionPolicy Bypass -File uwp\build.ps1
 ```
 
-This builds the engine as a static library; builds SDL2 and downloads ANGLE into `uwp/deps/`; then generates and builds the launcher solution at `uwp/build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
+This builds the engine, builds SDL2 and downloads ANGLE into `uwp/deps/`, then generates and builds the launcher solution at `uwp/build/ringracers-uwp.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
 
-[docs/uwp-pgo.md](docs/uwp-pgo.md) describes collecting profile-guided optimisation data on Xbox: installing an instrumented build, playing a varied session, and sending the captures for future optimised builds.
+To help optimise future builds with a recording of your own play session, see [docs/uwp-pgo.md](docs/uwp-pgo.md).
 
 ### Desktop game
 
-The game for Windows, Linux and macOS builds as upstream's does, with a compatible C++ toolchain (GCC, MinGW, Clang or Apple Clang), CMake and Microsoft vcpkg. The compiler and runtime libraries must support ISO C++17 and ISO C11.
+The game for Windows, Linux and macOS builds the way upstream's does. You need a C++ toolchain that supports C++17 and C11 (GCC, MinGW, Clang or Apple Clang), CMake and ninja.
 
 On Linux you need these libraries on the system: libcurl, zlib, libpng, libogg, libvorbis, libvpx, libyuv, SDL2 and libopus. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
 
-There are [CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html) in `CMakePresets.json`, which need ninja as well. Some of them:
+`CMakePresets.json` has [CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html), among them:
 
 - `ninja-debug`: non-optimized, assertions enabled
 - `ninja-develop`: optimized, assertions enabled
@@ -127,22 +145,21 @@ The vcpkg presets need the `VCPKG_ROOT` environment variable set before the firs
     cmake --preset ninja-x86_mingw_static_vcpkg-develop
     cmake --build --preset ninja-x86_mingw_static_vcpkg-develop
 
-VibeRant D3D is built into Windows builds made with MSVC or clang-cl (`SRB2_CONFIG_D3D12`); the Tests workflow shows how.
+Windows builds made with MSVC or clang-cl include VibeRant D3D (`SRB2_CONFIG_D3D12`). `.github/workflows/tests.yml` has the commands for one.
 
 ### Repository layout
 
-`master` is upstream's `maintenance-2.4` branch with this fork's changes on top, one commit per change. What the fork adds beside the engine's own folders:
+`master` is upstream's `maintenance-2.4` branch with this fork's changes on top, one commit per change. The fork's own folders:
 
-- `uwp/`: the Xbox app. The launcher links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore); `uwp/build.ps1` builds it.
-- `uwp/patches/`: build [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) for OpenGL ES, stop it from seeing each controller twice, and let Direct3D 12 take the window from ANGLE and give it back.
+- `uwp/`: the Xbox app's launcher and `build.ps1`. The launcher links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore).
+- `uwp/patches/`: changes to [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) that build it for OpenGL ES, stop it from seeing each controller twice, and let Direct3D 12 take the window from ANGLE and give it back.
 - `uwp/pgo/`: recordings from the Xbox that the build uses to optimise the engine.
 - `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ringracers-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 - [`uwp/tools/storage-probe/`](uwp/tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
-- `src/hardware/r_d3d12/`: the VibeRant D3D driver, with its docs in `docs/`.
+- `src/hardware/r_d3d12/`: the VibeRant D3D driver. Its docs are in `docs/`.
 - `tests/`: the regression tests and test add-ons.
-- [CHANGES.md](CHANGES.md): the changelog.
 
-The Xbox app used to be a separate repository, [ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp), which is now archived; its history is part of this one.
+The Xbox app used to be a separate repository, [ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp), now archived. Its history is part of this one.
 
 ## Credits
 
