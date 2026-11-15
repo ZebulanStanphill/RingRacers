@@ -5,12 +5,11 @@ macOS that draws what VibeRant D3D and VibeRant Vulkan draw, because it is the s
 VibeRant Vulkan ([vulkan-backend.md](vulkan-backend.md)): the driver keeps calling Direct3D 12, and a backend
 underneath implements the part of Direct3D 12 it calls.
 
-**State.** What exists is the backend's core, "mtl12", and it has only ever run as the headless driver test
-(`tests/README.md`, "Metal driver harness") on GitHub's macOS runner, whose GPU is a virtual one ("Apple Paravirtual
-device", macOS 15 on Apple silicon): every scene of the test passes there with Metal's API and shader validation on.
-No real GPU has run it, and no Intel Mac. The game doesn't use it yet: there is no presenter
-(`metal/mtl_present.mm`), no window code, no Renderer setting, and no option in the game's build. The hooks the
-presenter needs are in place (below).
+**State.** A macOS build of the game has it and starts with it: `SRB2_CONFIG_METAL` is on by default there, the
+Renderer setting lists **VibeRant Metal**, and a new config uses it. It has only run on GitHub's macOS runners, whose
+GPU is a virtual one ("Apple Paravirtual device", macOS 15 on Apple silicon): the driver test passes there
+(`tests/README.md`, "Metal driver harness") with Metal's API and shader validation on. No Mac with a real GPU has run
+it, no Intel Mac, and nobody has played it.
 
 ## How
 
@@ -19,8 +18,10 @@ and about 70 methods as vk12) in Objective-C++ on Metal. `mtl12_bases.h`, genera
 --backend mtl12`, defines every method of those interfaces as "not implemented", and mtl12's classes override the
 ones the driver calls; a method the driver starts to use and mtl12 lacks says so in the log.
 
-The build define is `HAVE_METAL`, beside `HAVE_D3D12` ("the driver is built"). A macOS build has this backend and
-no other: not Direct3D 12, and not Vulkan through MoltenVK. `Core_Metal()` is therefore a constant, true with
+The build define is `HAVE_METAL`, beside `HAVE_D3D12` ("the driver is built"), and the CMake option is
+`SRB2_CONFIG_METAL`: on by default on macOS, and `-DSRB2_CONFIG_METAL=OFF` builds without the driver, as the game was
+before. A macOS build has this backend and no other: not Direct3D 12, and not Vulkan through MoltenVK (asking for
+either beside it stops the configuration). `Core_Metal()` is therefore a constant, true with
 `HAVE_METAL`. What differs per backend, and where the driver asks:
 
 - **Device creation** (`d3d12_core.cpp`): `rr_mtl12::CreateDevice` makes the system's default `MTLDevice` (or, for
@@ -96,14 +97,46 @@ cache is locked.
 | a sampler's `MipLODBias` | not implemented: Metal's samplers have none. The driver never sets one; mtl12 logs it if one is ever set |
 | releasing objects | objects are released on the last `Release`, and Metal's command buffers keep what they use alive besides |
 
-## What the presenter gets
+## The window
 
-`mtl12.h`, for `metal/mtl_present.mm` (not written yet):
+The game's window is made for OpenGL, which shows the Software renderer's frames. As with Vulkan
+([vulkan-backend.md](vulkan-backend.md), "The window"), the presenter (`metal/mtl_present.mm`) makes a second
+window like the first for Metal (`SDL_WINDOW_METAL`, with SDL's Metal view and its `CAMetalLayer`), hides the first,
+and makes the second the game's window (`sdlmain.h`'s `window`), which is what the video code sizes, makes
+fullscreen, and takes input from. When Software takes over, the first window comes back as the second one was. The
+OpenGL window is made hidden and only shown once a renderer that presents on it is the one the game runs with
+(`I_ShowDeferredWindow`), so starting the game shows one window.
+
+- **Size.** The layer's drawables are the size of the window's content in points, not in the display's pixels: the
+  game's window isn't a high-resolution one (it is made without `SDL_WINDOW_ALLOW_HIGHDPI`), so on a Retina display
+  the system scales the frame up, as it does Software's and Legacy GL's. SDL's view keeps the drawable size at the
+  window's as the window changes, and the presenter takes each drawable's own size as the size to place the frame in.
+- **Placement.** The driver's placement draws each frame into the drawable, as on the other desktop presenters: at
+  Screen Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the
+  frame's aspect ratio. A drawable is BGRA8 and only a render target (`framebufferOnly`), which a draw suits and a
+  copy from the RGBA8 screen wouldn't.
+- **Colors.** `BGRA8Unorm`, not an sRGB format, and no color space set on the layer, so the frame's values reach the
+  display as they are, which is how the game's OpenGL window shows the other renderers' frames.
+- **Vsync** is `vid_wait`, as the layer's `displaySyncEnabled`, set again whenever the setting changes.
+- **A window nobody sees.** A layer's drawables only come back from the display, so asking the layer of a window
+  that is minimized, hidden, on another Space, or covered for its next drawable waits a second and gives nothing.
+  The presenter asks AppKit whether any of the window is on screen (`NSWindow`'s occlusion state) and doesn't present
+  while none is; the frame is still drawn and submitted, so the game runs on. The first frame after the window is
+  made is presented regardless, since a new window doesn't count as visible until the system has put it on screen.
+  If the layer gives no drawable anyway, that frame isn't shown and the layer isn't asked again for a quarter of a
+  second, doubling up to four seconds while it keeps giving none. The log says when presenting stops and starts
+  again, and, when the window is given back, how many frames were presented, skipped, and left without a drawable.
+- **The game's headers.** `mtl_present.mm` is Objective-C++, and the game's headers don't go into one file with
+  Apple's, so what the presenter needs of the game (the window, the icon, the Screen Scaling setting, the log, and
+  `I_Error`) comes through `mtl_present_game.h`, which a C++ file implements.
+
+What the presenter uses of mtl12 (`mtl12.h`):
 
 - `void *Device()`: the `id<MTLDevice>`, not retained, for the `CAMetalLayer`.
 - `HRESULT WrapTexture(void *texture, ID3D12Resource **resource)`: a drawable's `id<MTLTexture>`
   (`BGRA8Unorm` or `RGBA8Unorm`) as a resource in `D3D12_RESOURCE_STATE_PRESENT` that the driver can draw into and
-  copy to. The resource retains the texture.
+  copy to. The resource retains the texture. The presenter wraps each frame's drawable and retires the wrapper
+  with the frame's commands.
 - `void PresentWithNextSubmit(void *drawable)`: the next `ExecuteCommandLists` presents this
   `id<CAMetalDrawable>` with its last command buffer. Applies to that one submission.
 
@@ -114,8 +147,8 @@ device is made (`man MetalValidation`): `MTL_DEBUG_LAYER=1` (API validation, whi
 misuse; with `MTL_DEBUG_LAYER_WARNING_MODE=assert`, at the first warning too) and `MTL_SHADER_VALIDATION=1` (which
 checks what the shaders read and write as they run). The log's device line says which of them the device was made
 with, by the classes Metal wrapped it in: `MTLDebugDevice` for the first, and `MTLGPUDebugDevice` or
-`MTLLegacySVDevice` for the second. With `DeviceOptions::validation` (`Core_VulkanValidation`), each command buffer
-also says which of its passes failed. `rr_mtl12::ValidationErrors()` counts failed command buffers and the faults
+`MTLLegacySVDevice` for the second. With `DeviceOptions::validation` (`Core_VulkanValidation`; the game's `-mtldebug`,
+the counterpart of `-vkdebug`), each command buffer also says which of its passes failed. `rr_mtl12::ValidationErrors()` counts failed command buffers and the faults
 shader validation logs with them, such as a function reading a texture that was never bound. Completion handlers
 run on Metal's threads, so what they have to say is kept and written to the log from the driver's thread.
 

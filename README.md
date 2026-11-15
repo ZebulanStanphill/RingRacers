@@ -20,7 +20,7 @@ Coding agents were used heavily in the development of this fork. I have thorough
 
 [CHANGES.md](CHANGES.md) lists every change and says which have been tested. All Xbox testing was on an Xbox One X. This is what you'll notice.
 
-### VibeRant D3D and VibeRant Vulkan
+### VibeRant D3D, VibeRant Vulkan, and VibeRant Metal
 
 Legacy GL needs desktop OpenGL, which the Xbox doesn't have. VibeRant D3D started as Legacy GL moved to Direct3D 12 and then gained what Legacy GL draws wrongly or not at all:
 
@@ -40,6 +40,8 @@ On Xbox, VibeRant D3D is the default renderer, and on the Xbox One X it runs fas
 **VibeRant Vulkan** is the same renderer on Vulkan, for PCs. It isn't a second implementation: it shares VibeRant D3D's drawing code and shaders, and draws the same picture. Compared on 1,002 frames from all 213 tracks, the two differ in about one pixel in a thousand, at the edges between texels. It is the default renderer on Linux, where it has been tested on one PC, with an AMD Radeon. If Vulkan isn't working on your PC, the game says so and uses Software.
 
 Windows desktop builds have both, with VibeRant D3D as the default. Those have only been tested under Wine, not on a real Windows PC.
+
+**VibeRant Metal** is the same renderer again on Apple's Metal, for Macs, and the default renderer of a macOS build. It is native Metal, not Vulkan translated to it. It has not been played on a real Mac yet: it has only run on GitHub's macOS test machines, whose graphics are virtual. If Metal doesn't start, the game says so and uses Software.
 
 ### On Xbox
 

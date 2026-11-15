@@ -32,7 +32,7 @@ those commits stay as they are and the merge is made again.
   code. Don't reformat, rename or reorder upstream code you aren't changing.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
   UWP build, and `HAVE_D3D12` for builds that contain the VibeRant driver
-  (`src/hardware/r_d3d12`). The driver has two backends. `HAVE_D3D12_NATIVE`
+  (`src/hardware/r_d3d12`). The driver has three backends. `HAVE_D3D12_NATIVE`
   (`SRB2_CONFIG_D3D12`) is Direct3D 12 itself, VibeRant D3D, which UWP builds and
   Windows desktop builds made with MSVC or clang-cl have by default.
   `HAVE_VULKAN` (`SRB2_CONFIG_VULKAN`) is the Vulkan backend, VibeRant Vulkan,
@@ -54,12 +54,16 @@ those commits stay as they are and the merge is made again.
   compile without `_UWP` (Xbox-only things inside it get their own `_UWP`
   guard) and without Windows (Linux builds have `HAVE_D3D12` with only the
   Vulkan backend; `vulkan/vk12_win.h` stands in for the few Win32 calls the
-  driver makes). macOS and MinGW builds must build without any of them.
-  `HAVE_METAL` is a third backend, for macOS: `src/hardware/r_d3d12/metal`
-  implements the same interfaces on Metal (`docs/metal-backend.md`), and
-  `Core_Metal()` is where the driver asks. So far only the driver test builds it
-  (`tests/metal-driver`); the game's macOS build has no option for it yet. Its
-  code can only be compiled on macOS, which here means the `metal` CI job.
+  driver makes). MinGW builds must build without any of them.
+  `HAVE_METAL` (`SRB2_CONFIG_METAL`) is a third backend, VibeRant Metal, which
+  macOS builds have by default, and as their only one: `src/hardware/r_d3d12/metal`
+  implements the same interfaces on Metal (`docs/metal-backend.md`),
+  `Core_Metal()` is where the driver asks, and `HWR_Metal()` names the renderer.
+  Its files are Objective-C++ and can't include the game's headers (Apple's and
+  the game's don't go into one file), so what they need of the game goes
+  through a small C++ file (`metal/mtl_present_game.cpp`). Metal code can only
+  be compiled on macOS, which here means CI: the `metal` and `macos` jobs of
+  `tests.yml`.
 - A fix to a change that has its own commit can be made with
   `git commit --fixup=<commit>`, to be squashed into it at the next rebase.
 
@@ -89,8 +93,8 @@ the unmodified game.
 
 `tests/README.md` describes the native regression tests (Linux or macOS, with
 sanitizers) and the Direct3D 12 WARP harness (Windows).
-`.github/workflows/tests.yml` runs both, and checks that Linux builds the driver
-with only its Vulkan backend, that macOS still builds without the driver, and that
+`.github/workflows/tests.yml` runs both, and checks that Linux builds the driver with
+only its Vulkan backend, that macOS builds it with only its Metal backend, and that
 Windows desktop (not UWP) builds with it by default (beside OpenGL, using the desktop presenter).
 `.github/workflows/build.yml` builds the UWP app with `uwp/build.ps1` and uploads
 the package that is tested on Xbox; there is no local UWP build outside Windows.

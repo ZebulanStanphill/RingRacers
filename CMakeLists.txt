@@ -112,6 +112,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR (MSVC AND NOT SRB2_CONFIG_UWP))
 endif()
 cmake_dependent_option(SRB2_CONFIG_VULKAN "Build the Vulkan backend of the hardware driver (VibeRant Vulkan)." "${SRB2_CONFIG_VULKAN_DEFAULT}"
 	"SRB2_CONFIG_HWRENDER;NOT SRB2_CONFIG_UWP" OFF)
+# VibeRant Metal: the same driver on Apple's Metal (src/hardware/r_d3d12/metal), for macOS, which then has no other
+# backend. Its shaders are the SPIR-V the Vulkan backend is built with, turned into Metal Shading Language at run time.
+set(SRB2_CONFIG_METAL_DEFAULT OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+	set(SRB2_CONFIG_METAL_DEFAULT ON)
+endif()
+cmake_dependent_option(SRB2_CONFIG_METAL "Build the Metal backend of the hardware driver (VibeRant Metal). macOS only." "${SRB2_CONFIG_METAL_DEFAULT}"
+	"APPLE;SRB2_CONFIG_HWRENDER" OFF)
+if(SRB2_CONFIG_METAL)
+	if(SRB2_CONFIG_VULKAN OR SRB2_CONFIG_D3D12)
+		message(FATAL_ERROR "SRB2_CONFIG_METAL can't be combined with SRB2_CONFIG_VULKAN or SRB2_CONFIG_D3D12: a build with the Metal backend has no other")
+	endif()
+	# The backend is Objective-C++
+	enable_language(OBJCXX)
+endif()
 set(SRB2_CONFIG_ASSET_DIRECTORY "" CACHE PATH "Path to directory that contains all asset files for the installer. If set, assets will be part of installation and cpack.")
 
 # Enable CCache

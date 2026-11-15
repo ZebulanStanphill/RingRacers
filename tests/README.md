@@ -1083,8 +1083,8 @@ The same driver test, `d3d12-driver.cpp`, runs a third time against the Metal ba
 (`src/hardware/r_d3d12/metal`, [`docs/metal-backend.md`](../docs/metal-backend.md)):
 the production driver, mtl12, and the runtime shader translator are built into a
 headless executable (`tests/metal-driver/CMakeLists.txt`) that needs no window, SDL
-library, game assets, or game process. It is the only thing that builds the Metal
-backend so far: the game has no presenter for it yet. On a Mac with Xcode's
+library, game assets, or game process. (The game's macOS build has the backend too,
+with a presenter: the `macos` job builds it.) On a Mac with Xcode's
 command-line tools, CMake, and Git, from the repository root:
 
 ```sh
@@ -1148,8 +1148,8 @@ differ:
   window is wrapped, cleared, and presented with `PresentWithNextSubmit`, and its
   submission must complete without a validation error. `metal-objects.mm` makes
   the texture and the layer, which C++ can't. If the layer gives no drawable, the
-  test says so in capitals and goes on. What a window shows is not tested: there is
-  no presenter and no window.
+  test says so in capitals and goes on. What a window shows is not tested here: the
+  presenter (`metal/mtl_present.mm`) is part of the game, not of this executable.
 - **Not exercised**: the paths of mtl12 that the scenes don't reach, among them a
   view of fewer mips than its texture, buffer-to-buffer copies and timestamp
   queries (only the UWP presenter uses them), and a lost device.
@@ -1172,8 +1172,14 @@ runner image, pins, and the harness's build file, and a hit keeps FetchContent
 disconnected.
 The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
 `compile_commands.json`: the Linux build must have the driver with only its Vulkan backend
-(`HAVE_D3D12` and `HAVE_VULKAN`, no `HAVE_D3D12_NATIVE`), and the macOS build must have no
-`HAVE_D3D12`, so it cannot gain the driver. The `windows` job builds the ordinary (not UWP) Windows desktop game
+(`HAVE_D3D12` and `HAVE_VULKAN`, no `HAVE_D3D12_NATIVE`), and the macOS build must have the driver
+with only its Metal backend (`HAVE_D3D12` and `HAVE_METAL`, without `HAVE_VULKAN` or
+`HAVE_D3D12_NATIVE`). The `macos` job also checks that the Metal backend's
+Objective-C++ files and the presenter are compiled with `-fobjc-arc`, which they
+rely on to keep Metal's objects alive, and uploads the app as `macos-app` (an
+archive of the unsigned `.app` for Apple silicon; it loads Homebrew's SDL2, libpng,
+and Opus, and looks for the game's data in the directory it is started from).
+Nothing in this workflow runs the macOS game. The `windows` job builds the ordinary (not UWP) Windows desktop game
 in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_D3D12` is on by
 default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_D3D12` and compiles
 `d3d12_present_win32.cpp`, the desktop presenter, and not `d3d12_present.cpp`, UWP's. It builds with

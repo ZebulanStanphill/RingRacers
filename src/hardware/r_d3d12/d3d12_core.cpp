@@ -363,8 +363,8 @@ void Core_Log(const char *format, ...)
 	va_start(args, format);
 	vsnprintf(message, sizeof message, format, args);
 	va_end(args);
-	// The Vulkan backend's lines say so: a log from a PC shouldn't read as if Direct3D 12 had been in use
-	I_OutputMsg("%s: %s\n", g_vulkan ? "VibeRant Vulkan" : "UWP D3D12", message);
+	// The Vulkan and the Metal backend's lines say so: a log from a PC shouldn't read as if Direct3D 12 had been in use
+	I_OutputMsg("%s: %s\n", Core_Metal() ? "VibeRant Metal" : g_vulkan ? "VibeRant Vulkan" : "UWP D3D12", message);
 }
 
 bool Core_Failed(HRESULT hr, const char *what)

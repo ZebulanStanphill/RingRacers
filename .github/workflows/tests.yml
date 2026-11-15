@@ -245,7 +245,7 @@ jobs:
   macos:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: macOS build (no Direct3D 12)
+    name: macOS build (VibeRant Metal)
     runs-on: macos-15
     timeout-minutes: 40
 
@@ -262,14 +262,47 @@ jobs:
           -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Check that the Direct3D 12 driver is left out
+      # A macOS build has the VibeRant driver with its Metal backend by default, and no other backend: not Direct3D 12,
+      # and not Vulkan (through MoltenVK).
+      - name: Check that the driver is built with the Metal backend only
         run: |
-          if grep -q HAVE_D3D12 build/ninja-release/compile_commands.json; then
-            echo "A macOS build must not include the Direct3D 12 driver"; exit 1
+          commands=build/ninja-release/compile_commands.json
+          if ! grep -q -e '-DHAVE_D3D12 ' -e '-DHAVE_D3D12"' $commands || ! grep -q HAVE_METAL $commands; then
+            echo "A macOS build must include the VibeRant driver (HAVE_D3D12) with its Metal backend (HAVE_METAL) by default"; exit 1
           fi
+          if grep -q -e HAVE_D3D12_NATIVE -e HAVE_VULKAN $commands; then
+            echo "A macOS build must not include the Direct3D 12 or the Vulkan backend"; exit 1
+          fi
+          # The backend's Objective-C++ files rely on automatic reference counting to keep Metal's objects alive
+          python3 - $commands <<'PY'
+          import json, sys
+          files = {"mtl12_device.mm", "mtl12_commands.mm", "mtl12_resources.mm", "mtl12_pipeline.mm", "mtl_present.mm"}
+          seen = set()
+          for entry in json.load(open(sys.argv[1])):
+              name = entry["file"].rsplit("/", 1)[-1]
+              if name in files:
+                  seen.add(name)
+                  if "-fobjc-arc" not in entry.get("command", " ".join(entry.get("arguments", []))):
+                      sys.exit(name + " must be compiled with -fobjc-arc")
+          if seen != files:
+              sys.exit("A macOS build must compile the Metal backend and its presenter; missing: " + ", ".join(sorted(files - seen)))
+          PY
 
       - name: Build
         run: cmake --build build/ninja-release --parallel 4
+
+      # The app as the build leaves it, for Apple silicon: it isn't signed, and it loads Homebrew's SDL2, libpng, and
+      # Opus (brew install sdl2 libpng opus) rather than carrying them. It looks for the game's data (bios.pk3, data/,
+      # models/) in the directory it is started from. An archive, because an artifact doesn't keep the executable bit.
+      - name: Pack the app
+        run: tar -C build/ninja-release/bin -czf macos-app.tar.gz .
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-app
+          path: macos-app.tar.gz
+          if-no-files-found: error
 
   windows:
     # Same-repository commits run on push; fork commits run on pull_request.
