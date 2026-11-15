@@ -22,6 +22,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${templates} fixtures/sprite-rotation-baseline.c source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
     "${RR_SOURCE_DIR}/src/f_finale.c"
     "${RR_SOURCE_DIR}/src/sdl/i_video.cpp"
+    "${RR_SOURCE_DIR}/src/sdl/i_system.cpp"
     "${RR_SOURCE_DIR}/src/screen.c"
     "${RR_SOURCE_DIR}/src/i_tcp.c"
     "${RR_SOURCE_DIR}/src/i_tcp_detail.h"
@@ -125,6 +126,7 @@ regression(renderer_setting renderer_setting HWRENDER)
 regression(renderer_setting_uwp renderer_setting HWRENDER _UWP)
 regression(renderer_setting_both renderer_setting HWRENDER HAVE_D3D12)
 regression(event_queue event_queue)
+regression(quit_signal quit_signal)
 regression(intro_uwp intro _UWP)
 regression(intro_desktop intro)
 regression(startup_gamepads startup_gamepads _UWP)

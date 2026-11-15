@@ -723,11 +723,26 @@ static ATTRNORETURN void signal_handler(INT32 num)
 LPTOP_LEVEL_EXCEPTION_FILTER g_prevtoplevelexceptionfilter;
 #endif
 
-FUNCNORETURN static ATTRNORETURN void quit_handler(int num)
+// A signal that asks the game to quit: Ctrl+C, kill, the session ending. The handler only notes it, and I_OsPolling
+// quits when it sees the note. Quitting from inside the handler ran the whole shutdown wherever the signal happened to
+// interrupt the game (inside malloc, or with a graphics driver's lock held), which could hang or crash. A second
+// signal means the game isn't getting back to its event loop, and ends the process at once.
+static volatile sig_atomic_t g_quit_signal = 0;
+
+static void quit_handler(int num)
 {
-	signal(num, SIG_DFL); //default signal action
-	raise(num);
-	I_Quit();
+	if (g_quit_signal)
+	{
+		_Exit(128 + num);
+	}
+
+	g_quit_signal = num;
+	signal(num, quit_handler); // where a handler is forgotten once it has run (Windows), keep it
+}
+
+boolean I_QuitSignaled(void)
+{
+	return g_quit_signal != 0;
 }
 
 #ifdef HAVE_TERMIOS

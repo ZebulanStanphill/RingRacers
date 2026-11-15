@@ -1,0 +1,55 @@
+// The handler of the signals that ask the game to quit (src/sdl/i_system.cpp). It used to run the whole shutdown from
+// inside the handler, wherever the signal had interrupted the game, which could hang or crash. Now the first signal
+// only leaves a note for the event loop, and a second one ends the process at once.
+#include <cassert>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <sys/wait.h>
+#include <unistd.h>
+
+typedef int boolean;
+static void quit_handler(int num);
+
+@@HANDLER@@
+
+// A child that has already been asked to quit once is asked again with `second`. Returns how it ended.
+static int SecondSignal(int second)
+{
+    fflush(nullptr);
+    const pid_t child = fork();
+    assert(child != -1);
+    if (child == 0)
+    {
+        // The end must not go through exit(): its handlers are what could hang
+        atexit([] { _Exit(1); });
+        raise(second);
+        _Exit(2); // the second signal didn't end the process
+    }
+
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status));
+    return WEXITSTATUS(status);
+}
+
+int main()
+{
+    signal(SIGTERM, quit_handler);
+    signal(SIGINT, quit_handler);
+    assert(!I_QuitSignaled());
+
+    // The first signal is noted, the program goes on, and the handler stays in place
+    raise(SIGTERM);
+    assert(I_QuitSignaled());
+    assert(signal(SIGTERM, quit_handler) == quit_handler);
+
+    // The second ends the process with the shell's status for that signal, whichever of the signals it is
+    assert(SecondSignal(SIGTERM) == 128 + SIGTERM);
+    assert(SecondSignal(SIGINT) == 128 + SIGINT);
+
+    // The parent was only asked once and is still here
+    assert(I_QuitSignaled());
+    puts("quit signal: the first is noted, the second ends the process");
+    return 0;
+}

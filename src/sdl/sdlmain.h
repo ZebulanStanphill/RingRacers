@@ -63,6 +63,8 @@ extern SDLJoyInfo_t JoyInfo[MAXSPLITSCREENPLAYERS];
 #undef SDL_JDEADZONE
 
 void I_GetConsoleEvents(void);
+// True once a signal has asked the game to quit (see quit_handler)
+boolean I_QuitSignaled(void);
 #ifdef _UWP
 // [UWP]: Drain initial SDL controller-added notifications without dispatching input.
 void I_OpenStartupGamepads(void);

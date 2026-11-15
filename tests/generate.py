@@ -67,6 +67,10 @@ def generate(engine, output):
         "DEVICE": events.function("HandleGamepadDeviceEvents"),
         "POST": events.function("D_PostEvent"),
     }, output / "event_queue.cpp")
+    render(templates / "quit_signal.cpp.in", {
+        "HANDLER": Source(engine / "src/sdl/i_system.cpp").section(
+            "static volatile sig_atomic_t g_quit_signal", "\n#ifdef HAVE_TERMIOS"),
+    }, output / "quit_signal.cpp")
     video_menu = Source(engine / "src/menus/options-video-1.c")
     render(templates / "video_fullscreen.cpp.in", {
         "QUERY": Source(engine / "src/sdl/i_video.cpp").function("I_VideoAlwaysFullscreen"),

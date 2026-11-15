@@ -76,6 +76,14 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   ticker fails the UWP immediate associates-card skip case. See
   [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
+- **Quit signals:** `quit_signal` executes the production handler of SIGINT and
+  SIGTERM. The first signal must only leave a note for the event loop
+  (`I_QuitSignaled`), with the program still running and the handler still in
+  place; a second one must end the process at once, without running exit
+  handlers. The old handler ran the whole shutdown from inside the signal, which
+  could hang or crash when the signal had interrupted an allocation or a
+  graphics driver call.
+
 - **Input queue overflow:** `event_queue` executes the production `D_PostEvent` and
   gamepad device bookkeeping. A pad's added event followed by 0 to 1000 axis
   events with nothing reading the queue (stick movement during the loading

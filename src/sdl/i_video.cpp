@@ -1117,6 +1117,13 @@ void I_OsPolling(void)
 {
 	SDL_Keymod mod;
 
+	// Asked to quit by a signal: quit from here, like SDL_QUIT, not from inside the signal handler
+	if (I_QuitSignaled())
+	{
+		LUA_HookBool(true, HOOK(GameQuit));
+		I_Quit();
+	}
+
 	if (consolevent)
 		I_GetConsoleEvents();
 
