@@ -30,7 +30,6 @@ Coding agents were used heavily in the development of this fork.
 - **Faster performance on Xbox.** The Software renderer, the game logic and the hardware renderer are optimized for the Xbox's CPU, startup is shorter, and levels preload their textures and models to reduce hitches during races.
 - **New video options, on every platform.** **Screen Scaling** (Fit, Integer or 1:1) places the picture on the screen, and **Camera Position** gives each local player a 3rd Person or 1st Person view.
 - **Logs for bug reports.** On Xbox the game writes a log, the last error message and a performance profile to the USB drive. See [Reporting problems](#reporting-problems).
-- **A version of its own.** The title screen shows the fork's version on top of Ring Racers', as `v2.4_z1`.
 
 Things to know on Xbox:
 
