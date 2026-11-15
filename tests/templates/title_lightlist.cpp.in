@@ -198,7 +198,10 @@ static std::vector<Draw> Traverse(){
  const angle_t a1=gld_FrustumAngle(0);
  gld_clipper_SafeAddClipRange(ANGLE_90+a1,ANGLE_90-a1);HWR_RenderBSPNode(fixtureRoot);
  int fogCount=0;for(auto&d:draws)fogCount+=d.fog;
- assert(draws.size()==58 && fogCount==5 && drawsky && visitedSky.size()==16);
+ // 55 draws: three of the one-sided walls in view (lines 156, 159, and 171) belong to sector 1, whose floor and
+ // ceiling are both at 176. They have no height, so only their sky walls are drawn (see upright_wall).
+ assert(draws.size()==55 && fogCount==5 && drawsky && visitedSky.size()==16);
+ for(auto&d:draws)if(d.line==156||d.line==159||d.line==171)assert(d.flags==(PF_Invisible|PF_NoTexture));
  return draws;
 }
 // One-sided middle textures on a sloped floor, against Software's R_StoreWallRange: the row at height z is
@@ -278,7 +281,7 @@ int main(){
  auto second=Traverse();
  size_t differences=Differences(first,reference),secondDifferences=Differences(first,second);
  assert(Differences(second,reference)==0);
- printf("58 title walls: cold/warm differences=%zu; first/second differences=%zu; slopes=%u\n",differences,secondDifferences,slopecount);
+ printf("55 title walls: cold/warm differences=%zu; first/second differences=%zu; slopes=%u\n",differences,secondDifferences,slopecount);
  if(!differences && !secondDifferences)CheckPreparationCases();
  CheckOneSidedPegging();
  gld_clipper_Clear();while(freelist){auto*n=freelist->next;free(freelist);freelist=n;}

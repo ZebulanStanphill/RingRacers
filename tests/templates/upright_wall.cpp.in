@@ -1,0 +1,116 @@
+// One-sided walls of a sector whose ceiling is below its floor (src/hardware/hw_main.c). Software draws a column of
+// a wall only where its top is above its bottom, so it draws nothing there; Legacy GL draws the quad upside down.
+// VibeRant cuts the wall down to its upright part: Ice Paradise's sky barrier showed its placeholder texture.
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include "doomdef.h"
+#include "hardware/hw_defs.h"
+
+// Which kind of hardware renderer is drawing: this test runs the call as both
+static bool viberant;
+#undef HWR_D3D12
+#define HWR_D3D12() viberant
+
+@@CLIP@@
+
+static int drawn;
+static FOutVector drawnwall[4];
+
+// The call in HWR_ProcessSeg, with the drawing replaced by a note of what would be drawn
+static void DrawWall(FOutVector *wallVerts)
+{
+    FOutVector uprightwall[4];
+    @@CALL@@
+    {
+        drawn++;
+        memcpy(drawnwall, wallVerts, sizeof drawnwall);
+    }
+    @@RESTORE@@
+}
+
+// A wall along x from 0 to 400 with texture columns 0 to 4: 0 bottom left, 1 bottom right, 2 top right, 3 top left
+static void Wall(FOutVector *v, float bottomleft, float bottomright, float topleft, float topright)
+{
+    v[0] = {0.0f, bottomleft, 64.0f, 0.0f, bottomleft * -0.5f};
+    v[1] = {400.0f, bottomright, 96.0f, 4.0f, bottomright * -0.5f};
+    v[2] = {400.0f, topright, 96.0f, 4.0f, topright * -0.5f};
+    v[3] = {0.0f, topleft, 64.0f, 0.0f, topleft * -0.5f};
+}
+
+static bool Same(const FOutVector &a, const FOutVector &b)
+{
+    return fabsf(a.x - b.x) < 1e-3f && fabsf(a.y - b.y) < 1e-3f && fabsf(a.z - b.z) < 1e-3f
+        && fabsf(a.s - b.s) < 1e-4f && fabsf(a.t - b.t) < 1e-3f;
+}
+
+// Draws the wall with each kind of hardware renderer. Returns whether VibeRant drew it; Legacy GL must always draw
+// it as it is, and both must leave the wall as it was for the sky walls that follow.
+static bool Draw(float bottomleft, float bottomright, float topleft, float topright)
+{
+    FOutVector wall[4], before[4];
+    Wall(wall, bottomleft, bottomright, topleft, topright);
+    memcpy(before, wall, sizeof before);
+
+    viberant = false;
+    drawn = 0;
+    DrawWall(wall);
+    assert(drawn == 1);
+    assert(!memcmp(drawnwall, before, sizeof before));
+    assert(!memcmp(wall, before, sizeof before));
+
+    viberant = true;
+    drawn = 0;
+    DrawWall(wall);
+    assert(!memcmp(wall, before, sizeof before));
+    return drawn == 1;
+}
+
+int main()
+{
+    FOutVector whole[4];
+
+    // An ordinary wall is drawn as it is
+    assert(Draw(0.0f, 0.0f, 128.0f, 128.0f));
+    Wall(whole, 0.0f, 0.0f, 128.0f, 128.0f);
+    assert(!memcmp(drawnwall, whole, sizeof whole));
+
+    // So is one that only touches its floor at one end
+    assert(Draw(0.0f, 128.0f, 128.0f, 128.0f));
+    Wall(whole, 0.0f, 128.0f, 128.0f, 128.0f);
+    assert(!memcmp(drawnwall, whole, sizeof whole));
+
+    // Ice Paradise's barrier: floor 680, ceiling -256
+    assert(!Draw(680.0f, 680.0f, -256.0f, -256.0f));
+    // The same along slopes that stay the wrong way round
+    assert(!Draw(680.0f, 400.0f, -256.0f, 100.0f));
+    // No height at all
+    assert(!Draw(64.0f, 64.0f, 64.0f, 64.0f));
+    assert(!Draw(64.0f, 32.0f, 64.0f, 32.0f));
+
+    // Upright by 100 at the left and upside down by 300 at the right: the top and the bottom cross a quarter of the
+    // way along, and what is drawn is the triangle up to there
+    assert(Draw(0.0f, 400.0f, 100.0f, 100.0f));
+    Wall(whole, 0.0f, 400.0f, 100.0f, 100.0f);
+    assert(Same(drawnwall[0], whole[0]));
+    assert(Same(drawnwall[3], whole[3]));
+    assert(Same(drawnwall[1], FOutVector{100.0f, 100.0f, 72.0f, 1.0f, -50.0f}));
+    assert(Same(drawnwall[2], FOutVector{100.0f, 100.0f, 72.0f, 1.0f, -50.0f}));
+
+    // The other way round: upside down by 300 at the left, upright by 100 at the right
+    assert(Draw(400.0f, 0.0f, 100.0f, 100.0f));
+    Wall(whole, 400.0f, 0.0f, 100.0f, 100.0f);
+    assert(Same(drawnwall[1], whole[1]));
+    assert(Same(drawnwall[2], whole[2]));
+    assert(Same(drawnwall[0], FOutVector{300.0f, 100.0f, 88.0f, 3.0f, -50.0f}));
+    assert(Same(drawnwall[3], FOutVector{300.0f, 100.0f, 88.0f, 3.0f, -50.0f}));
+
+    // A sloped ceiling that meets a flat floor: the crossing keeps the top edge's own texture rows
+    assert(Draw(0.0f, 0.0f, 100.0f, -100.0f));
+    assert(Same(drawnwall[1], FOutVector{200.0f, 0.0f, 80.0f, 2.0f, 0.0f}));
+    assert(Same(drawnwall[2], FOutVector{200.0f, 0.0f, 80.0f, 2.0f, 0.0f}));
+
+    puts("upright wall: VibeRant draws the upright part only, Legacy GL the whole quad");
+    return 0;
+}

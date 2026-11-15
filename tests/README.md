@@ -76,6 +76,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   ticker fails the UWP immediate associates-card skip case. See
   [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
+- **Upside-down walls:** `upright_wall` executes the production cut of a
+  one-sided wall to the part whose top is above its bottom, and the call that
+  uses it. For VibeRant, a wall of a sector whose ceiling is below its floor
+  (Ice Paradise's sky barrier) or with no height must not be drawn, and a wall
+  whose top and bottom cross along a slope must become the triangle up to the
+  crossing, with positions and texture coordinates taken from each edge. Legacy
+  GL must draw every wall as it is, and both must leave the wall untouched for
+  the sky walls that follow.
+
 - **Quit signals:** `quit_signal` executes the production handler of SIGINT and
   SIGTERM. The first signal must only leave a note for the event loop
   (`I_QuitSignaled`), with the program still running and the handler still in

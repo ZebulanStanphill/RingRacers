@@ -352,6 +352,51 @@ static hwr_springwall_t *HWR_SpringNewWall(void)
 	return &hwr_springwalls[hwr_numspringwalls++];
 }
 
+// Software draws a column of a wall only where the wall's top is above its bottom. A sector whose ceiling is below its
+// floor (the sky barrier around Ice Paradise) therefore has no walls at all, and a wall whose top and bottom cross
+// along a slope ends at the crossing. Legacy GL draws the quad whichever way up it is, so such a wall showed, upside
+// down, where Software shows the sky. This cuts a wall (0 bottom left, 1 bottom right, 2 top right, 3 top left) down
+// to the part whose top is above its bottom, and returns false when there is none.
+static boolean HWR_ClipWallToUpright(FOutVector *v)
+{
+	const float left = v[3].y - v[0].y;
+	const float right = v[2].y - v[1].y;
+	float along;
+	FOutVector bottom, top;
+
+	if (left <= 0.0f && right <= 0.0f)
+		return false;
+	if (left >= 0.0f && right >= 0.0f)
+		return true;
+
+	// The top and the bottom cross part of the way along: the upright side is a triangle that ends there
+	along = left / (left - right);
+	bottom = v[0];
+	bottom.x += (v[1].x - v[0].x) * along;
+	bottom.y += (v[1].y - v[0].y) * along;
+	bottom.z += (v[1].z - v[0].z) * along;
+	bottom.s += (v[1].s - v[0].s) * along;
+	bottom.t += (v[1].t - v[0].t) * along;
+	top = v[3];
+	top.x = bottom.x;
+	top.y = bottom.y;
+	top.z = bottom.z;
+	top.s += (v[2].s - v[3].s) * along;
+	top.t += (v[2].t - v[3].t) * along;
+
+	if (left > 0.0f)
+	{
+		v[1] = bottom;
+		v[2] = top;
+	}
+	else
+	{
+		v[0] = bottom;
+		v[3] = top;
+	}
+	return true;
+}
+
 // Records a side that Software would draw over a spring: a solid one-sided wall, or the opaque side of a 3D floor.
 // Called before lighting splits the wall, with the top and bottom already set.
 static void HWR_AddSpringWall(const FOutVector *v, const ffloor_t *fof)
@@ -3204,6 +3249,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 		gl_midtexture = R_GetTextureNum(gl_sidedef->midtexture);
 		if (gl_midtexture && gl_linedef->special != 41) // (Ignore horizon line for OGL)
 		{
+			FOutVector uprightwall[4]; // [UWP]: the wall before HWR_ClipWallToUpright
 			{
 				fixed_t     texturevpeg;
 				// PEGGING
@@ -3259,6 +3305,14 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			wallVerts[2].y = FIXED_TO_FLOAT(worldtopslope);
 			wallVerts[1].y = FIXED_TO_FLOAT(worldbottomslope);
 
+			// [UWP]: Only the part of the wall whose top is above its bottom, as Software draws it. The sky walls
+			// below go by the whole line, so the cut is undone after the wall is drawn.
+			memcpy(uprightwall, wallVerts, sizeof uprightwall);
+			if (HWR_D3D12() && !HWR_ClipWallToUpright(wallVerts))
+			{
+				// Nothing of it is the right way up
+			}
+			else
 			// I don't think that solid walls can use translucent linedef types...
 			if (gl_frontsector->numlights)
 			{
@@ -3287,6 +3341,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 						HWR_ProjectWall(wallVerts, &Surf, blendmode, lightnum, colormap);
 				}
 			}
+			memcpy(wallVerts, uprightwall, sizeof uprightwall);
 		}
 
 		if (!gl_curline->polyseg)

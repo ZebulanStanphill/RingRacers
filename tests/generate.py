@@ -67,6 +67,13 @@ def generate(engine, output):
         "DEVICE": events.function("HandleGamepadDeviceEvents"),
         "POST": events.function("D_PostEvent"),
     }, output / "event_queue.cpp")
+    upright = Source(engine / "src/hardware/hw_main.c")
+    render(templates / "upright_wall.cpp.in", {
+        "CLIP": upright.function("HWR_ClipWallToUpright"),
+        "CALL": upright.section("memcpy(uprightwall, wallVerts, sizeof uprightwall);",
+            "\t\t\t// I don't think that solid walls can use translucent linedef types..."),
+        "RESTORE": upright.section("memcpy(wallVerts, uprightwall, sizeof uprightwall);", "\n\t\t}\n"),
+    }, output / "upright_wall.cpp")
     render(templates / "quit_signal.cpp.in", {
         "HANDLER": Source(engine / "src/sdl/i_system.cpp").section(
             "static volatile sig_atomic_t g_quit_signal", "\n#ifdef HAVE_TERMIOS"),

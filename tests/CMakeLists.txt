@@ -130,6 +130,7 @@ regression(renderer_setting_vulkan renderer_setting HWRENDER HAVE_D3D12 HAVE_VUL
 regression(renderer_setting_all renderer_setting HWRENDER HAVE_D3D12 HAVE_D3D12_NATIVE HAVE_VULKAN)
 regression(event_queue event_queue)
 regression(quit_signal quit_signal)
+regression(upright_wall upright_wall HWRENDER)
 regression(intro_uwp intro _UWP)
 regression(intro_desktop intro)
 regression(startup_gamepads startup_gamepads _UWP)
