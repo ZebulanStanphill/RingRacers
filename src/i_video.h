@@ -141,6 +141,11 @@ void I_UpdateNoBlit(void);
 /** \brief Start a display update.
 */
 void I_StartDisplayUpdate(void);
+#ifdef HAVE_VULKAN
+// Shows the game's own (OpenGL) window once a renderer that presents on it is the one the game runs with. It starts
+// hidden where VibeRant Vulkan, which presents on a window of its own, may be that renderer.
+void I_ShowDeferredWindow(void);
+#endif
 // Whether Software has begun a frame since the game started, which is what makes the state its frames are shown with
 boolean I_SoftwareDisplayStarted(void);
 

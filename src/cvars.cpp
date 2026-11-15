@@ -433,6 +433,10 @@ consvar_t cv_pauseifunfocused = Player("pauseifunfocused", "Yes").yes_no();
 extern CV_PossibleValue_t cv_renderer_t[];
 #if defined(HAVE_D3D12) && defined(_UWP) // [UWP]: Default to VibeRant D3D, which runs faster than Software on Xbox
 consvar_t cv_renderer = Player("renderer", "VibeRant D3D").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
+#elif defined(HAVE_D3D12_NATIVE) // Windows desktop: VibeRant D3D, where Direct3D 12 is
+consvar_t cv_renderer = Player("renderer", "VibeRant D3D").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
+#elif defined(HAVE_VULKAN) // and VibeRant Vulkan where it isn't; either falls back to Software if it can't start
+consvar_t cv_renderer = Player("renderer", "VibeRant Vulkan").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
 #else
 consvar_t cv_renderer = Player("renderer", "Software").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
 #endif

@@ -37,9 +37,9 @@ It goes past Software in one place: seen from above, rippling water also distort
 
 On Xbox, VibeRant D3D is the default renderer, and on the Xbox One X it runs faster than Software.
 
-**VibeRant Vulkan** is the same renderer on Vulkan, for PCs. It isn't a second implementation: it shares VibeRant D3D's drawing code and shaders, and draws the same picture. Compared on 1,002 frames from all 213 tracks, the two differ in about one pixel in a thousand, at the edges between texels. It has been tested on one Linux PC, with an AMD Radeon. If Vulkan isn't working on your PC, the game says so and uses Software.
+**VibeRant Vulkan** is the same renderer on Vulkan, for PCs. It isn't a second implementation: it shares VibeRant D3D's drawing code and shaders, and draws the same picture. Compared on 1,002 frames from all 213 tracks, the two differ in about one pixel in a thousand, at the edges between texels. It is the default renderer on Linux, where it has been tested on one PC, with an AMD Radeon. If Vulkan isn't working on your PC, the game says so and uses Software.
 
-Windows desktop builds have both. Those have only been tested under Wine, not on a real Windows PC.
+Windows desktop builds have both, with VibeRant D3D as the default. Those have only been tested under Wine, not on a real Windows PC.
 
 ### On Xbox
 

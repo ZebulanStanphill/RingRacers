@@ -62,7 +62,9 @@ desktop build has both in one program, and the Renderer setting (or `-d3d12` and
 The game's window is made for OpenGL, which shows the Software renderer's frames, and a window can't be both
 OpenGL's and Vulkan's. So the presenter makes a second window like the first for Vulkan, hides the first, and makes
 the second the game's window (`sdlmain.h`'s `window`), which is what the video code sizes, makes fullscreen, and
-takes input from. When Software takes over, the first window comes back as the second one was.
+takes input from. When Software takes over, the first window comes back as the second one was. Where VibeRant
+Vulkan may be the renderer, the OpenGL window is made hidden and only shown once a renderer that presents on it is
+the one the game runs with (`I_ShowDeferredWindow`), so starting the game shows one window.
 
 The swap chain is always the window's size, and the driver's placement draws each frame into it: at Screen
 Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the frame's aspect

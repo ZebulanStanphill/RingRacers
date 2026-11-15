@@ -194,6 +194,9 @@ static INT32 windowedModes[MAXWINMODES][2] =
 
 static void Impl_VideoSetupBuffer(void);
 static SDL_bool Impl_CreateWindow(SDL_bool fullscreen);
+#ifdef HAVE_VULKAN
+static SDL_bool g_window_deferred = SDL_FALSE; // the game's window was made hidden and hasn't been shown yet
+#endif
 //static void Impl_SetWindowName(const char *title);
 static void Impl_SetWindowIcon(void);
 
@@ -403,6 +406,26 @@ static boolean IgnoreMouse(void)
 		return true;
 	return false;
 }
+
+#ifdef HAVE_VULKAN
+void I_ShowDeferredWindow(void)
+{
+	if (!g_window_deferred || !window)
+		return;
+	// VibeRant Vulkan's own window is the one on screen
+	if (rendermode == render_opengl && HWR_Vulkan())
+		return;
+	// The settings ask for VibeRant Vulkan, which hasn't started yet (the config is read after the video system starts):
+	// wait for it rather than show a window it would replace a moment later. If it fails to start, this one is shown.
+	// (A value of 0 is the variable before it is registered, when its default, VibeRant Vulkan, is all there is to go by.)
+	if (chosenrendermode == RENDERER_UNCHOSEN && vid.glstate != VID_GL_LIBRARY_ERROR
+		&& (SCR_RendererVulkan(cv_renderer.value) || cv_renderer.value == 0) && !HWR_DriverStarted())
+		return;
+	g_window_deferred = SDL_FALSE;
+	SDL_ShowWindow(window);
+	SDL_RaiseWindow(window);
+}
+#endif
 
 void I_UpdateMouseGrab(void)
 {
@@ -1630,6 +1653,14 @@ static SDL_bool Impl_CreateWindow(SDL_bool fullscreen)
 
 	// RHI: always create window as OPENGL
 	flags |= SDL_WINDOW_OPENGL;
+
+#ifdef HAVE_VULKAN
+	// VibeRant Vulkan presents on a window of its own in this one's place (vk_present.cpp), so this one stays hidden until
+	// a renderer that presents on it is the one the game runs with (I_ShowDeferredWindow): starting the game then shows
+	// one window, not two in turn
+	flags |= SDL_WINDOW_HIDDEN;
+	g_window_deferred = SDL_TRUE;
+#endif
 
 	// Create a window
 	window = SDL_CreateWindow("Dr. Robotnik's Ring Racers " VERSIONSTRING, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,

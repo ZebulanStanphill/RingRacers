@@ -296,6 +296,10 @@ void I_FinishUpdate(void)
 		return;
 	}
 
+#ifdef HAVE_VULKAN
+	I_ShowDeferredWindow();
+#endif
+
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
