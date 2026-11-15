@@ -152,6 +152,28 @@ the counterpart of `-vkdebug`), each command buffer also says which of its passe
 shader validation logs with them, such as a function reading a texture that was never bound. Completion handlers
 run on Metal's threads, so what they have to say is kept and written to the log from the driver's thread.
 
+## Apple's paravirtual GPU
+
+A macOS virtual machine's GPU ("Apple Paravirtual device": GitHub's runners, and any VM made with Apple's
+Virtualization framework) has a driver that passes Metal's commands to the host, and that driver has a bug the game
+runs into. It writes each encoder's commands into chunks of 131,072 bytes. When an encoder ends with its last chunk
+within four bytes of full, the first command of the next encoder made on the same command buffer is tested against
+the old chunk's fill, found not to fit the new, empty chunk, and the driver stops the program at an assertion of its
+own (`-[AppleParavirtCommandBuffer endCurrentChunk]`, "`_commandCurrentStorage.currentOffset`"). A race's 3D view is
+one pass of about 600 draws and 350,000 bytes, and a draw's size varies, so by the arithmetic of it the pass ends on
+such a fill about once in 16,000 frames: the first time it happened was 80 frames into Aerial Highlands, in the copy
+of the screen that follows the 3D view. Found by running the failing frame under `lldb` on a runner and reading the driver's code around
+the assertion; the sizes were measured there (macOS 15.8, with shader validation: a draw 350 to 620 bytes with the
+buffers it binds, a pipeline state 68, a texture 20, a new pass 850, a copy up to 200).
+
+An encoder that never fills a chunk can't end on a full one. So on this device (`CreateDevice` knows it by the class
+of the device, `AppleParavirt...`) a list ends a pass after 48 draws and a blit encoder after 96 copies, and the
+next draw or copy begins another, which is the same as far as the result goes: mtl12's passes load and store
+everything. Even at twice the measured sizes that stays under a chunk. Other devices are not affected and get no
+limit. With the limit, 213 replays (436,000 frames) ran without the assertion, where the estimate without it is
+one stop in every eight replays. `-mtldebug` made the same bug show sooner, because Metal then ends every pass with
+a small blit encoder of its own; it runs with the limit too.
+
 ## What can differ from the other backends
 
 As on Vulkan, the driver's logic, shaders, textures, and states are the same, and what is left is arithmetic: another

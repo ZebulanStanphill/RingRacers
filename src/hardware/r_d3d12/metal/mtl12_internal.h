@@ -404,6 +404,7 @@ private:
 	id<MTLCommandBuffer> cmd_ = nil;
 	id<MTLRenderCommandEncoder> pass_ = nil;
 	id<MTLBlitCommandEncoder> blit_ = nil;
+	unsigned passDraws_ = 0, blitCopies_ = 0; // what the open encoders hold, for Context's limits
 	bool open_ = false;
 
 	Slot color_, depth_; // copies of the bound target views
@@ -458,6 +459,9 @@ struct Context
 	id<MTLDrawable> nextDrawable = nil; // PresentWithNextSubmit's
 	bool validation = false;
 	bool unified = false, tiled = false;
+	// How many draws a pass, and how many copies a blit encoder, may hold before a list ends it and goes on in another;
+	// 0 for no limit. Set for Apple's paravirtual GPU (see CreateDevice).
+	unsigned encoderDraws = 0, encoderCopies = 0;
 	char description[512] = {};
 
 	// Buffers by the made-up address ranges root CBVs and buffer views name them with

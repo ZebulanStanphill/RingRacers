@@ -285,6 +285,7 @@ bool List::BeginPass()
 	}
 	if (!pass_)
 		return false;
+	passDraws_ = 0;
 	passKey_ = {hasColor_ ? color_.format : MTLPixelFormatInvalid, hasDepth_ ? depth_.format : MTLPixelFormatInvalid};
 	passWidth_ = hasColor_ ? color_.width : depth_.width;
 	passHeight_ = hasColor_ ? color_.height : depth_.height;
@@ -496,8 +497,13 @@ bool List::PrepareDraw()
 		return false;
 	}
 
+	// A pass that holds as much as the device's driver can take (the paravirtual GPU's) ends here, and the draw begins
+	// the next one, which loads what this one stored
+	if (g.encoderDraws && pass_ && passDraws_ >= g.encoderDraws)
+		EndPass();
 	if (!BeginPass())
 		return false;
+	passDraws_++;
 	id<MTLRenderPipelineState> state = pipeline_->Get(passKey_);
 	if (!state)
 		return false;
@@ -630,8 +636,14 @@ id<MTLBlitCommandEncoder> List::Blit(id<MTLTexture> first, id<MTLTexture> second
 		FlushClear(first);
 	if (second)
 		FlushClear(second);
+	if (g.encoderCopies && blit_ && blitCopies_ >= g.encoderCopies)
+		EndBlit();
 	if (!blit_)
+	{
 		blit_ = [cmd_ blitCommandEncoder];
+		blitCopies_ = 0;
+	}
+	blitCopies_++;
 	return blit_;
 }
 

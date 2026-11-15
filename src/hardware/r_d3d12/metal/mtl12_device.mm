@@ -833,7 +833,7 @@ HRESULT CreateDevice(const DeviceOptions &options, ID3D12Device **device, IDXGIA
 		// Metal's validation wraps the device: MTL_DEBUG_LAYER's object checks every call, and MTL_SHADER_VALIDATION's
 		// instruments the shaders. Each says which object it wraps, down to the driver's own.
 		std::string classes;
-		bool apiValidation = false, shaderValidation = false;
+		bool apiValidation = false, shaderValidation = false, paravirtual = false;
 		id layer = chosen;
 		for (int depth = 0; layer && depth < 8; depth++)
 		{
@@ -847,6 +847,8 @@ HRESULT CreateDevice(const DeviceOptions &options, ID3D12Device **device, IDXGIA
 				apiValidation = true;
 			else if (!strcmp(name, "MTLGPUDebugDevice") || !strcmp(name, "MTLLegacySVDevice"))
 				shaderValidation = true;
+			else if (!strncmp(name, "AppleParavirt", 13))
+				paravirtual = true;
 			if (![layer respondsToSelector:@selector(baseObject)])
 				break;
 			layer = [(id<RRMtl12ToolsObject>)layer baseObject];
@@ -859,6 +861,21 @@ HRESULT CreateDevice(const DeviceOptions &options, ID3D12Device **device, IDXGIA
 			options.validation ? ", command buffer errors in detail" : "");
 		if (options.software)
 			MTL12_LOG_ONCE("a CPU device was asked for, and Metal has none; using the GPU");
+		if (paravirtual)
+		{
+			// The GPU of a macOS virtual machine (GitHub's runners, too). Its driver writes each encoder's commands into
+			// chunks of 131,072 bytes, and when an encoder ends with its last chunk within four bytes of full, the next
+			// encoder made on the command buffer stops the program at an assertion of the driver's own
+			// (-[AppleParavirtCommandBuffer endCurrentChunk]: it tests the first command of the new encoder against the
+			// old chunk's fill). In a race that was one frame in some thousands. An encoder that never fills a chunk
+			// can't end that way, so here no pass gets more draws, and no blit encoder more copies, than fit one with
+			// room to spare: measured on macOS 15.8 with shader validation, a draw with the state set for it takes
+			// at most about 1,200 bytes and a copy 200.
+			g.encoderDraws = 48;
+			g.encoderCopies = 96;
+			Log("the paravirtual GPU's driver can't end an encoder on a full chunk of commands, so passes end after %u draws and blit encoders after %u copies",
+				g.encoderDraws, g.encoderCopies);
+		}
 
 		*device = new DeviceImpl;
 		// Without a recommendation there is nothing to keep under
