@@ -135,5 +135,5 @@ if(SRB2_CONFIG_VULKAN)
 
 	target_sources(SRB2SDL2 PRIVATE "${rr_volk_SOURCE_DIR}/volk.c"
 		r_d3d12/vulkan/vk12_device.cpp r_d3d12/vulkan/vk12_commands.cpp r_d3d12/vulkan/vk12_resources.cpp
-		r_d3d12/vulkan/vk12_pipeline.cpp r_d3d12/vulkan/vk12_spirv.cpp r_d3d12/vulkan/vk_present.cpp)
+		r_d3d12/vulkan/vk12_pipeline.cpp r_d3d12/spirv_shader.cpp r_d3d12/vulkan/vk_present.cpp)
 endif()

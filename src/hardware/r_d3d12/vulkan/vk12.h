@@ -30,6 +30,8 @@
 
 #include <volk.h>
 
+#include "../spirv_shader.h"
+
 namespace rr_vk12
 {
 
@@ -50,10 +52,9 @@ extern const unsigned char kRootSignature[16];
 // Blocks until the GPU has finished everything up to the fence's value, or ms pass. False on a timeout or a lost device.
 bool WaitFence(ID3D12Fence *fence, UINT64 value, DWORD ms);
 
-// HLSL to SPIR-V with glslang's HLSL front end, for the shaders the driver compiles at run time (add-on shaders and
-// screen effects, which reach it as HLSL), with the bindings shaders.hlsl is built with. profile's first letter gives
-// the stage ("vs_5_1", "ps_5_1"). code receives the SPIR-V, or errors the compiler's messages.
-HRESULT CompileHlsl(const void *source, size_t size, const char *entry, const char *profile, ID3DBlob **code, ID3DBlob **errors);
+// HLSL to SPIR-V for the shaders the driver compiles at run time, shared with the other backend that takes SPIR-V
+// (../spirv_shader.h)
+using rr_spirv::CompileHlsl;
 
 // "name (driver version), Vulkan x.y.z" of the device in use
 const char *DeviceDescription();

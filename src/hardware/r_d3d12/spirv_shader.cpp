@@ -4,27 +4,40 @@
 // terms of the GNU General Public License, version 2.
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
-/// \file  vk12_spirv.cpp
-/// \brief vk12's shaders: HLSL to SPIR-V with glslang, and SPIR-V made to link the way HLSL does
+/// \file  spirv_shader.cpp
+/// \brief The driver's shaders as SPIR-V: HLSL to SPIR-V with glslang, and SPIR-V made to link the way HLSL does
 ///
 /// Direct3D links a vertex shader's outputs to a pixel shader's inputs, and a vertex buffer's elements to a vertex
 /// shader's inputs, by semantic ("TEXCOORD1"). SPIR-V links by location number, which glslang hands out in the order
 /// each stage declares things. The shaders are compiled with their semantics kept (SPV_GOOGLE_hlsl_functionality1),
 /// and PatchShader gives every input and output the location its semantic stands for, the same in every stage, then
-/// removes the semantics, which Vulkan itself has no use for.
+/// removes the semantics, which the backends themselves have no use for.
 
-#include "vk12_internal.h"
+#include "spirv_shader.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <cstring>
 #include <map>
 
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/Public/ResourceLimits.h>
 #include <SPIRV/GlslangToSpv.h>
 
-namespace rr_vk12
+namespace rr_spirv
 {
+
+const RootParameter kRoot[kRootParameters] = {
+	{RootParameter::CBV, 0},
+	{RootParameter::SRV, 0}, {RootParameter::SAMPLER, 0},
+	{RootParameter::SRV, 1}, {RootParameter::SAMPLER, 1},
+	{RootParameter::SRV, 3}, {RootParameter::SRV, 2},
+	{RootParameter::SRV, 4}, {RootParameter::SRV, 5}, {RootParameter::SRV, 6}, {RootParameter::SRV, 7},
+	{RootParameter::SRV, 8}, {RootParameter::SRV, 9}, {RootParameter::SRV, 10},
+	{RootParameter::CBV, 1}, {RootParameter::CBV, 2}, {RootParameter::CBV, 3}, {RootParameter::CBV, 4},
+	{RootParameter::CBV, 5},
+};
 
 uint32_t SemanticLocation(const char *name, unsigned index)
 {
@@ -270,7 +283,7 @@ bool PatchShader(const void *code, size_t bytes, ShaderInfo &info, std::string &
 				location = SemanticLocation(semantic);
 				if (location == UINT32_MAX)
 				{
-					error = "the semantic " + semantic + " has no location in vk12";
+					error = "the semantic " + semantic + " has no location";
 					return false;
 				}
 				location += w[3] - firstLocation[(kind == StorageInput ? "i" : "o") + semantic];
@@ -293,7 +306,7 @@ bool PatchShader(const void *code, size_t bytes, ShaderInfo &info, std::string &
 	{
 		if (binding.second >= ARRAYSIZE(info.usesBinding))
 		{
-			error = "a binding is outside vk12's descriptor set";
+			error = "a binding is outside the root signature's";
 			return false;
 		}
 		info.usesBinding[binding.second] = true;
@@ -307,6 +320,57 @@ bool PatchShader(const void *code, size_t bytes, ShaderInfo &info, std::string &
 	}
 	return true;
 }
+
+namespace
+{
+
+bool SameGuid(REFIID a, REFIID b)
+{
+	return !memcmp(&a, &b, sizeof(GUID));
+}
+
+// What CompileHlsl returns its SPIR-V and its messages in
+class Blob : public ID3DBlob
+{
+public:
+	virtual ~Blob() = default;
+
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override
+	{
+		if (!out)
+			return E_POINTER;
+		if (SameGuid(riid, __uuidof(IUnknown)) || SameGuid(riid, __uuidof(ID3DBlob)))
+		{
+			*out = static_cast<ID3DBlob *>(this);
+			AddRef();
+			return S_OK;
+		}
+		*out = nullptr;
+		return E_NOINTERFACE;
+	}
+
+	ULONG STDMETHODCALLTYPE AddRef() override
+	{
+		return ++refs_;
+	}
+
+	ULONG STDMETHODCALLTYPE Release() override
+	{
+		const ULONG left = --refs_;
+		if (!left)
+			delete this;
+		return left;
+	}
+
+	LPVOID STDMETHODCALLTYPE GetBufferPointer() override { return data.data(); }
+	SIZE_T STDMETHODCALLTYPE GetBufferSize() override { return data.size(); }
+	std::vector<unsigned char> data;
+
+private:
+	std::atomic<ULONG> refs_{1};
+};
+
+} // namespace
 
 HRESULT CompileHlsl(const void *source, size_t size, const char *entry, const char *profile, ID3DBlob **code, ID3DBlob **errors)
 {
@@ -376,13 +440,14 @@ HRESULT CompileHlsl(const void *source, size_t size, const char *entry, const ch
 	return S_OK;
 }
 
-} // namespace rr_vk12
+} // namespace rr_spirv
 
 #ifndef _WIN32
-// Declared in vk12_win.h: where there is no Direct3D compiler, "compiling HLSL" means to SPIR-V, for vk12
+// Declared in vk12_win.h: where there is no Direct3D compiler, "compiling HLSL" means to SPIR-V, for the backends
+// that take it
 HRESULT D3DCompile(const void *source, SIZE_T size, const char *, const void *, void *, const char *entry,
 	const char *profile, UINT, UINT, ID3DBlob **code, ID3DBlob **errors)
 {
-	return rr_vk12::CompileHlsl(source, size, entry, profile, code, errors);
+	return rr_spirv::CompileHlsl(source, size, entry, profile, code, errors);
 }
 #endif

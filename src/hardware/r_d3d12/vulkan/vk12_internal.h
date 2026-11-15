@@ -214,45 +214,19 @@ public:
 	uint32_t count;
 };
 
-class Blob : public Object<ID3D10BlobBase, ID3D10Blob>
-{
-public:
-	LPVOID STDMETHODCALLTYPE GetBufferPointer() override { return data.data(); }
-	SIZE_T STDMETHODCALLTYPE GetBufferSize() override { return data.size(); }
-	std::vector<unsigned char> data;
-};
-
-// Root parameters of RR_ROOT_SIGNATURE, in its order, and where each lands in the one descriptor set
-enum
-{
-	kCbvCount = 6, // b0..b5 at bindings 0..5
-	kSrvCount = 11, // t0..t10 at bindings 16..26
-	kSamplerCount = 2, // s0..s1 at bindings 32..33
-	kSrvBinding = 16,
-	kSamplerBinding = 32,
-	kRootParameters = 19,
-};
-struct RootParameter
-{
-	enum Kind { CBV, SRV, SAMPLER } kind;
-	unsigned index; // b, t or s register
-};
-extern const RootParameter kRoot[kRootParameters];
-
-// A patched shader stage: the SPIR-V with every user input and output at the location its HLSL semantic names, and
-// what the module says of itself
-struct ShaderInfo
-{
-	std::vector<uint32_t> words;
-	std::string entry;
-	struct Input { std::string semantic; uint32_t location; };
-	std::vector<Input> inputs; // a vertex shader's
-	uint32_t uniformBytes[kCbvCount] = {}; // sizes of the uniform blocks at bindings 0..5; 0 where the stage has none
-	bool usesBinding[40] = {}; // which bindings of the set the stage declares
-};
-bool PatchShader(const void *code, size_t bytes, ShaderInfo &info, std::string &error);
-// The location of a semantic ("TEXCOORD", 1), the same in every stage; UINT32_MAX if vk12 has none for it
-uint32_t SemanticLocation(const char *name, unsigned index);
+// The root signature's layout and the shaders' SPIR-V don't depend on Vulkan (../spirv_shader.h). The registers'
+// bindings are their bindings in vk12's one descriptor set.
+using rr_spirv::kCbvCount;
+using rr_spirv::kSrvCount;
+using rr_spirv::kSamplerCount;
+using rr_spirv::kSrvBinding;
+using rr_spirv::kSamplerBinding;
+using rr_spirv::kRootParameters;
+using rr_spirv::RootParameter;
+using rr_spirv::kRoot;
+using rr_spirv::ShaderInfo;
+using rr_spirv::PatchShader;
+using rr_spirv::SemanticLocation;
 
 struct PassKey
 {

@@ -41,7 +41,7 @@ desktop build has both in one program, and the Renderer setting (or `-d3d12` and
 | --- | --- |
 | clip space, viewport | a viewport of negative height (`VK_KHR_maintenance1`, core in Vulkan 1.1), which makes clip space, winding, and `SV_Position` Direct3D's; depth is 0 to 1 in both |
 | `SV_Position.w` in pixel shaders | glslang's `--hlsl-dx-position-w` |
-| linking stages and vertex buffers by semantic | SPIR-V links by location number, so the shaders are compiled with their semantics kept and `PatchShader` gives each input and output the location its semantic stands for, the same in every stage (`vk12_spirv.cpp`) |
+| linking stages and vertex buffers by semantic | SPIR-V links by location number, so the shaders are compiled with their semantics kept and `PatchShader` gives each input and output the location its semantic stands for, the same in every stage (`spirv_shader.cpp`, which knows nothing of Vulkan: the root signature's layout, `PatchShader`, and the run-time HLSL compiler are shared with any other backend that takes SPIR-V) |
 | the root signature: 6 root constant buffers, 11 tables of one texture, 2 tables of one sampler | one descriptor set: dynamic uniform buffers b0 to b5 at bindings 0 to 5, sampled images t0 to t10 at 16 to 26, samplers s0 and s1 at 32 and 33 |
 | a root constant buffer named by GPU virtual address | each buffer gets a made-up address range; the address resolves to a buffer and an offset, which is bound as a dynamic offset. The range bound is the size of the shader's own uniform block, read from the SPIR-V |
 | descriptor heap slots | records of a view or a sampler; descriptor sets are written when a draw needs one that differs, from pools that belong to the command allocator and are reset with it |

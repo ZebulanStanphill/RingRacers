@@ -18,17 +18,6 @@
 namespace rr_vk12
 {
 
-const RootParameter kRoot[kRootParameters] = {
-	{RootParameter::CBV, 0},
-	{RootParameter::SRV, 0}, {RootParameter::SAMPLER, 0},
-	{RootParameter::SRV, 1}, {RootParameter::SAMPLER, 1},
-	{RootParameter::SRV, 3}, {RootParameter::SRV, 2},
-	{RootParameter::SRV, 4}, {RootParameter::SRV, 5}, {RootParameter::SRV, 6}, {RootParameter::SRV, 7},
-	{RootParameter::SRV, 8}, {RootParameter::SRV, 9}, {RootParameter::SRV, 10},
-	{RootParameter::CBV, 1}, {RootParameter::CBV, 2}, {RootParameter::CBV, 3}, {RootParameter::CBV, 4},
-	{RootParameter::CBV, 5},
-};
-
 // ---------------------------------------------------------------------------------------------------------------
 // Allocators
 

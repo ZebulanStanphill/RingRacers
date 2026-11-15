@@ -76,5 +76,5 @@ if(SRB2_CONFIG_VULKAN)
 
 	target_sources(vulkan-driver PRIVATE "${rr_volk_SOURCE_DIR}/volk.c"
 		${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_device.cpp ${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_commands.cpp ${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_resources.cpp
-		${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_pipeline.cpp ${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_spirv.cpp)
+		${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_pipeline.cpp ${RR_ENGINE}/src/hardware/r_d3d12/spirv_shader.cpp)
 endif()
