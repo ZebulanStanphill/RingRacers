@@ -1,0 +1,137 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      pgo_generate:
+        description: Build an instrumented package to collect PGO training data
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+
+    steps:
+      # The engine is the RingRacers submodule (ZebulanStanphill/RingRacers), whose own CI runs its tests
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # A build is a release of the fork only if a tag named after its version (2.4_z1) points at the engine commit;
+      # the checkout above doesn't fetch tags, and without one the title screen says -dev. An annotated tag's commit
+      # is on its peeled line (^{}).
+      - name: Fetch the engine commit's tags
+        shell: pwsh
+        run: |
+          $sha = git -C RingRacers rev-parse HEAD
+          $remote = git -C RingRacers ls-remote --tags origin
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($line in $remote) {
+            if ($line -match "^$sha\s+refs/tags/(.+?)(\^\{\})?$") {
+              git -C RingRacers tag -f $Matches[1] $sha
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              Write-Host "The engine commit is tagged $($Matches[1])"
+            }
+          }
+
+      - name: Find the engine commit
+        id: engine
+        shell: pwsh
+        run: '"sha=$(git rev-parse HEAD:RingRacers)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append'
+
+      # Full clone: Ring Racers' vcpkg.json pins a builtin-baseline commit
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ steps.engine.outputs.sha }}-${{ hashFiles('build.ps1') }}
+          restore-keys: vcpkg-
+
+      - name: Set up x64 MSVC environment
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or !$vs) { throw "Visual Studio C++ tools were not found" }
+          $before = [Environment]::GetEnvironmentVariables('Process')
+          & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          Get-Command cl.exe, fxc.exe, msbuild.exe -ErrorAction Stop | Select-Object Name, Source
+          # Each step starts a new shell; preserve the developer environment.
+          foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+            if ($before[$entry.Key] -cne $entry.Value) {
+              "$($entry.Key)=$($entry.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+
+      - name: Build
+        shell: pwsh
+        env:
+          RR_PGO: ${{ inputs.pgo_generate && 'generate' || 'auto' }}
+        run: ./build.ps1
+
+      # Sign with a throwaway certificate matching the manifest's Publisher.
+      # Install the .cer from the artifact before the package (Device Portal accepts both).
+      - name: Package
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=danwo" `
+            -KeyUsage DigitalSignature -FriendlyName "Ring Racers UWP CI" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+          $password = ConvertTo-SecureString -String "ci" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath build\ci.pfx -Password $password | Out-Null
+          New-Item -ItemType Directory -Force out | Out-Null
+          Export-Certificate -Cert $cert -FilePath out\ringracers-uwp.cer | Out-Null
+
+          msbuild build\ringracers-uwp.vcxproj /p:Configuration=Release /p:Platform=x64 `
+            /p:GenerateAppxPackageOnBuild=true /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never `
+            /p:AppxPackageSigningEnabled=true /p:PackageCertificateKeyFile="$PWD\build\ci.pfx" /p:PackageCertificatePassword=ci `
+            /p:AppxPackageDir="$PWD\build\AppPackages\"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          Get-ChildItem build\AppPackages -Recurse -Include *.msix, *.appx | Copy-Item -Destination out
+
+          $package = @(Get-ChildItem out -Filter 'ringracers-uwp*.msix')
+          if ($package.Count -ne 1) { throw "Expected one Ring Racers MSIX" }
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($package[0].FullName)
+          try {
+            foreach ($notice in @('Licenses/glslang.txt', 'Licenses/SPIRV-Cross.txt')) {
+              $entry = $archive.GetEntry($notice)
+              if ($null -eq $entry -or $entry.Length -lt 1000) { throw "Package is missing $notice" }
+            }
+            if ($null -eq $archive.GetEntry('AppxSignature.p7x')) { throw "Package is unsigned" }
+          } finally { $archive.Dispose() }
+
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.pgo_generate && 'ringracers-uwp-pgo-instrumented' || 'ringracers-uwp' }}
+          path: out/
+
+      # The linker map of this build, which maps the addresses in the game's profile (uwp-profile.txt) to functions
+      - name: Collect symbols
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force symbols | Out-Null
+          Get-ChildItem build -Recurse -Filter ringracers-uwp.map | Select-Object -First 1 | Copy-Item -Destination symbols
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.pgo_generate && 'ringracers-uwp-pgo-instrumented-symbols' || 'ringracers-uwp-symbols' }}
+          path: symbols/
+          if-no-files-found: error

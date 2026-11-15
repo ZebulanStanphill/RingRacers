@@ -1,0 +1,53 @@
+From 370b5257fd62512bad2cb00795e8f53f01443f21 Mon Sep 17 00:00:00 2001
+From: Zebulan Stanphill <zebulanstanphill@protonmail.com>
+Date: Sun, 4 Oct 2026 09:02:42 -0500
+Subject: [PATCH] UWP: Don't add a controller twice when it's reported twice
+
+WGI_JoystickInit() subscribes to RawGameControllerAdded and then adds
+the controllers that are already connected, but the event can also be
+raised for those, so InvokeAdded() now skips controllers it has already
+added, as Microsoft's Windows.Gaming.Input samples do. On Xbox, running
+as a game instead of an app made every controller show up twice, and
+each press counted twice.
+---
+ src/joystick/windows/SDL_windows_gaming_input.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/joystick/windows/SDL_windows_gaming_input.c b/src/joystick/windows/SDL_windows_gaming_input.c
+index 6f01b4e1..2b6aec97 100644
+--- a/src/joystick/windows/SDL_windows_gaming_input.c
++++ b/src/joystick/windows/SDL_windows_gaming_input.c
+@@ -384,6 +384,21 @@ static ULONG STDMETHODCALLTYPE IEventHandler_CRawGameControllerVtbl_Release(__FI
+     return rc;
+ }
+ 
++/* RawGameControllerAdded can also be raised for controllers that were already connected when the handler
++   was added, which WGI_JoystickInit() adds from RawGameControllers too. On Xbox, this made each controller
++   show up twice when running as a game instead of an app. */
++static SDL_bool WGI_IsControllerAdded(__x_ABI_CWindows_CGaming_CInput_CIRawGameController *controller)
++{
++    int i;
++
++    for (i = 0; i < wgi.controller_count; i++) {
++        if (wgi.controllers[i].controller == controller) {
++            return SDL_TRUE;
++        }
++    }
++    return SDL_FALSE;
++}
++
+ static HRESULT STDMETHODCALLTYPE IEventHandler_CRawGameControllerVtbl_InvokeAdded(__FIEventHandler_1_Windows__CGaming__CInput__CRawGameController *This, IInspectable *sender, __x_ABI_CWindows_CGaming_CInput_CIRawGameController *e)
+ {
+     HRESULT hr;
+@@ -408,7 +423,7 @@ static HRESULT STDMETHODCALLTYPE IEventHandler_CRawGameControllerVtbl_InvokeAdde
+         SDL_JoystickType type = SDL_JOYSTICK_TYPE_UNKNOWN;
+         __x_ABI_CWindows_CGaming_CInput_CIRawGameController2 *controller2 = NULL;
+         __x_ABI_CWindows_CGaming_CInput_CIGameController *gamecontroller = NULL;
+-        SDL_bool ignore_joystick = SDL_FALSE;
++        SDL_bool ignore_joystick = WGI_IsControllerAdded(controller);
+ 
+         __x_ABI_CWindows_CGaming_CInput_CIRawGameController_get_HardwareVendorId(controller, &vendor);
+         __x_ABI_CWindows_CGaming_CInput_CIRawGameController_get_HardwareProductId(controller, &product);
+-- 
+2.50.1 (Apple Git-155)
+
