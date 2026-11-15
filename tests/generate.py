@@ -425,6 +425,10 @@ def generate(engine, output):
     user = Source(engine / "src/p_user.c")
     render(templates / "first_person_angle.cpp.in", {
         "HELPER": user.function("P_FirstPersonFollowKart"),
+        "SLOPE": user.section("static angle_t firstpersonpitch[MAXSPLITSCREENPLAYERS];",
+            "boolean P_MoveChaseCamera(player_t *player, camera_t *thiscam, boolean resetcalled)"),
+        "AIM": Source(engine / "src/r_main.cpp").function("R_SetupAimingFrame"),
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
         "TICK": Source(engine / "src/p_tick.c").function("P_RunChaseCameras"),
     }, output / "first_person_angle.cpp")
     main = Source(engine / "src/r_main.cpp")

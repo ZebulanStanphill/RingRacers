@@ -3265,6 +3265,44 @@ void P_FirstPersonFollowKart(player_t *player, camera_t *thiscam)
 		P_ForceLocalAngle(player, player->mo->angle);
 }
 
+// First person looks out of the kart, so its view pitches with the ground the kart stands on: by the slope's angle in
+// the direction the view faces, uphill and downhill alike, and level in the air. The chase camera gets the same from
+// where it sits, behind the kart and looking at it; a first-person view that stays level stares into the ground on
+// the way up a steep slope and into the sky on the way down. The pitch is eased over a few tics so that a change of
+// slope doesn't snap the view, and it belongs to the view alone (P_FirstPersonSlopePitch gives it to R_SetupFrame):
+// nothing of the game's state, a netgame, or a replay depends on it.
+static angle_t firstpersonpitch[MAXSPLITSCREENPLAYERS];
+static tic_t firstpersonpitchtic[MAXSPLITSCREENPLAYERS];
+
+void P_FirstPersonFollowSlope(player_t *player, camera_t *thiscam)
+{
+	const UINT8 num = (UINT8)(thiscam - camera);
+	const mobj_t *mo = player->mo;
+	angle_t pitch = 0;
+	INT32 step;
+
+	if (mo && mo->standingslope)
+	{
+		// The angle R_SetupFrame gives a first-person view
+		const angle_t facing = (!demo.playback && player->playerstate != PST_DEAD) ? localangle[num] : mo->angle;
+		pitch = (angle_t)FixedMul(FINECOSINE(((facing - mo->standingslope->xydirection) >> ANGLETOFINESHIFT) & FINEMASK),
+			(fixed_t)mo->standingslope->zangle);
+	}
+
+	// A view that wasn't in first person a tic ago starts on the slope as it is
+	step = (INT32)(pitch - firstpersonpitch[num]) / 4;
+	if (!step || gametic - firstpersonpitchtic[num] > 1)
+		firstpersonpitch[num] = pitch;
+	else
+		firstpersonpitch[num] += (angle_t)step;
+	firstpersonpitchtic[num] = gametic;
+}
+
+angle_t P_FirstPersonSlopePitch(UINT8 num)
+{
+	return firstpersonpitch[num];
+}
+
 boolean P_MoveChaseCamera(player_t *player, camera_t *thiscam, boolean resetcalled)
 {
 	static boolean lookbackactive[MAXSPLITSCREENPLAYERS];

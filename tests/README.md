@@ -286,7 +286,17 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   views must follow a game-steered human kart every tic (finish or Lua), while
   driving, replay, bot and missing-object views stay unchanged. Chase views run
   their existing path without calling Lua twice. Split views use their displayed
-  players independently, including on a second tic. This checks local view state,
+  players independently, including on a second tic. The same test covers the
+  first-person view's pitch on slopes (`P_FirstPersonFollowSlope`,
+  `P_FirstPersonSlopePitch`, and `R_SetupAimingFrame`): the slope's full angle
+  facing up it, the opposite facing down it, none across it, and its cosine share
+  in between; a quarter of the remaining way each tic, never past the target,
+  and exactly level again in the air; the kart's angle rather than the local one
+  in a replay and for a dead player; the pitch added to the view's own aim in
+  both first-person cases and to neither the chase camera's nor a cut-away
+  view's; a fresh start, without easing, after tics spent as a chase camera; and
+  one pitch per split-screen view. Each fails with the matching production line
+  changed. This checks local view state,
   not a rendered race. Run with `ctest -R '^first_person_angle$'`.
 - **First person on the title screen:** `first_person_title` runs the extracted
   `R_ViewNeedsCamera` and the part of `R_SetupFrame` that settles on the camera

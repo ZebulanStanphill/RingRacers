@@ -2,6 +2,9 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
+#include "r_fps.h"
+#include "g_game.h"
 #include "doomdef.h"
 #include "doomstat.h"
 #include "d_player.h"
@@ -22,9 +25,135 @@ boolean K_PlayerUsesBotMovement(const player_t *player) { ++asked; return steere
 void P_ForceLocalAngle(player_t *, angle_t angle) { ++forces; forced = angle; }
 boolean P_MoveChaseCamera(player_t *, camera_t *, boolean) { ++chases; return true; }
 void K_EndCameraGC(void) {}
+tic_t gametic;
+angle_t localangle[MAXSPLITSCREENPLAYERS];
+INT32 localaiming[MAXSPLITSCREENPLAYERS];
 }
+// The engine's cosine table isn't linked here: the same values, computed
+#undef FINECOSINE
+#define FINECOSINE(i) ((fixed_t)std::lround(std::cos((i) * (2 * M_PI / FINEANGLES)) * FRACUNIT))
+static viewvars_t view;
+viewvars_t *newview = &view;
+#ifdef __USE_C_FIXEDMUL__
+@@FIXED_MUL@@
+#endif
 @@HELPER@@
+@@SLOPE@@
+@@AIM@@
 @@TICK@@
+// A first-person view pitches with the slope its kart stands on, by the slope's angle in the direction it faces.
+static void SlopePitch()
+{
+	const angle_t steep = ANGLE_45, up = ANGLE_90 / 3; // the slope rises towards 30 degrees
+	const auto near = [](angle_t a, angle_t b, INT32 tolerance) { return std::abs((INT32)(a - b)) <= tolerance; };
+	mobj_t mo{};
+	pslope_t slope{};
+	slope.zangle = steep;
+	slope.xydirection = up;
+	players[3] = player_t{};
+	players[3].mo = &mo;
+	displayplayers[0] = 3;
+	r_splitscreen = 0;
+	camera[0] = camera_t{};
+	demo.playback = false;
+	steered = false;
+	const auto settle = [&] { for (int i = 0; i < 100; ++i) { ++gametic; P_RunChaseCameras(); } };
+
+	// The first tic in first person takes the slope as it is; the view then looks up it, down it, or level across it
+	mo.standingslope = &slope;
+	localangle[0] = up;
+	gametic += 10;
+	P_RunChaseCameras();
+	assert(near(P_FirstPersonSlopePitch(0), steep, 4));
+	localangle[0] = up + ANGLE_180;
+	settle();
+	assert(near(P_FirstPersonSlopePitch(0), InvAngle(steep), 4));
+	localangle[0] = up + ANGLE_90;
+	settle();
+	assert(near(P_FirstPersonSlopePitch(0), 0, 4096));
+	localangle[0] = up + ANGLE_45;
+	settle();
+	assert(near(P_FirstPersonSlopePitch(0), (angle_t)(steep * std::cos(M_PI / 4)), ANGLE_45 / 4096));
+
+	// A change of slope is eased: each tic covers a quarter of what is left, never passes the target, and arrives
+	localangle[0] = up;
+	settle();
+	assert(P_FirstPersonSlopePitch(0) == steep);
+	mo.standingslope = nullptr; // in the air, or on flat ground: back to level
+	angle_t before = P_FirstPersonSlopePitch(0);
+	for (int tic = 0; tic < 100; ++tic)
+	{
+		++gametic;
+		P_RunChaseCameras();
+		const angle_t now = P_FirstPersonSlopePitch(0);
+		assert((INT32)now >= 0 && now <= before);
+		if (before >= 4)
+			assert(now == before - before / 4);
+		before = now;
+	}
+	assert(P_FirstPersonSlopePitch(0) == 0);
+
+	// A replay and a dead player look where the kart points, not where this machine's player last steered
+	mo.standingslope = &slope;
+	mo.angle = up;
+	localangle[0] = up + ANGLE_180;
+	demo.playback = true;
+	settle();
+	assert(near(P_FirstPersonSlopePitch(0), steep, 4));
+	demo.playback = false;
+	players[3].playerstate = PST_DEAD;
+	settle();
+	assert(near(P_FirstPersonSlopePitch(0), steep, 4));
+	players[3].playerstate = PST_LIVE;
+	settle();
+	assert(near(P_FirstPersonSlopePitch(0), InvAngle(steep), 4));
+
+	// The view gets it on top of its own aim, in first person only: the chase camera and a cut-away view keep theirs
+	localaiming[0] = 1000;
+	players[3].aiming = 2000;
+	R_SetupAimingFrame(0);
+	assert(view.aim == (angle_t)1000 + P_FirstPersonSlopePitch(0) && view.angle == localangle[0]);
+	demo.playback = true;
+	R_SetupAimingFrame(0);
+	assert(view.aim == (angle_t)2000 + P_FirstPersonSlopePitch(0) && view.angle == mo.angle);
+	demo.playback = false;
+	const angle_t kept = P_FirstPersonSlopePitch(0);
+	camera[0].chase = true;
+	camera[0].aiming = 3000;
+	camera[0].angle = 77;
+	++gametic;
+	P_RunChaseCameras();
+	R_SetupAimingFrame(0);
+	assert(view.aim == 3000 && view.angle == 77 && P_FirstPersonSlopePitch(0) == kept);
+	camera[0].chase = false;
+	mobj_t away{};
+	away.pitch = 4000;
+	away.angle = 88;
+	players[3].awayview.mobj = &away;
+	players[3].awayview.tics = 1;
+	R_SetupAimingFrame(0);
+	assert(view.aim == 4000 && view.angle == 88);
+	players[3].awayview = {};
+
+	// Back in first person after tics as a chase camera, the view starts on the slope as it is, without easing from
+	// what it had before
+	localangle[0] = up;
+	gametic += 5;
+	P_RunChaseCameras();
+	assert(near(P_FirstPersonSlopePitch(0), steep, 4));
+
+	// Each split-screen view has its own, from its own player, and a view without a kart is level
+	r_splitscreen = 1;
+	displayplayers[1] = 5;
+	players[5] = player_t{};
+	camera[1] = camera_t{};
+	++gametic;
+	P_RunChaseCameras();
+	assert(P_FirstPersonSlopePitch(1) == 0 && near(P_FirstPersonSlopePitch(0), steep, 4));
+	r_splitscreen = 0;
+	localangle[0] = 0; localaiming[0] = 0;
+	puts("first person: the view pitches with the slope under the kart");
+}
 int main()
 {
 	mobj_t mo{};
@@ -73,4 +202,5 @@ int main()
 	P_RunChaseCameras();
 	assert(forces == 2 && asked == 2 && chases == 2);
 	puts("first person: per-tic local angle follows game steering");
+	SlopePitch();
 }

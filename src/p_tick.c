@@ -645,7 +645,10 @@ void P_RunChaseCameras(void)
 			P_MoveChaseCamera(p, cam, false);
 		}
 		else
+		{
 			P_FirstPersonFollowKart(&players[displayplayers[i]], &camera[i]);
+			P_FirstPersonFollowSlope(&players[displayplayers[i]], &camera[i]);
+		}
 	}
 
 	K_EndCameraGC();

@@ -1369,12 +1369,12 @@ static void R_SetupAimingFrame(int s)
 	}
 	else if (!demo.playback && player->playerstate != PST_DEAD)
 	{
-		newview->aim = localaiming[s];
+		newview->aim = localaiming[s] + P_FirstPersonSlopePitch(s);
 		newview->angle = localangle[s];
 	}
 	else
 	{
-		newview->aim = player->aiming;
+		newview->aim = player->aiming + P_FirstPersonSlopePitch(s);
 		newview->angle = player->mo->angle;
 	}
 }

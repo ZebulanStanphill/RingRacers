@@ -163,6 +163,8 @@ boolean P_TryCameraMove(fixed_t x, fixed_t y, camera_t *thiscam);
 void P_SlideCameraMove(camera_t *thiscam);
 void P_DemoCameraMovement(camera_t *cam, UINT8 num);
 void P_FirstPersonFollowKart(player_t *player, camera_t *thiscam);
+void P_FirstPersonFollowSlope(player_t *player, camera_t *thiscam);
+angle_t P_FirstPersonSlopePitch(UINT8 num);
 boolean P_MoveChaseCamera(player_t *player, camera_t *thiscam, boolean resetcalled);
 void P_ToggleDemoCamera(UINT8 viewnum);
 
