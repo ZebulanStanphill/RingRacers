@@ -51,6 +51,8 @@ If Windows reports errors on the drive, copy `ringracers\ringracers` (your confi
   - add-on shaders
   - Water surfaces go beyond Software: viewed from above, their ripples also distort the track beneath the water, not just the background.
 
+  Where it differs from Software on purpose, such as true perspective when looking up or down, is listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
+
   Levels preload their textures and models to reduce hitches during races. Translucent sprites and models are sorted among water and other see-through surfaces. Options → Video → Advanced also has **Batching** (resets to On at each launch). To go back to Software, change Options → Video → Advanced → Renderer, or set `renderer` to `Software` in `E:\ringracers\ringracers\ringconfig.cfg`. A config saved by an earlier build keeps its renderer.
 - **Faster performance.** The Software renderer, the game logic and the hardware renderer are optimized for the Xbox's CPU. Game logic gives the same results as vanilla, so replays, ghosts and netplay with PC players work as usual.
 - **Startup file check in the background.** The game files are checked while the game loads instead of before.
