@@ -242,6 +242,11 @@ static precise_t uwp_stagestart;
 #define UWP_STAGE(total) do {} while (0)
 #endif
 
+boolean I_SoftwareDisplayStarted(void)
+{
+	return g_hw_state.twodee_renderer != nullptr;
+}
+
 void I_StartDisplayUpdate(void)
 {
 	if (rendermode == render_none)
@@ -311,6 +316,14 @@ void I_FinishUpdate(void)
 	if (rhi == nullptr)
 	{
 		// ???
+		FrameMark;
+		return;
+	}
+
+	// A game that started in a hardware renderer has never begun a Software frame, which is what makes this state
+	// (I_StartDisplayUpdate). Switching to Software presents once from SDLSetMode before the first such frame.
+	if (!g_hw_state.twodee_renderer)
+	{
 		FrameMark;
 		return;
 	}

@@ -141,6 +141,8 @@ void I_UpdateNoBlit(void);
 /** \brief Start a display update.
 */
 void I_StartDisplayUpdate(void);
+// Whether Software has begun a frame since the game started, which is what makes the state its frames are shown with
+boolean I_SoftwareDisplayStarted(void);
 
 /**	\brief Update video system with updating frame
 */

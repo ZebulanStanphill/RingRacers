@@ -1524,6 +1524,11 @@ boolean VID_CheckRenderer(void)
 					rendererchanged = false;
 				}
 			}
+			// A game that started in a hardware renderer switches to Software in the middle of a frame whose
+			// I_StartDisplayUpdate did nothing, and that is where the state Software's frames are shown with is made. The
+			// rest of this frame needs it.
+			if (rendermode == render_soft && !I_SoftwareDisplayStarted())
+				I_StartDisplayUpdate();
 #endif
 		}
 
