@@ -65,6 +65,7 @@
 
 // So that the screenshot menu auto-updates...
 #include "k_menu.h"
+#include "d_framecapture.h"
 
 #ifdef HWRENDER
 #include "hardware/hw_main.h"
@@ -1845,7 +1846,9 @@ void M_DoScreenShot(UINT32 width, UINT32 height, tcb::span<const std::byte> data
 	M_MkdirEach(pathname, M_PathParts(pathname) - 2, 0755);
 
 #ifdef USE_PNG
-	freename = Newsnapshotfile(pathname,"png");
+	freename = FrameCapture_ShotName(pathname, sizeof pathname); // frame capture mode names it by map and tic
+	if (!freename)
+		freename = Newsnapshotfile(pathname,"png");
 #else
 	if (rendermode == render_soft)
 		freename = Newsnapshotfile(pathname,"pcx");
@@ -1874,7 +1877,7 @@ void M_DoScreenShot(UINT32 width, UINT32 height, tcb::span<const std::byte> data
 failure:
 	if (ret)
 	{
-		if (moviemode != MM_SCREENSHOT)
+		if (moviemode != MM_SCREENSHOT && !g_framecapture) // capture mode keeps the console out of the next frame
 			CONS_Printf(M_GetText("Screen shot %s saved in %s\n"), freename, pathname);
 #ifdef _UWP
 		// [UWP]: Log where the last view drawn was, so a screenshot of a rendering bug can be rendered again on a PC

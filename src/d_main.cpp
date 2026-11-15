@@ -46,6 +46,7 @@
 #endif
 #include "am_map.h"
 #include "console.h"
+#include "d_framecapture.h"
 #include "d_net.h"
 #include "f_finale.h"
 #include "g_game.h"
@@ -1273,6 +1274,8 @@ void D_SRB2Loop(void)
 				debugload--;
 #endif
 
+		FrameCapture_BeginLoop();
+
 		interp = R_UsingFrameInterpolation() && !dedicated;
 		doDisplay = false;
 
@@ -1406,6 +1409,8 @@ void D_SRB2Loop(void)
 		}
 #endif
 
+		FrameCapture_Request(world);
+
 #ifdef HWRENDER
 		// Only take screenshots after drawing.
 		if (moviemode && rendermode == render_opengl)
@@ -1416,6 +1421,8 @@ void D_SRB2Loop(void)
 
 		if ((moviemode || takescreenshot) && rendermode == render_soft)
 			I_CaptureVideoFrame();
+
+		FrameCapture_EndFrame();
 
 		// consoleplayer -> displayplayers (hear sounds from viewpoint)
 		S_UpdateSounds(); // move positional sounds
@@ -1482,6 +1489,10 @@ void D_SRB2Loop(void)
 			}
 		}
 
+
+		// Frame capture mode: every tic is drawn, however long that took
+		if (g_framecapture)
+			frameskip = 0;
 
 		if (world)
 		{
@@ -2476,6 +2487,8 @@ void D_SRB2Main(void)
 
 	if (!autostart)
 		M_PushSpecialParameters(); // push all "+" parameters at the command buffer
+
+	FrameCapture_Init(); // -shottics
 
 	// demo doesn't need anymore to be added with D_AddFile()
 	p = M_CheckParm("-playdemo");

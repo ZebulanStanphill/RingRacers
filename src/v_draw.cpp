@@ -11,6 +11,7 @@
 #include "core/hash_map.hpp"
 #include "doomdef.h" // skincolornum_t
 #include "doomtype.h"
+#include "d_framecapture.h"
 #include "hu_stuff.h"
 #include "i_time.h"
 #include "k_hud.h"
@@ -435,7 +436,7 @@ void Chain::button_(Button type, int ver, std::optional<bool> press) const
 	}
 	else
 	{
-		K_drawButtonAnim(x_, y_, flags_, get_button_patch(type, ver), I_GetTime());
+		K_drawButtonAnim(x_, y_, flags_, get_button_patch(type, ver), FrameCapture_AnimTime());
 	}
 }
 
@@ -477,7 +478,7 @@ void Chain::generic_button_(GenericButton type, int ver, std::optional<bool> pre
 	}
 	else
 	{
-		K_drawButtonAnim(x_, y_, flags_, get_button_patch(type, ver), I_GetTime());
+		K_drawButtonAnim(x_, y_, flags_, get_button_patch(type, ver), FrameCapture_AnimTime());
 	}
 }
 

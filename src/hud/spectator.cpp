@@ -11,6 +11,8 @@
 #include <optional>
 #include <utility>
 
+#include "../d_framecapture.h"
+
 #include <fmt/format.h>
 
 #include "../v_draw.hpp"
@@ -199,7 +201,7 @@ void K_drawSpectatorHUD(boolean director)
 		else
 		{
 			bool press = D_LocalTiccmd(viewnum)->buttons & BT_BAIL;
-			const char* label = (press && I_GetTime() % 16 < 8) ? "> <" : ">< ";
+			const char* label = (press && FrameCapture_AnimTime() % 16 < 8) ? "> <" : ">< ";
 
 			list.insert({{label, press ? "<y_pressed>" : "<y>"}, {"Exit", "<c_animated>"}});
 		}

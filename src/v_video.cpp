@@ -20,6 +20,7 @@
 #include <tracy/tracy/Tracy.hpp>
 
 #include "doomdef.h"
+#include "d_framecapture.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #endif
@@ -1794,7 +1795,7 @@ UINT8 *V_GetStringColormap(INT32 colorflags)
 INT32 V_DanceYOffset(INT32 counter)
 {
 	const INT32 duration = 16;
-	const INT32 step = (I_GetTime() + counter) % duration;
+	const INT32 step = (FrameCapture_AnimTime() + counter) % duration;
 
 	return abs(step - (duration / 2)) - (duration / 4);
 }
@@ -2763,7 +2764,7 @@ void V_DrawStringScaled(
 				if (c == '\xEC') // Pressed
 					anim = 1;
 				else if (c != '\xEE') // Not lifted..?
-					anim = ((I_GetTime() % (anim_duration * 2)) < anim_duration) ? 1 : 0;
+					anim = ((FrameCapture_AnimTime() % (anim_duration * 2)) < anim_duration) ? 1 : 0;
 
 				// For bullshit text outlining reasons, we cannot draw this background character-by-character.
 				// Thinking about doing string manipulation and calling out to V_StringWidth made me drink water.

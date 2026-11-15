@@ -25,6 +25,7 @@
 #include "r_state.h"
 #include "z_zone.h"
 #include "i_time.h"
+#include "d_framecapture.h"
 
 UINT32 R_GetFramerateCap(void)
 {
@@ -52,6 +53,10 @@ UINT32 R_GetFramerateCap(void)
 
 boolean R_UsingFrameInterpolation(void)
 {
+	// Frame capture mode draws each tic once, exactly as it is
+	if (g_framecapture)
+		return false;
+
 	return (R_GetFramerateCap() != TICRATE || I_GetTimeScale() < FRACUNIT);
 }
 

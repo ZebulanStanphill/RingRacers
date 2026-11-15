@@ -9,6 +9,7 @@ set(SRB2_MAIN_SOURCES
 	config.h.in
 	string.c
 	d_main.cpp
+	d_framecapture.cpp
 	d_clisrv.c
 	d_net.cpp
 	d_netfil.c

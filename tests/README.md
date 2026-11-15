@@ -179,6 +179,16 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   wraparound, repeat target changes, resets during a slide, and instant wipes.
   The desktop variant compiles upstream's timing branch and checks that it is
   unchanged on desktop.
+- **Frame capture tic list:** `frame_capture` runs the header behind the engine's `-shottics`
+  capture mode (`src/frame_capture.hpp`; the mode itself is `src/d_framecapture.cpp`). Check that
+  a list of level times is read into ascending tics without repeats, that an empty list, an
+  empty item, a sign, a decimal, a hex number, a suffix, a space, a ten-digit number and a list
+  over the limit of 1024 are refused, and that screenshot names are `<MAP>_<tic>.png` with the
+  map's name cleaned to letters, digits, `_` and `-`, so that no map name can name another
+  directory and the same replay and tic always give the same file. The capture itself (one
+  frame per tic, the screenshot, the exit) needs a game with its data and a renderer, so it is
+  covered by running it, not here; see "Capture mode" in
+  [tests/frame-compare/README.md](frame-compare/README.md).
 - **Bounded diagnostics:** production trace implementation and frame-window
   selection. Check fade expiry/event caps, title sample caps, both frame windows
   (with their line caps empty, so the edges of the title window and of the 10-20 s

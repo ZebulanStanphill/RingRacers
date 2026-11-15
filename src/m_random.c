@@ -19,6 +19,7 @@
 #include "m_cond.h" // gamedata->totalplaytime
 
 #include "m_random.h"
+#include "d_framecapture.h"
 #include "m_fixed.h"
 
 char rng_class_names[34][30] = {
@@ -64,6 +65,9 @@ char rng_class_names[34][30] = {
 
 ATTRINLINE static UINT32 FUNCINLINE __external_prng__(void)
 {
+	if (g_framecapture)
+		return FrameCapture_Random(); // frame capture mode (d_framecapture.cpp): the same numbers on every run
+
 	UINT32 rnd = rand();
 
 #if RAND_MAX < 65535

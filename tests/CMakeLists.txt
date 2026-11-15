@@ -299,6 +299,20 @@ add_test(NAME name_index COMMAND name_index)
 set_tests_properties(name_index PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
+# The frame capture mode's tic list and screenshot names are a header of their own, with no dependencies.
+add_executable(frame_capture frame-capture.cpp)
+target_compile_features(frame_capture PRIVATE cxx_std_17)
+target_include_directories(frame_capture PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(frame_capture PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(frame_capture PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(frame_capture PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME frame_capture COMMAND frame_capture)
+set_tests_properties(frame_capture PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
 # The fork's version text is a header of its own, with no dependencies beyond the C library.
 add_executable(fork_version fork-version.cpp)
 target_compile_features(fork_version PRIVATE cxx_std_17)
