@@ -973,6 +973,26 @@ fails the run, as it does on WARP. Where the two runs differ:
 - **Presentation** isn't exercised: the headless presenter stub is the one WARP's
   `d3d12-driver` uses, and the Vulkan swap chain (`vk_present.cpp`) has no test
   here. The separate Windows presenter executable is specific to `run-d3d12.ps1`.
+- **Water, grouped** (`water-group`) starts from a green of 200 on Vulkan, where
+  the WARP run uses 120. The scene draws water with an alpha of 1/255 over a uniform
+  capture of the screen twice, so each channel is scaled by 254/255 and rounded
+  twice. AMD's Vulkan driver (RADV, Mesa 26.2 on a Vega 10) exports 8-bit colors
+  through 16-bit floats rounded toward zero, so a result within about an eighth of a
+  level above a rounding boundary lands one level lower. A green of 120 gives
+  119.53, which should round to 120 but gives 119, and the second pass takes that
+  119 (118.53) to 118: two levels from the 120 that the scene expects (and WARP
+  gives), past the tolerance of 1. Sweeping a uniform background from 0 to 255
+  through one water draw gives, for all 256 values, exactly what rounding the product
+  toward zero in half precision and then to the nearest level predicts, and 15 of
+  them (113 to 127) differ from exact rounding. The ripple's dependence on the
+  reciprocal of `SV_Position.w` plays no part: the background is uniform, so every
+  offset samples the same color. WARP and lavapipe round to nearest. Rather than
+  accept two answers, the Vulkan run starts from a green whose results can't be taken
+  below a boundary: 200 gives 199.22 and then 198.22, and the unchanged red of 80
+  gives 79.69, 0.19 of a level above a boundary, which is more than the truncation
+  takes away at that size (0.06). Every device then agrees on one expected value,
+  computed by the scene's own per-pass formula, which for the Direct3D run's 120 is
+  the color it always expected.
 
 ## CI and adding cases
 

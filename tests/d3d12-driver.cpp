@@ -1089,7 +1089,23 @@ int main(int argc,char **argv) {
             }
             // Nested coplanar faces reuse the run's first capture; a second run gets a fresh one.
             // Tiny constant/geometry rings may submit between these draws, exercising capture lifetime.
-            reset({80,120,160}); shaderInfo(HWD_SHADERINFO_LEVELTIME,6);
+            // Each run replaces the screen with its water draw over a capture of the screen, whose alpha of 1/255 scales every
+            // channel by 254/255, so each channel after two runs is the previous one scaled and rounded twice. The background is
+            // uniform, so the ripple offset (and the reciprocal of SV_Position.w it derives from) can't matter here.
+            // AMD's Vulkan driver (RADV, measured on a Vega 10) exports 8-bit colors through 16-bit floats rounded toward zero,
+            // so a result within about an eighth of a level above a rounding boundary lands a level lower: a green of 120 gives
+            // 119.53 and then 119, where WARP rounds to 120 both times, and two passes end 2 off, past the tolerance of 1.
+            // Rather than accept two answers, the Vulkan run starts from a green of 200 (199.22, then 198.22), whose results
+            // can't be taken below a boundary, so that every device agrees on one value.
+            const RGB groupClear={80,
+#ifdef HAVE_D3D12_NATIVE
+                120,
+#else
+                200,
+#endif
+                160};
+            auto groupPass=[](RGB c) { for(int &v:c) v=(int)std::lround(v*254./255); return c; };
+            reset(groupClear); shaderInfo(HWD_SHADERINFO_LEVELTIME,6);
             UINT64 fogBefore=0,copiesBefore=0,tripsBefore=0;
             D3D12_GetCaptureCountsForTest(&fogBefore,&copiesBefore,&tripsBefore);
             for(int run=0;run<2;run++) {
@@ -1105,7 +1121,7 @@ int main(int argc,char **argv) {
             UINT64 fogAfter=0,copiesAfter=0,tripsAfter=0;
             D3D12_GetCaptureCountsForTest(&fogAfter,&copiesAfter,&tripsAfter);
             require("water-group-counts",copiesAfter-copiesBefore==2 && tripsAfter-tripsBefore==2,"grouped water copy/roundtrip oracle failed");
-            expect("water-group",{80,120,158}); D3D12_FinishUpdate(0);
+            expect("water-group",groupPass(groupPass(groupClear))); D3D12_FinishUpdate(0);
             auto fog=surface({248,4,252}); fog.LightInfo.light_level=255; fog.LightInfo.fade_end=31;
             auto captureQuad=quad(128.125f);
             const FBITFIELD waterFlags=PF_Modulated|PF_ColorMapped|PF_Ripple|PF_Translucent|PF_NoDepthTest;
