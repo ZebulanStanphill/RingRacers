@@ -785,6 +785,33 @@ static void Sweep(int views){
     }
     assert(drawn);
 }
+// A probed Endless Mine frame (tic 70 of the first staff ghost): springs stand on the side of a beam, a 3D floor
+// 16 units thick that runs diagonally towards the camera, with their tops under the beam's top plane. The beam's
+// top passes beside each spring nearer to the camera, but in the spring's own screen columns it is all behind it,
+// and Software draws the spring whole. Judged by the plane's nearest corner anywhere, the plane sorted the spring
+// behind it, and the beam's side then cut most of the spring away. A spring 34 units further in, inside the beam,
+// still has the plane in front of it in its own columns and stays hidden.
+static void BeamSide(){
+    auto f=Solid();
+    const Quad side={{{-16320,-160,6928,0,0},{-16224,-160,7024,0,0},{-16224,-144,7024,0,0},{-16320,-144,6928,0,0}}};
+    const std::array<FOutVector,5> top0={{{-16224,-144,7040,0,0},{-16224,-144,7024,0,0},{-16320,-144,6928,0,0},{-16320,-144,6944,0,0},{-16253.5f,-144,7010.5f,0,0}}};
+    const Quad top1={{{-16320,-144,7040,0,0},{-16224,-144,7040,0,0},{-16253.5f,-144,7010.5f,0,0},{-16320,-144,6944,0,0}}};
+    for(bool inside:{false,true}){
+        const float dx=inside?-24:0,dy=inside?24:0;
+        Begin();
+        gl_viewx=-16235.53f;gl_viewy=6327.28f;gl_viewz=-36.91f;
+        gl_viewcos=(float)std::cos(60.05*M_PI/180);gl_viewsin=(float)std::sin(60.05*M_PI/180);
+        fixture={{{-16245.1f+dx,-160.0f,6994.0f+dy,0,1},{-16238.1f+dx,-160.0f,6990.0f+dy,1,1},{-16235.7f+dx,-148.1f,6994.2f+dy,1,0},{-16242.6f+dx,-148.1f,6998.2f+dy,0,0}}};
+        spr.gx=-16232+dx;spr.gy=6992+dy;stubGz=-160;stubGzt=-147.2f;
+        thing.x=FLOAT_TO_FIXED(-16232+dx);thing.y=FLOAT_TO_FIXED(6992+dy);thing.z=-160*FRACUNIT;
+        HWR_AddSpringWall(side.data(),&f);HWR_AddSpringPlane(top0.data(),5,&f);HWR_AddSpringPlane(top1.data(),4,&f);
+        HWR_DrawSprite(&spr); // not DrawEntry or ExactQuad: their interpolation check is for coordinates near the origin
+        if(inside)assert(draws.empty());
+        else assert(draws.size()==1&&draws[0].v.size()==4&&std::memcmp(draws[0].v.data(),fixture.data(),sizeof fixture)==0);
+        stubGz=stubGzt=NAN;ResetView();
+    }
+    PurgeLevel();
+}
 // A spring's 3D model follows the spring's sprite: not drawn when nothing of the sprite is left, drawn behind
 // stencil marks of the sides that cut the sprite when part of it is left, and otherwise drawn as any model.
 static bool SameQuad(const std::vector<FOutVector> &v,const Quad &q){return v.size()==4&&std::memcmp(v.data(),q.data(),sizeof q)==0;}
@@ -847,6 +874,6 @@ static void Models(){
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return 2;
-    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();Models();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
+    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();Models();BeamSide();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }

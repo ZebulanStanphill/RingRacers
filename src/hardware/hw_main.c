@@ -631,9 +631,32 @@ static boolean HWR_SpringPlaneApplies(const hwr_springwall_t *plane, const hwr_s
 		high = fmax(high, row);
 	}
 
-	// Part of the plane is nearer than the sprite's origin, in the sprite's screen columns and rows.
-	return nearest < view->depth && right >= view->left && left <= view->right
-		&& (view->bottom - gl_viewz) / view->depth <= high && (view->top - gl_viewz) / view->depth >= low;
+	// The plane shares screen columns and rows with the sprite.
+	if (right < view->left || left > view->right
+		|| (view->bottom - gl_viewz) / view->depth > high || (view->top - gl_viewz) / view->depth < low)
+		return false;
+
+	// Part of the plane is nearer than the sprite's origin in the sprite's own screen columns: Software looks for
+	// a nearer scale of the plane's seg from the sprite's first column to its last, and nowhere else. A plane that
+	// passes beside the sprite on its way towards the camera, as the top of a beam does for a spring on the beam's
+	// side, isn't drawn over it.
+	{
+		const double lx = gl_viewsin - view->left * gl_viewcos, lz = -gl_viewcos - view->left * gl_viewsin;
+		const double rx = view->right * gl_viewcos - gl_viewsin, rz = view->right * gl_viewsin + gl_viewcos;
+		const hwr_springplane_t leftplane = {lx, 0, lz, -(gl_viewx * lx + gl_viewy * lz)};
+		const hwr_springplane_t rightplane = {rx, 0, rz, -(gl_viewx * rx + gl_viewy * rz)};
+		FOutVector part[HWR_SPRINGMAXNEAR + 2], columns[HWR_SPRINGMAXNEAR + 2];
+		INT32 count = HWR_SpringHalfPlane(v, n, part, HWR_SPRINGMAXNEAR + 2, &leftplane, true);
+		if (count >= 0)
+			count = HWR_SpringHalfPlane(part, count, columns, HWR_SPRINGMAXNEAR + 2, &rightplane, true);
+		if (count >= 0) // Too many corners to cut (rounding along a nearly collinear outline): judge by the whole polygon.
+		{
+			nearest = DBL_MAX;
+			for (i = 0; i < count; i++)
+				nearest = fmin(nearest, HWR_SpringDepth(columns[i].x - gl_viewx, columns[i].z - gl_viewy));
+		}
+	}
+	return nearest < view->depth;
 }
 
 // Whether Software draws this side over the spring, rather than the spring over it.

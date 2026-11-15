@@ -516,7 +516,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   probed camera, a spring and the seam side passing beside the camera below eye level, with the side's two tops
   raised by every combination of 0 to 24 float ulps and the camera jittered by up to 0.01 units (1,250 cases,
   plain and 3D floor). The spring must stay the exact quad in every case; before flat silhouettes were rejected,
-  325 cases cut it away. A spring's 3D model follows its sprite (`HWR_DrawSpringModel`, with the model
+  325 cases cut it away. A probed Endless Mine frame (a spring on the side of a diagonal 3D floor beam, its top
+  under the beam's top plane, the camera above) must leave the spring the exact quad, since the plane is behind
+  it in its own screen columns, while the same spring moved inside the beam must not be drawn; judged by the
+  plane's nearest corner anywhere, as before, the first is cut to three triangles. A spring's 3D model follows its sprite (`HWR_DrawSpringModel`, with the model
   drawer and the driver's stencil mask stubbed): it is drawn as any model when nothing is recorded, when the
   spring stands in front of the wall, for another object, and for an always-on-top spring; it isn't drawn,
   and counts as drawn, inside a block with either driver; half hidden, the wall that cuts the sprite is
