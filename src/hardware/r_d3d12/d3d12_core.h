@@ -26,7 +26,7 @@
 #include <dxgi1_4.h>
 #include <wrl/client.h>
 #else
-// No Windows SDK: Direct3D 12's declarations from DirectX-Headers, for the Vulkan backend to implement
+// No Windows SDK: Direct3D 12's declarations from DirectX-Headers, for the Vulkan or the Metal backend to implement
 #include "vulkan/vk12_win.h"
 #endif
 
@@ -62,7 +62,10 @@ void Core_ScaleWaitsForTest(double factor);
 // initialization. A build with only one of them always uses it.
 void Core_UseVulkan(bool vulkan);
 bool Core_Vulkan();
-// With the Vulkan backend: validation layers and their messages in the log. Set before initialization.
+// True in a build whose backend is Metal through mtl12 (VibeRant Metal), which then is its only one
+bool Core_Metal();
+// With the Vulkan backend: validation layers and their messages in the log. With the Metal backend: what Metal reports
+// of failed command buffers, in detail. Set before initialization.
 void Core_VulkanValidation(bool validation);
 
 // Releases everything if the GPU is idle (or the device was removed); otherwise keeps it all until exit, since

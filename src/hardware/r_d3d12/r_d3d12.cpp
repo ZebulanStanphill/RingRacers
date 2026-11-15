@@ -32,6 +32,9 @@
 #ifdef HAVE_VULKAN
 #include "vulkan/vk12.h"
 #endif
+#ifdef HAVE_METAL
+#include "metal/mtl12.h"
+#endif
 
 #include <cmath>
 #include <cfloat>
@@ -1513,6 +1516,10 @@ bool InitDrawing()
 	// vk12 has shaders.hlsl's root signature built in, and takes a token in place of Direct3D's serialized one
 	const void *rootBlob = nullptr;
 	size_t rootBytes = 0;
+#ifdef HAVE_METAL
+	// As has mtl12
+	if (Core_Metal()) { rootBlob = rr_mtl12::kRootSignature; rootBytes = sizeof rr_mtl12::kRootSignature; }
+#endif
 #ifdef HAVE_VULKAN
 	if (Core_Vulkan()) { rootBlob = rr_vk12::kRootSignature; rootBytes = sizeof rr_vk12::kRootSignature; }
 #endif
@@ -3122,7 +3129,7 @@ void *D3D12_GetDriverFunction(const char *name)
 	if (!logged)
 	{
 		logged = true;
-		I_OutputMsg("UWP: VibeRant backend: %s\n", Core_Vulkan() ? "Vulkan" : "D3D12");
+		I_OutputMsg("UWP: VibeRant backend: %s\n", Core_Metal() ? "Metal" : Core_Vulkan() ? "Vulkan" : "D3D12");
 	}
 
 	for (const auto &function : kDriverFunctions)

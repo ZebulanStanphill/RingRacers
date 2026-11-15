@@ -17,6 +17,9 @@
 #ifdef HAVE_VULKAN
 #include "vulkan/vk12.h"
 #endif
+#ifdef HAVE_METAL
+#include "metal/mtl12.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -408,6 +411,15 @@ bool Core_Vulkan()
 	return g_vulkan;
 }
 
+bool Core_Metal()
+{
+#ifdef HAVE_METAL
+	return true; // the only backend
+#else
+	return false;
+#endif
+}
+
 void Core_VulkanValidation(bool validation)
 {
 	g_vulkanValidation = validation;
@@ -418,6 +430,23 @@ bool Core_Init()
 	if (g_device)
 		return true;
 
+#ifdef HAVE_METAL
+	if (Core_Metal())
+	{
+		Core_Log("starting VibeRant's Metal backend");
+		rr_mtl12::DeviceOptions options;
+		options.validation = g_vulkanValidation;
+		options.software = g_forceWarp;
+		if (FAILED(rr_mtl12::CreateDevice(options, &g_device, &g_memoryAdapter)))
+		{
+			g_device.Reset();
+			return false;
+		}
+		if (!g_memoryAdapter)
+			Core_Log("video memory budgets unavailable (the device recommends no working set size)");
+	}
+	else
+#endif
 #ifdef HAVE_VULKAN
 	if (g_vulkan)
 	{
@@ -739,6 +768,12 @@ bool Core_Wait(UINT64 value, DWORD ms, const char *what, double *waitedMs)
 		if (elapsed >= limit)
 			break;
 		// An earlier wait that timed out may still set the event, so check the fence after every wake
+#ifdef HAVE_METAL
+		// mtl12's fence has no event to set; it waits for Metal's command buffers
+		if (Core_Metal())
+			rr_mtl12::WaitFence(g_fence.Get(), value, (DWORD)std::max(1.0, std::ceil(limit - elapsed)));
+		else
+#endif
 #ifdef HAVE_VULKAN
 		// vk12's fence has no event to set; it waits on Vulkan's own fence
 		if (g_vulkan)

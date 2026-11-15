@@ -31,8 +31,9 @@
 #include "r_d3d12_shaders/PSFadeMap.h"
 #include "r_d3d12_shaders/PSPostImage.h"
 #endif
-#ifdef HAVE_VULKAN
-// The same entry points as SPIR-V (g_<entry>_spv), for the Vulkan backend
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+// The same entry points as SPIR-V (g_<entry>_spv), for the backends that take it: Vulkan's, and Metal's, which
+// translates it further
 #include "r_vulkan_shaders/VSPoly.h"
 #include "r_vulkan_shaders/VSPolyClip.h"
 #include "r_vulkan_shaders/VSSky.h"
@@ -94,7 +95,7 @@ const D3D12_SHADER_BYTECODE kVs[] = {
 	{g_VSPostImage, sizeof g_VSPostImage},
 };
 #endif
-#ifdef HAVE_VULKAN
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
 const D3D12_SHADER_BYTECODE kVsSpv[] = {
 	{g_VSPoly_spv, sizeof g_VSPoly_spv},
 	{g_VSPolyClip_spv, sizeof g_VSPolyClip_spv},
@@ -119,7 +120,7 @@ const D3D12_SHADER_BYTECODE kPs[] = {
 	{g_PSFadeMap, sizeof g_PSFadeMap},	 {g_PSPostImage, sizeof g_PSPostImage},
 };
 #endif
-#ifdef HAVE_VULKAN
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
 const D3D12_SHADER_BYTECODE kPsSpv[] = {
 	{g_PSFixed_spv, sizeof g_PSFixed_spv},
 	{g_PSDefault_spv, sizeof g_PSDefault_spv},
@@ -148,7 +149,7 @@ const char *kPsNames[] = {"PSFixed",	"PSDefault",
 static_assert(ARRAYSIZE(kVs) == NUMVS, "Every built-in vertex shader needs bytecode");
 static_assert(ARRAYSIZE(kPs) == NUMPS, "Every built-in pixel shader needs bytecode");
 #endif
-#ifdef HAVE_VULKAN
+#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
 static_assert(ARRAYSIZE(kVsSpv) == NUMVS, "Every built-in vertex shader needs SPIR-V");
 static_assert(ARRAYSIZE(kPsSpv) == NUMPS, "Every built-in pixel shader needs SPIR-V");
 #endif
