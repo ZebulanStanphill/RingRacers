@@ -1,0 +1,191 @@
+name: Metal frames
+
+# The macOS game with VibeRant Metal on a macOS runner's GPU, under Metal's API and shader validation: staff ghosts
+# played in the frame capture mode (tests/metal-frames/ghosts.txt, one per map, five frames each), and scenes the
+# ghosts don't reach (the title screen, a menu, models, Screen Scaling, changing the renderer, quitting). The frames,
+# pictures of the screen, and logs are artifacts, to be compared with another renderer's frames of the same commit
+# (tests/README.md, "Metal frames"). It takes about three runner-hours (some 40 minutes with five jobs side by side),
+# so it only runs when asked: from the Actions page, or by pushing a commit to a branch named frames/<anything>.
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: How many parallel jobs play the ghosts
+        default: '5'
+      only:
+        description: Play only the ghosts whose names contain one of these (comma-separated); empty for all
+        default: ''
+      tics:
+        description: Level times to capture
+        default: '70,350,700,1400,2100'
+  push:
+    branches:
+      - 'frames/**'
+
+env:
+  RR_ASSETS_URL: https://github.com/KartKrewDev/RingRacers/releases/download/v2.4/Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip
+  RR_ASSETS_KEY: ringracers-assets-v2.4
+
+jobs:
+  build:
+    name: Build the macOS game and fetch the game's data
+    runs-on: macos-15
+    timeout-minutes: 60
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
+      count: ${{ steps.shards.outputs.count }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: List the shards
+        id: shards
+        run: |
+          count=${{ inputs.shards || '5' }}
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "list=[$(seq -s, 0 $((count - 1)))]" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: brew install ninja sdl2 libpng opus pkgconf ccache
+
+      - name: Cache compiled objects
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: metal-frames-ccache-${{ github.sha }}
+          restore-keys: metal-frames-ccache-
+
+      - name: Configure
+        run: >-
+          cmake --preset ninja-release
+          -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
+          -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build/ninja-release --parallel 4
+
+      # An archive, because an artifact doesn't keep the executable bit
+      - name: Pack the app
+        run: tar -C build/ninja-release/bin -czf macos-game.tar.gz .
+
+      - name: Upload the game
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-game
+          path: macos-game.tar.gz
+          if-no-files-found: error
+
+      # The official assets of the release the fork is based on, about 750 MB, kept between runs of a branch (a cache
+      # belongs to the branch that made it, and to branches made from the default branch after it was made there)
+      - name: Cache the game's data
+        id: assets
+        uses: actions/cache@v6
+        with:
+          path: game-data
+          key: ${{ env.RR_ASSETS_KEY }}
+
+      - name: Download the game's data
+        if: steps.assets.outputs.cache-hit != 'true'
+        run: |
+          curl --fail --location --retry 3 -o assets.zip "$RR_ASSETS_URL"
+          mkdir -p game-data
+          unzip -q assets.zip -d game-data
+          rm assets.zip
+          ls game-data game-data/data
+
+  sweep:
+    name: Staff ghosts (${{ matrix.shard }})
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.build.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the libraries the game loads
+        run: brew install sdl2 libpng opus
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-game
+
+      - name: Unpack the app
+        run: |
+          mkdir game
+          tar -C game -xzf macos-game.tar.gz
+          echo "RR_GAME=$(find "$PWD/game" -path '*.app/Contents/MacOS/*' -type f | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Restore the game's data
+        uses: actions/cache/restore@v6
+        with:
+          path: game-data
+          key: ${{ env.RR_ASSETS_KEY }}
+          fail-on-cache-miss: true
+
+      - name: Play the staff ghosts
+        run: |
+          python3 tests/metal-frames/capture.py sweep --game "$RR_GAME" --data game-data \
+            --out results --shard ${{ matrix.shard }}/${{ needs.build.outputs.count }} \
+            --tics "${{ inputs.tics || '70,350,700,1400,2100' }}" --only "${{ inputs.only }}"
+
+      - name: Upload frames and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: metal-frames-${{ matrix.shard }}
+          path: |
+            results/frames
+            results/logs
+            results/summary.json
+          if-no-files-found: warn
+
+  scenes:
+    name: Title screen, menu, models, scaling, renderer changes
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the libraries the game loads
+        run: brew install sdl2 libpng opus
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-game
+
+      - name: Unpack the app
+        run: |
+          mkdir game
+          tar -C game -xzf macos-game.tar.gz
+          echo "RR_GAME=$(find "$PWD/game" -path '*.app/Contents/MacOS/*' -type f | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Restore the game's data
+        uses: actions/cache/restore@v6
+        with:
+          path: game-data
+          key: ${{ env.RR_ASSETS_KEY }}
+          fail-on-cache-miss: true
+
+      - name: Describe the display
+        run: system_profiler SPDisplaysDataType || true
+
+      - name: Run the scenes
+        run: |
+          python3 tests/metal-frames/capture.py scenes --game "$RR_GAME" --data game-data --out results
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: metal-scenes
+          path: |
+            results/scenes
+            results/logs
+            results/summary.json
+          if-no-files-found: warn

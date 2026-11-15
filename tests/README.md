@@ -1154,6 +1154,69 @@ differ:
   view of fewer mips than its texture, buffer-to-buffer copies and timestamp
   queries (only the UWP presenter uses them), and a lost device.
 
+## Metal frames (the game on a macOS runner)
+
+There is no Mac among the machines this fork is developed on, so the macOS game with
+VibeRant Metal is run where there is one: on GitHub's `macos-15` runners (Apple
+silicon, with the virtual GPU "Apple Paravirtual device"), by the workflow
+`.github/workflows/metal-frames.yml`. It takes about three runner-hours, so it runs
+only when asked: from the Actions page (**Metal frames** → Run workflow, once the
+workflow is on the default branch), or by pushing a commit to a branch named
+`frames/<anything>` (delete the branch afterwards).
+
+- The `build` job builds the game as the `macos` job of `tests.yml` does (with
+  ccache between runs), uploads the app, and fetches the official assets of Ring
+  Racers v2.4 (750 MB, from the release's page) into a cache.
+- The `sweep` jobs (five side by side by default, about 35 minutes each) play the
+  staff ghosts of `tests/metal-frames/ghosts.txt`, the first one of each of the 213
+  maps, in the frame capture mode (`-shotghost`, `-shottics 70,350,700,1400,2100`;
+  [frame-compare/README.md](frame-compare/README.md) describes the mode), one game
+  per ghost, and upload the frames and each run's log as `metal-frames-<n>`.
+- The `scenes` job runs what the ghosts don't reach and uploads `metal-scenes`:
+  screenshots the game takes itself and pictures of the screen (`screencapture`),
+  the latter taken when the log says the game has reached the moment. The scenes:
+  the game started without naming a renderer; the title screen and a menu, with keys
+  sent through the system (CoreGraphics events from `osascript`, which reach whatever
+  window has the keyboard); 3D models on and off; changing the renderer while a
+  replay plays, starting in VibeRant Metal and starting in Software; the three
+  Screen Scaling modes in fullscreen with a 320x200 frame; `vid_wait`; and
+  `-mtldebug`.
+
+`tests/metal-frames/capture.py` (Python's standard library only) does the running, on
+a Mac as well: `capture.py sweep --game <the binary in the .app> --data <game data>
+--out results [--only AERIAL,MARBLE] [--shard 0/5]`, or `capture.py scenes ...`.
+Every run of the game gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
+`MTL_SHADER_VALIDATION=1`. A run fails, and with it the job, if the game doesn't exit
+with 0 in time (a game that stops at its error dialog is killed after five seconds),
+if the log doesn't say that the backend is Metal with both kinds of validation on, if
+a frame the capture mode announced is missing, if no frame was presented to the
+window (the presenter counts them in the log), or if the log has a validation
+message, a failed command buffer, a "not implemented" line, an error of the driver's,
+or a fallback to Software. `summary.json` in each artifact has every run's result.
+
+What the jobs can't judge is whether the pictures are right. For the frames, compare
+them with another renderer's frames of the same game logic, such as VibeRant Vulkan's
+from a PC (the same ghosts and level times with the Linux build and `-vulkan`):
+
+```sh
+gh run download <run id> -R ZebulanStanphill/RingRacers -p 'metal-frames-*' -D metal
+mkdir metal-all && mv metal/*/frames/*.png metal-all/
+uv run tests/metal-frames/compare.py metal-all <the other frames> comparison
+```
+
+`compare.py` counts, per frame, the pixels that differ, those more than one level of a
+channel apart, and those that differ beyond texel edges (neither frame has the pixel's
+color within a pixel of it), prints the medians and the frames that stand out, and
+writes side-by-side sheets of the latter. One level on a blended surface and the other
+texel on a texel edge are the differences two GPUs have; `docs/metal-backend.md`
+("What was tested, and what wasn't") has the figures of the first such comparison and
+what each of its outliers was. The pictures of the screen have to be looked at.
+
+The runners' display is 1024x768, so the game's 1280x720 window doesn't fit it: the
+system cuts the window to the display's height, and the frame is fitted into what is
+left, which the pictures of the screen show. The capture mode's screenshots are read
+back from the driver and are 1280x720 regardless.
+
 ## CI and adding cases
 
 `.github/workflows/tests.yml` runs this suite with ASan and UBSan (the

@@ -41,7 +41,7 @@ On Xbox, VibeRant D3D is the default renderer, and on the Xbox One X it runs fas
 
 Windows desktop builds have both, with VibeRant D3D as the default. Those have only been tested under Wine, not on a real Windows PC.
 
-**VibeRant Metal** is the same renderer again on Apple's Metal, for Macs, and the default renderer of a macOS build. It is native Metal, not Vulkan translated to it. It has not been played on a real Mac yet: it has only run on GitHub's macOS test machines, whose graphics are virtual. If Metal doesn't start, the game says so and uses Software.
+**VibeRant Metal** is the same renderer again on Apple's Metal, for Macs, and the default renderer of a macOS build. It is native Metal, not Vulkan translated to it. It has not been played on a real Mac yet: it has only run on GitHub's macOS test machines, whose graphics are virtual, where it played a replay on all 213 tracks and drew the same picture as VibeRant Vulkan, about one pixel in a thousand apart. If Metal doesn't start, the game says so and uses Software.
 
 ### On Xbox
 

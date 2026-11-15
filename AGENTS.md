@@ -63,7 +63,8 @@ those commits stay as they are and the merge is made again.
   the game's don't go into one file), so what they need of the game goes
   through a small C++ file (`metal/mtl_present_game.cpp`). Metal code can only
   be compiled on macOS, which here means CI: the `metal` and `macos` jobs of
-  `tests.yml`.
+  `tests.yml`, and, for running the game itself on a macOS runner, the Metal
+  frames workflow (`tests/README.md`, "Metal frames").
 - A fix to a change that has its own commit can be made with
   `git commit --fixup=<commit>`, to be squashed into it at the next rebase.
 

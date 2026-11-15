@@ -6,10 +6,11 @@ VibeRant Vulkan ([vulkan-backend.md](vulkan-backend.md)): the driver keeps calli
 underneath implements the part of Direct3D 12 it calls.
 
 **State.** A macOS build of the game has it and starts with it: `SRB2_CONFIG_METAL` is on by default there, the
-Renderer setting lists **VibeRant Metal**, and a new config uses it. It has only run on GitHub's macOS runners, whose
-GPU is a virtual one ("Apple Paravirtual device", macOS 15 on Apple silicon): the driver test passes there
-(`tests/README.md`, "Metal driver harness") with Metal's API and shader validation on. No Mac with a real GPU has run
-it, no Intel Mac, and nobody has played it.
+Renderer setting lists **VibeRant Metal**, and a new config uses it. Everything known about how it runs comes from
+GitHub's macOS runners, whose GPU is a virtual one ("Apple Paravirtual device", macOS 15 on Apple silicon): the
+driver test passes there (`tests/README.md`, "Metal driver harness"), and so does the game itself, playing a replay on
+every map with Metal's API and shader validation on, with its frames compared with VibeRant Vulkan's (below, "What was
+tested, and what wasn't"). No Mac with a real GPU has run it, no Intel Mac, and nobody has played it.
 
 ## How
 
@@ -185,3 +186,80 @@ shader compiler rounds differently in the last bit, and depth is 32-bit float wh
   state says so, and the driver's never do; it would take a strip of 65,536 vertices to tell.
 - **`SV_VertexID`** counts from the draw's first vertex in Metal, as in Vulkan, and from zero in Direct3D. The
   driver's only use draws from vertex zero.
+
+## What was tested, and what wasn't
+
+Everything here ran on GitHub's `macos-15` runners (macOS 15.8, Apple silicon, the paravirtual GPU above), with
+`MTL_DEBUG_LAYER=1` and `MTL_SHADER_VALIDATION=1`. `tests/README.md` ("Metal frames") has the workflow that does it
+and how to run it again.
+
+**Replays on every map.** The macOS game played the first staff ghost of each of the 213 maps with `-metal` in the
+frame capture mode (five level times each; 1,002 frames, as some replays are shorter), one game per map. All 213
+runs exited with 0, with no validation message, no failed command buffer, no "not implemented" line, and no error of
+the driver's in any log; 436,000 frames were presented to the window on the way.
+
+The frames were compared pixel by pixel with VibeRant Vulkan's frames of the same commit's game logic, made on a
+Linux PC with an AMD Radeon (RADV). In the median frame 0.14% of the pixels differ, in 95% of the frames fewer than
+0.76%, and in the worst 20%. Most of that is one level of one color channel:
+
+- **One level on blended surfaces.** Where a translucent surface is blended over another (water above all), whole
+  bands of one color come out one level apart, up to a fifth of the frame in nine frames of water levels
+  (Dragonspire Sewer, Deluged Metroplex, Whirl Waters, Aquatic Cathedral, Water Palace, Thunder Piston, Honeycomb
+  Hollow, Carnival Night, Chemical Facility). It is the Radeon that rounds differently, not Metal: four of those
+  frames were drawn again with the Vulkan backend on lavapipe, Mesa's CPU device, and Metal's frames differ from
+  lavapipe's in 0.04% to 2% of the pixels where the Radeon's differ from lavapipe's in 5.6% to 22%. The same
+  rounding is why the driver test's grouped water scene starts from another green on Vulkan. Counting only pixels
+  more than one level apart, the median frame differs in 0.02% of its pixels, 95% of the frames in fewer than
+  0.17%, and the worst in 3.3%.
+- **Texel edges.** As between the other backends, a pixel whose texture coordinate falls on the edge between two
+  texels can take the other texel, and two GPUs disagree more often than two backends on one GPU. Setting those
+  pixels aside (a pixel counts only if neither frame has its color within a pixel of it), 936 of the 1,002 frames
+  differ in at most 0.02% of their pixels, and 11 in more than 0.1%:
+  - five at level time 70 (Mega Sandopolis, Mega Scrap Brain, Dragonspire Sewer 2, Zoned City, Barren Badlands, up to
+    2.9%), where it is the Linux build's game that differs: effects around the kart at the start are other ones than
+    in the frames an earlier commit's Windows build drew under Wine, which Metal's frames match (0.05% at most). The
+    Linux and Windows builds differed in the same frames when VibeRant Vulkan was compared with VibeRant D3D;
+  - Test Track at 350 (0.39%), a puff of dust behind the kart that is placed differently on each of the three
+    systems;
+  - Haunted Ship at 70 (0.37%), the effect in one plane with another that already differed between Vulkan and
+    Direct3D 12;
+  - Daytona Speedway at 350 and 1400, and Blizzard Peaks Classic at 350 and 1400 (0.13% to 0.23%), fine textures
+    far away, where texel edges are everywhere.
+- **One depth tie.** In Vermilion Vessel at 1400, about 870 pixels of a distant red wall show the sky through a
+  stipple on Metal and the wall whole on the Radeon (with either of its backends). A sky wall (the invisible
+  polygon that keeps the sky in front of what is behind it) lies in the wall's plane there, and which of two
+  surfaces in one plane shows is decided by rounding, pixel by pixel on the runner's GPU. Software shows no wall
+  there at all, only sky. It is the only such place the 1,002 frames have, so depth isn't less precise on Metal in
+  general; it would take a change to the hardware renderer, for every backend, to settle it.
+- **One frame that changed between runs.** The 213 replays were played twice from the same code (the figures here
+  are the second run's). 1,001 of the 1,002 frames came out the same to the pixel. Neon Resort at 700 had 198 dim
+  pixels scattered over the black sky at the top of the frame in the second run, and none in the first or in two
+  more runs of that replay made to look for them (thirteen frames each around that time, all alike). Nothing in the
+  logs differs between the runs, and it is unexplained. It looks like texture memory that was read without ever
+  being written, somewhere on the sky's way through the engine or mtl12, which is a guess.
+
+**Beyond replays**, each as a run of the game on a runner, with screenshots the game took itself and pictures of the
+screen (`screencapture`), which were looked at:
+
+- started without naming a renderer: the log says the Metal backend, the intro and the title screen show in the
+  window;
+- the keyboard reaches the Metal window: keys sent through the system leave the title screen, confirm the
+  warning that follows, open the first menu and its Exit Program question, and cancel it;
+- 3D models on and off, each against VibeRant Vulkan's frames with the same setting (0.13% to 0.16% of the pixels);
+- changing the renderer while a replay plays, from VibeRant Metal to Software and back, twice: each time the
+  Metal window goes or comes, the picture on screen is the renderer's, and the game goes on; and the same starting
+  in Software;
+- fullscreen, which is how the game starts for a player, with a 320x200 frame on the runner's 1024x768 display:
+  Fit fills the width (1024x640, filtered), Integer shows it three times as large (960x600), 1:1 as it is, each
+  centered;
+- a window larger than the display, which the system cuts to the display's height: the frame is fitted into what
+  is left;
+- `vid_wait` on, and `-mtldebug`;
+- quitting, by the `quit` command and through the menu: the game exits with 0 and doesn't hang.
+
+**Not tested**, because it takes a Mac and a person: a real GPU (Apple silicon, or an Intel Mac's AMD or Intel one),
+a Retina display (the frame is drawn at the window's size in points and scaled by the system, by design, and that
+was never seen), more than one display, resizing or minimizing the window by hand and switching Spaces (the code that
+stops presenting to a window nobody sees only ran in the moments after the window is made), the look of colors on a
+wide-gamut display, how fast it is, split-screen (a staff ghost is one player), netgames, add-on shaders and screen
+effects in the game (the driver test covers them), and playing with a controller.
