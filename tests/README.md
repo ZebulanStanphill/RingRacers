@@ -887,6 +887,18 @@ rather than running without the debug layer.
 Reinitialization is currently unsupported: `g_shutdown` is terminal. These tests
 do not change that lifecycle. They do not cover Xbox rendering or performance.
 
+## Frame comparison between renderers
+
+`tests/frame-compare/` plays the same staff ghosts in two builds or renderers with the game's data,
+takes screenshots at the same game tics, and compares them pixel by pixel, to check that one renderer
+(VibeRant D3D under Wine, a Vulkan build, Legacy GL) draws what another draws. The engine's part is the
+`-shottics 70,210,350` capture mode (one frame per tic, no interpolation, a screenshot named
+`<MAP>_<tic>.png`, quit after the last one; `-shotghost <staff ghost>` starts the replay), whose tic
+list parsing has the native test `frame_capture`; the runner, the comparer and the report are Python run with
+`uv run`. It needs real game data and a window, so CI does not run it. See
+[frame-compare/README.md](frame-compare/README.md) for the commands, the sides it takes (a native binary or
+a Windows build under Wine, each with its renderer's arguments), the default replays, and how to read the report.
+
 ## CI and adding cases
 
 `.github/workflows/tests.yml` runs this suite with ASan and UBSan (the
