@@ -56,6 +56,13 @@ uint64_t ValidationErrors()
 	return completions.errors;
 }
 
+TestCounts CountsForTest()
+{
+	TestCounts counts = {};
+	counts.shaders = ShaderCount();
+	return counts;
+}
+
 FormatInfo Format(DXGI_FORMAT format)
 {
 	switch (format)

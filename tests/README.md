@@ -1150,6 +1150,12 @@ differ:
   the texture and the layer, which C++ can't. If the layer gives no drawable, the
   test says so in capitals and goes on. What a window shows is not tested here: the
   presenter (`metal/mtl_present.mm`) is part of the game, not of this executable.
+- **The shader cache** is checked after the add-on shader scenes, outside the
+  registry as well: sixteen add-on shaders are each compiled, drawn with (the
+  pixel is checked), and cleaned, and once the frames that used them are done,
+  mtl12's cache must hold as many compiled functions as before
+  (`rr_mtl12::CountsForTest`). With the pruning taken out of mtl12 (not kept in
+  the tree) the count went from 42 to 58 and the run failed.
 - **Not exercised**: the paths of mtl12 that the scenes don't reach, among them a
   view of fewer mips than its texture, buffer-to-buffer copies and timestamp
   queries (only the UWP presenter uses them), and a lost device.

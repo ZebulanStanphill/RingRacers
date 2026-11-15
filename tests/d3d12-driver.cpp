@@ -1853,6 +1853,34 @@ int main(int argc,char **argv) {
                   D3D12_FinishUpdate(0);
               } }
             clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); special(HWD_SET_MODEL_LIGHTING,0);
+#ifdef HAVE_METAL
+            // mtl12 keeps a compiled Metal function for as long as a pipeline state is made of it, and no longer: sixteen
+            // add-on shaders, each compiled, drawn with, and cleaned, must leave its shader cache as it was. Not a scene:
+            // the other backends keep no such cache.
+            {
+                // Retired pipeline states go when the frames that used them are done
+                auto settle=[&]() {
+                    for(int i=0;i<4;i++) { reset(); D3D12_FinishUpdate(0); if(!Core_WaitIdle(30000,"shader cache")) throw std::runtime_error("Metal shader cache: idle failed"); }
+                };
+                clean(); settle();
+                const size_t before=rr_mtl12::CountsForTest().shaders; size_t most=before;
+                special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON);
+                for(int i=0;i<16;i++) {
+                    char source[96]; snprintf(source,sizeof source,"void main() { gl_FragColor = vec4(%d.0 / 255.0, 0.5, 0.25, 1.0); }",64+i*8);
+                    loadFragment(SHADER_FLOOR,source);
+                    if(!compile()) throw std::runtime_error("Metal shader cache: an add-on shader did not compile");
+                    shader(SHADER_FLOOR); drawPolygon();
+                    { auto p=pixels(); validate(validationQueue); if(!within(at(p,32,32),{64+i*8,128,64})) throw std::runtime_error("Metal shader cache: an add-on shader drew another color"); }
+                    most=std::max(most,rr_mtl12::CountsForTest().shaders);
+                    clean();
+                }
+                shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); settle();
+                const size_t after=rr_mtl12::CountsForTest().shaders;
+                printf("Metal shader cache: %zu shaders before sixteen add-on shaders, at most %zu with one of them, %zu after\n",before,most,after);
+                if(most<=before) throw std::runtime_error("Metal shader cache: the add-on shaders never reached the cache");
+                if(after!=before) throw std::runtime_error("Metal shader cache: shaders that no pipeline state uses were kept");
+            }
+#endif
             deleteTexture(&customTexture); D3D12_FinishUpdate(0);
         }
 #ifdef HAVE_METAL

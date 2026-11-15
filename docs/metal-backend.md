@@ -65,9 +65,12 @@ nothing.
 
 The source is compiled with `newLibraryWithSource`, with fast math off: Metal's compiler otherwise assumes it may
 reorder arithmetic, and the shaders pick palette entries and colormap rows by arithmetic that must come out as on
-the other backends. Compiled functions are kept by the bytes of their SPIR-V, since the driver makes hundreds of
-pipeline states from two dozen shaders. The driver's prewarming makes pipeline states on a worker thread, so the
-cache is locked.
+the other backends. Compiled functions are shared by the bytes of their SPIR-V, since the driver makes hundreds of
+pipeline states from two dozen shaders. The pipeline states own them: the cache only knows where a function is while
+a pipeline state is made of it, so the built-in shaders' functions last as long as the device, and an add-on
+shader's go, with the cache's copy of its SPIR-V, when the driver retires the last pipeline state made of it (when
+the add-on is replaced or unloaded). The driver's prewarming makes pipeline states on a worker thread, so the cache
+is locked.
 
 ## Mapping
 

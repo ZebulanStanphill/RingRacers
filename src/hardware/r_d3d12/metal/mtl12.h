@@ -59,6 +59,13 @@ uint64_t ValidationErrors();
 // True once a command buffer has failed because the device was removed; the device then reports itself removed
 bool DeviceLost();
 
+// For the driver test: what mtl12 holds that should go when the driver lets go of it
+struct TestCounts
+{
+	size_t shaders; // compiled Metal functions in the shader cache
+};
+TestCounts CountsForTest();
+
 // For the presenter, which owns the layer and its drawables
 
 // The id<MTLDevice>, not retained; null without a device

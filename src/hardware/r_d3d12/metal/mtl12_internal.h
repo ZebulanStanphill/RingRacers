@@ -233,7 +233,8 @@ using rr_spirv::RootParameter;
 using rr_spirv::kRoot;
 
 // A stage compiled for Metal, and what its SPIR-V said of itself. Shared by every pipeline state made with the same
-// shader, which is most of them: the driver makes hundreds of states from two dozen shaders.
+// shader, which is most of them: the driver makes hundreds of states from two dozen shaders. It lasts as long as one
+// of those pipeline states does.
 struct Shader
 {
 	id<MTLFunction> function = nil;
@@ -242,6 +243,8 @@ struct Shader
 };
 std::shared_ptr<Shader> GetShader(const D3D12_SHADER_BYTECODE &code, bool vertex);
 void ForgetShaders();
+// How many shaders the cache knows
+size_t ShaderCount();
 
 // The formats of the targets a pipeline draws to; MTLPixelFormatInvalid for none
 struct PassKey
@@ -252,6 +255,7 @@ struct PassKey
 class Pipeline : public Object<ID3D12PipelineStateBase, ID3D12PipelineState>
 {
 public:
+	~Pipeline() override;
 	HRESULT Init(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc);
 	// The Metal pipeline state for the formats of the targets being drawn to; made on first use if it isn't the one
 	// made with the object

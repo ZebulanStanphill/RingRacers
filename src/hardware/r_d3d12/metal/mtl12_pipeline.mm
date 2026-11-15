@@ -27,8 +27,10 @@ namespace
 {
 
 std::mutex shaderMutex;
-// By the stage's letter and the bytes of its SPIR-V. A shader that failed stays, as null, so that it fails once.
-std::map<std::string, std::shared_ptr<Shader>> shaders;
+// By the stage's letter and the bytes of its SPIR-V. The pipeline states made of a shader own it, and this only knows
+// where it is while one of them does: the built-in shaders' pipeline states last as long as the device, and an add-on
+// shader goes with the last pipeline state that was made of it, when the driver retires those.
+std::map<std::string, std::weak_ptr<Shader>> shaders;
 
 std::shared_ptr<Shader> Compile(const D3D12_SHADER_BYTECODE &code, bool vertex)
 {
@@ -95,16 +97,41 @@ std::shared_ptr<Shader> GetShader(const D3D12_SHADER_BYTECODE &code, bool vertex
 	std::lock_guard<std::mutex> lock(shaderMutex);
 	auto found = shaders.find(key);
 	if (found != shaders.end())
-		return found->second;
+	{
+		if (std::shared_ptr<Shader> kept = found->second.lock())
+			return kept;
+		shaders.erase(found);
+	}
 	std::shared_ptr<Shader> shader = Compile(code, vertex);
-	shaders[key] = shader;
+	// One that failed isn't kept: the driver doesn't ask again for a pipeline state that couldn't be made
+	if (shader)
+		shaders[key] = shader;
 	return shader;
+}
+
+// Drops the entries of shaders that no pipeline state holds any more, and with them the copies of their SPIR-V
+static void ForgetUnusedShaders()
+{
+	std::lock_guard<std::mutex> lock(shaderMutex);
+	for (auto it = shaders.begin(); it != shaders.end();)
+	{
+		if (it->second.expired())
+			it = shaders.erase(it);
+		else
+			++it;
+	}
 }
 
 void ForgetShaders()
 {
 	std::lock_guard<std::mutex> lock(shaderMutex);
 	shaders.clear();
+}
+
+size_t ShaderCount()
+{
+	std::lock_guard<std::mutex> lock(shaderMutex);
+	return shaders.size();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -205,6 +232,16 @@ static void MarkUsed(id<MTLBinding> binding, bool uses[40])
 		default:
 			break;
 	}
+}
+
+Pipeline::~Pipeline()
+{
+	// The last pipeline state made of a shader takes the shader along, and the cache's entry for it
+	const bool held = vs_ || ps_;
+	vs_.reset();
+	ps_.reset();
+	if (held)
+		ForgetUnusedShaders();
 }
 
 HRESULT Pipeline::Init(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc)
