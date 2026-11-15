@@ -516,8 +516,16 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   probed camera, a spring and the seam side passing beside the camera below eye level, with the side's two tops
   raised by every combination of 0 to 24 float ulps and the camera jittered by up to 0.01 units (1,250 cases,
   plain and 3D floor). The spring must stay the exact quad in every case; before flat silhouettes were rejected,
-  325 cases cut it away. Seg traversal,
-  GPU depth/stencil and Xbox visuals still need separate validation.
+  325 cases cut it away. A spring's 3D model follows its sprite (`HWR_DrawSpringModel`, with the model
+  drawer and the driver's stencil mask stubbed): it is drawn as any model when nothing is recorded, when the
+  spring stands in front of the wall, for another object, and for an always-on-top spring; it isn't drawn,
+  and counts as drawn, inside a block with either driver; half hidden, the wall that cuts the sprite is
+  marked before the model is drawn, the mask is in use during the draw at the current portal level, and the
+  same wall clears its mark afterwards, also when there is no model to draw; without VibeRant, or when a mark
+  can't be drawn, the model is drawn whole with no mask; and a 3D floor side that misses the sprite but
+  comes within twice its size is marked as well. Each of these fails with the matching line of the
+  production code changed. Seg traversal, GPU depth and Xbox visuals still need separate validation;
+  the stencil mask itself is a driver scene (`spring-mask`, below).
 - **Shared brightmap textures:** `shared_brightmap_texture`, `shared_brightmap_flat`
   and `shared_brightmap_patch` execute production texture/texture-flat and patch
   collection after the same mipmap was used as a brightmap. Its flag must be clear
@@ -727,6 +735,14 @@ checks incrementing 1 to 2 and restoring 2 to 1. `portal-restore` checks that th
 pass writes entrance depth, and `portal-depth` checks that the fullscreen far-depth
 reset only touches the aperture, allowing farther child geometry while preserving
 outside occlusion. `portal-plane` checks world-plane clipping and disabling the plane.
+The spring mask scenes cover the stencil bit that hides a spring's 3D model behind the sides
+Software draws over the spring's sprite: `spring-mask` marks half the screen from behind a
+nearer wall, without changing color, and a draw that uses the mask skips that half;
+`spring-mask-unused` checks that the mark hides nothing while the mask is out of use and is
+still there afterwards; `spring-mask-clear` checks that the same polygon clears it and that
+marking wrote no depth; `spring-mask-portal` checks that a masked draw inside a portal also
+stays inside the aperture, and that clearing the mark leaves the portal level and the
+aperture's restore as they were.
 These pixel scenes use production driver
 entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
 and fog/water portal interactions still require further testing.

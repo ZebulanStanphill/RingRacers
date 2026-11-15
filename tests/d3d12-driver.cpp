@@ -275,7 +275,8 @@ static void validate(ID3D12InfoQueue *queue)
 static const char *const kOracles[]={
     "startup-present", "clear", "readrect", "surface-probe", "surface-probe-pixel", "surface-probe-quiet",
     "opaque", "translucent", "additive", "subtract", "reverse", "multiply", "environment", "masked", "invert", "fog",
-    "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane", "indexed", "line",
+    "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane",
+    "spring-mask", "spring-mask-unused", "spring-mask-clear", "spring-mask-portal", "indexed", "line",
     "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect", "scaling-fit",
@@ -489,6 +490,52 @@ int main(int argc,char **argv) {
             D3D12_SetPortalPlane(nullptr); draw(parent,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("portal-plane",p,16,32,parent); check("portal-plane",p,48,32,parent); }
             D3D12_SetPortalStencil(0); D3D12_FinishUpdate(0);
+        }
+        // A spring's model is hidden behind the silhouettes Software draws over the spring's sprite. The mask is the
+        // stencil buffer's top bit: set over a polygon whatever its depth, without color or depth of its own, honored
+        // only while it is in use, cleared by the same polygon, and independent of the portal level.
+        {
+            const RGB background={48,80,112}, wall={32,220,96}, model={224,64,32}, later={24,180,220}, child={200,200,40};
+            auto half=[](float x0,float x1,float z) {
+                return std::array<FOutVector,4>{{{x0*z,-z,z,0,0},{x1*z,-z,z,0,0},{x1*z,z,z,0,0},{x0*z,z,z,0,0}}};
+            };
+            auto mark=[&](const std::array<FOutVector,4> &v,bool set) {
+                if(!D3D12_DrawSpringMask(v.data(),4,set)) throw std::runtime_error("spring mask failed");
+            };
+            // The left half is marked from behind a nearer wall, and from in front of where the model will be.
+            reset(); draw(wall,PF_Occlude,.5f); mark(half(-1,0,1.5f),true);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask",p,16,32,wall); check("spring-mask",p,48,32,wall); }
+            D3D12_UseSpringMask(true,0); draw(model,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask",p,16,32,wall); check("spring-mask",p,48,32,model); }
+            // Out of use, the mask hides nothing; the mark is still there when it is used again.
+            D3D12_UseSpringMask(false,0); draw(later,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-unused",p,16,32,later); check("spring-mask-unused",p,48,32,later); }
+            D3D12_UseSpringMask(true,0); draw(model,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-unused",p,16,32,later); check("spring-mask-unused",p,48,32,model); }
+            // Cleared, the whole model shows; and the marks wrote no depth, so the wall still hides what is behind it.
+            D3D12_UseSpringMask(false,0); mark(half(-1,0,.25f),false);
+            D3D12_UseSpringMask(true,0); draw(wall,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-clear",p,16,32,wall); check("spring-mask-clear",p,48,32,wall); }
+            draw(model,PF_Occlude,.4f);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-clear",p,16,32,model); check("spring-mask-clear",p,48,32,model); }
+            draw(later,PF_Occlude,1.f);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-clear",p,16,32,model); check("spring-mask-clear",p,48,32,model); }
+            D3D12_UseSpringMask(false,0);
+            // Inside a portal the model stays inside the aperture as well, and clearing the mark leaves the level as it was.
+            reset(); const std::array<FOutVector,4> aperture=half(-.6f,.6f,.25f);
+            std::array<FOutVector,4> opening=aperture; opening[0].y=opening[1].y=-.6f*.25f; opening[2].y=opening[3].y=.6f*.25f;
+            if(!D3D12_DrawPortalAperture(opening.data(),0,false)) throw std::runtime_error("portal aperture failed");
+            D3D12_SetPortalStencil(1); draw(child,PF_NoDepthTest); mark(half(-1,0,1.5f),true);
+            D3D12_UseSpringMask(true,1); draw(model,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-portal",p,24,32,child); check("spring-mask-portal",p,40,32,model);
+              check("spring-mask-portal",p,8,32,background); check("spring-mask-portal",p,56,32,background); }
+            D3D12_UseSpringMask(false,1); mark(half(-1,0,1.5f),false); draw(later,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-portal",p,24,32,later); check("spring-mask-portal",p,40,32,later);
+              check("spring-mask-portal",p,8,32,background); check("spring-mask-portal",p,56,32,background); }
+            D3D12_SetPortalStencil(0); if(!D3D12_DrawPortalAperture(opening.data(),0,true)) throw std::runtime_error("portal aperture failed");
+            draw(wall,PF_NoDepthTest);
+            { auto p=pixels(); validate(validationQueue); check("spring-mask-portal",p,8,32,wall); check("spring-mask-portal",p,32,32,wall); }
+            D3D12_FinishUpdate(0);
         }
         reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expectQuad("indexed",{24,180,220});
         reset(); blend(PF_NoDepthTest|PF_NoTexture); F2DCoord p1={-.75f,0},p2={.75f,0}; auto ls=surface({240,160,80}); line(&p1,&p2,ls.PolyColor);

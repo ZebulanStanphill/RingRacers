@@ -3206,6 +3206,46 @@ boolean D3D12_DrawPortalAperture(const FOutVector *v, INT32 level, boolean resto
 	return drawn;
 }
 
+boolean D3D12_DrawSpringMask(const FOutVector *v, INT32 count, boolean set)
+{
+	enum { kMaxCorners = 32, kSpringMaskBit = 0x80 };
+	if (!CanDraw() || count < 3 || count > kMaxCorners)
+		return false;
+	FOutVector triangles[(kMaxCorners - 2) * 3];
+	UINT n = 0;
+	for (INT32 i = 1; i + 1 < count; i++)
+	{
+		triangles[n++] = v[0];
+		triangles[n++] = v[i];
+		triangles[n++] = v[i + 1];
+	}
+	const GLState saved = g_gl;
+	const int program = g_program;
+	g_gl.stencil = g_gl.depthTest = g_gl.depthAlways = true;
+	g_gl.depthMask = false;
+	g_gl.stencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	g_gl.stencilFail = g_gl.stencilDepthFail = D3D12_STENCIL_OP_KEEP;
+	g_gl.stencilPass = D3D12_STENCIL_OP_REPLACE;
+	g_gl.stencilRef = set ? kSpringMaskBit : 0;
+	g_gl.stencilReadMask = 255;
+	g_gl.stencilWriteMask = kSpringMaskBit;
+	g_gl.colorWriteMask = 0;
+	g_gl.cullFace = g_gl.polygonOffset = g_gl.alphaTest = g_gl.texture2D = g_gl.blend = false;
+	g_program = -1;
+	const bool drawn = DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, triangles, n, nullptr, 0);
+	g_gl = saved;
+	g_program = program;
+	return drawn;
+}
+
+void D3D12_UseSpringMask(boolean on, INT32 level)
+{
+	// The portal test already asks for the whole stencil value to equal the level, which a marked pixel's doesn't;
+	// outside portals the same test against level 0 has to be switched on.
+	g_gl.stencil = on || level > 0;
+	g_gl.stencilRef = (UINT8)level;
+}
+
 void D3D12_ResetPortalDepth(INT32 level)
 {
 	if (!CanDraw())

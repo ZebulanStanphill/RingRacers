@@ -119,6 +119,8 @@ boolean HWR_DrawModel(gl_vissprite_t *spr) {
     if (modelSucceeds) { ++modelsDrawn; capture(spr); }
     return modelSucceeds;
 }
+// What a spring's model adds to this (hidden or masked as its sprite is cut) is spring_clip's subject.
+static boolean HWR_DrawSpringModel(gl_vissprite_t *spr) { return HWR_DrawModel(spr); }
 
 #ifdef __USE_C_FIXEDMUL__
 @@FIXED_MUL@@

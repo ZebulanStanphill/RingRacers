@@ -627,6 +627,8 @@ def generate(engine, output):
             "// End [UWP] spring silhouette geometry."),
         "DRAW_SPRITE": hardware.function("HWR_SpriteUV") + draw_sprite,
         "ROUTES": routes,
+        "MODEL": hardware.section("// How a spring's 3D model is to be drawn, from what Software leaves of the spring's sprite.",
+            "static void HWR_DrawVisSprite(gl_vissprite_t *spr)"),
     }, output / "spring_clip.cpp")
 
     render(templates / "distortion.cpp.in", {

@@ -48,6 +48,16 @@ static float gl_viewx=0,gl_viewy=0,gl_viewz=0;
 #include <cstdarg>
 static int probeLines;
 void I_OutputMsg(const char *fmt,...){++probeLines;va_list ap;va_start(ap,fmt);std::vprintf(fmt,ap);va_end(ap);}
+// Which hardware driver draws: the stencil marks for a spring's model are VibeRant's.
+static bool viberant=true;
+#undef HWR_D3D12
+#define HWR_D3D12() viberant
+struct Mark { std::vector<FOutVector> v; bool set; };
+static std::vector<Mark> marks;
+static bool markFails;
+boolean D3D12_DrawSpringMask(const FOutVector *v,INT32 n,boolean set){
+    assert(n>=3&&n<=32);if(markFails)return false;marks.push_back({{v,v+n},set!=0});return true;
+}
 @@HELPERS@@
 
 // Dependencies of the entire production draw entry. Geometry is supplied as a
@@ -82,6 +92,18 @@ void HWR_GetSpriteBrightmap(patch_t *){}
 fixed_t P_GetFFloorTopZAt(const ffloor_t *f,fixed_t,fixed_t){return *f->topheight;}
 fixed_t P_GetFFloorBottomZAt(const ffloor_t *f,fixed_t,fixed_t){return *f->bottomheight;}
 @@ROUTES@@
+static INT32 hwr_portallevel;
+static std::vector<std::pair<bool,INT32>> maskUse;
+void D3D12_UseSpringMask(boolean on,INT32 level){maskUse.push_back({on!=0,level});}
+static int modelDraws;
+static bool modelExists=true,maskUsedAtDraw;
+static size_t marksAtDraw;
+boolean HWR_DrawModel(gl_vissprite_t *){
+    maskUsedAtDraw=!maskUse.empty()&&maskUse.back().first;marksAtDraw=marks.size();
+    if(!modelExists)return false;
+    ++modelDraws;return true;
+}
+@@MODEL@@
 
 struct Vec { double x,y,z; };
 static Vec Sub(Vec a,Vec b){return {a.x-b.x,a.y-b.y,a.z-b.z};}
@@ -763,9 +785,68 @@ static void Sweep(int views){
     }
     assert(drawn);
 }
+// A spring's 3D model follows the spring's sprite: not drawn when nothing of the sprite is left, drawn behind
+// stencil marks of the sides that cut the sprite when part of it is left, and otherwise drawn as any model.
+static bool SameQuad(const std::vector<FOutVector> &v,const Quad &q){return v.size()==4&&std::memcmp(v.data(),q.data(),sizeof q)==0;}
+static boolean DrawModelEntry(){
+    marks.clear();maskUse.clear();modelDraws=0;maskUsedAtDraw=false;marksAtDraw=0;
+    int n=vertexCalls;boolean drawn=HWR_DrawSpringModel(&spr);
+    assert(vertexCalls<=n+1&&draws.empty()); // the sprite itself isn't drawn here
+    return drawn;
+}
+static void Models(){
+    auto wall=Wall(8,-8,8,8),side=Wall(8,8,20,8),edge=Wall(8,-8,8,0),front=Wall(14,-8,14,8);auto fof=Solid();
+    // Nothing recorded, and a wall the spring stands in front of: an ordinary model.
+    Begin();assert(DrawModelEntry()&&modelDraws==1&&marks.empty()&&maskUse.empty());
+    Begin();HWR_AddSpringWall(front.data(),nullptr);assert(DrawModelEntry()&&modelDraws==1&&marks.empty()&&maskUse.empty());
+    // Inside a block, as in Metropolis's bumpers: nothing of the sprite is left, so the model isn't drawn at all.
+    // It counts as drawn, so that the sprite isn't drawn in its place.
+    for(bool thick:{false,true})for(bool d3d12:{true,false}){
+        Begin();viberant=d3d12;HWR_AddSpringWall(wall.data(),thick?&fof:nullptr);HWR_AddSpringWall(side.data(),thick?&fof:nullptr);
+        assert(DrawModelEntry()&&modelDraws==0&&marks.empty()&&maskUse.empty());viberant=true;
+    }
+    // What isn't clipped as a sprite isn't hidden as a model: another object, and a spring drawn over everything.
+    Begin();thing.flags=0;HWR_AddSpringWall(wall.data(),nullptr);HWR_AddSpringWall(side.data(),nullptr);
+    assert(DrawModelEntry()&&modelDraws==1&&marks.empty()&&maskUse.empty());
+    Begin();thing.renderflags=RF_ALWAYSONTOP;HWR_AddSpringWall(wall.data(),nullptr);HWR_AddSpringWall(side.data(),nullptr);
+    assert(DrawModelEntry()&&modelDraws==1&&marks.empty()&&maskUse.empty());
+    // Half of the sprite is left: the wall that cuts it is marked before the model is drawn, the mask is in use
+    // while it is, and afterwards the mask is out of use and the same wall has cleared its mark.
+    for(INT32 level:{0,2}){
+        Begin();hwr_portallevel=level;HWR_AddSpringWall(edge.data(),nullptr);
+        assert(DrawModelEntry()&&modelDraws==1&&maskUsedAtDraw&&marksAtDraw==1);
+        assert(marks.size()==2&&marks[0].set&&!marks[1].set&&SameQuad(marks[0].v,edge)&&SameQuad(marks[1].v,edge));
+        assert(maskUse.size()==2&&maskUse[0]==std::make_pair(true,level)&&maskUse[1]==std::make_pair(false,level));
+        hwr_portallevel=0;
+    }
+    // Without a model to draw, the marks are cleared all the same and the caller draws the sprite.
+    Begin();modelExists=false;HWR_AddSpringWall(edge.data(),nullptr);
+    assert(!DrawModelEntry()&&modelDraws==0&&marks.size()==2&&marks[0].set&&!marks[1].set&&maskUse.size()==2&&!maskUse[1].first);
+    modelExists=true;
+    // Another hardware driver has no mask, and a mark that can't be drawn leaves none in use: the model is drawn whole.
+    Begin();viberant=false;HWR_AddSpringWall(edge.data(),nullptr);
+    assert(DrawModelEntry()&&modelDraws==1&&marks.empty()&&maskUse.empty());viberant=true;
+    Begin();markFails=true;HWR_AddSpringWall(edge.data(),nullptr);
+    assert(DrawModelEntry()&&modelDraws==1&&marks.empty()&&maskUse.empty());markFails=false;
+    // A model can be larger than its sprite, so a side that Software draws over the spring is marked when it comes
+    // within twice the sprite's size: here a 3D floor side above the sprite's left half, which the sprite itself misses.
+    {
+        auto left=Wall(12,-8,12,0),above=Wall(12,-8,12,0,3,3,5,5);
+        Begin(20);HWR_AddSpringWall(above.data(),&fof);HWR_AddSpringWall(left.data(),&fof);
+        HWR_DrawSprite(&spr);assert(!draws.empty());
+        for(auto &d:draws)assert(d.v.size()==3); // the sprite is cut by the side beside it alone
+        draws.clear();hwr_numspringwalls=0;HWR_AddSpringWall(above.data(),&fof);
+        HWR_DrawSprite(&spr);ExactQuad();draws.clear();
+        hwr_numspringwalls=0;HWR_AddSpringWall(above.data(),&fof);HWR_AddSpringWall(left.data(),&fof);
+        assert(DrawModelEntry()&&modelDraws==1&&maskUsedAtDraw&&marksAtDraw==2&&marks.size()==4);
+        assert(SameQuad(marks[0].v,above)&&SameQuad(marks[1].v,left)&&marks[0].set&&marks[1].set);
+        assert(SameQuad(marks[2].v,above)&&SameQuad(marks[3].v,left)&&!marks[2].set&&!marks[3].set);
+    }
+    PurgeLevel();
+}
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return 2;
-    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
+    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();Models();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }

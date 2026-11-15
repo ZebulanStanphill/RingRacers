@@ -899,38 +899,43 @@ static void HWR_RollSurface(FSurfaceInfo *surf, gl_vissprite_t *spr)
 }
 #endif
 
-static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
-	FBITFIELD flags, INT32 shader, gl_vissprite_t *spr)
-{
+// A spring's 3D model is hidden where Software hides the spring's sprite: the sides that cut the sprite are marked in
+// the stencil buffer while the model is drawn (see HWR_DrawSpringModel). These are the sides marked for this model.
 #ifdef HAVE_D3D12
-	if (HWR_D3D12() && spr->rollgeometry)
-	{
-		HWR_RollSurface(surf, spr);
-		flags |= PF_RollSprite;
-	}
+#define HWR_SPRINGMAXMASKS 64
+static size_t hwr_springmasks[HWR_SPRINGMAXMASKS];
+static size_t hwr_numspringmasks;
 #endif
+
+// Subtracts from `area` the silhouette of every side Software would draw over the spring whose sprite is `quad`
+// (`area` is the quad itself for a sprite). Returns false when the spring is left alone or nothing cuts the area;
+// otherwise *piececount triangles of it remain in hwr_springpieces[*piecebuffer]. With `mask`, the sides that cut
+// the area are also marked in the stencil buffer and listed in hwr_springmasks.
+static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area, FBITFIELD flags, gl_vissprite_t *spr,
+	boolean mask, INT32 *piecebuffer, size_t *piececount)
+{
 	hwr_springview_t view;
 	size_t w, i, count = 0, farthestthick;
 	INT32 buffer = 0;
 	boolean changed = false;
+	const boolean probe = hwr_springprobe && !mask; // the marking pass repeats one already logged
 	if (!hwr_numspringwalls || !(spr->mobj->flags & MF_SPRING) || (flags & PF_NoDepthTest)
 		|| !HWR_SpringSetView(&view, quad, spr->gx, spr->gy, spr->gz, spr->gzt))
 	{
-		if (hwr_springprobe && (spr->mobj->flags & MF_SPRING))
+		if (probe && (spr->mobj->flags & MF_SPRING))
 			I_OutputMsg("UWP spring probe: type=%d at (%.1f,%.1f,%.1f) left alone: entries=%u flags=0x%lx\n", (int)spr->mobj->type,
 				FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z),
 				(unsigned)hwr_numspringwalls, (unsigned long)flags);
-		HWR_ProcessPolygon(surf, quad, 4, flags, shader, false);
-		return;
+		return false;
 	}
-	HWR_SpringAppend(buffer, &count, quad, 4);
+	HWR_SpringAppend(buffer, &count, area, 4);
 	// R_CreateDrawNodes inserts the sprite before the farthest 3D floor side or plane it sorts behind, so every
 	// one drawn after that (nearer in the BSP order, recorded earlier here) paints over it as well.
 	farthestthick = SIZE_MAX;
 	for (w = 0; w < hwr_numspringwalls; w++)
 		if (hwr_springwalls[w].thick && HWR_SpringWallApplies(&hwr_springwalls[w], &view))
 			farthestthick = w;
-	if (hwr_springprobe)
+	if (probe)
 		I_OutputMsg("UWP spring probe: type=%d at (%.1f,%.1f,%.1f) gz=%.1f gzt=%.1f quad=(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) depth=%.2f entries=%u farthestthick=%ld\n",
 			(int)spr->mobj->type, FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z), spr->gz, spr->gzt,
 			quad[0].x, quad[0].z, quad[0].y, quad[1].x, quad[1].z, quad[1].y, quad[2].x, quad[2].z, quad[2].y, quad[3].x, quad[3].z, quad[3].y,
@@ -944,7 +949,7 @@ static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
 			: HWR_SpringWallApplies(&hwr_springwalls[w], &view), cut = false;
 		if (!subtracted || !(edges = HWR_SpringWallPlanes(&hwr_springwalls[w], planes)))
 		{
-			if (hwr_springprobe && HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view))
+			if (probe && HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view))
 				HWR_SpringProbeEntry(w, &hwr_springwalls[w], HWR_SpringWallApplies(&hwr_springwalls[w], &view), subtracted, false);
 			continue;
 		}
@@ -995,11 +1000,16 @@ static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
 		count = nextcount;
 		if (count > hwr_springpeakpieces)
 			hwr_springpeakpieces = count;
-		if (hwr_springprobe && (cut || HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view)))
+#ifdef HAVE_D3D12
+		if (mask && cut && hwr_numspringmasks < HWR_SPRINGMAXMASKS
+			&& D3D12_DrawSpringMask(hwr_springwalls[w].v, hwr_springwalls[w].numverts, true))
+			hwr_springmasks[hwr_numspringmasks++] = w;
+#endif
+		if (probe && (cut || HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view)))
 			HWR_SpringProbeEntry(w, &hwr_springwalls[w], hwr_springwalls[w].thick
 				? HWR_SpringWallApplies(&hwr_springwalls[w], &view) : true, true, cut);
 	}
-	if (hwr_springprobe)
+	if (probe)
 	{
 		double left = 0;
 		if (!changed)
@@ -1010,12 +1020,30 @@ static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
 		I_OutputMsg("UWP spring result: pieces=%u changed=%d stopped=%d area=%.6f of %.6f\n", (unsigned)(changed ? count : 1),
 			(int)changed, (int)(count >= HWR_SPRINGMAXPIECES), left, HWR_SpringScreenArea(quad, 4));
 	}
-	if (!changed)
+	*piecebuffer = buffer;
+	*piececount = count;
+	return changed;
+}
+
+static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
+	FBITFIELD flags, INT32 shader, gl_vissprite_t *spr)
+{
+	size_t i, count;
+	INT32 buffer;
+#ifdef HAVE_D3D12
+	if (HWR_D3D12() && spr->rollgeometry)
+	{
+		HWR_RollSurface(surf, spr);
+		flags |= PF_RollSprite;
+	}
+#endif
+	if (!HWR_SpringSubtract(quad, quad, flags, spr, false, &buffer, &count))
 		HWR_ProcessPolygon(surf, quad, 4, flags, shader, false);
 	else
 		for (i = 0; i < count; i++)
 			HWR_ProcessPolygon(surf, hwr_springpieces[buffer][i].v, 3, flags, shader, false);
 }
+
 // End [UWP] spring silhouette geometry.
 #ifdef _UWP
 static boolean hwr_springprobearmed; // gr_springprobe was requested; the next main view logs its springs
@@ -6941,6 +6969,89 @@ static void HWR_DrawSpriteShadow(gl_vissprite_t *spr, boolean *skipshadow)
 	}
 }
 
+// How a spring's 3D model is to be drawn, from what Software leaves of the spring's sprite.
+enum
+{
+	HWR_SPRINGMODEL_WHOLE, // not a spring, or nothing is drawn over its sprite
+	HWR_SPRINGMODEL_HIDDEN, // nothing of its sprite is left
+	HWR_SPRINGMODEL_MASKED, // part of its sprite is left: the sides drawn over it are marked in the stencil buffer
+};
+
+// Software has no models, and hides a spring inside a wall by clipping its sprite (see above). A model there would
+// show wherever it pokes through the wall, as the tips of the springs in Metropolis's bumpers did. So a spring's model
+// follows its sprite: hidden when nothing of the sprite is left, and otherwise hidden behind the same silhouettes that
+// cut the sprite. VibeRant marks those silhouettes in the stencil buffer; elsewhere a partly hidden spring's model is
+// drawn whole.
+static INT32 HWR_SpringModelBegin(gl_vissprite_t *spr)
+{
+	FOutVector quad[4];
+	size_t count;
+	INT32 buffer;
+	FBITFIELD flags = 0;
+	if (!hwr_numspringwalls || spr->precip || !spr->mobj || !(spr->mobj->flags & MF_SPRING) || R_ThingIsFloorSprite(spr->mobj))
+		return HWR_SPRINGMODEL_WHOLE;
+	if (cv_debugrender_spriteclip.value || (spr->mobj->renderflags & RF_ALWAYSONTOP))
+		flags |= PF_NoDepthTest; // as HWR_DrawSprite does for the sprite
+	HWR_SpriteVertices(spr, quad);
+	if (!HWR_SpringSubtract(quad, quad, flags, spr, false, &buffer, &count))
+		return HWR_SPRINGMODEL_WHOLE;
+	if (!count)
+		return HWR_SPRINGMODEL_HIDDEN;
+#ifdef HAVE_D3D12
+	if (HWR_D3D12())
+	{
+		// A model can be wider and taller than its sprite: mark what cuts an area twice the sprite's size.
+		FOutVector area[4];
+		float x = 0, y = 0, z = 0;
+		INT32 i;
+		for (i = 0; i < 4; i++)
+		{
+			x += quad[i].x / 4; y += quad[i].y / 4; z += quad[i].z / 4;
+		}
+		for (i = 0; i < 4; i++)
+		{
+			area[i] = quad[i];
+			area[i].x = x + (quad[i].x - x) * 2; area[i].y = y + (quad[i].y - y) * 2; area[i].z = z + (quad[i].z - z) * 2;
+		}
+		hwr_numspringmasks = 0;
+		HWR_SpringSubtract(quad, area, flags, spr, true, &buffer, &count);
+		if (hwr_numspringmasks)
+		{
+			D3D12_UseSpringMask(true, hwr_portallevel);
+			return HWR_SPRINGMODEL_MASKED;
+		}
+	}
+#endif
+	return HWR_SPRINGMODEL_WHOLE;
+}
+
+static void HWR_SpringModelEnd(INT32 drawn)
+{
+#ifdef HAVE_D3D12
+	size_t i;
+	if (drawn != HWR_SPRINGMODEL_MASKED)
+		return;
+	D3D12_UseSpringMask(false, hwr_portallevel);
+	for (i = 0; i < hwr_numspringmasks; i++)
+		D3D12_DrawSpringMask(hwr_springwalls[hwr_springmasks[i]].v, hwr_springwalls[hwr_springmasks[i]].numverts, false);
+	hwr_numspringmasks = 0;
+#else
+	(void)drawn;
+#endif
+}
+
+// Draws a sprite's 3D model, following the sprite where Software hides a spring. False if there is no model to draw.
+static boolean HWR_DrawSpringModel(gl_vissprite_t *spr)
+{
+	const INT32 spring = HWR_SpringModelBegin(spr);
+	boolean drawn;
+	if (spring == HWR_SPRINGMODEL_HIDDEN)
+		return true;
+	drawn = HWR_DrawModel(spr);
+	HWR_SpringModelEnd(spring);
+	return drawn;
+}
+
 static void HWR_DrawVisSprite(gl_vissprite_t *spr)
 {
 	if (spr->bbox)
@@ -6959,7 +7070,7 @@ static void HWR_DrawVisSprite(gl_vissprite_t *spr)
 				HWR_DrawSprite(spr);
 			else
 			{
-				if (!HWR_DrawModel(spr))
+				if (!HWR_DrawSpringModel(spr))
 					HWR_DrawSprite(spr);
 			}
 		}
@@ -6969,7 +7080,7 @@ static void HWR_DrawVisSprite(gl_vissprite_t *spr)
 				HWR_DrawSprite(spr);
 			else
 			{
-				if (!HWR_DrawModel(spr))
+				if (!HWR_DrawSpringModel(spr))
 					HWR_DrawSprite(spr);
 			}
 		}

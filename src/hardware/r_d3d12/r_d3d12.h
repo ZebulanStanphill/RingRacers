@@ -64,6 +64,11 @@ void D3D12_SetPortalStencil(INT32 level);
 boolean D3D12_PortalsSupported(void);
 boolean D3D12_DrawPortalAperture(const FOutVector *vertices, INT32 level, boolean restore);
 void D3D12_ResetPortalDepth(INT32 level);
+// The spring mask is the stencil buffer's top bit, which portal levels never reach. DrawSpringMask sets or clears it
+// over a convex polygon at any depth, writing no color or depth; while UseSpringMask is on, drawing skips the marked
+// pixels (and stays inside the portal level, as always).
+boolean D3D12_DrawSpringMask(const FOutVector *vertices, INT32 count, boolean set);
+void D3D12_UseSpringMask(boolean on, INT32 level);
 void D3D12_FillVoid(void);
 
 boolean D3D12_ApplyFadeMap(const UINT8 *table, size_t size, UINT32 tableId, UINT8 strength);
