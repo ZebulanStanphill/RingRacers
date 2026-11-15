@@ -1150,6 +1150,20 @@ differ:
   the texture and the layer, which C++ can't. If the layer gives no drawable, the
   test says so in capitals and goes on. What a window shows is not tested here: the
   presenter (`metal/mtl_present.mm`) is part of the game, not of this executable.
+- **A failed command buffer** gets four runs of its own before the negative
+  controls (`metal-controls.py`, `metal-driver --metal-command-buffer-error
+  <code>`), since nothing goes on after one. Nothing here can make Metal fail a
+  command buffer, so after one frame that works, mtl12 is told to treat the next
+  submission's as failed with a `MTLCommandBufferError` code
+  (`FailNextSubmissionForTest`): a timeout (2), a page fault (3), out of memory
+  (8), and the device removed (11). The wait for that submission must fail, the
+  fence must read as `UINT64_MAX`, the device must say it was removed with the
+  reason that code stands for, the log must have the failure, and the frame that
+  follows must stop the game: the driver calls `I_Error` with the reason, which
+  exits with 1, and the script requires that exit, the run's
+  `METAL_FAILURE_REACHED_DRIVER` line, and the error's text. With mtl12 as it was
+  before (only the device removed counted; not kept in the tree) the run for a
+  timeout failed with "the wait for its fence succeeded".
 - **The shader cache** is checked after the add-on shader scenes, outside the
   registry as well: sixteen add-on shaders are each compiled, drawn with (the
   pixel is checked), and cleaned, and once the frames that used them are done,

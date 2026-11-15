@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run WARP's code-under-test negative controls against the Metal harness (see vulkan-controls.py)."""
+"""Run WARP's code-under-test negative controls against the Metal harness (see vulkan-controls.py), and, before
+them, the runs that check what a failed Metal command buffer is to the driver."""
 import pathlib
 import subprocess
 import sys
@@ -26,6 +27,22 @@ def compile_source(path):
                     "--parallel", "3"], check=True)
 
 
+def command_buffer_error(code, reason):
+    """A command buffer that Metal fails with this MTLCommandBufferError code (mtl12 is told to treat the next one as
+    failed) must reach the driver as a removed device with this reason, and the frame after it must stop the game:
+    the test's I_Error exits with 1."""
+    result = subprocess.run([str(exe), "--metal-command-buffer-error", str(code)],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, timeout=120)
+    print(result.stdout, end="")
+    if (result.returncode != 1 or f"METAL_FAILURE_REACHED_DRIVER: {code} as {reason}" not in result.stdout
+            or f"device stopped working ({reason})" not in result.stdout):
+        raise RuntimeError(f"command buffer error {code}: expected the game to stop with {reason}, exit {result.returncode}")
+
+
+# A timeout, a page fault, out of memory, and the device removed
+for code, reason in ((2, "0x887A0006"), (3, "0x887A0007"), (8, "0x887A0007"), (11, "0x887A0005")):
+    command_buffer_error(code, reason)
 reject("custom-shader-nocustom")
 controls = [
     ("water-refraction", "WaterBackgroundOffset(i.pos.w, u_leveltime)",

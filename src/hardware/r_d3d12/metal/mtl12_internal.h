@@ -466,6 +466,7 @@ struct Context
 	// How many draws a pass, and how many copies a blit encoder, may hold before a list ends it and goes on in another;
 	// 0 for no limit. Set for Apple's paravirtual GPU (see CreateDevice).
 	unsigned encoderDraws = 0, encoderCopies = 0;
+	int failNextSubmission = 0; // FailNextSubmissionForTest's
 	char description[512] = {};
 
 	// Buffers by the made-up address ranges root CBVs and buffer views name them with
@@ -484,8 +485,11 @@ struct Completions
 	uint64_t last = 0; // the newest submission
 	std::set<uint64_t> running; // submissions whose command buffers haven't completed
 	std::vector<std::string> messages; // for the log, which only the driver's thread writes
-	std::atomic<bool> lost{false};
+	// S_OK until a command buffer fails, then what the device says of itself (GetDeviceRemovedReason): from then on
+	// fences read as UINT64_MAX and waits fail, as when Direct3D 12 removes a device
+	std::atomic<HRESULT> failure{S_OK};
 	std::atomic<uint64_t> errors{0};
+	bool Failed() const { return failure != S_OK; }
 
 	// Every submission up to this one is done. Call with the mutex held.
 	uint64_t Completed() const { return running.empty() ? last : *running.begin() - 1; }

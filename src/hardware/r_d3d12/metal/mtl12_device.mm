@@ -48,7 +48,12 @@ HRESULT Unimplemented(const char *method)
 
 bool DeviceLost()
 {
-	return completions.lost;
+	return completions.Failed();
+}
+
+void FailNextSubmissionForTest(int code)
+{
+	g.failNextSubmission = code;
 }
 
 uint64_t ValidationErrors()
@@ -100,17 +105,46 @@ static void Note(const std::string &message)
 		completions.messages.push_back(message);
 }
 
-// Runs on a thread of Metal's when a command buffer has finished, in success or not
-static void Completed(id<MTLCommandBuffer> buffer, uint64_t submission)
+// What a failed command buffer is to the driver. Direct3D 12 has one way for the GPU's work to fail, the device being
+// removed, with a reason: so has mtl12. A command buffer that failed did some part of its uploads, draws, and copies
+// and not the rest, and nothing says which, so there is no going on from any of Metal's errors.
+static HRESULT RemovalReason(NSError *error)
+{
+	if (![error.domain isEqualToString:MTLCommandBufferErrorDomain])
+		return DXGI_ERROR_DEVICE_RESET;
+	// By number: the macOS 27 SDK deprecates some of the names
+	switch (error.code)
+	{
+		case 11: return DXGI_ERROR_DEVICE_REMOVED; // MTLCommandBufferErrorDeviceRemoved
+		case 1: return DXGI_ERROR_DRIVER_INTERNAL_ERROR; // Internal
+		case 2: // Timeout
+		case 4: // AccessRevoked: the system took the device away after too many timeouts
+		case 7: // NotPermitted
+			return DXGI_ERROR_DEVICE_HUNG;
+		default: // a page fault, out of memory, an invalid resource, ...
+			return DXGI_ERROR_DEVICE_RESET;
+	}
+}
+
+// Runs on a thread of Metal's when a command buffer has finished, in success or not. injected: a
+// MTLCommandBufferError code to fail with although Metal reported none (FailNextSubmissionForTest).
+static void Completed(id<MTLCommandBuffer> buffer, uint64_t submission, int injected)
 {
 	NSError *error = buffer.error;
+	if (!error && injected)
+		error = [NSError errorWithDomain:MTLCommandBufferErrorDomain code:injected
+			userInfo:@{NSLocalizedDescriptionKey: @"a failure injected by a test"}];
 	if (error)
 	{
 		completions.errors++;
-		if ([error.domain isEqualToString:MTLCommandBufferErrorDomain] && error.code == MTLCommandBufferErrorDeviceRemoved)
-			completions.lost = true;
+		// The first failure is the reason the device gives
+		HRESULT none = S_OK;
+		completions.failure.compare_exchange_strong(none, RemovalReason(error));
+		char code[96];
+		snprintf(code, sizeof code, " (%s %ld)", error.domain.UTF8String ?: "?", (long)error.code);
 		std::string message = "a command buffer failed: ";
 		message += error.localizedDescription.UTF8String ?: "(no description)";
+		message += code;
 		if (@available(macOS 11.0, *))
 		{
 			NSArray<id<MTLCommandBufferEncoderInfo>> *encoders = error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
@@ -135,10 +169,11 @@ static void Completed(id<MTLCommandBuffer> buffer, uint64_t submission)
 			Note(message);
 		}
 	}
-	if (submission)
 	{
+		// Also when it completes no submission: a failure wakes whoever waits for a fence
 		std::lock_guard<std::mutex> lock(completions.mutex);
-		completions.running.erase(submission);
+		if (submission)
+			completions.running.erase(submission);
 		completions.changed.notify_all();
 	}
 }
@@ -171,7 +206,7 @@ void Fence::Pend(UINT64 value, uint64_t submission)
 UINT64 Fence::GetCompletedValue()
 {
 	FlushMessages();
-	if (completions.lost)
+	if (completions.Failed())
 		return UINT64_MAX;
 	if (!pending_.empty())
 	{
@@ -198,7 +233,7 @@ HRESULT Fence::Signal(UINT64 value)
 bool Fence::Wait(UINT64 value, DWORD ms)
 {
 	if (GetCompletedValue() >= value)
-		return !completions.lost;
+		return !completions.Failed();
 	uint64_t submission = 0;
 	for (const Pending &pending : pending_)
 	{
@@ -213,9 +248,9 @@ bool Fence::Wait(UINT64 value, DWORD ms)
 	{
 		std::unique_lock<std::mutex> lock(completions.mutex);
 		completions.changed.wait_for(lock, std::chrono::milliseconds(ms),
-			[submission] { return completions.Completed() >= submission || completions.lost; });
+			[submission] { return completions.Completed() >= submission || completions.Failed(); });
 	}
-	return GetCompletedValue() >= value && !completions.lost;
+	return GetCompletedValue() >= value && !completions.Failed();
 }
 
 bool WaitFence(ID3D12Fence *fence, UINT64 value, DWORD ms)
@@ -258,14 +293,18 @@ void Queue::ExecuteCommandLists(UINT count, ID3D12CommandList *const *lists)
 			if (!buffers.empty())
 				completions.running.insert(submission);
 		}
+		const int injected = buffers.empty() ? 0 : g.failNextSubmission;
+		if (injected)
+			g.failNextSubmission = 0;
 		for (size_t i = 0; i < buffers.size(); i++)
 		{
 			const bool last = i + 1 == buffers.size();
 			const uint64_t completes = last ? submission : 0;
 			if (last && drawable)
 				[buffers[i] presentDrawable:drawable];
+			const int fails = last ? injected : 0;
 			[buffers[i] addCompletedHandler:^(id<MTLCommandBuffer> done) {
-				Completed(done, completes);
+				Completed(done, completes, fails);
 			}];
 			[buffers[i] commit];
 		}
@@ -284,7 +323,7 @@ HRESULT Queue::Signal(ID3D12Fence *fence, UINT64 value)
 		last = completions.last;
 	}
 	static_cast<Fence *>(fence)->Pend(value, last);
-	return completions.lost ? DXGI_ERROR_DEVICE_REMOVED : S_OK;
+	return completions.failure;
 }
 
 HRESULT Queue::GetTimestampFrequency(UINT64 *frequency)
@@ -434,9 +473,10 @@ public:
 		return Finish(new Fence(value), riid, out);
 	}
 
+	// What the first command buffer that failed makes of the device: see RemovalReason
 	HRESULT STDMETHODCALLTYPE GetDeviceRemovedReason() override
 	{
-		return completions.lost ? DXGI_ERROR_DEVICE_REMOVED : S_OK;
+		return completions.failure;
 	}
 
 	HRESULT STDMETHODCALLTYPE CreateQueryHeap(const D3D12_QUERY_HEAP_DESC *desc, REFIID riid, void **out) override
@@ -767,7 +807,7 @@ void DeviceImpl::GetCopyableFootprints(const D3D12_RESOURCE_DESC *desc, UINT fir
 DeviceImpl::~DeviceImpl()
 {
 	// As Direct3D 12 would: the driver has waited for its own work, and nothing may outlive the device
-	if (!WaitIdle(5000) && !completions.lost)
+	if (!WaitIdle(5000) && !completions.Failed())
 		Log("command buffers were still running when the device was released");
 	FlushMessages();
 	@autoreleasepool
@@ -834,7 +874,7 @@ HRESULT CreateDevice(const DeviceOptions &options, ID3D12Device **device, IDXGIA
 		{
 			std::lock_guard<std::mutex> lock(completions.mutex);
 			completions.running.clear();
-			completions.lost = false;
+			completions.failure = S_OK;
 		}
 
 		// Metal's validation wraps the device: MTL_DEBUG_LAYER's object checks every call, and MTL_SHADER_VALIDATION's

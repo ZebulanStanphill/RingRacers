@@ -85,7 +85,10 @@ precise_t I_GetPreciseTime() { LARGE_INTEGER n; QueryPerformanceCounter(&n); ret
 UINT64 I_GetPrecisePrecision() { LARGE_INTEGER n; QueryPerformanceFrequency(&n); return n.QuadPart; }
 void I_OutputMsg(const char *fmt, ...) { char b[8192]; va_list ap; va_start(ap,fmt); vsnprintf(b,sizeof b,fmt,ap); va_end(ap); logs += b; fputs(b,stdout); }
 RGBA_t *pMasterPalette = nullptr;
-void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stderr,fmt,ap); va_end(ap); exit(1); }
+// Set by the run that has the device fail on purpose (Metal's). A real presenter goes on without its frame then, and it is
+// the driver that stops the game, with I_Error: the run ends there, without the destructors of a driver that is still up.
+static bool deviceFailsOnPurpose=false;
+void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stderr,fmt,ap); va_end(ap); if(deviceFailsOnPurpose) { fflush(stdout); fflush(stderr); _Exit(1); } exit(1); }
 }
 namespace rr_d3d12 {
 bool Present_TakeWindow() { return true; }
@@ -94,7 +97,7 @@ void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool, Pl
     presentedFrames++;
     // No transition is necessary: submission leaves the source in its supplied state.
     UINT64 fence = Core_Submit("present");
-    if (!fence || !Core_Wait(fence, 30000, "headless present")) throw std::runtime_error("present failed");
+    if (!fence || !Core_Wait(fence, 30000, "headless present")) { if (deviceFailsOnPurpose) return; throw std::runtime_error("present failed"); }
 }
 void Present_ReleaseWindow() {}
 void Present_Shutdown(bool) {}
@@ -353,6 +356,35 @@ static void metalPresenterHooks() {
         puts("Metal presenter hooks: WrapTexture checked, and a drawable of a layer without a window presented with a submission");
     }
 }
+// A command buffer that Metal fails, for whatever reason, did part of its work and not the rest, so the driver has to see
+// what Direct3D 12 would show it: the wait for that submission fails, the fence reads as UINT64_MAX, the device says it
+// was removed and why, and the frame that follows stops the game. Nothing here can make Metal fail a command buffer, so
+// mtl12 treats the next one as failed with the given MTLCommandBufferError code (FailNextSubmissionForTest). A run of
+// its own (--metal-command-buffer-error <code>, from metal-controls.py), since nothing goes on after it: it must end in
+// I_Error, which exits with 1.
+static int metalFailure=0;
+static void metalFailedCommandBuffer() {
+    const HRESULT reason=metalFailure==11 ? DXGI_ERROR_DEVICE_REMOVED : metalFailure==1 ? DXGI_ERROR_DRIVER_INTERNAL_ERROR
+        : metalFailure==2 || metalFailure==4 || metalFailure==7 ? DXGI_ERROR_DEVICE_HUNG : DXGI_ERROR_DEVICE_RESET;
+    // A frame that works first, with a draw in it: frames that are only a clear aren't presented while the renderer starts
+    reset(); fillRect(-1,1,-1,1,{200,40,16}); D3D12_FinishUpdate(0);
+    if(presentedFrames!=1 || !Core_WaitIdle(30000,"failed command buffer") || Core_DeviceRemoved() || Core_RemovedReason()!=S_OK || rr_mtl12::DeviceLost() || rr_mtl12::ValidationErrors())
+        throw std::runtime_error("Metal failed command buffer: the device wasn't a working one to begin with");
+    reset();
+    rr_mtl12::FailNextSubmissionForTest(metalFailure);
+    const UINT64 fence=Core_Submit("failed command buffer");
+    if(!fence) throw std::runtime_error("Metal failed command buffer: nothing was submitted");
+    if(Core_Wait(fence,30000,"failed command buffer")) throw std::runtime_error("Metal failed command buffer: the wait for its fence succeeded");
+    if(!Core_DeviceRemoved() || !rr_mtl12::DeviceLost()) throw std::runtime_error("Metal failed command buffer: the device doesn't say it was removed");
+    if(Core_RemovedReason()!=reason) { fprintf(stderr,"reason 0x%08X, expected 0x%08X\n",(unsigned)Core_RemovedReason(),(unsigned)reason); throw std::runtime_error("Metal failed command buffer: the device gives another reason"); }
+    if(Core_CompletedFence()!=UINT64_MAX) throw std::runtime_error("Metal failed command buffer: the fence still reads as a value");
+    if(rr_mtl12::ValidationErrors()!=1) throw std::runtime_error("Metal failed command buffer: the failure wasn't counted once");
+    if(logs.find("a command buffer failed: a failure injected by a test")==std::string::npos) throw std::runtime_error("Metal failed command buffer: the log doesn't say so");
+    printf("METAL_FAILURE_REACHED_DRIVER: %d as 0x%08X\n",metalFailure,(unsigned)reason); fflush(stdout);
+    // The driver ends the frame by stopping the game, as it does for a Direct3D 12 device that was removed
+    deviceFailsOnPurpose=true; D3D12_FinishUpdate(0);
+    throw std::runtime_error("Metal failed command buffer: the frame after it didn't stop the game");
+}
 #endif
 // Every scene whose oracle the full run must reach. A scene never reached, or reached but missing here, fails the run, so a
 // renamed, skipped or unlisted oracle can't go unnoticed.
@@ -459,6 +491,9 @@ static void selfTest() {
 }
 int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
+#ifdef HAVE_METAL
+    else if(argc==3 && !strcmp(argv[1],"--metal-command-buffer-error") && atoi(argv[2])>0) metalFailure=atoi(argv[2]);
+#endif
     else if(argc!=1) return 2;
 #ifdef HAVE_D3D12_NATIVE
     ComPtr<ID3D12Debug> debug; ComPtr<ID3D12Debug1> gbv;
@@ -497,6 +532,9 @@ int main(int argc,char **argv) {
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
         // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
         { reset(); D3D12_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
+#ifdef HAVE_METAL
+        if(metalFailure) metalFailedCommandBuffer();
+#endif
         selfTest();
         reset(); expect("clear",{48,80,112});
         reset({0,0,0});

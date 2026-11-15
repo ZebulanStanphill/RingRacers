@@ -95,6 +95,7 @@ is locked.
 | upload and readback heaps, `Map` | buffers in shared storage, mapped for life; other buffers and all textures are private to the GPU |
 | command allocators | nothing: a list takes a command buffer from the queue each time it is reset |
 | fences, `Signal`, waits | a value that completes with the last command buffer of the submission it was signaled after |
+| a removed device | any command buffer that Metal fails (below, "A command buffer that fails") |
 | `D24_UNORM_S8_UINT` | `Depth32Float_Stencil8`: Apple's GPUs have no 24-bit depth, and every Metal device has this format |
 | `IDXGIAdapter3::QueryVideoMemoryInfo` | the device's recommended working set size as the budget and its allocated size as the usage; no adapter if the device recommends nothing |
 | timestamp queries | read as zero. Metal has no timestamp a command list can write between two commands (its counter sample buffers aren't on every device), so the driver's GPU times say 0 ms |
@@ -155,6 +156,25 @@ with, by the classes Metal wrapped it in: `MTLDebugDevice` for the first, and `M
 the counterpart of `-vkdebug`), each command buffer also says which of its passes failed. `rr_mtl12::ValidationErrors()` counts failed command buffers and the faults
 shader validation logs with them, such as a function reading a texture that was never bound. Completion handlers
 run on Metal's threads, so what they have to say is kept and written to the log from the driver's thread.
+
+## A command buffer that fails
+
+Metal reports what went wrong on the GPU per command buffer (`MTLCommandBufferError`): a timeout, a page fault, no
+memory left, an invalid resource, the device removed. Direct3D 12 has one way for the GPU's work to fail, the device
+being removed, and that is what any of them is to the driver: a command buffer that failed did some part of its
+uploads, draws, and copies and not the rest, nothing says which, and the driver's bookkeeping already counts the
+textures as uploaded. From the first failure on, mtl12's fences read as `UINT64_MAX`, waits fail, `Signal` fails, and
+`GetDeviceRemovedReason` gives a reason by Metal's code: `DXGI_ERROR_DEVICE_REMOVED` for the device removed,
+`DXGI_ERROR_DEVICE_HUNG` for a timeout or a device the system took away after too many of them,
+`DXGI_ERROR_DRIVER_INTERNAL_ERROR` for an internal error, and `DXGI_ERROR_DEVICE_RESET` for the rest. The driver
+then ends the frame as it does for a removed Direct3D 12 device, by stopping the game with an error that names the
+reason; the log has Metal's own description and code. There is no recovery short of starting the renderer again,
+which makes a new device.
+
+Before, only the device removed counted. Any other failure was logged and its fence completed as if the work had
+been done, so a readback could return pixels that were never written. No command buffer has failed on any GPU this
+ran on; the driver test has mtl12 treat a command buffer as failed (`FailNextSubmissionForTest`) to check the path
+(`tests/README.md`, "Metal driver harness").
 
 ## Apple's paravirtual GPU
 

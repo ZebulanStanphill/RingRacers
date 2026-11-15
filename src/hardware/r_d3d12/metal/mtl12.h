@@ -45,7 +45,8 @@ HRESULT CreateDevice(const DeviceOptions &options, ID3D12Device **device, IDXGIA
 // layout of shaders.hlsl's RR_ROOT_SIGNATURE built in (../spirv_shader.h's kRoot)
 extern const unsigned char kRootSignature[16];
 
-// Blocks until the GPU has finished everything up to the fence's value, or ms pass. False on a timeout or a lost device.
+// Blocks until the GPU has finished everything up to the fence's value, or ms pass. False on a timeout or once a
+// command buffer has failed.
 bool WaitFence(ID3D12Fence *fence, UINT64 value, DWORD ms);
 
 // "name, Metal" of the device in use
@@ -56,7 +57,10 @@ const char *DeviceDescription();
 // stops the program where it happens.
 uint64_t ValidationErrors();
 
-// True once a command buffer has failed because the device was removed; the device then reports itself removed
+// True once a command buffer has failed, for whatever reason Metal gave (a timeout, a page fault, no memory, the
+// device removed): what it was to do is partly undone, so the device reports itself removed from then on, with a
+// reason by Metal's error (GetDeviceRemovedReason), its fences read as UINT64_MAX, and waits fail. The driver
+// stops the game with an error, as for a Direct3D 12 device that was removed. A new device starts clean.
 bool DeviceLost();
 
 // For the driver test: what mtl12 holds that should go when the driver lets go of it
@@ -65,6 +69,9 @@ struct TestCounts
 	size_t shaders; // compiled Metal functions in the shader cache
 };
 TestCounts CountsForTest();
+// For the driver test: the last command buffer of the next submission completes as if Metal had failed it with this
+// MTLCommandBufferError code
+void FailNextSubmissionForTest(int code);
 
 // For the presenter, which owns the layer and its drawables
 
