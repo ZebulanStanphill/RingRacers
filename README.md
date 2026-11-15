@@ -61,34 +61,55 @@ Integer and 1:1 can provide a sharper picture for certain resolutions, with the 
 
 ## Installing on Xbox
 
-You need a USB drive and a PC to prepare it: Windows, or a Mac or Linux PC with [Xbox Media Drive Helper](https://github.com/ZebulanStanphill/xbox-media-drive-helper).
+You need:
 
-1. Format the drive as NTFS: on Windows, right-click it in File Explorer and choose **Format**; on Linux, use `mkfs.ntfs`; macOS can't format NTFS without third-party software. This erases the drive. A drive that is already NTFS can be used as it is. exFAT and FAT32 have no permissions to set in step 4, and haven't been tried.
-2. Create a folder named `ringracers` at the root of the drive.
-3. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [official v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) into that folder (so you have e.g. `ringracers\bios.pk3` and `ringracers\data\`). Files from other versions won't load. A Mac needs third-party software to write to NTFS; Linux uses the `ntfs3` driver or `ntfs-3g`.
-4. Give apps access to the drive. On Windows, open a Command Prompt as administrator and run these, with `X:` replaced by the drive's letter on the PC (on a large drive they take a while):
+- an Xbox One or Xbox Series console in [Developer Mode](https://learn.microsoft.com/en-us/previous-versions/windows/uwp/xbox-apps/devkit-activation)
+- a USB drive
+- a PC to prepare the drive with: Windows, or a Mac or Linux PC with [Xbox Media Drive Helper](https://github.com/ZebulanStanphill/xbox-media-drive-helper)
 
-   ```
-   icacls X:\ /grant "*S-1-15-2-1:(OI)(CI)F" /t /c
-   icacls X:\ /grant "*S-1-5-11:(OI)(CI)M" /t /c
-   ```
+### Prepare the USB drive
 
-   The game runs in a sandbox, like every app on the Xbox, and Windows lets a sandboxed app open a file only if the file's permissions allow both the app, through "ALL APPLICATION PACKAGES" (`S-1-15-2-1`), and the user it runs as, for example through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already allows Authenticated Users but not ALL APPLICATION PACKAGES, so the first command is the one it needs. The second is for drives prepared some other way, such as our test drive, which allowed only the app side and which the game couldn't open until Authenticated Users was added. `(OI)(CI)` makes files created later, on Windows or by the game, get the same access. On a Mac or Linux PC, Xbox Media Drive Helper's **Prepare for Xbox** makes both grants (skipping the second where the drive already allows the user) and saves a journal that can undo them.
-5. Plug the drive into the Xbox, where it is `E:\`, so the game finds its files in `E:\ringracers`. The Xbox doesn't format a drive it uses for media or change its permissions, so everything the game needs comes from the steps above. A drive of at least 128 GB on USB 3.0 or later makes the Xbox ask how to use it. Choose **Use for media**: **Format storage device** erases it for installed games, after which PCs see it as unformatted. Smaller or slower drives are used for media without asking.
-6. Install the app on your Xbox. Unless you've modded your console somehow, this requires [Dev Mode](https://developer.microsoft.com/en-US/games/partner/signup). Builds come from [GitHub Actions](#github-actions) or a [local build](#xbox-app-on-windows).
-7. Changing the "App type" that Dev Home shows for the game (App or Game) isn't necessary. The package declares the `expandedResources` capability, which Microsoft documents as granting Game Mode resources on Xbox: CPU cores reserved for the app and a memory partition of at least 4 GB, where plain apps get a share of the cores, 1 GB and, on Xbox One, no Direct3D 12. On an Xbox One X with either type selected, the game got Direct3D 12, the same 5 GB memory budget, and the same race speed. The setting does change some behaviour (with Game, controllers are reported twice, which the port's SDL patch handles), so if you do switch it, mention it when reporting a bug.
+1. Format the drive as NTFS, unless it already is. This erases the drive. On Windows, right-click it in File Explorer and choose **Format**. On Linux, use `mkfs.ntfs`. macOS needs third-party software to format or write to NTFS. exFAT and FAT32 drives haven't been tried; they have no file permissions, so step 4 doesn't apply to them.
+2. Create a folder named `ringracers` at the top of the drive.
+3. Extract `Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip` from the [official v2.4 release](https://github.com/KartKrewDev/RingRacers/releases/tag/v2.4) into that folder, so that you have `ringracers\bios.pk3` and `ringracers\data\`. Files from other versions of the game won't load.
+4. Give Xbox apps access to the drive.
+   - On Windows, open a Command Prompt as administrator and run these two commands, with `X:` replaced by the drive's letter. On a large drive they take a while.
+
+     ```
+     icacls X:\ /grant "*S-1-15-2-1:(OI)(CI)F" /t /c
+     icacls X:\ /grant "*S-1-5-11:(OI)(CI)M" /t /c
+     ```
+   - On a Mac or Linux PC, use **Prepare for Xbox** in Xbox Media Drive Helper.
+5. Plug the drive into the Xbox. If the Xbox asks how to use it, choose **Use for media**. **Format storage device** would erase it and turn it into storage for installed games, after which PCs see it as unformatted. The Xbox only asks about drives of at least 128 GB on USB 3.0 or later.
+
+The Xbox calls the drive `E:`, so the game looks for its files in `E:\ringracers`. It keeps your config and saves in `E:\ringracers\ringracers`.
+
+### Install the game
+
+1. Download the `ringracers-uwp` artifact of the latest successful **Build** run from this repository's [Actions](https://github.com/ZebulanStanphill/RingRacers/actions/workflows/build.yml) tab (GitHub asks you to sign in), or [build it yourself](#xbox-app-on-windows). It contains an `.msix` package and a `.cer` certificate.
+2. In Xbox Device Portal, install the `.cer` along with the `.msix`. Each build has a new certificate, so uninstall the game before installing a different build. Your config and saves are on the USB drive and stay.
+3. Start the game. You don't need to change the **App type** that Dev Home shows for it: on an Xbox One X, the game ran the same as an App and as a Game. If the game says at launch that it is running as an app, follow the steps it shows to change the type to Game. If you have changed the type, say so when you report a bug.
+
+### Why step 4 is needed
+
+Every app on the Xbox runs in a sandbox. Windows lets a sandboxed app open a file only if the file's permissions allow both the app and the user it runs as:
+
+- The first command allows the app, through the group "ALL APPLICATION PACKAGES" (`S-1-15-2-1`). A drive formatted by Windows doesn't have this.
+- The second allows the user, through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already has this, but a drive formatted another way may not. The game couldn't open a drive that had only the first grant until the second was added.
+
+`(OI)(CI)` makes files added later get the same access. Xbox Media Drive Helper makes both grants, skips the second where the drive already has it, and saves a journal that can undo them. The Xbox itself doesn't format a media drive or change its permissions.
+
+Files copied onto the drive on Windows inherit these permissions. Files copied from a Mac or Linux PC through NTFS-3G don't: they get NTFS-3G's own default, which leaves out ALL APPLICATION PACKAGES. After copying files that way, do step 4 again (in Xbox Media Drive Helper, prepare the drive again and add to the existing journal).
 
 ### If the game can't use the drive
 
-Every error message the game shows ends with the drives it can see, and is also saved as `E:\ringracers\error.txt` when the drive is writable. Error 5 means access denied and error 2 or 3 means not found:
+Every error message the game shows ends with a list of the drives it can see. The message is also saved as `E:\ringracers\error.txt` if the drive can be written to. In the list, error 5 means access denied, and error 2 or 3 means not found:
 
-- `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Run step 4 again.
-- `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at its root.
-- `E:\ringracers\bios.pk3: error 2`: the folder is there, but the game files aren't in it (step 3).
+- `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Do step 4 again.
+- `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at the top of it (step 2).
+- `E:\ringracers\bios.pk3: error 2`: the folder is there, but the game's files aren't in it (step 3).
 
-Files copied onto the drive from a Mac or Linux PC through NTFS-3G, which most of their NTFS drivers use, don't inherit the drive's permissions: they get NTFS-3G's own default, which leaves out ALL APPLICATION PACKAGES. Run step 4 again after copying files that way; in Xbox Media Drive Helper, prepare the drive again and add to the existing journal. Files copied on Windows inherit the permissions.
-
-If Windows reports errors on the drive, copy `ringracers\ringracers` (your config and saves) off it before letting Windows repair it. A repair moves files it can't put back in place into a `found.000` folder at the root of the drive; on our test drive, that was everything the game had written.
+If Windows says the drive has errors, copy `ringracers\ringracers` (your config and saves) off it before letting Windows repair it. A repair moves files it can't put back in place into a `found.000` folder at the top of the drive. That happened to a drive of mine, and it took everything the game had written.
 
 ## Reporting problems
 
@@ -104,7 +125,7 @@ Report bugs on [this repository's issues](https://github.com/ZebulanStanphill/Ri
 
 Every push runs two workflows:
 
-- **Build** builds the Xbox app on Windows and uploads a `ringracers-uwp` artifact containing a sideloadable `.msix` and its `.cer`. In Xbox Device Portal, install the `.cer` along with the package. The certificate is new for each run, so uninstall the previous build before installing one from a different run.
+- **Build** builds the Xbox app on Windows and uploads it as the `ringracers-uwp` artifact, which [Install the game](#install-the-game) explains how to use.
 - **Tests** runs the native regression tests and the Direct3D 12 tests described in [tests/README.md](tests/README.md), checks that Linux and macOS still build, and uploads the Windows desktop build as `windows-desktop`.
 
 ### Xbox app on Windows
