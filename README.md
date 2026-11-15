@@ -90,24 +90,24 @@ The Xbox calls the drive `E:`, so the game looks for its files in `E:\ringracers
 2. In Xbox Device Portal, install the `.cer` along with the `.msix`. Each build has a new certificate, so uninstall the game before installing a different build. Your config and saves are on the USB drive and stay.
 3. Start the game. You don't need to change the **App type** that Dev Home shows for it: on an Xbox One X, the game ran the same as an App and as a Game. If the game says at launch that it is running as an app, follow the steps it shows to change the type to Game. If you have changed the type, say so when you report a bug.
 
-### Why step 4 is needed
+### Why the drive needs permissions
 
-Every app on the Xbox runs in a sandbox. Windows lets a sandboxed app open a file only if the file's permissions allow both the app and the user it runs as:
+Preparing the drive includes giving Xbox apps access to it. That is needed because every app on the Xbox runs in a sandbox. Windows lets a sandboxed app open a file only if the file's permissions allow both the app and the user it runs as:
 
 - The first command allows the app, through the group "ALL APPLICATION PACKAGES" (`S-1-15-2-1`). A drive formatted by Windows doesn't have this.
 - The second allows the user, through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already has this, but a drive formatted another way may not. The game couldn't open a drive that had only the first grant until the second was added.
 
 `(OI)(CI)` makes files added later get the same access. Xbox Media Drive Helper makes both grants, skips the second where the drive already has it, and saves a journal that can undo them. The Xbox itself doesn't format a media drive or change its permissions.
 
-Files copied onto the drive on Windows inherit these permissions. Files copied from a Mac or Linux PC through NTFS-3G don't: they get NTFS-3G's own default, which leaves out ALL APPLICATION PACKAGES. After copying files that way, do step 4 again (in Xbox Media Drive Helper, prepare the drive again and add to the existing journal).
+Files copied onto the drive on Windows inherit these permissions. Files copied from a Mac or Linux PC through NTFS-3G don't: they get NTFS-3G's own default, which leaves out ALL APPLICATION PACKAGES. After copying files that way, give Xbox apps access to the drive again (in Xbox Media Drive Helper, prepare the drive again and add to the existing journal).
 
 ### If the game can't use the drive
 
 Every error message the game shows ends with a list of the drives it can see. The message is also saved as `E:\ringracers\error.txt` if the drive can be written to. In the list, error 5 means access denied, and error 2 or 3 means not found:
 
-- `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Do step 4 again.
-- `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at the top of it (step 2).
-- `E:\ringracers\bios.pk3: error 2`: the folder is there, but the game's files aren't in it (step 3).
+- `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Give Xbox apps access to the drive again.
+- `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at the top of it.
+- `E:\ringracers\bios.pk3: error 2`: the folder is there, but the game's files aren't in it. Extract the assets archive into it.
 
 If Windows says the drive has errors, copy `ringracers\ringracers` (your config and saves) off it before letting Windows repair it. A repair moves files it can't put back in place into a `found.000` folder at the top of the drive. That happened to a drive of mine, and it took everything the game had written.
 
