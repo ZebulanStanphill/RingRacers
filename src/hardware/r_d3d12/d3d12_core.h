@@ -53,6 +53,11 @@ bool Core_Init();
 // lavapipe). Set before initialization.
 void Core_ForceWarp(bool force);
 
+// Test hook: multiplies the time every fence wait gives the GPU before it gives up (500 ms for a readback, say). A CPU
+// device such as lavapipe compiles each shader variant when it first draws with it, which can outlast those waits on a
+// slow machine. Defaults to 1; set before initialization.
+void Core_ScaleWaitsForTest(double factor);
+
 // Which backend Core_Init makes the device with: Direct3D 12 itself, or Vulkan through vk12 (VibeRant Vulkan). Set before
 // initialization. A build with only one of them always uses it.
 void Core_UseVulkan(bool vulkan);

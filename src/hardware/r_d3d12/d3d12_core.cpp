@@ -47,6 +47,7 @@ ComPtr<ID3D12DescriptorHeap> g_rtvHeap, g_dsvHeap;
 UINT g_rtvStep = 0, g_dsvStep = 0;
 UINT64 g_frequency = 0;
 bool g_forceWarp = false;
+double g_waitScale = 1.0;
 #if defined(HAVE_VULKAN) && !defined(HAVE_D3D12_NATIVE)
 bool g_vulkan = true; // the only backend
 #else
@@ -384,6 +385,11 @@ void Core_ForceWarp(bool force)
 	g_forceWarp = force;
 }
 
+void Core_ScaleWaitsForTest(double factor)
+{
+	g_waitScale = factor;
+}
+
 void Core_UseVulkan(bool vulkan)
 {
 #if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
@@ -688,24 +694,25 @@ bool Core_Wait(UINT64 value, DWORD ms, const char *what, double *waitedMs)
 		return false;
 	}
 
+	const double limit = ms * g_waitScale;
 	const precise_t start = I_GetPreciseTime();
 	bool reached = false;
 	for (;;)
 	{
 		const double elapsed = PreciseToMs(I_GetPreciseTime() - start);
-		if (elapsed >= ms)
+		if (elapsed >= limit)
 			break;
 		// An earlier wait that timed out may still set the event, so check the fence after every wake
 #ifdef HAVE_VULKAN
 		// vk12's fence has no event to set; it waits on Vulkan's own fence
 		if (g_vulkan)
-			rr_vk12::WaitFence(g_fence.Get(), value, (DWORD)std::max(1.0, std::ceil(ms - elapsed)));
+			rr_vk12::WaitFence(g_fence.Get(), value, (DWORD)std::max(1.0, std::ceil(limit - elapsed)));
 		else
 #endif
 		if (!g_event || FAILED(g_fence->SetEventOnCompletion(value, g_event)))
 			Sleep(1);
 		else
-			WaitForSingleObjectEx(g_event, (DWORD)std::max(1.0, std::ceil(ms - elapsed)), FALSE);
+			WaitForSingleObjectEx(g_event, (DWORD)std::max(1.0, std::ceil(limit - elapsed)), FALSE);
 		done = g_fence->GetCompletedValue();
 		if (done == UINT64_MAX)
 		{
