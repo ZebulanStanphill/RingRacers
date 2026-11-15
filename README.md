@@ -21,14 +21,14 @@ Coding agents were used heavily in the development of this fork.
   - Software's screen fades, wipes and Encore inversion
   - glowing sprite brightmaps
   - Software-strength underwater and heat distortion
-  - translucent sprites and models sorted among water and other see-through surfaces
+  - translucent sprites and models sorted, among water and other see-through surfaces
   - add-on shaders
   - Water surfaces go beyond Software: viewed from above, their ripples also distort the track beneath the water, not just the background.
 
   It aims to look like Software. Where it differs on purpose, such as true perspective when looking up or down, is listed under [Intended differences from Software](CHANGES.md#intended-differences-from-software).
 - **VibeRant D3D on Windows PCs.** Windows desktop builds have it as a third renderer beside Software and Legacy GL. This has only been tested under Wine, not on a real Windows PC.
-- **Faster performance on Xbox.** The Software renderer, the game logic and the hardware renderer are optimized for the Xbox's CPU, startup is shorter, and levels preload their textures and models to reduce hitches during races.
-- **New video options, on every platform.** **Screen Scaling** (Fit, Integer or 1:1) places the picture on the screen, and **Camera Position** gives each local player a 3rd Person or 1st Person view.
+- **Faster performance on Xbox.** The Software renderer, the game logic and the VibeRant D3D renderer are optimized for the Xbox's CPU, startup is shorter, and levels preload their textures and models to reduce hitches during races.
+- **New video options.** **Screen Scaling** (Fit, Integer or 1:1) places the picture on the screen, and **Camera Position** gives each local player a 3rd Person or 1st Person view.
 - **Logs for bug reports.** On Xbox the game writes a log, the last error message and a performance profile to the USB drive. See [Reporting problems](#reporting-problems).
 
 Things to know on Xbox:
