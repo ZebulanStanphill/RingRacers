@@ -12,7 +12,7 @@ The game itself plays the same. Replays, ghosts, and online play with people on 
 
 I've only tested the Xbox port on an Xbox One X. It should run better on Xbox Series X|S, and it may run on an original Xbox One with lowered graphics settings, but I don't have those consoles to try. If you have one of these consoles and can test the game, let me know how it runs!
 
-The Xbox port builds on the abandoned one by [worleydl](https://github.com/worleydl/ringracers-uwp) and goes further beyond, with the aim of providing as seamless an experience as possible.
+The Xbox port builds on the [older one by worleydl](https://github.com/worleydl/ringracers-uwp) and goes further beyond, with an aim of providing as seamless an experience as possible.
 
 Coding agents were used heavily in the development of this fork. I have thoroughly playtested it to iron out various bugs and corner cases. (Shout out to Green Hills Zone, which seemed to be a nexus of such issues, for whatever reason.) I intend to actively maintain this fork and keep it up-to-date with future releases of the vanilla game.
 
