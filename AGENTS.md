@@ -123,3 +123,14 @@ These are model families, not versions: use the latest version of the family tha
 is available, which is assumed to be better than the ones before it.
 
 Review a subagent's changes before committing or pushing them.
+
+# Rendering sweeps
+
+For a branch that changes rendering, run the Map sweep workflow on demand before
+merging it (`gh workflow run map-sweep.yml --ref master -f ref=<branch>`), read
+its job summary and the `map-sweep-reports` artifact, and resolve or explain every
+red result: a health failure is a bug to fix or report, and a changed frame is a
+prompt to look at its before, after, and difference crops. Also run it at
+`size=1280x720` for a change to how geometry is clipped or filtered. See
+`tests/README.md`, "Automated map sweeps", for the inputs, the baseline rules, and
+what a sweep does not cover.

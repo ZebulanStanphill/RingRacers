@@ -140,8 +140,11 @@ is in any menu, and neither changes anything when it isn't on the command line. 
   VibeRant Vulkan the option means what `-vkdebug` does, Vulkan's validation layers, so one command line can ask for
   validation of either backend. The layer makes the game several times slower.
 
+The map sweep (`tests/README.md`, "Automated map sweeps") plays VibeRant D3D with `-d3d12 -warp -d3ddebug` on a hosted
+Windows runner, and fails a map whose log has a `D3D12 debug ERROR` line.
+
 ## Tests
 
 The `surface-probe` WARP scene covers the probe (see [tests/README.md](../tests/README.md)). The other
 features, including the swap chain and its hand-offs with ANGLE, are untested off Xbox. The two startup options are
-not covered by the WARP harness, which makes its device without them.
+exercised by the map sweep on a hosted runner; the WARP harness makes its device without them.

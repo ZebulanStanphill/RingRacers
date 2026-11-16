@@ -362,3 +362,13 @@ regression(horizon_cache horizon_cache _UWP HWRENDER)
 regression(horizon_cache_both horizon_cache HWRENDER HAVE_D3D12)
 
 regression(plane_polygon_loops plane_polygon_loops HWRENDER)
+
+# Image comparison tooling needs NumPy and Pillow; CI installs the pinned requirements.
+execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import numpy; import PIL"
+    RESULT_VARIABLE map_sweep_python)
+if(map_sweep_python EQUAL 0)
+    add_test(NAME map_sweep COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+        -s "${CMAKE_CURRENT_SOURCE_DIR}/map-sweep" -p "test_*.py")
+else()
+    message(STATUS "Map sweep Python tests disabled: install tests/map-sweep/requirements.txt")
+endif()

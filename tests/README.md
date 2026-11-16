@@ -977,7 +977,8 @@ takes screenshots at the same game tics, and compares them pixel by pixel, to ch
 `-shottics 70,210,350` capture mode (one frame per tic, no interpolation, a screenshot named
 `<MAP>_<tic>.png`, quit after the last one; `-shotghost <staff ghost>` starts the replay), whose tic
 list parsing has the native test `frame_capture`; the runner, the comparer and the report are Python run with
-`uv run`. It needs real game data and a window, so CI does not run it. See
+`uv run`. It needs real game data and a window, so the Tests workflow does not run it; the Map sweep workflow
+("Automated map sweeps" below) plays the same capture mode on hosted runners. See
 [frame-compare/README.md](frame-compare/README.md) for the commands, the sides it takes (a native binary or
 a Windows build under Wine, each with its renderer's arguments), the default replays, and how to read the report.
 
@@ -1337,3 +1338,185 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   semibright are mutually exclusive; existing semibright lighting is unchanged.
   The harness stubs boundary heights and ordinary post-lighting dependencies;
   it checks lighting decisions, not shader pixels or Xbox output.
+
+## Automated map sweeps
+
+`.github/workflows/map-sweep.yml` plays the real staff ghost on each of the 213 official maps with each renderer on a
+GitHub-hosted runner, takes five frames per map, checks that the game stayed healthy, and reports what changed since
+the last sweep of `master`. A rendering change that breaks a map nobody played shows up as a red sweep with
+before, after, and difference pictures, with no one at a keyboard. It is the same frame capture mode as
+`tests/frame-compare` (`-shotghost`, `-shottics`), run on hosted runners instead of a desktop.
+
+### What runs where
+
+| Renderer | Runner | How it is made to run |
+|---|---|---|
+| Software | `ubuntu-24.04` | The Linux build under Xvfb. Mesa's llvmpipe is the OpenGL the game opens for its 2D drawing in every renderer. |
+| Legacy GL | `ubuntu-24.04` | The same build and display, `-opengl`, on llvmpipe. |
+| VibeRant Vulkan | `ubuntu-24.04` | `-vulkan -vkdebug` on lavapipe, with Vulkan's validation layers. The job finds lavapipe's ICD file (its name depends on the Mesa package) and prints `vulkaninfo`, so it is the only device. |
+| VibeRant D3D | `windows-2022` | The Windows desktop build, `-d3d12 -warp -d3ddebug`: Direct3D 12 on WARP with the debug layer (the "Graphics Tools" optional feature, installed as `tests/run-d3d12.ps1` does). |
+
+The desktop game always opens an OpenGL 2.1 context for its 2D drawing, and a Windows runner has only Microsoft's OpenGL
+1.1. The job therefore puts Mesa's `opengl32.dll` and `libgallium_wgl.dll` (llvmpipe) beside the executable, from
+the [mesa-dist-win](https://github.com/pal1000/mesa-dist-win) build, pinned to release 26.2.5 by SHA-256 in the
+workflow. Only those two files are copied: the archive's `d3d10warp.dll` would be loaded in place of the system's WARP,
+and the Direct3D 12 device would fail to be made (found on a runner: `D3D12CreateDevice failed: 0x887A0004`). Release 26.2.6
+of the same build has no OpenGL driver in it at all. Mesa supplies only that startup context; the log must say
+`VibeRant backend: D3D12`, `using WARP for testing`, and `D3D12 debug layer enabled`, or the map fails. The game data
+is the official v2.4 asset archive, downloaded once, checked against the SHA-256 the release publishes, and cached.
+
+### Running it
+
+The workflow runs only when asked and nightly: not on pushes. Run it from Actions > Map sweep > Run workflow, or
+
+```sh
+gh workflow run map-sweep.yml --ref master -f ref=my-branch                      # everything, at 640x400
+gh workflow run map-sweep.yml --ref master -f ref=my-branch -f size=1280x720     # full size, several times slower
+gh workflow run map-sweep.yml --ref master -f ref=my-branch -f renderers=vulkan,d3d -f maps=RR_AERIALHIGHLANDS,RR_RAMPPARK
+```
+
+`ref` is the branch, tag, or commit to build; the workflow file is always master's. Do this for a branch that changes
+rendering before merging it (`AGENTS.md`). `renderers` is a comma-separated subset of `software`, `gl`, `vulkan`, `d3d`;
+`maps` are `RR_` names (a game's internal map names, as in `tests/map-sweep/ghosts.txt`); `baseline_run` compares with a
+named run instead of master's. A run with a few maps takes a few minutes and compares only those maps.
+
+The nightly run (05:37 UTC) is for a `master` that has moved: it first checks whether a complete sweep of the same
+commit already exists and ends if it does. Only one sweep runs at a time in the repository, and at most six capture jobs
+run at once, so the other workflows still get runners.
+
+### Frame size
+
+The game takes only the window sizes in its own list (`windowedModes` in `src/sdl/i_video.cpp`); `-width 640 -height 360`
+is not one, and the game then quietly draws 320x200, which is how the first version of this sweep ran. The sweep
+checks each PNG's size against the size it asked for. The choices are:
+
+- `640x400` (the default): twice the game's base size, 16:10.
+- `320x200`: the base size, which is also what Software renders natively, so hardware frames sit on the same pixel grid as
+  Software's. The cheapest.
+- `1280x720`: 16:9, as the earlier hand-made sweeps and `tests/frame-compare` use. The most detail and the widescreen
+  layout, at about twice the cost of 640x400 on the hardware renderers.
+
+At 640x400 the sweep loses what needs more pixels to show: seams of a pixel or two between walls, thin textures far away,
+the widescreen HUD and field of view, filtering of distant geometry. What it keeps is anything that changes an object,
+a wall, a plane, the lighting, or the HUD. Run `size=1280x720` for the review of a change to how geometry is clipped or
+filtered. A baseline is only used by a sweep at its own size.
+
+### What is played
+
+Each map's first staff ghost in the official `staffghosts.pk3` (`tests/map-sweep/ghosts.txt`), at level times 70, 350,
+700, 1400, and 2100, five frames in all, 1,065 frames per renderer. Fifty of the ghosts end before tic 2,135; those maps
+(`tests/map-sweep/schedules.json`) use 70, 210, 350, 525, and 700 instead. The list was made before any sweep ran, not
+after a failure, and a replay that ends before a requested tic is a health failure either way.
+
+### Health: what makes a sweep red
+
+The capture fails a map, and so the sweep, for any of:
+
+- a crash, a nonzero exit, or the game's error dialog (the game prints the error and waits for a button; the run
+  notices and stops it after a few seconds), `I_Error`, a signal;
+- a hang: no new frame for five minutes (slow is fine; the whole map has 25 minutes);
+- fewer frames than asked for, a file that is not a PNG of the asked-for size, or no `done; N of N screenshots taken` line;
+- a "not implemented" line from a backend, a lost or removed device, or a driver error line such as `failed: 0x...`;
+- a fallback to Software when another renderer was asked for ("couldn't start (the log says why), so the game is using
+  the Software renderer"), or a log that does not show the renderer asked for starting (`tests/map-sweep/renderers.py`);
+- a Vulkan validation error (`VUID-`, `Validation Error`; `-vkdebug`), or a Direct3D debug layer error (`D3D12 debug
+  ERROR`; `-d3ddebug`);
+- a shard that did not report, or a frame inventory that does not match what the maps asked for.
+
+### Comparing with the last sweep
+
+Each renderer's frames are compared with that renderer's frames from the **newest complete, healthy sweep of `master`,
+at the same size**, up to 50 runs back and 90 days old (artifact `baseline-<renderer>` of that run, with the commit,
+and the runner image and driver versions in `manifest.json`). The report gives, per renderer:
+
+- how many frames are identical;
+- for each changed frame, two percentages of its pixels: *plain* (any RGB difference) and *structural* (a differing pixel
+  counts only if neither image has that pixel's color within 8 levels in the other's 3-by-3 neighborhood, which removes
+  most texel-edge flips);
+- before, after, and difference crops of the worst 12 frames (gray: any difference; red: structural);
+- whether the graphics stack changed: each map records its shard's runner image version and graphics stack (Mesa and
+  the LLVM it compiles with, or WARP), since a hosted image rolls out over days and the shards of one run can differ.
+  Only the stack counts as the environment, and the image versions are printed beside it: two versions of the Linux
+  image were in use together for the whole of the first measurements, with the same Mesa, and every frame of Software,
+  VibeRant Vulkan, and VibeRant D3D came out the same on both.
+
+The sweep is **red** if any health check failed, if a frame is missing, extra, or resized, or if a frame whose
+graphics stack is the same as its baseline's has more than 0.1% structural or 2% plain difference. A changed stack
+(a new Mesa, a new WARP) makes visual differences information only, so the sweep after such an update is blind to
+regressions in the maps it touched: look at its report. The thresholds prompt a look; they do not prove a picture is
+right or wrong.
+
+The new frames of a complete, healthy sweep of `master` become the next baseline **even if the sweep is red**, so a
+deliberate visual change turns exactly one sweep red, as a prompt to look. A sweep of a branch, of a subset of maps, or
+with an unhealthy renderer never becomes a baseline, and a branch is compared with `master`'s baseline. The first sweep
+of `master` finds none and records one.
+
+#### Are the frames reproducible?
+
+Software, VibeRant Vulkan, and VibeRant D3D: yes. Two complete sweeps, built from different commits and run on
+different hosted runners, gave identical frames wherever the second commit changed nothing: all 526 frames the deliberate change of the second commit (a box in
+a corner of the HUD from level time 700) could not touch, and all 539 that it could, outside the box, with each of the
+three renderers. Hosted CPUs vary (a probe of six jobs landed on an AMD EPYC 7763 with AVX2, two EPYC 9V74, an EPYC 9V45,
+and two Xeon 6975P-C with AVX-512) and each capture records its CPU model; the frames did not depend on it, as far as these
+runs show. A reproducible renderer is what makes the comparison with a baseline worth reading.
+
+Legacy GL is not reproducible on 21 of the 213 maps (Water Palace, Whirl Waters, Aqua Tunnel, and Hydro Plant among them): 55 of the 1,065 frames differed between
+those two sweeps outside the deliberate change, in 4 to 52% of their pixels, and `RR_WHIRLWATERS` differed twice on one
+machine, with and without llvmpipe's `LP_NATIVE_VECTOR_WIDTH=128`. The cause is not known; those pictures look the same at
+a glance. `tests/map-sweep/unstable.json` lists the maps: their differences are shown in the report, marked
+`(unstable)`, and never make a sweep red, while their health checks still count. Add a map to it only with evidence that
+two runs of one commit on one stack differ, and take it out when the renderer is fixed. Another Legacy GL map that
+flickers turns one sweep red and belongs in the list.
+
+**Vulkan against D3D**: the report also compares VibeRant Vulkan's frames with VibeRant D3D's of the same commit (two
+renderers, two operating systems, always information only, never red).
+
+### Reading a run
+
+The page of the run shows a table (verdict, maps, frames, failures, identical frames, baseline run, capture minutes,
+seconds per map) and each renderer's changed frames. The artifacts are `map-sweep-reports` (`<renderer>/summary.md`,
+`report.json` with every frame, the crops, `cross-backend/`, and `negative-control/`, where one real frame is inverted to
+show that the comparison reports a changed frame), `frames-<renderer>-<shard>` (frames, one log per map, and the manifest),
+and `baseline-<renderer>`.
+
+### What it does not cover
+
+The Xbox, real GPUs (llvmpipe, lavapipe, and WARP are CPU renderers with their own arithmetic: a pass is not a pass on
+an AMD, NVIDIA, or Intel GPU, nor on Microsoft's Direct3D 12 driver), other settings and resolutions than the one
+chosen, anything the ghosts do not drive past, the title screen and menus, and times other than the five chosen.
+It finds regressions and crashes on the ghosts' paths; it is not a review of how a frame looks.
+
+### Cost
+
+Measured on hosted runners (2026-11-15). A complete sweep at 640x400, all four renderers, 36 capture jobs and at most six
+at a time, took **2 hours 52 minutes** and **902 runner minutes** (15.0 hours): Software 44.5 minutes in 2 jobs, Legacy GL
+106.5 in 6, VibeRant Vulkan 361.7 in 14, VibeRant D3D 374.3 in 14, the Linux and Windows builds 4.6 and 8.3, planning and
+reporting 2.5. One map (five frames, the game's start and exit included) took on average, and at most: Software 12 and 24
+seconds, Legacy GL 29 and 65, VibeRant Vulkan 98 and 224 (lavapipe, validation on), VibeRant D3D 102 and 195 (WARP, debug
+layer on). A check of five maps with all four renderers takes about 18 minutes and 37 runner minutes; one map of one
+renderer a few minutes beyond the build.
+
+At 320x200 a map takes 0.5 to 0.8 of the time it takes at 640x400. At 1280x720 five maps took on average: Software 22
+seconds, Legacy GL 60, VibeRant Vulkan 164, VibeRant D3D about 210 or more (two of the five hit the first version's
+240-second limit). The planner (`renderers.py`) assumes 25, 68, 184, and 290 and splits the sweep into jobs of about
+30 minutes each, so 35 for VibeRant D3D at that size; its 290 is an estimate. A sweep leaves about 430 MB of frames
+(14 days) and 365 MB of baselines (90 days) in artifacts. Hosted runners cost nothing for a public repository at the time of writing, but a sweep
+fills six of the account's concurrent jobs for three hours, which is why `max-parallel` is 6 and sweeps queue behind one
+another. Capture times are in every `manifest.json` (`runs`, per map), for the next measurement.
+
+### Adding a renderer (VibeRant Metal)
+
+The renderers are one table, `tests/map-sweep/renderers.py`. A row there (`label`, `os: macos-15`, `build: macos`,
+`flags: ['-metal']`, `requires: ['VibeRant backend: Metal']`, plus its validation patterns in `errors`, and measured
+`seconds`) puts it in the planner, the capture script's assertions, and the report. The workflow then needs a `build-macos`
+job like the one in `metal-frames.yml` (packed as a tarball, since an artifact loses the executable bit), the capture
+job's download and setup steps for macOS, `MTL_DEBUG_LAYER=1` and `MTL_SHADER_VALIDATION=1` in its environment,
+and one more `baseline-metal` upload step in the report job. Adding `('vulkan', 'metal')` to `CROSS` compares them.
+
+### The tooling
+
+The ghost list, shard planning, comparer, and report generator are in `tests/map-sweep` and have unit tests there
+(`python -m unittest discover -s tests/map-sweep`; NumPy and Pillow from `requirements.txt`), which the workflow runs
+before every sweep and CTest registers as `map_sweep` when both are installed. Regenerate the ghost list and schedules from
+a copy of the official `staffghosts.pk3` with `python3 tests/map-sweep/ghosts.py staffghosts.pk3 > ghosts.txt` and
+`--schedules > schedules.json`.

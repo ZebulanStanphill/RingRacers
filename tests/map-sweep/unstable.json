@@ -1,0 +1,28 @@
+{
+  "gl": {
+    "reason": "Legacy GL draws these maps' frames differently from run to run, even twice on one machine; found by comparing two complete sweeps (55 of the 1,065 frames, 4 to 52% of their pixels), and the cause is not known",
+    "maps": [
+      "RR_AQUATUNNEL",
+      "RR_AQUEDUCTCRYSTAL",
+      "RR_ASTRALDIMENSION",
+      "RR_AZUREAXIOM",
+      "RR_BRONZELAKE",
+      "RR_CARBONCRUCIBLE",
+      "RR_CARNIVALNIGHT",
+      "RR_DRAGONSPIRESEWER1",
+      "RR_DRIEDBATTLEDUNE",
+      "RR_EMERALDCOAST",
+      "RR_HAUNTEDSHIP",
+      "RR_HYDROPLANT",
+      "RR_LABYRINTH",
+      "RR_LAUNCHBASECLASSIC",
+      "RR_METROPOLIS",
+      "RR_NOVASHORE",
+      "RR_PESTILENCE",
+      "RR_RUMBLERIDGE",
+      "RR_WATERPALACE",
+      "RR_WEISSWATERWAY",
+      "RR_WHIRLWATERS"
+    ]
+  }
+}

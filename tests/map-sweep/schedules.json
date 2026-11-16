@@ -1,0 +1,502 @@
+{
+  "RR_SRB2MEADOWMATCH": {
+    "recorded_race_tics": 1935,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_TOYKINGDOM": {
+    "recorded_race_tics": 1243,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_POWERPLANT": {
+    "recorded_race_tics": 1762,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_DUELBUSTER": {
+    "recorded_race_tics": 716,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_DARKCHAOGARDEN": {
+    "recorded_race_tics": 670,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_METEORHERD": {
+    "recorded_race_tics": 1125,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MYSTERYGATE": {
+    "recorded_race_tics": 605,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_TREERING": {
+    "recorded_race_tics": 1855,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_AQUATICCATHEDRAL2": {
+    "recorded_race_tics": 1130,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_BRAWLFORT": {
+    "recorded_race_tics": 700,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_DEATHEGGSEYE": {
+    "recorded_race_tics": 1905,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MARBLEFOYER": {
+    "recorded_race_tics": 1405,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_TINKERERSARENA": {
+    "recorded_race_tics": 1834,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_ARMOREDARMADILLO": {
+    "recorded_race_tics": 2115,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_THUNDERLAB": {
+    "recorded_race_tics": 872,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MEGAMETROPOLIS": {
+    "recorded_race_tics": 474,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MEGALABYRINTH": {
+    "recorded_race_tics": 778,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CYBERARENA": {
+    "recorded_race_tics": 539,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MEGAEMERALDBEACH": {
+    "recorded_race_tics": 506,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_SONICSSCHOOLHOUSE": {
+    "recorded_race_tics": 885,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_ELECTRACLACKER": {
+    "recorded_race_tics": 742,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CARBONCRUCIBLE": {
+    "recorded_race_tics": 1715,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_WORLD1MAP": {
+    "recorded_race_tics": 1674,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_SECURITYHALL": {
+    "recorded_race_tics": 1913,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_RUSTYRIG": {
+    "recorded_race_tics": 951,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_FROSTYCOURTYARD": {
+    "recorded_race_tics": 2101,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_DEADSIMPLE": {
+    "recorded_race_tics": 644,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_GIZMOBASTION": {
+    "recorded_race_tics": 1294,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_TRICIRCLEMARINA": {
+    "recorded_race_tics": 1192,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_GEMSMUSEUM": {
+    "recorded_race_tics": 606,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_AQUATICCATHEDRAL1": {
+    "recorded_race_tics": 1502,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_SEGASATURN": {
+    "recorded_race_tics": 887,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CDSPECIALSTAGE1": {
+    "recorded_race_tics": 667,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_RECORDATTACK": {
+    "recorded_race_tics": 900,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_VANTABLACKATRIUM": {
+    "recorded_race_tics": 511,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CRYSTALISLAND": {
+    "recorded_race_tics": 1274,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_THUNDERTOP": {
+    "recorded_race_tics": 329,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CHAOSSERAPH": {
+    "recorded_race_tics": 1047,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MEGAMARBLE": {
+    "recorded_race_tics": 308,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_PEANUTPALACE": {
+    "recorded_race_tics": 549,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_HONEYCOMBHOLLOW": {
+    "recorded_race_tics": 2094,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_WHIRLWATERS": {
+    "recorded_race_tics": 368,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_ROCKWORLD": {
+    "recorded_race_tics": 1296,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CDSPECIALSTAGE8": {
+    "recorded_race_tics": 1178,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_TAILSLAB": {
+    "recorded_race_tics": 555,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_MUNICIPALMEADOW": {
+    "recorded_race_tics": 581,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CLUCKYFARMS": {
+    "recorded_race_tics": 571,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_CITYSKYLINE": {
+    "recorded_race_tics": 1824,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_NEONRESORT": {
+    "recorded_race_tics": 663,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  },
+  "RR_DRIEDBATTLEDUNE": {
+    "recorded_race_tics": 2099,
+    "tics": [
+      70,
+      210,
+      350,
+      525,
+      700
+    ]
+  }
+}

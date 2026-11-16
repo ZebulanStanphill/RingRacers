@@ -1,0 +1,344 @@
+name: Map sweep
+
+# Plays the real staff ghost on every map with each renderer, takes five frames per map (tests/map-sweep), checks the game's
+# health, and compares the frames with the last complete sweep of master and between the two VibeRant backends. It runs
+# when asked, and nightly if master has moved since its last sweep; see tests/README.md, "Automated map sweeps".
+#
+# The page of a run is its summary. The artifacts are map-sweep-reports (before, after, and difference crops of the worst
+# frames, with report.json for every frame), frames-<renderer>-<shard> (frames and logs), and baseline-<renderer> (what a
+# later sweep compares with).
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to build and play
+        default: master
+        type: string
+      renderers:
+        description: 'Which renderers, comma-separated: software, gl, vulkan, d3d'
+        default: software,gl,vulkan,d3d
+        type: string
+      maps:
+        description: Only these maps, comma-separated, like RR_AERIALHIGHLANDS (empty for all 213)
+        default: ''
+        type: string
+      size:
+        description: Frame size. 640x400 is twice the game's base size; 1280x720 (16:9) shows much more and takes longer
+        default: 640x400
+        type: choice
+        options:
+        - 320x200
+        - 640x400
+        - 1280x720
+      baseline_run:
+        description: Compare with the frames of this run instead of master's last sweep (a run ID)
+        default: ''
+        type: string
+  schedule:
+  - cron: 37 5 * * *
+
+# One sweep at a time, in the whole repository: a sweep fills the hosted runners
+concurrency:
+  group: map-sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      skip: ${{ steps.plan.outputs.skip }}
+      master: ${{ steps.plan.outputs.master }}
+      size: ${{ steps.plan.outputs.size }}
+      maps: ${{ steps.plan.outputs.maps }}
+      shards: ${{ steps.plan.outputs.shards }}
+      builds: ${{ steps.plan.outputs.builds }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - name: Test the sweep tooling
+      run: |
+        pip install -r tests/map-sweep/requirements.txt
+        python -m unittest discover -s tests/map-sweep
+    - name: Plan the sweep
+      id: plan
+      run: python tests/map-sweep/ci.py plan
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INPUT_REF: ${{ inputs.ref || github.ref_name }}
+        INPUT_RENDERERS: ${{ inputs.renderers }}
+        INPUT_MAPS: ${{ inputs.maps }}
+        INPUT_SIZE: ${{ inputs.size }}
+
+  build-linux:
+    name: Linux build (Software, Legacy GL, VibeRant Vulkan)
+    needs: plan
+    if: needs.plan.outputs.skip != 'true' && contains(fromJSON(needs.plan.outputs.builds), 'linux')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ needs.plan.outputs.sha }}
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ninja-build libsdl2-dev libpng-dev libcurl4-openssl-dev libopus-dev zlib1g-dev
+    - name: Configure
+      run: >-
+        cmake --preset ninja-release
+        -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
+        -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+    - name: Build
+      run: cmake --build build/ninja-release --parallel 4
+    - uses: actions/upload-artifact@v7
+      with:
+        name: build-linux
+        path: build/ninja-release/bin/*
+        if-no-files-found: error
+        retention-days: 7
+
+  build-windows:
+    name: Windows desktop build (Software, Legacy GL, VibeRant D3D)
+    needs: plan
+    if: needs.plan.outputs.skip != 'true' && contains(fromJSON(needs.plan.outputs.builds), 'windows')
+    runs-on: windows-2022
+    # A cold vcpkg cache builds SDL2 and the rest of vcpkg.json's dependencies from source
+    timeout-minutes: 60
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ needs.plan.outputs.sha }}
+    # The same steps, and the same vcpkg cache keys, as the Windows desktop build of tests.yml
+    - name: Set up x64 MSVC environment and clang-cl
+      shell: pwsh
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($LASTEXITCODE -ne 0 -or !$vs) { throw "Visual Studio C++ tools were not found" }
+        $before = [Environment]::GetEnvironmentVariables('Process')
+        & "$vs\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+        $vsLlvm = Join-Path $env:VCINSTALLDIR "Tools\Llvm\x64\bin"
+        if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $vsLlvm "clang-cl.exe"))) {
+          $env:PATH = "$vsLlvm;$env:PATH"
+        }
+        Get-Command cl.exe, clang-cl.exe, cmake.exe, ninja.exe, fxc.exe -ErrorAction Stop | Select-Object Name, Source
+        "RR_IMAGE_VERSION=$env:ImageOS-$env:ImageVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+          if ($entry.Key -ne 'VCPKG_ROOT' -and $before[$entry.Key] -cne $entry.Value) {
+            "$($entry.Key)=$($entry.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+        }
+    - name: Set up vcpkg
+      shell: pwsh
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+    - name: Cache vcpkg binaries
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'thirdparty/overlay-ports/**') }}
+        restore-keys: |
+          vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-
+          vcpkg-${{ runner.os }}-
+    - name: Configure
+      shell: pwsh
+      run: >-
+        cmake --preset ninja-x64_windows_vcpkg-release
+        -DSRB2_CONFIG_ENABLE_WEBM_MOVIES=OFF
+        -DSRB2_CONFIG_ENABLE_DISCORDRPC=OFF
+    - name: Build
+      shell: pwsh
+      run: cmake --build --preset ninja-x64_windows_vcpkg-release --parallel 4
+    - uses: actions/upload-artifact@v7
+      with:
+        name: build-windows
+        path: |
+          build/ninja-x64_windows_vcpkg-release/bin/*.exe
+          build/ninja-x64_windows_vcpkg-release/bin/*.dll
+        if-no-files-found: error
+        retention-days: 7
+
+  capture:
+    name: ${{ matrix.renderer }} ${{ matrix.shard }}
+    needs: [plan, build-linux, build-windows]
+    if: ${{ !cancelled() && needs.plan.outputs.skip != 'true' && needs.build-linux.result != 'failure' && needs.build-windows.result != 'failure' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      # Few enough that the repository's other workflows still get runners
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    # The tooling is the workflow's own ref's; only the builds check out the commit that is played
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - uses: actions/download-artifact@v8
+      with:
+        name: ${{ matrix.os == 'windows-2022' && 'build-windows' || 'build-linux' }}
+        path: game-bin
+    # The official v2.4 assets, 750 MB, which ci.py checks against the digest of the release
+    - uses: actions/cache@v6
+      with:
+        path: game-data
+        key: map-sweep-v2.4-assets-v1
+    - name: Fetch the game's data
+      run: python tests/map-sweep/ci.py assets game-data
+
+    # Mesa's llvmpipe is the OpenGL under Software and Legacy GL (the game opens an OpenGL 2.1 context for its 2D drawing in
+    # every renderer), and lavapipe is the Vulkan device. Xvfb is the display; the game's window is never shown to anyone.
+    - name: Display and CPU renderers (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends xvfb xauth libglu1-mesa mesa-utils mesa-vulkan-drivers vulkan-validationlayers vulkan-tools libsdl2-2.0-0 libopus0 libpng16-16 libcurl4
+        chmod +x game-bin/*
+        # What can change a picture, for the report: the versions of Mesa and of the LLVM that lavapipe and llvmpipe compile with
+        llvm=$(dpkg-query -W -f='${Depends}' mesa-vulkan-drivers | tr ',' '\n' | grep -o 'libllvm[0-9a-z]*' | head -n 1 || true)
+        echo "RR_DRIVER=$(dpkg-query -W -f='${Package} ${Version}; ' mesa-vulkan-drivers libgl1-mesa-dri ${llvm:+$llvm} || true)" >> "$GITHUB_ENV"
+        echo "RR_CPU=$(lscpu | sed -n 's/^Model name: *//p')" >> "$GITHUB_ENV"
+        Xvfb :99 -screen 0 1280x720x24 -ac > xvfb.log 2>&1 &
+        echo DISPLAY=:99 >> "$GITHUB_ENV"
+        echo LIBGL_ALWAYS_SOFTWARE=1 >> "$GITHUB_ENV"
+        # The file's name depends on the Mesa package, so look for it; lavapipe is then the only Vulkan device
+        icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n 1)
+        echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+        VK_DRIVER_FILES="$icd" vulkaninfo --summary
+
+    # A Windows runner has no OpenGL 2.1 either, which the game needs to start in every renderer, so Mesa's llvmpipe
+    # opengl32.dll goes beside the executable. Only those two files: Mesa's d3d10warp.dll would replace the system's WARP
+    # there, and the Direct3D 12 device would fail. Release 26.2.6 of the build leaves OpenGL out, so this is 26.2.5, from
+    # the build's own repository, checked against its SHA-256.
+    - uses: actions/cache@v6
+      if: runner.os == 'Windows'
+      with:
+        path: mesa-cache
+        key: map-sweep-mesa-win-26.2.5-msvc
+    - name: OpenGL and the Direct3D debug layer (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force mesa-cache | Out-Null
+        $archive = "mesa-cache/mesa3d-26.2.5-release-msvc.7z"
+        if (!(Test-Path $archive)) {
+          Invoke-WebRequest https://github.com/pal1000/mesa-dist-win/releases/download/26.2.5/mesa3d-26.2.5-release-msvc.7z -OutFile $archive
+        }
+        if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '997123EF4CE8896204AB912D5B54F19372C487FF9835BCEFAFA2FCA23B8953C2') {
+          throw 'The Mesa archive does not match its pinned SHA-256'
+        }
+        7z x $archive "-o$env:RUNNER_TEMP/mesa" -y | Out-Null
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Copy-Item "$env:RUNNER_TEMP/mesa/x64/opengl32.dll", "$env:RUNNER_TEMP/mesa/x64/libgallium_wgl.dll" game-bin
+        "GALLIUM_DRIVER=llvmpipe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        # The debug layer is the "Graphics Tools" optional feature, as in tests/run-d3d12.ps1
+        Add-WindowsCapability -Online -Name 'Tools.Graphics.DirectX~~~~0.0.1.0' | Out-Null
+        $warp = (Get-Item "$env:WINDIR\System32\d3d10warp.dll").VersionInfo.FileVersion
+        "RR_DRIVER=WARP $warp; mesa 26.2.5 OpenGL" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "RR_CPU=$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name.Trim())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Play the ghosts
+      env:
+        RR_COMMIT: ${{ needs.plan.outputs.sha }}
+      run: |
+        binary=$(find game-bin -maxdepth 1 -type f \( -name 'ringracers*' -o -name '*.exe' \) | head -n 1)
+        python tests/map-sweep/capture.py --binary "$binary" --data game-data --output captures \
+          --renderer "${{ matrix.renderer }}" --shard "${{ matrix.shard }}" \
+          --shards "${{ matrix.shards }}" \
+          --size "${{ needs.plan.outputs.size }}" --maps "${{ needs.plan.outputs.maps }}"
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: frames-${{ matrix.renderer }}-${{ matrix.shard }}
+        path: captures
+        if-no-files-found: error
+        retention-days: 14
+
+  report:
+    name: Report
+    needs: [plan, capture]
+    if: ${{ !cancelled() && needs.plan.outputs.skip != 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - run: pip install -r tests/map-sweep/requirements.txt
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: frames-*
+        path: incoming
+    - name: Compare with master's last sweep and between the VibeRant backends
+      env:
+        GH_TOKEN: ${{ github.token }}
+        INPUT_BASELINE: ${{ inputs.baseline_run }}
+        # Only a sweep of master, started from master, can become a baseline
+        BASELINE_ELIGIBLE: ${{ needs.plan.outputs.master }}
+        SHARDS: ${{ needs.plan.outputs.shards }}
+        SIZE: ${{ needs.plan.outputs.size }}
+      run: python tests/map-sweep/ci.py report
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: map-sweep-reports
+        path: reports
+        retention-days: 90
+    # What a later sweep compares with. Only the renderers that ran have a folder; a sweep of a branch uploads them too,
+    # but ci.py takes only a complete, healthy sweep of master, or the run a person names.
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: baseline-software
+        path: baseline-software
+        if-no-files-found: ignore
+        retention-days: 90
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: baseline-gl
+        path: baseline-gl
+        if-no-files-found: ignore
+        retention-days: 90
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: baseline-vulkan
+        path: baseline-vulkan
+        if-no-files-found: ignore
+        retention-days: 90
+    - uses: actions/upload-artifact@v7
+      if: always()
+      with:
+        name: baseline-d3d
+        path: baseline-d3d
+        if-no-files-found: ignore
+        retention-days: 90
+    # The mark that tells the nightly run this commit has a complete sweep
+    - uses: actions/upload-artifact@v7
+      if: always() && needs.plan.outputs.master == 'true'
+      with:
+        name: master-sweep-${{ needs.plan.outputs.sha }}
+        path: master-sweep.json
+        if-no-files-found: ignore
+        retention-days: 90
