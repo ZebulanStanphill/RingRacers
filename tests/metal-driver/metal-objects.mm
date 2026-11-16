@@ -46,6 +46,10 @@ void *MetalTest_NextDrawable(void *device, unsigned width, unsigned height, void
 
 void MetalTest_Release(void *object)
 {
-	if (object)
-		CFRelease(object);
+	// In a pool: Metal's objects autorelease others as they are deallocated (a texture its device, a drawable its layer)
+	@autoreleasepool
+	{
+		if (object)
+			CFRelease(object);
+	}
 }

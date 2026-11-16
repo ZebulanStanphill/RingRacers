@@ -236,12 +236,19 @@ static void MarkUsed(id<MTLBinding> binding, bool uses[40])
 
 Pipeline::~Pipeline()
 {
-	// The last pipeline state made of a shader takes the shader along, and the cache's entry for it
-	const bool held = vs_ || ps_;
-	vs_.reset();
-	ps_.reset();
-	if (held)
-		ForgetUnusedShaders();
+	// The last pipeline state made of a shader takes the shader along, and the cache's entry for it. In a pool, as
+	// whatever Metal's objects autorelease on their way out would otherwise stay (see Resource's destructor).
+	@autoreleasepool
+	{
+		const bool held = vs_ || ps_;
+		variants_.clear();
+		depthStencil = nil;
+		vertexDescriptor_ = nil;
+		vs_.reset();
+		ps_.reset();
+		if (held)
+			ForgetUnusedShaders();
+	}
 }
 
 HRESULT Pipeline::Init(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc)

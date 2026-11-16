@@ -1183,6 +1183,18 @@ differ:
   vertex function puts out: on an M4 Pro the check failed with "INF or NAN
   detected in interpolant" before the shader's fix and passes with it. On the
   runner's virtual GPU and on Intel's it can only check that nothing is drawn.
+- **Autorelease pools.** The script runs the test with
+  `OBJC_DEBUG_MISSING_POOLS=YES`, which has the Objective-C runtime report every
+  object autoreleased with no pool in place, by thread, and fails if a report names
+  the test's own thread (the test prints which that is). It found two in the
+  test's own helper, which released a texture and a drawable outside a pool. It is
+  a weak check of mtl12, though: under validation Metal frees the driver's
+  resources on threads of its own, so the place where the driver's thread did
+  autorelease without a pool (a resource's destructor) passes here with the pool
+  taken out. The game without validation is where that shows:
+  `capture.py hardware`'s `autorelease` scene ("On a Mac", below). Metal's own
+  threads report tens of thousands under validation, which the script counts and
+  leaves alone.
 - **The shader cache** is checked after the add-on shader scenes, outside the
   registry as well: sixteen add-on shaders are each compiled, drawn with (the
   pixel is checked), and cleaned, and once the frames that used them are done,

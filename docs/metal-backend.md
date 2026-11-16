@@ -101,6 +101,7 @@ is locked.
 | timestamp queries | read as zero. Metal has no timestamp a command list can write between two commands (its counter sample buffers aren't on every device), so the driver's GPU times say 0 ms |
 | a sampler's `MipLODBias` | not implemented: Metal's samplers have none. The driver never sets one; mtl12 logs it if one is ever set |
 | releasing objects | objects are released on the last `Release`, and Metal's command buffers keep what they use alive besides |
+| autorelease pools | the driver's thread is the game's main loop, which is C++ and has none, so every call of mtl12's and the presenter's that can autorelease brings its own, the destructors included: a Metal texture or buffer autoreleases its device as it is deallocated |
 
 ## The window
 
@@ -161,6 +162,29 @@ with, by the classes Metal wrapped it in: `MTLDebugDevice` for the first, and `M
 the counterpart of `-vkdebug`), each command buffer also says which of its passes failed. `rr_mtl12::ValidationErrors()` counts failed command buffers and the faults
 shader validation logs with them, such as a function reading a texture that was never bound. Completion handlers
 run on Metal's threads, so what they have to say is kept and written to the log from the driver's thread.
+
+## Autorelease pools
+
+Objective-C's frameworks hand out objects that the caller doesn't own by putting them in the thread's innermost
+autorelease pool, which releases them when it is drained. A Cocoa program's main thread has one per turn of its event
+loop. The game's main loop is C++ and has none (SDL makes one only inside its own calls), so an object autoreleased
+there with no pool open is kept for as long as the thread lives. mtl12 and the presenter therefore open a pool in
+every function that calls into Metal, AppKit, or Core Animation.
+
+Whether that covered everything was measured on the two Macs with the Objective-C runtime's own report
+(`OBJC_DEBUG_MISSING_POOLS=YES`, which logs each object autoreleased with no pool in place, by thread). It didn't:
+a replay left about a thousand reports on the driver's thread, all of them the device, autoreleased by
+`-[IOGPUMetalResource dealloc]` each time the driver released a texture or a buffer outside a pool (found with a
+library loaded for the purpose that printed where; mostly the thousand textures freed at shutdown). Each kept eight
+bytes and a reference to the device that was never given back. The destructors of mtl12's resources, pipeline
+states, and lists now open a pool too, as does the completion handler, and the same replay has no report on the
+driver's thread: `capture.py hardware`'s `autorelease` scene checks that (`tests/README.md`, "On a Mac").
+
+The other reports, about eight per presented frame, are on Metal's and Core Animation's own threads, from their own
+code (`CAMetalLayer`, the arrays and numbers of a presented drawable, a frame-pacing record), on macOS 15 and 27
+alike; a pool around the driver's completion handler doesn't change their number. They don't accumulate: without the
+debug variable (with it the runtime leaks what it reports), the game presented 39,614 frames in eleven minutes on
+the M4 Pro with its memory between 272,912 and 273,024 KB from the first minute on.
 
 ## A command buffer that fails
 

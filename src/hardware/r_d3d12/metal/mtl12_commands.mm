@@ -29,8 +29,12 @@ List::~List()
 {
 	// A list released while open (the driver shutting down) never commits its command buffer, but Metal still wants
 	// every encoder ended
-	EndPass();
-	EndBlit();
+	@autoreleasepool
+	{
+		EndPass();
+		EndBlit();
+		cmd_ = nil;
+	}
 }
 
 HRESULT List::Reset(ID3D12CommandAllocator *allocator, ID3D12PipelineState *initial)

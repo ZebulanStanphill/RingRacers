@@ -26,6 +26,7 @@
 #else
 #include <cstdlib>
 #ifdef HAVE_METAL
+#include <pthread.h>
 #include "hardware/r_d3d12/metal/mtl12.h"
 #else
 #include "hardware/r_d3d12/vulkan/vk12.h"
@@ -562,6 +563,8 @@ int main(int argc,char **argv) {
 #elif defined(HAVE_METAL)
         if(logs.find("API validation on") == std::string::npos || logs.find("shader validation on") == std::string::npos)
             throw std::runtime_error("Metal's API and shader validation are required (MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1)");
+        // For run-metal.sh, which looks for the Objective-C runtime's reports of objects this thread autoreleased with no pool
+        printf("Metal driver test: main thread %p\n",(void *)pthread_self());
 #else
         if(logs.find(", validation on") == std::string::npos) throw std::runtime_error("Vulkan validation layer required");
 #endif

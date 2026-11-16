@@ -145,6 +145,15 @@ Resource::~Resource()
 {
 	if (buffer)
 		g.buffers.erase(address);
+	// A Metal texture or buffer hands its device to the autorelease pool as it is deallocated, and the driver's
+	// thread has no pool of its own: without one here, each resource the driver frees would leave that reference
+	// behind for good
+	@autoreleasepool
+	{
+		views_.clear();
+		texture = nil;
+		buffer = nil;
+	}
 	if (heap)
 		heap->Release();
 }

@@ -13,6 +13,8 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <pthread.h>
 
 // i_system.h's, which this file can't include: the game's headers and Objective-C's don't agree on what a boolean is
 extern "C" void I_OutputMsg(const char *format, ...);
@@ -290,7 +292,11 @@ void Commit(const std::vector<id<MTLCommandBuffer>> &buffers, id<MTLDrawable> dr
 			[buffers[i] presentDrawable:drawable];
 		const int fails = last ? injected : 0;
 		[buffers[i] addCompletedHandler:^(id<MTLCommandBuffer> done) {
-			Completed(done, completes, fails);
+			// Metal's thread has no pool in place for what a failure's description autoreleases
+			@autoreleasepool
+			{
+				Completed(done, completes, fails);
+			}
 		}];
 		[buffers[i] commit];
 	}
@@ -918,6 +924,11 @@ HRESULT CreateDevice(const DeviceOptions &options, ID3D12Device **device, IDXGIA
 			options.validation ? ", command buffer errors in detail" : "");
 		if (options.software)
 			MTL12_LOG_ONCE("a CPU device was asked for, and Metal has none; using the GPU");
+		// The driver's thread is the game's main loop, which has no autorelease pool: mtl12 brings one to every call
+		// that can autorelease. With OBJC_DEBUG_MISSING_POOLS=YES the Objective-C runtime reports each object
+		// autoreleased without a pool, by thread, and a test then needs to know which thread is this one.
+		if (getenv("OBJC_DEBUG_MISSING_POOLS"))
+			Log("the driver's thread is %p", (void *)pthread_self());
 		if (paravirtual)
 		{
 			// The GPU of a macOS virtual machine (GitHub's runners, too). Its driver writes each encoder's commands into
