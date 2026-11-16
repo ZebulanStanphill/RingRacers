@@ -38,13 +38,13 @@ existing 512-byte draw allocation. Vulkan already honors region copy offsets.
 The `D3D12: atlas:` perf line reports live views, retained pages, occupied shelf
 area (including fence-pending frees), period placements, frees, and released
 pages, and standalone admission reasons. `textures: ... created` still counts actual GPU resources,
-including pages, rather than atlas views. Page memory is counted once. Desktop
-backends call this logger every five seconds; UWP retains its engine-loop cadence.
+including pages, rather than atlas views. Page memory is counted once. Only the
+UWP build logs these lines.
 
 `d3d12_texture_atlas` tests allocation, rounding, full pages, deferred reuse,
 coalescing, and empty-page reset under the native harness's sanitizers. GPU frame
-comparisons and Vulkan validation exercise the shared driver; native D3D12 and
-Xbox timing still need CI/device checks.
+comparisons and Vulkan validation exercise the shared driver, and the Tests
+workflow runs the driver test on native Direct3D 12 (WARP).
 
 ## Local validation (2026-11-15)
 
@@ -76,5 +76,29 @@ changes. Nearest differences are isolated texel selections. Bilinear also has
 small color-rounding differences (mostly one channel level, up to 25 levels
 in these captures), so it does not strictly meet a point-sampling-only exception
 to pixel identity. This implementation follows the normalized transform design;
-bit-identical bilinear results would require further sampling work. Native D3D12
-compilation, Xbox visuals, and Xbox performance remain for CI/device testing.
+bit-identical bilinear results would require further sampling work.
+
+## Xbox result (2026-11-15)
+
+About two hours of online races on an Xbox One X at b04dbef (33 maps, 1,126
+five-second windows, 3D models on for the first half) against an earlier online
+session at 31af14d (7 maps, 232 windows):
+
+| Per five-second race window | 31af14d | b04dbef |
+| --- | --- | --- |
+| Resources created (mean) | 151 | 6 |
+| Median frames per second | 46.8 | 55.1 |
+| Windows below 50 frames per second | 56% | 37% |
+| Windows below 40 frames per second | 40% | 20% |
+
+The sessions differ in maps and player counts, so the frame rates are not a
+controlled comparison; the resource creations are the direct measure. A window
+placed 97 textures in pages at the median and 2,347 at most. The textures left
+standalone were wrapped ones (8,593 over the session) and ones over the size
+limit (1,561). The player reported no visual problems.
+
+A level kept every translation it had drawn until the level change, up to
+9,826 textures in 35 pages at 97% occupancy, and b04dbef never released a
+page: the session ended with 35 pages (560 MB) holding about 130 textures.
+Empty pages are released since the following commit, which this session did
+not test.
