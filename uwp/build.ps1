@@ -11,6 +11,9 @@ window from ANGLE and give it back (patches/sdl-egl-surface-handoff.patch),
 downloads ANGLE into deps/, then generates and builds the UWP launcher solution in
 build/. patches/, deps/ and build/ are beside this script, in uwp/.
 
+The package's version is Ring Racers' version followed by GITHUB_RUN_NUMBER (0 when
+it isn't set), for example 2.4.0.123.
+
 Run from an x64 Visual Studio 2022 developer shell with VCPKG_ROOT set.
 #>
 param(
@@ -161,7 +164,10 @@ if (-not (Test-Path (Join-Path $Angle "bin/UAP/x64/libGLESv2.dll"))) {
 	Expand-Archive -Force $AnglePackage $Angle
 }
 
-Exec { cmake -S $Root -B $UwpBuild -G "Visual Studio 17 2022" -A x64 @AppPgo "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
+# The package's version ends with the Build workflow's run number, so each build's package is newer than the last; a
+# local build ends in 0
+$PackageRevision = if ($env:GITHUB_RUN_NUMBER) { $env:GITHUB_RUN_NUMBER } else { "0" }
+Exec { cmake -S $Root -B $UwpBuild -G "Visual Studio 17 2022" -A x64 @AppPgo "-DRR_PACKAGE_REVISION=$PackageRevision" "-DRR_DIR=$($LibBuild.Replace('\', '/'))" "-DSDL_DIR=$($SdlOut.Replace('\', '/'))" "-DANGLE_DIR=$($Angle.Replace('\', '/'))" }
 Exec { cmake --build $UwpBuild --config Release }
 
 Write-Host ""

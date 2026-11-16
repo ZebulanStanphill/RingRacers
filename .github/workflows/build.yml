@@ -108,6 +108,19 @@ jobs:
               if ($null -eq $entry -or $entry.Length -lt 1000) { throw "Package is missing $notice" }
             }
             if ($null -eq $archive.GetEntry('AppxSignature.p7x')) { throw "Package is unsigned" }
+
+            # The package's version is Ring Racers' version padded to three parts, then this run's number
+            $first = Get-Content src\version.h -TotalCount 1
+            if ($first -notmatch '^#define SRB2VERSION "(\d+(?:\.\d+){0,2})"') { throw "Cannot read SRB2VERSION from src\version.h" }
+            $parts = @($Matches[1] -split '\.')
+            while ($parts.Count -lt 3) { $parts += '0' }
+            $expected = ($parts + $env:GITHUB_RUN_NUMBER) -join '.'
+            $entry = $archive.GetEntry('AppxManifest.xml')
+            if ($null -eq $entry) { throw "Package has no AppxManifest.xml" }
+            $reader = New-Object System.IO.StreamReader($entry.Open())
+            try { $manifest = [xml]$reader.ReadToEnd() } finally { $reader.Dispose() }
+            $version = $manifest.Package.Identity.Version
+            if ($version -ne $expected) { throw "Package version is $version, expected $expected" }
           } finally { $archive.Dispose() }
 
 

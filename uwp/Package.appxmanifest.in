@@ -10,7 +10,7 @@
   <Identity
     Name="5a528e66-e0fc-43fb-b377-ce0b1bb0d3e8"
     Publisher="CN=danwo"
-    Version="2.4.0.0" />
+    Version="@RR_PACKAGE_VERSION@" />
 
   <mp:PhoneIdentity PhoneProductId="5a528e66-e0fc-43fb-b377-ce0b1bb0d3e8" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

@@ -34,9 +34,43 @@ if(NOT EXISTS "${ANGLE_DIR}/bin/UAP/x64/libGLESv2.dll")
 	message(FATAL_ERROR "ANGLE_DIR must point to the extracted ANGLE.WindowsStore package; build.ps1 downloads it")
 endif()
 
+# The package version is Ring Racers' version (the first line of src/version.h, "2.4" or "2.4.1") padded to three parts,
+# then RR_PACKAGE_REVISION: the Build workflow's run number (build.ps1 passes GITHUB_RUN_NUMBER), 0 for a local build.
+# Each part is a whole number up to 65535, which is all a package version allows.
+set(RR_PACKAGE_REVISION "0" CACHE STRING "Fourth part of the package version")
+set(RR_VERSION_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/../src/version.h")
+# Configure again when the version changes
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${RR_VERSION_HEADER}")
+file(STRINGS "${RR_VERSION_HEADER}" _rr_version_line LIMIT_COUNT 1)
+if(NOT _rr_version_line MATCHES "^#define SRB2VERSION \"([^\"]*)\"")
+	message(FATAL_ERROR "The first line of ${RR_VERSION_HEADER} isn't #define SRB2VERSION \"...\": ${_rr_version_line}")
+endif()
+set(RR_SRB2VERSION "${CMAKE_MATCH_1}")
+string(REPLACE "." ";" _rr_version_parts "${RR_SRB2VERSION}")
+list(LENGTH _rr_version_parts _rr_version_count)
+if(_rr_version_count LESS 1 OR _rr_version_count GREATER 3)
+	message(FATAL_ERROR "SRB2VERSION \"${RR_SRB2VERSION}\" must have one to three parts to make a package version, which has four with the revision")
+endif()
+while(_rr_version_count LESS 3)
+	list(APPEND _rr_version_parts 0)
+	math(EXPR _rr_version_count "${_rr_version_count} + 1")
+endwhile()
+list(APPEND _rr_version_parts "${RR_PACKAGE_REVISION}")
+foreach(_rr_part IN LISTS _rr_version_parts)
+	if(NOT _rr_part MATCHES "^(0|[1-9][0-9]?[0-9]?[0-9]?[0-9]?)$" OR _rr_part GREATER 65535)
+		message(FATAL_ERROR "Package version part \"${_rr_part}\" (from SRB2VERSION \"${RR_SRB2VERSION}\" and RR_PACKAGE_REVISION \"${RR_PACKAGE_REVISION}\") isn't a whole number from 0 to 65535")
+	endif()
+endforeach()
+list(JOIN _rr_version_parts "." RR_PACKAGE_VERSION)
+message(STATUS "Package version: ${RR_PACKAGE_VERSION}")
+
+# The Visual Studio generator takes a source with the .appxmanifest extension as the package manifest, so the
+# configured copy keeps it
+configure_file(Package.appxmanifest.in "${CMAKE_CURRENT_BINARY_DIR}/Package.appxmanifest" @ONLY)
+
 add_executable(${PROJECT_NAME} WIN32
 	main.cpp
-	Package.appxmanifest
+	"${CMAKE_CURRENT_BINARY_DIR}/Package.appxmanifest"
 )
 
 # libuwp from worleydl/uwp-dep (fetched by the Ring Racers build), SDL2, and ANGLE
