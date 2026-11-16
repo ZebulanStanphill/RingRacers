@@ -8,15 +8,15 @@
   IgnorableNamespaces="uap mp">
 
   <Identity
-    Name="5a528e66-e0fc-43fb-b377-ce0b1bb0d3e8"
-    Publisher="CN=danwo"
+    Name="ZebulanStanphill.RingRacersZE"
+    Publisher="CN=ZebulanStanphill"
     Version="@RR_PACKAGE_VERSION@" />
 
-  <mp:PhoneIdentity PhoneProductId="5a528e66-e0fc-43fb-b377-ce0b1bb0d3e8" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+  <mp:PhoneIdentity PhoneProductId="1fdafec4-2514-4d51-9fd9-c3c257865404" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>Ring Racers</DisplayName>
-    <PublisherDisplayName>danwo</PublisherDisplayName>
+    <DisplayName>Ring Racers ZE</DisplayName>
+    <PublisherDisplayName>Zebulan Stanphill</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -33,10 +33,10 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="uwp.App">
       <uap:VisualElements
-        DisplayName="Ring Racers"
+        DisplayName="Ring Racers ZE"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
-        Description="Ring Racers"
+        Description="Ring Racers ZE"
         BackgroundColor="transparent">
 	<!--<uap:SplashScreen Image="Assets\SplashScreen.png" /> -->
       </uap:VisualElements>

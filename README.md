@@ -91,7 +91,7 @@ The Xbox calls the drive `E:`, so the game looks for its files in `E:\ringracers
 ### Install the game
 
 1. Download the `ring-racers-ze` artifact of the latest successful **Build** run from this repository's [Actions](https://github.com/ZebulanStanphill/RingRacers/actions/workflows/build.yml) tab (GitHub asks you to sign in), or [build it yourself](#xbox-app-on-windows). It contains an `.msix` package and a `.cer` certificate.
-2. In Xbox Device Portal, install the `.cer` along with the `.msix`. Each build has a new certificate, so uninstall the game before installing a different build. Your config and saves are on the USB drive and stay.
+2. In Xbox Device Portal, install the `.cer` along with the `.msix`. Each build has a new certificate, so uninstall the game before installing a different build. Your config and saves are on the USB drive and stay. If you installed the earlier "Ring Racers" package, uninstall it too: this app is separate from it and doesn't update it.
 3. Start the game. You don't need to change the **App type** that Dev Home shows for it: on an Xbox One X, the game ran the same as an App and as a Game. If the game says at launch that it is running as an app, follow the steps it shows to change the type to Game. If you have changed the type, say so when you report a bug.
 
 ### Why the drive needs permissions

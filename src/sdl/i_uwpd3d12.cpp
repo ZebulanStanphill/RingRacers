@@ -116,7 +116,7 @@ void I_UWPRequireGameMode(void)
 		"The game is running as an app, which gets fewer CPU cores and less of the GPU.\n"
 		"\n"
 		"In Dev Home, set the app type to \"Game\":\n"
-		"1. Under \"Games and Apps\", highlight \"Ring Racers\".\n"
+		"1. Under \"Games and Apps\", highlight \"Ring Racers ZE\".\n"
 		"2. Press the \"View\" button.\n"
 		"3. Choose \"View details\".\n"
 		"4. Change \"App type\" from \"App\" to \"Game\".\n"
