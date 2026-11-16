@@ -158,6 +158,18 @@ window is hidden".
   locked, so there the game stays in its window; with SDL's hint against Spaces
   (`SDL_VIDEO_MAC_FULLSCREEN_SPACES=0`) the window covers the screen as it is. Both ways the layer's drawables follow
   the window to the display's size and back.
+- **Changing the renderer in fullscreen** trades two windows, each of which wants a Space of its own, and a review
+  feared two animations at once, a Space left over, or a game that ends up in a window. The presenter now writes each
+  window's way into and out of a Space to the log (`WatchSpaces`, from AppKit's notifications), and on a runner
+  (macOS 15, where the screen isn't locked) the order is this. Software to VibeRant Metal: the Metal window goes into
+  a Space, in 0.55 to 0.67 s, and hiding the OpenGL window afterwards, which is then on a Space that isn't showing,
+  is no transition at all. VibeRant Metal to Software: the OpenGL window goes into a Space (0.6 s), and then the
+  Metal window leaves its own as it is destroyed (0.7 to 1.1 s). So two transitions that way, but one after the
+  other, because SDL waits for each to end. After every change the pictures of the runner's screen show the game
+  on the whole screen with the renderer that was asked for, no frame was withheld from a window out of sight, and
+  the game went on. Nothing was changed for it. What the transitions look like to a person, and whether Mission
+  Control is left with an empty Space, a picture of the screen doesn't show; and both Macs' screens were locked,
+  where there are no Spaces to try it with.
 - **A window nobody sees.** A layer's drawables only come back from the display, so asking the layer of a window
   that is minimized, hidden, on another Space, or covered for its next drawable waits a second and gives nothing.
   The presenter asks AppKit whether any of the window is on screen (`NSWindow`'s occlusion state) and doesn't present

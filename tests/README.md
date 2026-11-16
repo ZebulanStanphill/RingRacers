@@ -1284,7 +1284,10 @@ workflow is on the default branch), or by pushing a commit to a branch named
   the game started without naming a renderer; the title screen and a menu, with keys
   sent through the system (CoreGraphics events from `osascript`, which reach whatever
   window has the keyboard); 3D models on and off; changing the
-  renderer while a replay plays, starting in VibeRant Metal and starting in Software; the three
+  renderer while a replay plays, starting in VibeRant Metal and starting in Software,
+  in a window and in fullscreen (`fullscreen-switch`, `fullscreen-switch-software`,
+  where each of the two windows that trade places is in a Space of its own, and
+  `summary.json` has the presenter's lines about them in order); the three
   Screen Scaling modes in fullscreen with a 320x200 frame; `vid_wait`;
   `-mtldebug`; and `blind`, where `-mtlblind` has the presenter take its window for
   out of sight although it is on the runner's screen: at least ten frames must be
@@ -1412,9 +1415,13 @@ screen. Each scene is a run of the game (or two), judged like the sweep's, and b
   (`docs/metal-backend.md`, "Autorelease pools").
 - `fullscreen`: started on the whole screen as a player starts it, then `fullscreen No` and `fullscreen Yes`; the
   presenter's drawables must go from the display's size to the window's and back. The game's fullscreen is a Space
-  of its own, which the system doesn't make while the screen is locked: there the game stays in its window and this
-  scene fails, which is the scene telling the truth. `fullscreen-no-space` is the same with SDL's hint
-  `SDL_VIDEO_MAC_FULLSCREEN_SPACES=0`, where the window covers the screen as it is, locked or not.
+  of its own, which the system doesn't make while the screen is locked: there the game stays in its window, so the
+  scenes that are about Spaces aren't run behind a locked screen, and the mode says so ("not run"). `fullscreen-no-space`
+  is the same with SDL's hint `SDL_VIDEO_MAC_FULLSCREEN_SPACES=0`, where the window covers the screen as it is,
+  locked or not.
+- `fullscreen-switch`, `fullscreen-switch-software`: the renderer changed in fullscreen, from VibeRant Metal to
+  Software and back, and from Software to VibeRant Metal and back. Without `-mtlunseen`, so that a Metal window that
+  ends up on a Space that isn't showing is found out by the frames it doesn't get. Not run behind a locked screen.
 - `video-mode`: `vid_mode` to 800x600 and back to 1280x720; frames and drawables must follow.
 - `metal-software-metal`, `software-metal-software`, `legacy-gl-software-legacy-gl`: the renderer changed while a
   replay plays, there and back, with a screenshot at each stop.

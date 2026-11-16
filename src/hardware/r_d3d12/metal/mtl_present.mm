@@ -266,6 +266,41 @@ void MatchWindowColors(bool say)
 			displayName);
 }
 
+// The Metal window as AppKit knows it, for as long as it exists (the view goes before the window does)
+__weak NSWindow *g_metalCocoa = nil;
+
+// Says in the log when a window of the game goes into or out of a fullscreen Space, which is what the game's fullscreen
+// is on macOS (unless SDL is told otherwise): the system moves the window there with an animation, and SDL waits for
+// it. A change of renderer in fullscreen moves two windows, the one that goes and the one that comes, and only the log
+// can say afterwards in what order and how long each took. From then on, for both windows, whichever renderer runs.
+void WatchSpaces()
+{
+	static bool watching = false;
+	if (watching)
+		return;
+	watching = true;
+	struct
+	{
+		NSNotificationName name;
+		const char *what;
+	} const events[] = {
+		{NSWindowWillEnterFullScreenNotification, "begins to enter a fullscreen Space"},
+		{NSWindowDidEnterFullScreenNotification, "is in a fullscreen Space"},
+		{NSWindowWillExitFullScreenNotification, "begins to leave its fullscreen Space"},
+		{NSWindowDidExitFullScreenNotification, "has left its fullscreen Space"},
+	};
+	for (const auto &event : events)
+	{
+		const char *what = event.what;
+		// Posted on the main thread, which is the game's and the log's
+		[NSNotificationCenter.defaultCenter addObserverForName:event.name object:nil queue:nil usingBlock:^(NSNotification *note) {
+			NSWindow *metal = g_metalCocoa;
+			Log("presenter: at %.0f ms the %s window %s%s", MsSince(g_start), metal && note.object == metal ? "Metal" : "OpenGL", what,
+				!metal ? "" : metal.onActiveSpace ? " (the Metal window is on the Space that shows)" : " (the Metal window is not on the Space that shows)");
+		}];
+	}
+}
+
 void DestroyLayer()
 {
 	g_mtl.layer = nil;
@@ -291,6 +326,7 @@ bool CreateWindowAndLayer()
 
 	@autoreleasepool
 	{
+		WatchSpaces();
 		const Uint32 flags = SDL_GetWindowFlags(game);
 		int x, y, w, h;
 		SDL_GetWindowPosition(game, &x, &y);
@@ -329,6 +365,7 @@ bool CreateWindowAndLayer()
 		g_mtl.metalWindow = made;
 		g_mtl.view = view;
 		g_mtl.layer = layer;
+		g_metalCocoa = ((__bridge NSView *)view).window;
 		rr_mtl_present::SetWindowIcon(made);
 		SDL_ShowWindow(made);
 		MatchWindowColors(true);

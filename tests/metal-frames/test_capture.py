@@ -70,6 +70,8 @@ def main():
     assert judge(DEVICE + TOOK + COLORS + done(2049, how="closed the Metal window as the game quits; the game's OpenGL window is shown")) == ["quit"]
     assert judge(DEVICE + TOOK + COLORS + done(2049, how=GAVE_BACK)) == ["quit"]
     assert judge(DEVICE + TOOK + COLORS + done(300, how=GAVE_BACK) + TOOK + COLORS + done(400)) == []
+    # A scene that ends in Software after VibeRant Metal had the window
+    assert judge(DEVICE + TOOK + COLORS + done(2049, how=GAVE_BACK), quits_with_metal=False) == []
     # Colors: the layer must have its window's color space
     assert judge(DEVICE + TOOK + done(2049)) == ["colors"]
     assert judge(DEVICE + TOOK + 'VibeRant Metal: presenter: the window has no color space to give the layer, so the frame\'s colors '

@@ -163,6 +163,11 @@ def drawable_waits(text):
     return round(sum(float(mean) for mean, _ in found) / len(found), 3), max(float(worst) for _, worst in found)
 
 
+def spaces(text):
+    """The presenter's lines about windows going into and out of fullscreen Spaces, in order"""
+    return re.findall(r"presenter: (at \d+ ms the (?:Metal|OpenGL) window [^(\n]*?)(?: \(.*)?$", text, re.M)
+
+
 def probes(text):
     """Of the frames presented to a window the system called out of sight: how many, how many of them Metal reported
     with a time at which they were shown, and how many without (dropped, or a system that gives no times)"""
@@ -246,7 +251,7 @@ def run_game(game, data, home, args, log_path, timeout, during=None, validation=
     return code, time.time() - start
 
 
-def check_log(log_path, need_metal=True, validation=True):
+def check_log(log_path, need_metal=True, validation=True, quits_with_metal=True):
     with open(log_path, errors="replace") as handle:
         text = handle.read()
     problems = bad_lines(text)
@@ -265,7 +270,9 @@ def check_log(log_path, need_metal=True, validation=True):
         # A game that ends with VibeRant Metal closes the Metal window and leaves its OpenGL window, which nothing ever
         # drew into, hidden: the log says what SDL says of that window at the end
         quit_with = re.findall(r"presenter: closed the Metal window as the game quits; the game's OpenGL window is (\w+)", text)
-        if not quit_with:
+        if not quits_with_metal:
+            pass
+        elif not quit_with:
             problems.append(("quit", "the log doesn't say that the Metal window was closed as the game quit"))
         elif quit_with[-1] != "hidden":
             problems.append(("quit", "the game's OpenGL window was %s as the game quit from VibeRant Metal" % quit_with[-1]))
@@ -418,6 +425,17 @@ def scene_list():
                            "during": pictures((playing, 1, 3, "1-software-start"), (playing, 1, 5, "2-software"),
                                               (took, 1, 3, "3-metal")), "shots": 2,
                            "renderer": "-software"},
+        # The renderer changed in fullscreen, which is how the game runs for a player: two windows trade places, each
+        # in a Space of its own, and the log says in what order they went (spaces, in summary.json)
+        "fullscreen-switch": {"args": replay + wait(400) + shot + ["+renderer", "Software"] + wait(400) + shot
+                              + ["+renderer", "VibeRant Metal"] + wait(400) + shot + ["+quit"],
+                              "during": pictures((playing, 1, 7, "1-metal"), (gave_back, 1, 6, "2-software"), (took, 2, 6, "3-metal")),
+                              "shots": 3, "window": False},
+        "fullscreen-switch-software": {"args": replay + wait(400) + shot + ["+renderer", "VibeRant Metal"] + wait(400) + shot
+                                       + ["+renderer", "Software"] + wait(400) + shot + ["+quit"],
+                                       "during": pictures((playing, 1, 7, "1-software"), (took, 1, 6, "2-metal"),
+                                                          (gave_back, 1, 6, "3-software")),
+                                       "shots": 3, "window": False, "renderer": "-software", "ends_in_software": True},
         "scaling-fit": scaling("Fit"),
         "scaling-integer": scaling("Integer"),
         "scaling-1to1": scaling("1:1"),
@@ -452,7 +470,7 @@ def scenes(options):
         during = scene.get("during")
         wrapped = (lambda process, d=during, s=scene_dir, l=log_path: d(process, s, l)) if during else None
         code, seconds = run_game(options.game, options.data, home, args, log_path, options.timeout, wrapped)
-        problems, device, text = check_log(log_path)
+        problems, device, text = check_log(log_path, quits_with_metal=not scene.get("ends_in_software"))
         # A scene's window is on the screen the whole time, except where the scene has the presenter think otherwise
         presented = check_presenting(text, problems, in_sight=not scene.get("blind"))
         checked = check_drawables(text, problems) if scene.get("check") else None
@@ -478,7 +496,7 @@ def scenes(options):
                 problems.append(("frozen", "the pictures of the screen weren't taken"))
         results.append({"scene": name, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots), "presented": presented,
                         "not_presented": sum(presenting(text)[1:]), "drawables_checked": checked, "blind": blind, "device": device,
-                        "problems": problems})
+                        "spaces": spaces(text), "problems": problems})
         print("%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s" % (name, code, seconds, len(shots), presented,
               "" if checked is None else ", %d drawables checked" % checked, ", " + blind if blind else "",
               "" if not problems else "  PROBLEMS: " + "; ".join("%s: %s" % p for p in problems[:5])), flush=True)
@@ -518,9 +536,9 @@ def hardware_list():
         return [{"renderer": renderer, "args": timed + ["+vid_wait", vsync], "validation": False, "shots": 2, "timed": True,
                  "unseen": unseen, "needs": [took] if renderer == "-metal" else [], "lacks": [] if renderer == "-metal" else [took]}]
 
-    def fullscreen(env):
+    def fullscreen(env, space=False):
         # Started as a player starts it, on the whole screen; then a window through the game's own setting, and back
-        return [{"renderer": "-metal", "window": False, "env": env,
+        return [{"renderer": "-metal", "window": False, "env": env, "space": space,
                  "args": replay + wait(300) + shot + ["+fullscreen", "No"] + wait(300) + shot + ["+fullscreen", "Yes"]
                  + wait(300) + shot + ["+quit"],
                  "shots": 3, "sizes": [(1280, 720)] * 3, "drawables": [None, (1280, 720), None], "check": True}]
@@ -549,8 +567,19 @@ def hardware_list():
         # the frames too, and shows them to nobody.)
         "blind": [{"renderer": "-metal", "args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
                    "shots": 1, "unseen": False, "blind": True, "needs": [took]}],
-        "fullscreen": fullscreen({}),
+        "fullscreen": fullscreen({}, space=True),
         "fullscreen-no-space": fullscreen({"SDL_VIDEO_MAC_FULLSCREEN_SPACES": "0"}),
+        # The renderer changed in fullscreen: two windows trade places, each in a Space of its own, and the log says in
+        # what order they went. Without -mtlunseen, so that a Metal window left on a Space that isn't showing is found
+        # out by the frames it doesn't get.
+        "fullscreen-switch": [{"renderer": "-metal", "window": False, "space": True, "unseen": False,
+                               "args": replay + wait(400) + shot + ["+renderer", "Software"] + wait(400) + shot
+                               + ["+renderer", "VibeRant Metal"] + wait(400) + shot + ["+quit"], "shots": 3,
+                               "drawables": [None, None], "needs": ["(?s)%s.*%s.*%s" % (took, gave_back, took)]}],
+        "fullscreen-switch-software": [{"renderer": "-software", "window": False, "space": True, "unseen": False,
+                                        "args": replay + wait(400) + shot + ["+renderer", "VibeRant Metal"] + wait(400) + shot
+                                        + ["+renderer", "Software"] + wait(400) + shot + ["+quit"], "shots": 3,
+                                        "drawables": [None], "needs": ["(?s)%s.*%s" % (took, gave_back)]}],
         # vid_mode 14 is 800x600 and 10 is 1280x720 in a window (windowedModes in i_video.cpp)
         "video-mode": [{"renderer": "-metal", "args": replay + wait(300) + shot + ["+vid_mode", "14"] + wait(300) + shot
                         + ["+vid_mode", "10"] + wait(300) + shot + ["+quit"],
@@ -583,6 +612,13 @@ def hardware(options):
     results = []
     for name, runs in hardware_list().items():
         if options.only and name not in options.only.split(","):
+            continue
+        # The game's fullscreen is a Space of its own, which the system doesn't make while the screen is locked: the game
+        # stays in its window there, so a scene that is about Spaces has nothing to show
+        if any(run.get("space") for run in runs) and screen_locked():
+            results.append({"scene": name, "skipped": "the screen is locked, and the system makes no fullscreen Space behind a locked screen",
+                            "problems": []})
+            print("%s: not run: %s" % (name, results[-1]["skipped"]), flush=True)
             continue
         scene_dir = os.path.join(scenes_dir, name)
         os.makedirs(scene_dir, exist_ok=True)
@@ -651,6 +687,7 @@ def hardware(options):
                     if mine:
                         problems.append(("pools", "the driver's thread autoreleased %d objects with no pool in place: %s" % (
                             len(mine), ", ".join("%d %s" % (mine.count(name), name) for name in sorted(set(mine))[:6]))))
+            result["spaces"] = spaces(text)
             if metal:
                 result["unseen_frames"] = sum(int(n) for n in re.findall(r"(\d+) skipped while the window was out of sight", text))
                 result["probes"] = dict(zip(("presented", "shown", "dropped"), probes(text)))
@@ -701,9 +738,10 @@ def main():
     os.makedirs(options.out, exist_ok=True)
     results = {"sweep": sweep, "scenes": scenes, "hardware": hardware}[options.mode](options)
     failed = [r for r in results if r["problems"]]
+    skipped = [r for r in results if r.get("skipped")]
     with open(os.path.join(options.out, "summary.json"), "w") as handle:
         json.dump({"mode": options.mode, "runs": results}, handle, indent=1)
-    print("%d runs, %d with problems" % (len(results), len(failed)))
+    print("%d runs, %d with problems%s" % (len(results) - len(skipped), len(failed), ", %d not run" % len(skipped) if skipped else ""))
     return 1 if failed or not results else 0
 
 
