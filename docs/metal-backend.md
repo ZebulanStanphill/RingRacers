@@ -24,7 +24,10 @@ The build define is `HAVE_METAL`, beside `HAVE_D3D12` ("the driver is built"), a
 `SRB2_CONFIG_METAL`: on by default on macOS, and `-DSRB2_CONFIG_METAL=OFF` builds without the driver, as the game was
 before. A macOS build has this backend and no other: not Direct3D 12, and not Vulkan through MoltenVK (asking for
 either beside it stops the configuration). `Core_Metal()` is therefore a constant, true with
-`HAVE_METAL`. What differs per backend, and where the driver asks:
+`HAVE_METAL`. The backend needs CMake 3.16, the first that knows Objective-C++ as a language (the rest of the
+project states 3.14, and the configuration says so when it stops), and its files are compiled with automatic
+reference counting, which the game's target sets for its Objective-C++ files. What differs per backend, and where
+the driver asks:
 
 - **Device creation** (`d3d12_core.cpp`): `rr_mtl12::CreateDevice` makes the system's default `MTLDevice` (or, for
   a program without a window that is given none, the first device that isn't a low-power one) and its command queue.

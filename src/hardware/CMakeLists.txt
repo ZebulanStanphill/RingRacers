@@ -154,9 +154,11 @@ if(SRB2_CONFIG_METAL)
 		r_d3d12/metal/mtl12_resources.mm r_d3d12/metal/mtl12_pipeline.mm r_d3d12/metal/mtl_present.mm)
 	target_sources(SRB2SDL2 PRIVATE ${metal_objcxx_sources} r_d3d12/metal/mtl12_msl.cpp r_d3d12/metal/mtl_present_game.cpp)
 	# mtl12 keeps Metal's objects in C++ classes, which automatic reference counting makes safe: without it nothing
-	# retains them. TARGET_DIRECTORY, because the target is made in the directory above, and a source file's properties
-	# otherwise only reach targets of the directory that sets them.
-	set_source_files_properties(${metal_objcxx_sources} TARGET_DIRECTORY SRB2SDL2 PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+	# retains them. The option is the target's, for its Objective-C++ files, which are these five and no others: a
+	# source file's own properties only reach targets of the directory that sets them, the target is made in the
+	# directory above, and naming that directory (TARGET_DIRECTORY) takes CMake 3.18, where older versions read the
+	# word as one more file and build without the option, with no word of it.
+	target_compile_options(SRB2SDL2 PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 	target_link_libraries(SRB2SDL2 PRIVATE spirv-cross-msl
 		"-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework AppKit")
 endif()

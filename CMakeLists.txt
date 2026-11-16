@@ -124,7 +124,10 @@ if(SRB2_CONFIG_METAL)
 	if(SRB2_CONFIG_VULKAN OR SRB2_CONFIG_D3D12)
 		message(FATAL_ERROR "SRB2_CONFIG_METAL can't be combined with SRB2_CONFIG_VULKAN or SRB2_CONFIG_D3D12: a build with the Metal backend has no other")
 	endif()
-	# The backend is Objective-C++
+	# The backend is Objective-C++, which CMake knows as a language from 3.16 on
+	if(CMAKE_VERSION VERSION_LESS 3.16)
+		message(FATAL_ERROR "SRB2_CONFIG_METAL needs CMake 3.16 or later, for Objective-C++. An older CMake can build without VibeRant Metal: -DSRB2_CONFIG_METAL=OFF")
+	endif()
 	enable_language(OBJCXX)
 endif()
 set(SRB2_CONFIG_ASSET_DIRECTORY "" CACHE PATH "Path to directory that contains all asset files for the installer. If set, assets will be part of installation and cpack.")
