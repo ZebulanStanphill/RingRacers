@@ -184,7 +184,8 @@ window is hidden".
   the layer isn't asked again for a quarter of a second, doubling up to four seconds while it keeps giving none; if
   it has none for a probe, no more probes go out until the window is in sight. The log says when presenting stops
   and starts again, and, when the window is given back or closed, how many frames were presented, skipped, and left
-  without a drawable, and how many of those presented were probes, shown or dropped.
+  without a drawable, how many of those presented were probes, shown or dropped, and how long the layer took to
+  give a drawable, on average and at worst.
 - **`-mtlunseen`** presents every frame regardless of what AppKit says, for tests on a Mac nobody sits at: on both
   Macs this was tried on, the layer went on giving drawables with the screen locked (and, on the MacBook, the
   display asleep).

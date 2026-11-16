@@ -401,8 +401,9 @@ void GiveBackWindow(bool idle, bool quitting)
 	if (g_check.on)
 		Log("presenter: %d drawables were read back and compared with the frames placed in them (-mtlcheck): %d differed, %d unread",
 			g_check.made + g_check.missed, g_check.differed, g_check.missed);
-	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped)",
-		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesShown.load(), g_probesDropped.load());
+	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped); the layer took %.2f ms to give a drawable on average, %.1f ms at worst",
+		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesShown.load(), g_probesDropped.load(),
+		g_totals.acquireMs / std::max(1, g_totals.presented + g_totals.noDrawable), g_totals.worstAcquireMs);
 }
 
 } // namespace
@@ -499,6 +500,8 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		const double acquireMs = MsSince(acquireStart);
 		g_stats.acquireMs += acquireMs;
 		g_stats.worstAcquireMs = std::max(g_stats.worstAcquireMs, acquireMs);
+		g_totals.acquireMs += acquireMs;
+		g_totals.worstAcquireMs = std::max(g_totals.worstAcquireMs, acquireMs);
 		id<MTLTexture> texture = drawable ? drawable.texture : nil;
 		ComPtr<ID3D12Resource> back;
 		if (!texture || FAILED(rr_mtl12::WrapTexture((__bridge void *)texture, &back)))

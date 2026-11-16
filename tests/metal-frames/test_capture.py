@@ -20,7 +20,8 @@ COLORS = ('VibeRant Metal: presenter: colors are matched to the display as the O
 
 def done(presented, unseen=0, no_drawable=0, probes=(0, 0, 0), how="closed the Metal window as the game quits; the game's OpenGL window is hidden"):
     return ("VibeRant Metal: presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; "
-            "%d of those presented went to a window the system called out of sight (%d shown, %d dropped)\n"
+            "%d of those presented went to a window the system called out of sight (%d shown, %d dropped); "
+            "the layer took 0.41 ms to give a drawable on average, 8.3 ms at worst\n"
             % ((how, presented, unseen, no_drawable) + probes))
 
 
@@ -131,6 +132,8 @@ def main():
     assert blind(done(9, 433, probes=(9, 0, 9)), True) == ("the screen is locked: 9 frames presented blind, 0 shown, 9 dropped by the system", [])
     assert blind(done(601, 4000, 12, probes=(601, 600, 1)), False)[1] == ["blind"]
     assert blind(done(9, 433, 3, probes=(9, 0, 9)), True)[1] == ["blind"]
+    assert capture.drawable_waits(done(300, how=GAVE_BACK) + done(400)) == (0.41, 8.3)
+    assert capture.drawable_waits("") is None
     print("test_capture: passed")
     return 0
 

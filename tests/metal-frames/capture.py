@@ -155,6 +155,14 @@ def check_drawables(text, problems):
     return tried - unread
 
 
+def drawable_waits(text):
+    """How long the layer took to give a drawable, in ms: the mean of each window's mean, and the worst"""
+    found = re.findall(r"the layer took ([\d.]+) ms to give a drawable on average, ([\d.]+) ms at worst", text)
+    if not found:
+        return None
+    return round(sum(float(mean) for mean, _ in found) / len(found), 3), max(float(worst) for _, worst in found)
+
+
 def probes(text):
     """Of the frames presented to a window the system called out of sight: how many, how many of them the display
     showed, and how many the system dropped"""
@@ -589,6 +597,7 @@ def hardware(options):
             shots = sorted(pngs_under(home), key=os.path.getmtime)
             result = {"scene": name, "run": index + 1, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots),
                       "presented": presented, "drawables_checked": checked, "device": device, "problems": problems}
+            result["timed"] = bool(run.get("timed"))
             if run.get("timed") and len(shots) == 2:
                 # One frame per tic between the two level times
                 result["ms_per_frame"] = round((os.path.getmtime(shots[1]) - os.path.getmtime(shots[0])) * 1000 / (1400 - 350), 3)
@@ -635,15 +644,17 @@ def hardware(options):
             if metal:
                 result["unseen_frames"] = sum(int(n) for n in re.findall(r"(\d+) skipped while the window was out of sight", text))
                 result["probes"] = dict(zip(("presented", "shown", "dropped"), probes(text)))
+                result["drawable_wait_ms"] = drawable_waits(text)
             if run.get("blind"):
                 result["blind"] = check_blind(text, problems)
             results.append(result)
-            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s%s%s" % (
+            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s%s%s%s" % (
                 name, " (run %d)" % (index + 1) if len(runs) > 1 else "", code, seconds, len(shots), presented,
                 "" if checked is None else ", %d drawables checked" % checked,
                 ", %d not (the window was out of sight)" % result["unseen_frames"] if result.get("unseen_frames") else "",
                 ", " + result["blind"] if result.get("blind") else "",
                 ", %.2f ms per frame" % result["ms_per_frame"] if "ms_per_frame" in result else "",
+                ", a drawable after %.2f ms (worst %.1f)" % result["drawable_wait_ms"] if result.get("timed") and result.get("drawable_wait_ms") else "",
                 ", autoreleased without a pool: %(driver_thread)d on the driver's thread, %(other_threads)d on others"
                 % result["autoreleased_without_pool"] if "autoreleased_without_pool" in result else "",
                 ", drawables %s" % drawables if drawables else "",
