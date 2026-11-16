@@ -95,6 +95,10 @@ def generate(engine, output):
         "VALUES": Source(engine / "src/screen.c").section("CV_PossibleValue_t cv_renderer_t[]", "// ========================================================================="),
         "STARTUP": Source(engine / "src/sdl/i_video.cpp").section("\t// Renderer choices", "\tborderlesswindow ="),
     }, output / "renderer_setting.cpp")
+    render(templates / "renderer_description.cpp.in", {
+        "ENUM": Source(engine / "src/k_menu.h").enum("vaopt_e"),
+        "REFRESH": Source(engine / "src/menus/options-video-advanced.c").function("M_RefreshAdvancedVideoOptions"),
+    }, output / "renderer_description.cpp")
     render(templates / "overlay_blend.cpp.in", {
         "BLEND": Source(engine / "src/hardware/hw_main.c").section("FBITFIELD HWR_GetBlendModeFlag(INT32 ast)", "FBITFIELD HWR_TranstableToAlpha"),
     }, output / "overlay_blend.cpp")

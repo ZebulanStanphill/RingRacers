@@ -169,6 +169,16 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   start cannot unlock the driver choice. These native tests do not verify real
   Windows driver initialization, menu drawing/popups, or presentation.
 
+- **Renderer description:** `renderer_description_both`, `renderer_description_vulkan`,
+  `renderer_description_metal`, and `renderer_description_all` (the same four kinds of
+  desktop build) execute the production `M_RefreshAdvancedVideoOptions` with the
+  production `vaopt_e` for every renderer setting the build has, while Software, Legacy
+  GL, or a VibeRant renderer runs. The lines above the Renderer row must describe the
+  renderer the setting names, and with Software, which names none, the VibeRant renderer
+  the build lists first: never Direct3D 12 in a build without it, which is what a Linux
+  or macOS build said. The options heading must name the renderer that runs. Menu drawing
+  is not covered.
+
 - **D3D12 rolled sprites:** `sprite_brightmap` also executes the geometry-only
   helper and the extracted HLSL integer `RollSource` function. For all angles
   1–71, both horizontal flips, asymmetric patches with holes, transparent

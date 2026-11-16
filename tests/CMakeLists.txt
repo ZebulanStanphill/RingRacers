@@ -45,6 +45,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/hardware/r_d3d12/d3d12_captures.inc"
     "${RR_SOURCE_DIR}/src/menus/options-1.c"
     "${RR_SOURCE_DIR}/src/menus/options-video-1.c"
+    "${RR_SOURCE_DIR}/src/menus/options-video-advanced.c"
+    "${RR_SOURCE_DIR}/src/k_menu.h"
     "${RR_SOURCE_DIR}/src/d_main.cpp"
     "${RR_SOURCE_DIR}/src/d_frame_schedule.h"
     "${RR_SOURCE_DIR}/src/hardware/hw_main.c"
@@ -131,6 +133,11 @@ regression(renderer_setting_both renderer_setting HWRENDER HAVE_D3D12 HAVE_D3D12
 regression(renderer_setting_vulkan renderer_setting HWRENDER HAVE_D3D12 HAVE_VULKAN)
 regression(renderer_setting_metal renderer_setting HWRENDER HAVE_D3D12 HAVE_METAL)
 regression(renderer_setting_all renderer_setting HWRENDER HAVE_D3D12 HAVE_D3D12_NATIVE HAVE_VULKAN)
+# What Video Options > Advanced says about the renderer, in each kind of desktop build with the VibeRant driver
+regression(renderer_description_both renderer_description HWRENDER HAVE_D3D12 HAVE_D3D12_NATIVE)
+regression(renderer_description_vulkan renderer_description HWRENDER HAVE_D3D12 HAVE_VULKAN)
+regression(renderer_description_metal renderer_description HWRENDER HAVE_D3D12 HAVE_METAL)
+regression(renderer_description_all renderer_description HWRENDER HAVE_D3D12 HAVE_D3D12_NATIVE HAVE_VULKAN)
 regression(event_queue event_queue)
 regression(quit_signal quit_signal)
 regression(upright_wall upright_wall HWRENDER)

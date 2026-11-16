@@ -155,8 +155,21 @@ menu_t OPTIONS_VideoAdvancedDef = {
 void M_RefreshAdvancedVideoOptions(void)
 {
 #if defined(HAVE_D3D12) && !defined(_UWP)
-	boolean shown_d3d = cv_renderer.value != 2;
-	boolean shown_vulkan = cv_renderer.value == 4;
+	// The description is of the VibeRant renderer the setting names. Software names none, so with it the description
+	// is of the first one this build lists (cv_renderer_t), which is the one a new config uses.
+	INT32 described = cv_renderer.value;
+	if (described == 1)
+	{
+#if defined(HAVE_D3D12_NATIVE)
+		described = 3;
+#elif defined(HAVE_VULKAN)
+		described = 4;
+#else
+		described = 5;
+#endif
+	}
+	boolean shown_d3d = described != 2;
+	boolean shown_vulkan = described == 4;
 	boolean running_d3d = HWR_D3D12();
 	OPTIONS_VideoAdvanced[vaopt_spacer3].text = shown_vulkan ? "VibeRant Vulkan is an enhanced port" : shown_d3d ? "VibeRant D3D is an enhanced port of" : "Legacy GL supports 3D models and true";
 	OPTIONS_VideoAdvanced[vaopt_spacer4].text = shown_vulkan ? "of the Legacy GL renderer to Vulkan," : shown_d3d ? "the Legacy GL renderer to Direct3D 12," : "perspective, but many visual features";
@@ -166,7 +179,7 @@ void M_RefreshAdvancedVideoOptions(void)
 	OPTIONS_VideoAdvanced[vaopt_renderer - 2].text = shown_d3d ? "\x85ZebulanStanphill/RingRacers" : "\x85Please don't report visual bugs!";
 	OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = running_d3d ? (HWR_Vulkan() ? "VibeRant Vulkan Options..." : "VibeRant D3D Options...") : "Legacy GL Options...";
 #ifdef HAVE_METAL
-	if (cv_renderer.value == 5)
+	if (described == 5)
 	{
 		OPTIONS_VideoAdvanced[vaopt_spacer3].text = "VibeRant Metal is an enhanced port";
 		OPTIONS_VideoAdvanced[vaopt_spacer4].text = "of the Legacy GL renderer to Metal,";

@@ -1,0 +1,81 @@
+// Which renderer Video Options > Advanced describes above its Renderer row, and names its hardware options after
+#include <cassert>
+#include <cstring>
+#include <string>
+#include "doomdef.h"
+#include "command.h"
+#include "i_video.h"
+#include "hardware/hw_driver.h"
+
+@@ENUM@@
+struct menuitem_t {
+    const char *text, *tooltip;
+    struct { consvar_t *cvar; } itemaction;
+};
+struct { INT16 numitems; } OPTIONS_VideoAdvancedDef;
+// As the menu is made in a build with the driver: VibeRant D3D's words
+static menuitem_t OPTIONS_VideoAdvanced[vaopt_legacygl_end];
+rendermode_t rendermode;
+consvar_t cv_renderer, cv_glfiltermode, cv_scr_depth;
+@@REFRESH@@
+// The two lines that say what the renderer is a port to, and the heading of its options
+static std::string described(INT32 setting, bool running_viberant, bool vulkan)
+{
+    cv_renderer.value = setting;
+    hwr_d3d12 = running_viberant;
+    hwr_vulkan = vulkan;
+    rendermode = render_opengl;
+    M_RefreshAdvancedVideoOptions();
+    return std::string(OPTIONS_VideoAdvanced[vaopt_spacer3].text) + " " + OPTIONS_VideoAdvanced[vaopt_spacer4].text
+        + " / " + OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text;
+}
+
+int main()
+{
+    const std::string d3d = "VibeRant D3D is an enhanced port of the Legacy GL renderer to Direct3D 12,";
+    const std::string vulkan = "VibeRant Vulkan is an enhanced port of the Legacy GL renderer to Vulkan,";
+    const std::string metal = "VibeRant Metal is an enhanced port of the Legacy GL renderer to Metal,";
+    const std::string gl = "Legacy GL supports 3D models and true perspective, but many visual features";
+    // With Software, which names no hardware renderer, the description is of the VibeRant renderer this build lists
+    // first, and never of one it doesn't have
+#if defined(HAVE_D3D12_NATIVE)
+    const std::string &first = d3d;
+    const char *options = "VibeRant D3D Options...";
+#elif defined(HAVE_VULKAN)
+    const std::string &first = vulkan;
+    const char *options = "VibeRant Vulkan Options...";
+#else
+    const std::string &first = metal;
+    const char *options = "VibeRant Metal Options...";
+#endif
+    // Software selected, and Software or Legacy GL running
+    assert(described(1, false, false) == first + " / Legacy GL Options...");
+    assert(described(2, false, false) == gl + " / Legacy GL Options...");
+    // Legacy GL selected while a VibeRant renderer still runs (the change takes effect at the next start)
+#if defined(HAVE_VULKAN) && !defined(HAVE_D3D12_NATIVE)
+    assert(described(2, true, true) == gl + " / " + options);
+#else
+    assert(described(2, true, false) == gl + " / " + options);
+#endif
+#ifdef HAVE_D3D12_NATIVE
+    assert(described(3, true, false) == d3d + " / VibeRant D3D Options...");
+    assert(described(1, true, false) == d3d + " / VibeRant D3D Options...");
+#endif
+#ifdef HAVE_VULKAN
+    assert(described(4, true, true) == vulkan + " / VibeRant Vulkan Options...");
+    // Software selected while VibeRant Vulkan still runs
+    assert(described(1, true, true) == first + " / VibeRant Vulkan Options...");
+#endif
+#ifdef HAVE_METAL
+    assert(described(5, true, false) == metal + " / VibeRant Metal Options...");
+    assert(described(1, true, false) == metal + " / VibeRant Metal Options...");
+#endif
+    // The description goes on the same way for every VibeRant renderer, and Legacy GL's has its own words
+    described(1, false, false);
+    assert(!strcmp(OPTIONS_VideoAdvanced[vaopt_spacer5].text, "featuring 3D models, true perspective,"));
+    assert(!strcmp(OPTIONS_VideoAdvanced[vaopt_renderer - 2].text, "\x85ZebulanStanphill/RingRacers"));
+    described(2, false, false);
+    assert(!strcmp(OPTIONS_VideoAdvanced[vaopt_spacer5].text, "are missing/broken."));
+    assert(!strcmp(OPTIONS_VideoAdvanced[vaopt_renderer - 2].text, "\x85Please don't report visual bugs!"));
+    return 0;
+}
