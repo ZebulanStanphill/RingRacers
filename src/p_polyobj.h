@@ -97,6 +97,7 @@ struct polyobj_t
 
 	degenmobj_t spawnSpot; // location of spawn spot
 	vertex_t    centerPt;  // center point
+	vertex_t    anchorPt;  // [UWP]: the anchor it was moved to its spawn spot from: origVerts plus this is the map's own vertex
 	fixed_t zdist;         // viewz distance for sorting
 	angle_t angle;         // for rotation
 	UINT8 attached;         // if true, is attached to a subsector

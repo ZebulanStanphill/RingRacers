@@ -70,8 +70,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   corners, that the T-join pass leaves loop polygons alone, that dented and unclosed
   loops fall back to the BSP cut while a rounding-sized dent is accepted, that a loop
   starting with GL segs is complete, and that a leaf the BSP walk skips still gets its
-  loop. Prevents seams of void between a floor's subsectors where BSP partitions cross
-  within the merge tolerance, found on Test Run's bowl.
+  loop. It also moves polyobjects as the game leaves them, to a spawn spot far from
+  their anchor, never moved, and two sharing a vertex with different anchors, and
+  checks that every polygon (and the polygon points of every seg) is made of the map's
+  own corners, where the node builder saw the polyobjects, and that the live vertices
+  end bit for bit where they were, a shared one included. Prevents seams of void
+  between a floor's subsectors where BSP partitions cross within the merge tolerance,
+  found on Test Run's bowl, and Balloon Park's funnel hidden by the floor of the
+  sliding blocks' control sector, which reached from the map's polyobject to where the
+  blocks had moved.
 
 - **Startup intro input:** `intro_uwp` and `intro_desktop` execute the production
   intro ticker/responder at immediate and 17/18-tic boundaries, preserving the

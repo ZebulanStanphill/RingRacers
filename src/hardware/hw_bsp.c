@@ -29,6 +29,7 @@
 #include "../i_video.h"
 #include "../w_wad.h"
 #include "../p_setup.h" // levelfadecol
+#include "../p_polyobj.h" // [UWP]: HWR_PolyobjectsHome
 
 // --------------------------------------------------------------------------
 // This is global data for planes rendering
@@ -1071,6 +1072,49 @@ static void AdjustSegs(void)
 }
 
 
+// [UWP]: Puts every polyobject's vertices where the map has them, keeping where they are now in saved (one entry per
+// polyobject vertex), or puts them back from it. The node builder saw the map before any polyobject went to its spawn
+// spot, so a subsector with a polyobject line on its edge stays where the polyobject was drawn. With the vertices as
+// they are now, its seg loop reaches from there to wherever the polyobject is: Balloon Park's sliding blocks stretched
+// the floor of their control sector across the funnel beside them.
+static void HWR_PolyobjectsHome(vertex_t *saved, boolean home)
+{
+	INT32 i;
+	size_t j, n = 0;
+
+	if (home)
+	{
+		for (i = 0; i < numPolyObjects; i++)
+		{
+			const polyobj_t *po = &PolyObjects[i];
+
+			for (j = 0; j < po->numVertices; j++, n++)
+			{
+				saved[n] = *po->vertices[j];
+				// origVerts are relative to the anchor once the polyobject has been moved from it, and untouched before.
+				po->vertices[j]->x = po->origVerts[j].x + po->anchorPt.x;
+				po->vertices[j]->y = po->origVerts[j].y + po->anchorPt.y;
+			}
+		}
+		return;
+	}
+
+	for (i = 0; i < numPolyObjects; i++)
+		n += PolyObjects[i].numVertices;
+	// Backwards, so that a vertex two polyobjects share ends where it was.
+	for (i = numPolyObjects - 1; i >= 0; i--)
+	{
+		const polyobj_t *po = &PolyObjects[i];
+
+		for (j = po->numVertices; j-- > 0;)
+		{
+			n--;
+			po->vertices[j]->x = saved[n].x;
+			po->vertices[j]->y = saved[n].y;
+		}
+	}
+}
+
 // call this routine after the BSP of a Doom wad file is loaded,
 // and it will generate all the convex polys for the hardware renderer
 void HWR_CreatePlanePolygons(INT32 bspnum)
@@ -1079,6 +1123,8 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	polyvertex_t *rootpv;
 	size_t i;
 	fixed_t rootbbox[4];
+	vertex_t *polyobjverts = NULL; // [UWP]
+	size_t numpolyobjverts = 0;
 
 	CONS_Debug(DBG_RENDER, "Creating polygons, please wait...\n");
 #ifdef HWR_LOADING_SCREEN
@@ -1088,6 +1134,17 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 #endif
 
 	HWR_ClearPolys();
+
+	// [UWP]
+	for (i = 0; i < (size_t)numPolyObjects; i++)
+		numpolyobjverts += PolyObjects[i].numVertices;
+	if (numpolyobjverts)
+	{
+		polyobjverts = malloc(numpolyobjverts * sizeof (*polyobjverts));
+		if (polyobjverts == NULL)
+			I_Error("couldn't malloc polyobjverts numpolyobjverts %s\n", sizeu1(numpolyobjverts));
+		HWR_PolyobjectsHome(polyobjverts, true);
+	}
 
 	// find min/max boundaries of map
 	//CONS_Debug(DBG_RENDER, "Looking for boundaries of map...\n");
@@ -1143,6 +1200,12 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	i = SolveTProblem();
 	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 	AdjustSegs();
+
+	if (polyobjverts) // [UWP]
+	{
+		HWR_PolyobjectsHome(polyobjverts, false);
+		free(polyobjverts);
+	}
 
 	//debug debug..
 	//if (nobackpoly)

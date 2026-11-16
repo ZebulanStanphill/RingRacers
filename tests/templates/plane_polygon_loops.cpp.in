@@ -10,6 +10,7 @@
 #include "hardware/hw_driver.h"
 #include "r_state.h"
 #include "m_bbox.h"
+#include "p_polyobj.h"
 #undef HWR_LOADING_SCREEN
 #undef min
 #undef max
@@ -20,6 +21,8 @@ seg_t *segs;
 subsector_t *subsectors;
 node_t *nodes;
 consvar_t cv_glsolvetjoin{};
+polyobj_t *PolyObjects;
+INT32 numPolyObjects;
 void I_Error(const char *, ...) { std::abort(); }
 static void CONS_Debug(int, const char *, ...) {}
 #define DBG_RENDER 0
@@ -60,6 +63,8 @@ static seg_t segments[32]; // Includes a valid trailing GL seg for shifted first
 static subsector_t subs[4];
 static node_t bsp[3];
 static line_t linedefs[32];
+// The vertices the polygons must be made of: the live ones, unless a polyobject has moved some of them.
+static vertex_t *want=verts;
 static std::vector<std::vector<int>> loops;
 static size_t first[4];
 static void clear() {
@@ -104,6 +109,7 @@ static void map(fixed_t right=64*FRACUNIT+FRACUNIT/4) {
         M_ClearBox(b); M_AddToBox(b,0,0); M_AddToBox(b,128*FRACUNIT,128*FRACUNIT);
     }
     cv_glsolvetjoin.value=0;
+    PolyObjects=nullptr; numPolyObjects=0; want=verts;
 }
 static void exact(size_t s) {
     const poly_t *p=extrasubsectors[s].planepoly;
@@ -114,11 +120,47 @@ static void exact(size_t s) {
     assert(p->numpts == static_cast<INT32>(loops[s].size()));
     assert(extrasubsectors[s].segloop);
     for (size_t j=0;j<loops[s].size();++j) {
-        const vertex_t &v=verts[loops[s][j]];
+        const vertex_t &v=want[loops[s][j]];
         const float x=FIXED_TO_FLOAT(v.x), y=FIXED_TO_FLOAT(v.y);
         assert(std::memcmp(&p->pts[j].x,&x,sizeof x)==0);
         assert(std::memcmp(&p->pts[j].y,&y,sizeof y)==0);
         assert(p->pts[j].z==0);
+    }
+}
+// Polyobjects, as the game leaves them: a polyobject moved to its spawn spot has its live vertices at the map's plus
+// (spawn spot - anchor), and its origVerts relative to the anchor. One never moved has anchorPt zero and absolute origVerts.
+static polyobj_t polyobjs[2];
+static vertex_t *polyptrs[2][8];
+static vertex_t polyorig[2][8];
+static vertex_t home[32]; // the map's vertices, as the node builder saw them
+static vertex_t moved[32]; // the live vertices before the call
+static void own(int po, std::initializer_list<int> list, fixed_t ax, fixed_t ay, fixed_t dx, fixed_t dy) {
+    polyobjs[po].numVertices=list.size(); polyobjs[po].vertices=polyptrs[po]; polyobjs[po].origVerts=polyorig[po];
+    polyobjs[po].anchorPt.x=ax; polyobjs[po].anchorPt.y=ay;
+    size_t j=0;
+    for (int v: list) {
+        polyptrs[po][j]=&verts[v];
+        polyorig[po][j].x=home[v].x-ax; polyorig[po][j].y=home[v].y-ay;
+        // The live vertex follows the polyobject to its spawn spot (once, when shared).
+        verts[v].x=home[v].x+dx; verts[v].y=home[v].y+dy;
+        ++j;
+    }
+}
+static void polyobjects(int count) { PolyObjects=polyobjs; numPolyObjects=count; }
+static void setup_polyobjects() {
+    std::memset(polyobjs,0,sizeof polyobjs); std::memset(polyptrs,0,sizeof polyptrs);
+    std::memset(polyorig,0,sizeof polyorig);
+    std::memcpy(home,verts,sizeof home);
+}
+// Every non-GL seg's polygon vertices must be where the map has its ends, whatever the live ones are.
+static void segs_home() {
+    for (size_t i=0;i<numsegs;++i) if (!segs[i].glseg) {
+        const auto *a=static_cast<polyvertex_t *>(segs[i].pv1);
+        const auto *b=static_cast<polyvertex_t *>(segs[i].pv2);
+        const vertex_t &v1=home[segs[i].v1-verts], &v2=home[segs[i].v2-verts];
+        assert(a && b);
+        assert(a->x==FIXED_TO_FLOAT(v1.x) && a->y==FIXED_TO_FLOAT(v1.y));
+        assert(b->x==FIXED_TO_FLOAT(v2.x) && b->y==FIXED_TO_FLOAT(v2.y));
     }
 }
 static void all_exact() { for (size_t s=0;s<4;++s) exact(s); }
@@ -178,6 +220,58 @@ int main() {
     HWR_CreatePlanePolygons(2);
     assert(totalsubsecpolys-before==3);
     all_exact();
+    // A polyobject moved to a spawn spot far from its anchor owns the right-top subsector's corners (shared with every
+    // other subsector). The polygons are built where the map has them, and the polyobject is left where it is.
+    {
+        const fixed_t ax=96*FRACUNIT, ay=32*FRACUNIT, dx=1000*FRACUNIT, dy=-2000*FRACUNIT;
+        map(); setup_polyobjects(); own(0,{5,6,9,8},ax,ay,dx,dy); polyobjects(1);
+        std::memcpy(moved,verts,sizeof moved);
+        assert(std::memcmp(moved,home,sizeof moved)!=0);
+        want=home; HWR_CreatePlanePolygons(2);
+        all_exact(); segs_home();
+        want=verts;
+        assert(std::memcmp(verts,moved,sizeof moved)==0);
+        for (int j: {5,6,9,8}) assert(verts[j].x==home[j].x+dx && verts[j].y==home[j].y+dy);
+        // Plane polygons are rebuilt (a renderer change in mid-level): the same again.
+        want=home; HWR_CreatePlanePolygons(2); all_exact(); segs_home(); want=verts;
+        assert(std::memcmp(verts,moved,sizeof moved)==0);
+    }
+    // A polyobject that was never moved: anchor zero, absolute origVerts, live vertices where the map has them.
+    {
+        map(); setup_polyobjects(); own(0,{4,5,8},0,0,0,0); own(1,{1,2},0,0,0,0); polyobjects(2);
+        std::memcpy(moved,verts,sizeof moved);
+        assert(std::memcmp(moved,home,sizeof moved)==0);
+        HWR_CreatePlanePolygons(2);
+        all_exact(); segs_home();
+        assert(std::memcmp(verts,moved,sizeof moved)==0);
+    }
+    // Polyobjects without vertices have nothing to put back.
+    {
+        map(); setup_polyobjects(); polyobjects(2);
+        HWR_CreatePlanePolygons(2); all_exact();
+        assert(std::memcmp(verts,home,sizeof home)==0);
+    }
+    // Two polyobjects sharing a vertex, each with its own anchor, the live vertex moved: it ends where it was.
+    {
+        const fixed_t dx=1000*FRACUNIT, dy=-2000*FRACUNIT;
+        map(); setup_polyobjects();
+        own(0,{5,4},96*FRACUNIT,32*FRACUNIT,dx,dy);
+        own(1,{5,6},-48*FRACUNIT,160*FRACUNIT,dx,dy);
+        polyobjects(2);
+        assert(polyptrs[0][0]==polyptrs[1][0]);
+        std::memcpy(moved,verts,sizeof moved);
+        want=home; HWR_CreatePlanePolygons(2); all_exact(); segs_home(); want=verts;
+        assert(std::memcmp(verts,moved,sizeof moved)==0);
+        assert(verts[5].x==home[5].x+dx && verts[5].y==home[5].y+dy);
+        // And with the shared vertex listed last by the second polyobject: the order of the polyobjects decides nothing.
+        map(); setup_polyobjects();
+        own(0,{4,5},96*FRACUNIT,32*FRACUNIT,dx,dy);
+        own(1,{6,5},-48*FRACUNIT,160*FRACUNIT,dx,dy);
+        polyobjects(2);
+        std::memcpy(moved,verts,sizeof moved);
+        want=home; HWR_CreatePlanePolygons(2); all_exact(); segs_home(); want=verts;
+        assert(std::memcmp(verts,moved,sizeof moved)==0);
+    }
     clear();
-    puts("plane polygons: shared GL loops, T-joins, fallback and leading GL segs");
+    puts("plane polygons: shared GL loops, T-joins, fallback, leading GL segs and polyobjects");
 }
