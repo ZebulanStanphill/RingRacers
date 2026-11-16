@@ -12,16 +12,22 @@ static bool P_ApplyLightOffset(int n,sector_t *) { return n!=LIGHTLEVELS-1; }
 static int R_AdjustLightLevel(int n) { return n; }
 static sector_t *R_FakeFlat(sector_t *s,sector_t *,int *,int *,boolean) { return s; }
 @@HELPER@@
+// Whether VibeRant draws with shaders, which HWR_FogColormapWallLight asks; the tests run both ways
+static bool steps;
+static boolean HWR_SoftwareLightSteps(void) { return steps; }
+@@FOG_LIGHT@@
+@@SKIPS_OFFSET@@
+static boolean hwr_splitvoid;
 static int drawn;
 static void HWR_AddTransparentWall(FOutVector *,FSurfaceInfo *,int,int,FBITFIELD,boolean,int n,extracolormap_t *) { drawn=n; }
 static void HWR_ProjectWall(FOutVector *,FSurfaceInfo *,FBITFIELD,int n,extracolormap_t *) { drawn=n; }
-static int Mid(int lightnum,extracolormap_t *colormap,bool tripwire,FBITFIELD blendmode) {
+static int Mid(int lightnum,extracolormap_t *colormap,bool tripwire,FBITFIELD blendmode,sector_t *gl_frontsector) {
  FOutVector wallVerts[4]{}; FSurfaceInfo Surf{}; side_t side{}; side_t *gl_sidedef=&side; int gl_midtexture=0;
  if(false) {}
 @@MID@@
  return drawn;
 }
-static int Side(int site,int lightnum,extracolormap_t *colormap,sector_t *gl_backsector,ffloor_t *rover,FBITFIELD blendmode) {
+static int Side(int site,int lightnum,extracolormap_t *colormap,sector_t *gl_frontsector,sector_t *gl_backsector,ffloor_t *rover,FBITFIELD blendmode) {
  FOutVector wallVerts[4]{}; FSurfaceInfo Surf{}; int texnum=0,basetexnum=0;
  if(site==0) {
 @@SIDE_FRONT@@
@@ -31,6 +37,7 @@ static int Side(int site,int lightnum,extracolormap_t *colormap,sector_t *gl_bac
  return drawn;
 }
 static int Split(lightlist_t *list,int i,ffloor_t *pfloor,int cutflag,int lightnum,extracolormap_t *colormap) {
+ sector_t splitSector{}; sector_t *sector=&splitSector; const sector_t *offsetsector=sector; (void)offsetsector;
 @@SPLIT@@
  return lightnum;
 }
@@ -56,15 +63,15 @@ static void Check(const char *name,int hw,int sw,int expected) {
   fprintf(stderr,"%s: hardware=%d Software=%d expected hardware=%d\n",name,hw,sw,expected); ++failures;
  }
 }
-int main() {
+static void Existing() {
  sector_t sector{},back{}; extracolormap_t ordinary{},fog{}; fog.flags=CMF_FOG;
  for(int level:{0,96,160,255}) for(auto map:{&ordinary,(extracolormap_t *)nullptr,&fog}) {
   sector.lightlevel=level; sector.extra_colormap=map;
   for(bool trans:{false,true}) {
    fuzzy=trans;
-   Check(trans?"middle translucent":"middle masked",Mid(level,map,false,trans?PF_Translucent:PF_Masked),SoftwareMid(&sector,false),trans && map!=&fog?255:level);
+   Check(trans?"middle translucent":"middle masked",Mid(level,map,false,trans?PF_Translucent:PF_Masked,&sector),SoftwareMid(&sector,false),trans && map!=&fog?255:level);
   }
-  Check("tripwire",Mid(255,map,true,PF_Translucent),SoftwareMid(&sector,true),255);
+  Check("tripwire",Mid(255,map,true,PF_Translucent,&sector),SoftwareMid(&sector,true),255);
   ffloor_t floor{};
   for(int alpha=0;alpha<=255;++alpha) for(int blend:{0,1}) for(int site:{0,1}) {
    floor.alpha=alpha; floor.blend=blend;
@@ -73,8 +80,8 @@ int main() {
    back.extra_colormap=map;
    // Opposite fog state at the back-facing draw catches use of the wrong map.
    auto drawmap=site?(map==&fog?&ordinary:&fog):map;
-   Check(site?"side back":"side front",Side(site,level,drawmap,&back,&floor,PF_Translucent),SoftwareSide(&sector,&floor),fuzzy && map!=&fog?255:level);
-   if(!fuzzy) Check("side masked",Side(site,level,drawmap,&back,&floor,PF_Masked),SoftwareSide(&sector,&floor),level);
+   Check(site?"side back":"side front",Side(site,level,drawmap,&sector,&back,&floor,PF_Translucent),SoftwareSide(&sector,&floor),fuzzy && map!=&fog?255:level);
+   if(!fuzzy) Check("side masked",Side(site,level,drawmap,&sector,&back,&floor,PF_Masked),SoftwareSide(&sector,&floor),level);
   }
  }
  INT16 levels[3]={96,160,0}; extracolormap_t *maps[3]={&ordinary,&ordinary,&ordinary}; lightlist_t lights[3]{};
@@ -95,4 +102,57 @@ int main() {
   }
  }
  assert(failures==0);
+}
+
+// The calls of HWR_FogColormapWallLight in HWR_ProcessSeg. The sector's light is 100 and the light the call site is given
+// (the sector's with its seg's offset) 140: on the steps path, a fog colormap that is the sector's takes the sector's
+// own light, and the rest keep the one given.
+static void CallSites() {
+ sector_t sector{},back{}; extracolormap_t plain{},fog{},otherfog{}; fog.flags=CMF_FOG; otherfog.flags=CMF_FOG;
+ const int kSector=100,kGiven=140;
+ struct Case { const char *name; extracolormap_t *sectorMap,*drawMap; };
+ const Case cases[]={
+  {"no colormap",nullptr,nullptr},{"the sector's plain colormap",&plain,&plain},
+  {"the sector's fog colormap",&fog,&fog},{"fog that is not the sector's, which has none",nullptr,&fog},
+  {"fog that is not the sector's, which has a plain one",&plain,&fog},
+  {"fog that is not the sector's, which has another fog",&fog,&otherfog},
+  {"plain, where the sector has fog",&fog,&plain},{"none, where the sector has fog",&fog,nullptr},
+ };
+ int checked=0;
+ for(bool vib:{false,true}) for(const Case &c:cases) {
+  steps=vib; sector.lightlevel=kSector; sector.extra_colormap=c.sectorMap; back.extra_colormap=c.drawMap;
+  const bool drawFog=c.drawMap && (c.drawMap->flags&CMF_FOG);
+  const bool takesSector=vib && c.drawMap && c.drawMap==c.sectorMap && drawFog;
+  const int front=takesSector?kSector:kGiven; // what HWR_FogColormapWallLight gives
+  const int translucentFront=drawFog?front:255; // and HWR_TranslucentWallLight over it
+  auto Expect=[&](const char *what,int got,int expected) {
+   if(got!=expected) { fprintf(stderr,"%s, %s, steps %d: got %d expected %d\n",what,c.name,vib,got,expected); ++failures; }
+   ++checked;
+  };
+  // A two-sided line's middle texture without a light list
+  Expect("middle masked",Mid(kGiven,c.drawMap,false,PF_Masked,&sector),front);
+  Expect("middle translucent",Mid(kGiven,c.drawMap,false,PF_Translucent,&sector),translucentFront);
+  // A tripwire takes the light as given
+  Expect("tripwire masked",Mid(kGiven,c.drawMap,true,PF_Masked,&sector),kGiven);
+  Expect("tripwire translucent",Mid(kGiven,c.drawMap,true,PF_Translucent,&sector),kGiven);
+  for(int alpha:{0,255}) {
+   ffloor_t floor{}; floor.alpha=alpha; floor.blend=0;
+   const bool translucent=(10*((256+12)-alpha))/255>0; // where Software has its blend table
+   // A 3D floor's side seen from the front sector: the call site is given the sector in the front
+   Expect("side front translucent",Side(0,kGiven,c.drawMap,&sector,&back,&floor,PF_Translucent),translucent?translucentFront:front);
+   Expect("side front masked",Side(0,kGiven,c.drawMap,&sector,&back,&floor,PF_Masked),front);
+   // And seen from the back sector it keeps the light as it is, with the back sector's colormap deciding
+   // whether it is translucent (the sector at the front having a fog colormap changes nothing)
+   Expect("side back translucent",Side(1,kGiven,c.drawMap,&sector,&back,&floor,PF_Translucent),translucent?(drawFog?kGiven:255):kGiven);
+   Expect("side back masked",Side(1,kGiven,c.drawMap,&sector,&back,&floor,PF_Masked),kGiven);
+  }
+ }
+ // The cases are not all the same where it matters: on the steps path a fog colormap of the sector's does change the light
+ assert(checked==2*8*12);
+}
+int main() {
+ for(bool vib:{false,true}) { steps=vib; Existing(); }
+ CallSites();
+ assert(failures==0);
+ puts("translucent_wall_light: light of middle textures and 3D floor sides, including the sector's fog colormap");
 }

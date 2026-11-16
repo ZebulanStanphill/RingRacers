@@ -33,8 +33,17 @@ def generate_title(engine, output, templates, render, function_section):
     code += "\nstatic void HWR_DrawFlatBleed(boolean, fixed_t, fixed_t, fixed_t, fixed_t, const FOutVector *) {}\n"
     # The black fill of solid walls cut by 3D floors is covered by wall_light_slices.
     code += "\nstatic boolean hwr_splitvoid, hwr_voidslice;\nstatic void HWR_DrawCutVoid(const FOutVector *) {}\n"
+    # The replay draws without VibeRant's shaders, so the offset is HWR_CalcWallLight's (stubbed) in every light slice;
+    # wall_light_steps and wall_light_slices cover the steps path.
+    code += (
+        "\nstatic boolean HWR_SoftwareLightSteps(void) { return false; }"
+        "\nstatic FUINT HWR_StepWallLight(FUINT light, const seg_t *, const sector_t *) { return light; }\n"
+    )
     for n in [
         "HWR_FogBlockAlpha",
+        "HWR_SoftwareSkipsWallOffset",
+        "HWR_SliceWallLight",
+        "HWR_FogColormapWallLight",
         "HWR_DrawWallLightSlice",
         "HWR_TranslucentWallLight",
         "HWR_SplitWall",

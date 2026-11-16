@@ -1536,9 +1536,42 @@ UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if 
 	return surfcolor.s.alpha;
 }
 
+// [UWP]: Whether a wall's or a slope's light offset goes in Software's steps. Upstream gives hardware a fine offset
+// (hwLightOffset, in light levels) where Software has a coarse one (lightOffset, in light numbers: eight levels), for
+// smoothness. VibeRant's shaders light a surface by Software's 32 light numbers (R_DoomColormap in shaders.hlsl), so
+// there the fine offset was no smoother, only rounded another way: the light number was (level + fine) / 8 where
+// Software has level / 8 + coarse, and about half of all offsets came out one light number, two colormap rows, off
+// Software. Light 192 with an offset of -1 fell a whole step; with +7 it stayed. Software also leaves light under
+// 8 and over 247 alone, where the fine rule's limits are 1 and 254. Without shaders light isn't cut into steps, and
+// OpenGL's shaders have a smooth curve: both keep the fine offset.
+static boolean HWR_SoftwareLightSteps(void)
+{
+	return HWR_D3D12() && HWR_UseShader();
+}
+
+// [UWP]: A wall's light with Software's offset. The sector is the one whose lighting model says whether there is one:
+// the seg's front sector, except for the side of a 3D floor (see HWR_SliceWallLight).
+static FUINT HWR_StepWallLight(FUINT lightnum, const seg_t *seg, const sector_t *sector)
+{
+	INT16 finallight = lightnum;
+
+	if (P_ApplyLightOffset(lightnum >> LIGHTSEGSHIFT, sector))
+	{
+		finallight += seg->lightOffset * (1 << LIGHTSEGSHIFT);
+
+		if (finallight > 255) finallight = 255;
+		if (finallight < 0) finallight = 0;
+	}
+
+	return (FUINT)finallight;
+}
+
 static FUINT HWR_CalcWallLight(FUINT lightnum, seg_t *seg)
 {
 	INT16 finallight = lightnum;
+
+	if (seg != NULL && HWR_SoftwareLightSteps()) // [UWP]
+		return HWR_StepWallLight(lightnum, seg, seg->frontsector);
 
 	if (seg != NULL && P_ApplyLightOffsetFine(lightnum, seg->frontsector))
 	{
@@ -1551,6 +1584,47 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, seg_t *seg)
 	return (FUINT)finallight;
 }
 
+#ifdef HAVE_D3D12
+// [UWP]: Software gives some walls no light offset at all, and with its steps (HWR_SoftwareLightSteps) those must have
+// none here either: an offset of half a step or more is now always a whole step, where the fine one was often lost
+// in the rounding. Under a light of a sector's light list, a solid wall (an upper, lower, or one-sided wall:
+// R_RenderSegLoop) has no offset if the light has any colormap; a two-sided line's middle texture
+// (R_RenderMaskedSegRange) has none if the colormap is fog; and a 3D floor's side (R_RenderThickSideRange) has none
+// if the 3D floor is fog, the light is a fog block's, or the colormap is fog.
+static boolean HWR_SoftwareSkipsWallOffset(const ffloor_t *pfloor, boolean solidwall, INT32 lightflags, const extracolormap_t *colormap)
+{
+	const boolean fogmap = (colormap != NULL && (colormap->flags & CMF_FOG));
+
+	if (pfloor != NULL)
+		return (pfloor->fofflags & FOF_FOG) || (lightflags & FOF_FOG) || fogmap;
+
+	return solidwall ? (colormap != NULL) : fogmap;
+}
+
+// [UWP]: The light of a piece of a wall under a light list (HWR_SplitWall). With Software's steps, offsetsector is
+// the sector whose lighting model gives the offset, or NULL where Software gives none (HWR_SoftwareSkipsWallOffset).
+// It is the sector the light list is of: for the side of a 3D floor that is the sector the side is seen from, which
+// isn't the seg's front sector where the 3D floor is in it (R_RenderThickSideRange's frontsector).
+static FUINT HWR_SliceWallLight(FUINT lightnum, const sector_t *offsetsector)
+{
+	if (!HWR_SoftwareLightSteps())
+		return HWR_CalcWallLight(lightnum, gl_curline);
+
+	return offsetsector ? HWR_StepWallLight(lightnum, gl_curline, offsetsector) : lightnum;
+}
+#endif
+
+// [UWP]: Without a light list, Software gives a two-sided line's middle texture, and a 3D floor's side, no offset
+// where the sector's colormap is fog (a solid wall keeps its offset there). lightnum is the sector's light with the
+// seg's offset, unless a fog 3D floor's has taken its place along with the colormap.
+static FUINT HWR_FogColormapWallLight(FUINT lightnum, const extracolormap_t *colormap, const sector_t *sector)
+{
+	if (HWR_SoftwareLightSteps() && colormap != NULL && colormap == sector->extra_colormap && (colormap->flags & CMF_FOG))
+		return sector->lightlevel;
+
+	return lightnum;
+}
+
 // [UWP]: facesdown is Software's reverseLight (R_FindPlane): a slope's offset is worked out for a surface that faces
 // up, and a ceiling or a 3D floor's underside on the same slope faces the other way from the light. This took
 // "is a 3D floor plane" instead, which shaded a 3D floor's top the wrong way round and never turned a ceiling: the
@@ -1559,7 +1633,19 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t 
 {
 	INT16 finallight = lightnum;
 
-	if (slope != NULL && sector != NULL && P_ApplyLightOffsetFine(lightnum, sector))
+	if (slope != NULL && sector != NULL && HWR_SoftwareLightSteps()) // [UWP]
+	{
+		if (P_ApplyLightOffset(lightnum >> LIGHTSEGSHIFT, sector))
+		{
+			const INT16 offset = slope->lightOffset * (1 << LIGHTSEGSHIFT);
+
+			finallight += (facesdown && maplighting.directional ? -offset : offset);
+
+			if (finallight > 255) finallight = 255;
+			if (finallight < 0) finallight = 0;
+		}
+	}
+	else if (slope != NULL && sector != NULL && P_ApplyLightOffsetFine(lightnum, sector))
 	{
 		finallight += (facesdown && maplighting.directional ? -slope->hwLightOffset : slope->hwLightOffset);
 
@@ -2279,7 +2365,7 @@ static void HWR_DrawCutVoid(const FOutVector *piece)
 // min(top)/max(bottom) are linear on each resulting span. No heap allocation.
 static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float endtop,
 	float bot, float endbot, FSurfaceInfo *surf, INT32 texnum, INT32 basetexnum,
-	FBITFIELD flags, FUINT lightnum, extracolormap_t *colormap)
+	FBITFIELD flags, FUINT lightnum, extracolormap_t *colormap, const sector_t *offsetsector)
 {
 	const UINT8 alpha = surf->PolyColor.s.alpha;
 	const float heights[4][2] = {{original[3].y, original[2].y},
@@ -2341,9 +2427,9 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 		if (flags & PF_Fog)
 			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, true, lightnum, colormap);
 		else if (flags & PF_EnvironmentTrans)
-			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, false, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+			HWR_AddTransparentWall(piece, surf, texnum, basetexnum, flags, false, HWR_SliceWallLight(lightnum, offsetsector), colormap);
 		else
-			HWR_ProjectWall(piece, surf, flags, HWR_CalcWallLight(lightnum, gl_curline), colormap);
+			HWR_ProjectWall(piece, surf, flags, HWR_SliceWallLight(lightnum, offsetsector), colormap);
 	}
 }
 #endif
@@ -2387,6 +2473,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	const UINT8 alpha = Surf->PolyColor.s.alpha;
 #ifdef HAVE_D3D12
 	FOutVector original[4];
+	const sector_t *offsetsector = sector; // [UWP]: see HWR_SliceWallLight
 	if (HWR_D3D12())
 		M_Memcpy(original, wallVerts, sizeof original);
 #endif
@@ -2427,6 +2514,10 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 				if (!pfloor && cutflag == FOF_TRANSLUCENT && !(list[i].flags & FOF_FOG))
 					lightnum = HWR_TranslucentWallLight(lightnum, colormap);
 			}
+#ifdef HAVE_D3D12
+			// [UWP]: hwr_splitvoid is set around the walls Software treats as solid
+			offsetsector = HWR_SoftwareSkipsWallOffset(pfloor, hwr_splitvoid, list[i].flags, colormap) ? NULL : sector;
+#endif
 		}
 
 		solid = false;
@@ -2466,7 +2557,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 			{
 				hwr_voidslice = true;
 				HWR_DrawWallLightSlice(original, top, endtop, min(bheight, top), min(endbheight, endtop),
-					Surf, texnum, basetexnum, polyflags, lightnum, colormap);
+					Surf, texnum, basetexnum, polyflags, lightnum, colormap, offsetsector);
 				hwr_voidslice = false;
 				// The black unbound the wall's texture, which the rest of the wall's pieces draw with
 				HWR_GetTexture(texnum, basetexnum);
@@ -2509,7 +2600,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 
 #ifdef HAVE_D3D12
 		if (HWR_D3D12())
-			HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap);
+			HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap, offsetsector);
 		else
 #endif
 		{
@@ -2545,7 +2636,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 
 #ifdef HAVE_D3D12
 	if (HWR_D3D12())
-		HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap);
+		HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap, offsetsector);
 	else
 #endif
 	{
@@ -3257,9 +3348,9 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			}
 			else if (!(blendmode & PF_Masked))
 				HWR_AddTransparentWall(wallVerts, &Surf, gl_midtexture, gl_sidedef->midtexture, blendmode, false,
-					tripwire ? lightnum : HWR_TranslucentWallLight(lightnum, colormap), colormap);
+					tripwire ? lightnum : HWR_TranslucentWallLight(HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap), colormap);
 			else
-				HWR_ProjectWall(wallVerts, &Surf, blendmode, lightnum, colormap);
+				HWR_ProjectWall(wallVerts, &Surf, blendmode, tripwire ? lightnum : HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap);
 		}
 
 		// Sky culling
@@ -3601,9 +3692,10 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false,
 								// [UWP]: Translucent where Software's blend table is, from alpha 242 down
 								(rover->blend || (10*((256+12) - rover->alpha))/255 > 0)
-									? HWR_TranslucentWallLight(lightnum, colormap) : lightnum, colormap);
+									? HWR_TranslucentWallLight(HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap)
+									: HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap);
 						else
-							HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);
+							HWR_ProjectWall(wallVerts, &Surf, PF_Masked, HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap);
 					}
 				}
 			}

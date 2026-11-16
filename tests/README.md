@@ -1167,6 +1167,55 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   navy instead of light blue. These tests check the light level asked for, not
   rendered pixels.
 
+- **Software's light steps:** upstream gives the hardware renderer a fine light
+  offset (`hwLightOffset`, in light levels) where Software has a coarse one
+  (`lightOffset`, in light numbers, eight levels each). VibeRant's shaders cut light
+  into Software's 32 light numbers, so with VibeRant and shaders the offset must go
+  in Software's steps, and `HWR_SoftwareLightSteps` says when. `slope_light` (for
+  `HWR_CalcSlopeLight`) and `wall_light_steps` (for `HWR_CalcWallLight`) run the
+  production functions on both paths. With OpenGL, or VibeRant without shaders (off
+  or not available), they keep the fine rule: `P_ApplyLightOffsetFine` is asked
+  about the light level, `hwLightOffset` is added, and a disagreeing `lightOffset`
+  is ignored. With VibeRant and shaders, `P_ApplyLightOffset` is asked about the
+  light number (the level shifted right by three), `lightOffset` is added in eights
+  of a level, a slope facing down under directional lighting has it subtracted, the
+  result is clamped to 0 and 255, and neither `P_ApplyLightOffsetFine` nor
+  `hwLightOffset` is ever used. A missing slope, sector, or seg leaves the light
+  alone on both paths. Levels 192 with fine offset -1 and coarse 0 (must stay 192,
+  not 191) and 199 with fine +4 and coarse +1 (must be 207, not 203) are fixed
+  cases, and levels 0 to 7 and 248 to 255 get no offset on the new path. A loop over
+  every level from 0 to 255 and every coarse offset from -6 to 6, with the real
+  `P_ApplyLightOffset` range rule (only the sector's lighting model stubbed), checks
+  that the result's light number is Software's, `(level >> 3) + offset` cut to 0 to
+  31 where the offset applies. These tests check arithmetic, not rendered pixels.
+
+- **Walls Software gives no light offset:** on the same steps path, Software leaves
+  some walls without an offset (`R_RenderMaskedSegRange`, `R_RenderThickSideRange`,
+  `R_RenderSegLoop`), and the hardware renderer follows it. `wall_light_steps` runs
+  the production `HWR_SoftwareSkipsWallOffset` through its whole truth table: a 3D
+  floor's side has none when the 3D floor is fog, the light has the fog flag, or the
+  colormap is fog; a solid wall has none under any colormap; a middle texture has
+  none under a fog colormap; and a missing colormap is never fog. It runs
+  `HWR_StepWallLight` and `HWR_SliceWallLight` too: off the steps path the slice's
+  light is exactly `HWR_CalcWallLight`'s fine one, whatever sector (or none) it is
+  given, and on it none leaves the light as it is while a sector gives the coarse
+  offset judged by that sector's lighting model, not the seg's front sector's (the two
+  disagree, and both orders are checked). `HWR_FogColormapWallLight` is run with and
+  without the steps path, with no colormap, with a fog or plain colormap that is the
+  sector's, and with a fog colormap that is another one's. `wall_light_slices` runs
+  the production `HWR_SplitWall` and `HWR_DrawWallLightSlice` over every combination
+  of a solid wall, a masked or translucent middle texture, a 3D floor's side, and a
+  fog 3D floor's side; two lights with no, plain, or fog colormaps, with and without
+  the fog flag; and a `FOF_NOSHADE` light between two others. Each piece
+  must get the sector `HWR_SplitWall` was given (never the seg's front sector) or
+  none, and the light level and eight more where there is one, and a `FOF_NOSHADE`
+  light keeps the piece of the light above it. `translucent_wall_light` runs the
+  production calls in `HWR_ProcessSeg`: a middle texture without a light list
+  (masked, translucent, and tripwire), and a 3D floor's side seen from the front
+  sector, take the sector's own light where the colormap is its fog, and the side seen
+  from the back sector keeps the light it is given. These check arithmetic and the
+  calls made, not rendered pixels.
+
 - **Camera-underground walls:** `void_wall` runs the production `HWR_WallFillsView` (`hw_main.c`) against an independent
   model of Software's columns: the seg sampled, its visible run's ends bisected, and clipped to the screen's columns by angle, and
   `R_StoreWallRange`'s `pixlow`/`pixhigh` at its first and last visible column from `R_SetupFreelook`'s shifted

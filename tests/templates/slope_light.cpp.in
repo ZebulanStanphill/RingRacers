@@ -2,21 +2,54 @@
 // offset is worked out for a surface that faces up, and a surface that faces down, which is a sector's ceiling or a 3D
 // floor's underside, has it subtracted under directional lighting. Balloon Park's funnel, made of 3D floor tops under a
 // light contrast of 48, was navy on its far side where Software has it light blue.
+//
+// It runs the function down both of its paths. With VibeRant and shaders the offset goes in Software's steps: the coarse
+// offset (lightOffset, in light numbers) in eights of a light level, where P_ApplyLightOffset says it applies to the light
+// number, so that VibeRant's shaders, which cut light into Software's 32 light numbers, get Software's light number.
+// Otherwise (OpenGL, or VibeRant without shaders) it is the fine offset (hwLightOffset, in light levels), where
+// P_ApplyLightOffsetFine says it applies.
 #include <cassert>
 #include <cstdio>
 #include "doomdef.h"
 #include "r_defs.h"
 #include "doomstat.h"
 #include "p_setup.h"
+#include "r_main.h"
+#include "r_state.h"
+#include "hardware/hw_driver.h"
+#include "hardware/hw_main.h"
 #include "hardware/hw_defs.h"
 
 struct maplighting maplighting;
 
+// Which hardware driver draws, and whether it has shaders (what HWR_UseShader reads): this test runs the function as each
+#undef HWR_D3D12
+static bool viberant;
+#define HWR_D3D12() viberant
+consvar_t cv_glshaders;
+boolean gl_shadersavailable = true;
+@@USE_SHADER@@
+@@STEPS@@
+
+// What the two offset rules were asked, and what they answer. Under useRealRule the coarse one is the production
+// P_ApplyLightOffset, with only the sector's lighting model stubbed.
 static bool offsetApplies;
-static UINT8 offsetBase;
-static const sector_t *offsetSector;
+static bool useRealRule;
+static bool sectorDirectional = true;
+static int fineCalls, coarseCalls;
+static UINT8 fineBase, coarseBase;
+static const sector_t *fineSector, *coarseSector;
 boolean P_ApplyLightOffsetFine(UINT8 baselightlevel, const sector_t *sector)
-{ offsetBase = baselightlevel; offsetSector = sector; return offsetApplies; }
+{ fineCalls++; fineBase = baselightlevel; fineSector = sector; return offsetApplies; }
+boolean P_SectorUsesDirectionalLighting(const sector_t *) { return sectorDirectional; }
+#define P_ApplyLightOffset RealApplyLightOffset
+@@REAL_RULE@@
+#undef P_ApplyLightOffset
+boolean P_ApplyLightOffset(UINT8 baselightnum, const sector_t *sector)
+{
+    coarseCalls++; coarseBase = baselightnum; coarseSector = sector;
+    return useRealRule ? RealApplyLightOffset(baselightnum, sector) : offsetApplies;
+}
 
 @@CALC@@
 
@@ -40,21 +73,49 @@ static INT32 RenderPlaneCall(INT32 lightlevel, pslope_t *slope, sector_t *gl_fro
 }
 #undef HWR_CalcSlopeLight
 
+static void Mode(bool vib, bool shaders, bool available = true)
+{
+    viberant = vib; cv_glshaders.value = shaders; gl_shadersavailable = available;
+}
+static bool StepsPath() { return viberant && cv_glshaders.value && gl_shadersavailable; }
+
 static void Light(int expected, FUINT lightnum, pslope_t *slope, const sector_t *sector, bool facesdown, bool directional)
 {
     maplighting.directional = directional;
+    fineCalls = coarseCalls = 0;
     const FUINT got = HWR_CalcSlopeLight(lightnum, slope, sector, facesdown);
     if (got != static_cast<FUINT>(expected))
-        std::fprintf(stderr, "light %lu offset %d facesdown %d directional %d: got %lu expected %d\n",
-            lightnum, slope ? slope->hwLightOffset : 0, facesdown, directional, got, expected);
+        std::fprintf(stderr, "steps %d light %lu fine %d coarse %d facesdown %d directional %d: got %lu expected %d\n",
+            StepsPath(), lightnum, slope ? slope->hwLightOffset : 0, slope ? slope->lightOffset : 0, facesdown, directional,
+            got, expected);
     assert(got == static_cast<FUINT>(expected));
+    // Only the rule of the path is asked, and only when there is a slope and a sector to give an offset
+    const bool asked = slope != nullptr && sector != nullptr;
+    assert(fineCalls == (asked && !StepsPath() ? 1 : 0));
+    assert(coarseCalls == (asked && StepsPath() ? 1 : 0));
 }
 
-int main()
+// The drivers and settings that keep the fine offset: OpenGL, and VibeRant without shaders (off, or not available)
+static void OldPath(int which)
+{
+    switch (which)
+    {
+    case 0: Mode(false, true); break;
+    case 1: Mode(true, false); break;
+    case 2: Mode(false, false); break;
+    default: Mode(true, true, false); break;
+    }
+    assert(!StepsPath());
+}
+static const int kOldPaths = 4;
+
+// The old rule, on every setting that keeps it. A coarse offset that disagrees with the fine one is set, and must be ignored.
+static void OldRule()
 {
     sector_t sector = {};
     pslope_t slope = {};
     offsetApplies = true;
+    slope.lightOffset = -3;
 
     // Offset worked out for a surface that faces up: added, whether or not the lighting is directional
     slope.hwLightOffset = 30;
@@ -70,7 +131,8 @@ int main()
     slope.hwLightOffset = -30;
     Light(130, 100, &slope, &sector, true, true);
     Light(70, 100, &slope, &sector, true, false);
-    assert(offsetSector == &sector && offsetBase == 100);
+    // The fine rule is asked about the light level itself
+    assert(fineSector == &sector && fineBase == 100);
 
     // Clamped to 0 to 255 in both directions, whichever way the surface faces
     slope.hwLightOffset = 60;
@@ -88,6 +150,13 @@ int main()
     Light(0, 0, &slope, &sector, true, true);
     Light(0, 100, &slope, &sector, true, true);
 
+    // The fine offsets the steps path would get wrong, kept here: a light of 192 with -1 falls to 191, and 199 with +4
+    // is 203
+    slope.hwLightOffset = -1;
+    Light(191, 192, &slope, &sector, false, true);
+    slope.hwLightOffset = 4;
+    Light(203, 199, &slope, &sector, false, true);
+
     // No offset where the sector gives none, there is no slope, or there is no sector
     slope.hwLightOffset = 30;
     offsetApplies = false;
@@ -99,10 +168,148 @@ int main()
     Light(100, 100, nullptr, &sector, true, true);
     Light(100, 100, &slope, nullptr, false, true);
     Light(100, 100, &slope, nullptr, true, true);
+}
 
-    // The surface a plane is: a sector's floor faces up, its ceiling down, a 3D floor's top (its control sector's ceiling)
-    // up, and its bottom (its control sector's floor) down
+// The steps rule: the fine offset is set to something else throughout, and must never be used
+static void StepsRule()
+{
+    sector_t sector = {};
+    pslope_t slope = {};
+    offsetApplies = true;
+    slope.hwLightOffset = 77;
+    assert(StepsPath());
+
+    // The coarse offset in eights, added for a surface that faces up, whether or not the lighting is directional
+    slope.lightOffset = 4;
+    Light(132, 100, &slope, &sector, false, true);
+    Light(132, 100, &slope, &sector, false, false);
+    slope.lightOffset = -4;
+    Light(68, 100, &slope, &sector, false, true);
+    Light(68, 100, &slope, &sector, false, false);
+    // Facing down: subtracted under directional lighting and only then
+    slope.lightOffset = 4;
+    Light(68, 100, &slope, &sector, true, true);
+    Light(132, 100, &slope, &sector, true, false);
+    slope.lightOffset = -4;
+    Light(132, 100, &slope, &sector, true, true);
+    Light(68, 100, &slope, &sector, true, false);
+    // The coarse rule is asked about the light number, a light level over eight, and about the sector
+    assert(coarseSector == &sector && coarseBase == (100 >> 3));
+    Light(71, 103, &slope, &sector, true, false); // the light number is 12, not the level
+    assert(coarseBase == 12);
+    Light(223, 255, &slope, &sector, true, false); // light number 31, asked all the same: the stub says it applies
+    assert(coarseBase == 31);
+
+    // Clamped to 0 to 255 in both directions, whichever way the surface faces
+    slope.lightOffset = 7;
+    Light(255, 220, &slope, &sector, false, true);
+    Light(255, 220, &slope, &sector, true, false);
+    Light(164, 220, &slope, &sector, true, true);
+    Light(0, 40, &slope, &sector, true, true);
+    slope.lightOffset = -7;
+    Light(0, 40, &slope, &sector, false, true);
+    Light(0, 40, &slope, &sector, true, false);
+    Light(96, 40, &slope, &sector, true, true);
+    Light(255, 220, &slope, &sector, true, true);
+    slope.lightOffset = 127;
+    Light(255, 220, &slope, &sector, false, false);
+    slope.lightOffset = -128;
+    Light(0, 220, &slope, &sector, false, false);
+
+    // The steps of Software: a light of 192 (light number 24) with a fine offset of -1 and a coarse one of 0 stays 192, and
+    // 199 with a fine offset of +4 and a coarse one of +1 is 207 (light number 25)
+    slope.hwLightOffset = -1; slope.lightOffset = 0;
+    Light(192, 192, &slope, &sector, false, true);
+    slope.hwLightOffset = 4; slope.lightOffset = 1;
+    Light(207, 199, &slope, &sector, false, true);
+    assert(207 >> 3 == 25);
+    slope.hwLightOffset = 77;
+
+    // Light of 0 to 7 (light number 0) and of 248 to 255 (light number 31) is left alone, where the fine rule offsets all
+    // but 0 and 255. The offsets that the stub accepts here are the real rule's to refuse (see below).
+    useRealRule = true;
+    slope.lightOffset = 3;
+    for (int level : {0, 1, 5, 7, 248, 250, 254, 255})
+    {
+        Light(level, level, &slope, &sector, false, true);
+        Light(level, level, &slope, &sector, true, true);
+    }
+    Light(8 + 24, 8, &slope, &sector, false, true); // light number 1
+    Light(255, 247, &slope, &sector, false, true); // light number 30, to 271 and cut
+    slope.lightOffset = -3;
+    Light(0, 8, &slope, &sector, false, true);
+    Light(223, 247, &slope, &sector, false, true);
+    // And no offset at all without directional lighting in the sector
+    sectorDirectional = false;
+    Light(100, 100, &slope, &sector, false, true);
+    sectorDirectional = true;
+    useRealRule = false;
+
+    // No offset where the sector gives none, there is no slope, or there is no sector
+    slope.lightOffset = 4;
+    offsetApplies = false;
+    Light(100, 100, &slope, &sector, false, true);
+    Light(100, 100, &slope, &sector, true, true);
+    Light(100, 100, &slope, &sector, true, false);
+    offsetApplies = true;
+    Light(100, 100, nullptr, &sector, false, true);
+    Light(100, 100, nullptr, &sector, true, true);
+    Light(100, 100, &slope, nullptr, false, true);
+    Light(100, 100, &slope, nullptr, true, true);
+}
+
+// Software's light number for a surface of a light level and a coarse offset (R_FindPlane): the offset applies to
+// the light numbers 1 to 30, and the number is cut to 0 to 31
+static int SoftwareLightNumber(int level, int offset)
+{
+    const int number = level >> LIGHTSEGSHIFT;
+    const int applied = (number > 0 && number < LIGHTLEVELS - 1) ? number + offset : number;
+    return applied < 0 ? 0 : applied > LIGHTLEVELS - 1 ? LIGHTLEVELS - 1 : applied;
+}
+
+// Every light level and every coarse offset, with the real range rule: the light number of the steps path's result is
+// Software's, whichever way the surface faces
+static void EveryLevel()
+{
+    sector_t sector = {};
+    pslope_t slope = {};
+    Mode(true, true);
+    useRealRule = true;
+    sectorDirectional = true;
+    slope.hwLightOffset = 77; // is never used
+    for (int offset = -6; offset <= 6; offset++)
+    {
+        slope.lightOffset = offset;
+        for (int level = 0; level < 256; level++)
+            for (int facing = 0; facing < 4; facing++)
+            {
+                const bool facesdown = facing & 1, directional = facing & 2;
+                maplighting.directional = directional;
+                const int signedOffset = (facesdown && directional) ? -offset : offset;
+                const FUINT got = HWR_CalcSlopeLight(level, &slope, &sector, facesdown);
+                const int expected = SoftwareLightNumber(level, signedOffset);
+                if (got > 255 || static_cast<int>(got >> LIGHTSEGSHIFT) != expected)
+                    std::fprintf(stderr, "level %d offset %d facesdown %d directional %d: light number %lu, Software's %d\n",
+                        level, offset, facesdown, directional, got >> LIGHTSEGSHIFT, expected);
+                assert(got <= 255 && static_cast<int>(got >> LIGHTSEGSHIFT) == expected);
+                // Light numbers 0 and 31 are left as they are, to the level
+                if (level < 8 || level > 247)
+                    assert(got == static_cast<FUINT>(level));
+            }
+    }
+    useRealRule = false;
+    Mode(false, true);
+}
+
+// The surface a plane is: a sector's floor faces up, its ceiling down, a 3D floor's top (its control sector's ceiling)
+// up, and its bottom (its control sector's floor) down
+static void PlaneFacing()
+{
     sector_t front = {}, control = {};
+    pslope_t slope = {};
+    offsetApplies = true;
+    slope.lightOffset = -3; // the old path's, to be ignored by it
+    slope.hwLightOffset = 48;
     struct { const char *name; sector_t *fof; bool isceiling; bool facesdown; } planes[] = {
         {"sector floor", nullptr, false, false},
         {"sector ceiling", nullptr, true, true},
@@ -118,8 +325,25 @@ int main()
         assert(recorded == 1 && recordedFacesDown == plane.facesdown);
         assert(recordedLight == 150 && recordedSlope == &slope && recordedSector == &front);
         // With the real function, under directional lighting: the funnel's far side, light on top and dark below
-        slope.hwLightOffset = 48;
-        Light(plane.facesdown ? 102 : 198, 150, &slope, &front, recordedFacesDown, true);
+        for (int path = 0; path < 2; path++)
+        {
+            if (path == 0) OldPath(0); else Mode(true, true);
+            slope.lightOffset = path ? 6 : -3; // 48 levels in light numbers
+            Light(plane.facesdown ? 102 : 198, 150, &slope, &front, recordedFacesDown, true);
+        }
     }
-    std::puts("slope_light: offset by facing, clamps and the surface of each plane");
+}
+
+int main()
+{
+    for (int which = 0; which < kOldPaths; which++)
+    {
+        OldPath(which);
+        OldRule();
+    }
+    Mode(true, true);
+    StepsRule();
+    EveryLevel();
+    PlaneFacing();
+    std::puts("slope_light: offset by facing, clamps and the surface of each plane, in light levels and in Software's steps");
 }

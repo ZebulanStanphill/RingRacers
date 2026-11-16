@@ -390,6 +390,9 @@ def generate(engine, output):
         "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),
         "LIGHT_HEIGHT": slopes.function("P_GetLightZAt"),
         "FOF_BOTTOM": slopes.function("P_GetFFloorBottomZAt"),
+        "STEP_LIGHT": hardware.function("HWR_StepWallLight"),
+        "SKIPS_OFFSET": hardware.function("HWR_SoftwareSkipsWallOffset"),
+        "SLICE_LIGHT": hardware.function("HWR_SliceWallLight"),
         "CLIP_SLICE": hardware.function("HWR_DrawWallLightSlice"),
         "SPLIT_WALL": hardware.function("HWR_TranslucentWallLight") + hardware.function("HWR_SplitWall"),
     }, output / "wall_light.cpp")
@@ -398,17 +401,21 @@ def generate(engine, output):
     # The two side branches deliberately share spelling. Bound each by its own
     # position in this function, preserving source locations for diagnostics.
     side_start = "\t\t\t\t\t\tif (blendmode != PF_Masked)"
+    # The side seen from the front sector takes the fog colormap's light (HWR_FogColormapWallLight), the side seen
+    # from the back sector does not; each section ends with its own masked call's statement
+    side_end = "HWR_ProjectWall(wallVerts, &Surf, PF_Masked,"
     side_parts = []
     offset = hardware.text.index(process.rstrip("\n"))
     start = 0
     for _ in range(2):
         start = process.index(side_start, start)
-        end = process.index("HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);", start)
-        end += len("HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);")
+        end = process.index(";\n", process.index(side_end, start)) + 1
         side_parts.append(hardware.annotated(offset + start, offset + end))
         start = end
     render(templates / "translucent_wall_light.cpp.in", {
         "HELPER": hardware.function("HWR_TranslucentWallLight"),
+        "FOG_LIGHT": hardware.function("HWR_FogColormapWallLight"),
+        "SKIPS_OFFSET": hardware.function("HWR_SoftwareSkipsWallOffset"),
         "SPLIT": function_section(hardware, "HWR_SplitWall",
             "\t\tif (!(list[i].flags & FOF_NOSHADE))", "\n\t\tsolid = false;"),
         "MID": function_section(hardware, "HWR_ProcessSeg",
@@ -791,10 +798,24 @@ def generate(engine, output):
     }, output / "flat_bleed.cpp")
 
     render(templates / "slope_light.cpp.in", {
+        "USE_SHADER": hardware.function("HWR_UseShader"),
+        "STEPS": hardware.function("HWR_SoftwareLightSteps"),
+        # Software's range rule for an offset, with the sector's lighting model stubbed
+        "REAL_RULE": Source(engine / "src/p_setup.cpp").function("P_ApplyLightOffset"),
         "CALC": hardware.function("HWR_CalcSlopeLight"),
         # The statement itself, so that the test breaks if the expression in it changes
         "PLANE_CALL": hardware.section("lightlevel = HWR_CalcSlopeLight(", "\n"),
     }, output / "slope_light.cpp")
+
+    render(templates / "wall_light_steps.cpp.in", {
+        "USE_SHADER": hardware.function("HWR_UseShader"),
+        "STEPS": hardware.function("HWR_SoftwareLightSteps"),
+        "REAL_RULE": Source(engine / "src/p_setup.cpp").function("P_ApplyLightOffset"),
+        "CALC": hardware.function("HWR_StepWallLight") + hardware.function("HWR_CalcWallLight"),
+        "SKIPS_OFFSET": hardware.function("HWR_SoftwareSkipsWallOffset"),
+        "SLICE_LIGHT": hardware.function("HWR_SliceWallLight"),
+        "FOG_LIGHT": hardware.function("HWR_FogColormapWallLight"),
+    }, output / "wall_light_steps.cpp")
 
     render(templates / "void_wall.cpp.in", {
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),

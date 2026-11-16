@@ -12,6 +12,7 @@
 #include "p_slopes.h"
 #include "hardware/hw_defs.h"
 #include "hardware/hw_glob.h"
+#include "r_main.h"
 #undef min
 #undef max
 #define min std::min
@@ -25,6 +26,9 @@ struct Draw {
     extracolormap_t *color;
     UINT8 alpha;
     bool queued, fog;
+    // With Software's steps: whether the light was offset (HWR_StepWallLight), and under which sector's lighting model
+    bool stepped;
+    const sector_t *stepSector;
 };
 static std::vector<Draw> draws;
 // The black fill HWR_SplitWall draws over a solid wall's cut (HWR_DrawCutVoid in hw_main.c) unbinds the wall's
@@ -36,11 +40,25 @@ static seg_t segment{};
 static seg_t *gl_curline=&segment;
 static int wallLightCalls=0;
 static FUINT HWR_CalcWallLight(FUINT light,seg_t *seg) { assert(seg==gl_curline);++wallLightCalls;return light; }
+// Whether VibeRant draws with shaders (HWR_SoftwareLightSteps), which HWR_SliceWallLight asks. The offset rule is asked
+// about the light number and the sector, and says that it applies, so that the offset (the seg's lightOffset, in eights
+// of a light level) is added wherever HWR_StepWallLight is called, and the sector it was asked about is noted.
+static bool steps;
+static boolean HWR_SoftwareLightSteps(void) { return steps; }
+static int offsetAsks;
+static const sector_t *offsetAsked;
+boolean P_ApplyLightOffset(UINT8,const sector_t *sector) { ++offsetAsks;offsetAsked=sector;return true; }
+@@STEP_LIGHT@@
+@@SKIPS_OFFSET@@
+@@SLICE_LIGHT@@
 static void Submit(FOutVector *v,FSurfaceInfo *surf,FBITFIELD flags,INT32 light,
     extracolormap_t *color,bool queued,bool fog,INT32 texture=-1,INT32 base=-1) {
     assert(textureBound);
     Draw d{};std::copy(v,v+4,d.v.begin());d.flags=flags;d.light=light;
-    if(fog)assert(wallLightCalls==0);
+    if(fog)assert(wallLightCalls==0 && offsetAsks==0);
+    // A piece's light is worked out once, by the path that is on
+    assert(steps ? wallLightCalls==0 && offsetAsks<=1 : offsetAsks==0);
+    d.stepped=offsetAsks==1;d.stepSector=offsetAsked;offsetAsks=0;offsetAsked=nullptr;
     d.color=color;d.alpha=surf->PolyColor.s.alpha;d.queued=queued;d.fog=fog;
     d.texture=texture;d.base=base;draws.push_back(d);
     // A real draw may modify lighting; the next slice must restore alpha.
@@ -169,7 +187,7 @@ static void Run(Wall w,float boundary0,float boundary1,FBITFIELD flags=PF_Masked
     for(const Draw &d:draws)assert(d.color==(d.light==224?colorPtrs[0]:colorPtrs[1]));
     ++cases;
 }
-int main() {
+static void Existing() {
     // Build 93's second Xbox pixel capture, Water Palace line 1 / WTPTU1.
     // Original 18-unit tier crosses the water light plane at -52. The old
     // splitter emitted left bottom=-52, top=-614, then an expanded lower band.
@@ -286,5 +304,117 @@ int main() {
         CheckCoverage(original,-20,-20,224,128);
         assert(draws.size()==1);++cases;
     }
-    printf("%d wall light fixtures: clipped geometry, texture UVs, exact coverage, lighting, solid holes and their black fill, and queued modes\n",cases);
+}
+
+// Which sector each piece of a wall is lit under, with Software's steps (HWR_SplitWall's offsetsector, HWR_SliceWallLight):
+// the sector HWR_SplitWall was given, or none where Software gives the wall no offset. The seg's coarse offset is 1
+// (eight levels), its front sector is another one than the sector the light list is of, and the stub rule says an
+// offset always applies, so that a piece's light is its level and eight where there is an offset.
+enum Kind { Solid, MidMasked, MidTranslucent, Side, FogSide };
+static const char *const kKindNames[] = {"solid wall", "middle masked", "middle translucent", "3D floor side", "fog 3D floor side"};
+struct LightSpec { INT16 level; extracolormap_t *map; INT32 flags; };
+static int sectorPieces;
+static void SectorCheck(Kind kind, bool stepsOn, FBITFIELD polyflags, const std::vector<LightSpec> &specs)
+{
+    steps=stepsOn;
+    draws.clear();wallLightCalls=0;offsetAsks=0;offsetAsked=nullptr;
+    // Light heights 3000 (the top), 0, -10, -15, ..: the wall (-20 to 20) is cut in as many bands as there are lights
+    sector_t listSector{},frontSector{};seg_t seg{};seg.frontsector=&frontSector;seg.lightOffset=1;
+    gl_curline=&seg;
+    const size_t count=specs.size();
+    std::vector<lightlist_t> lights(count);
+    std::vector<INT16> levels(count);
+    std::vector<extracolormap_t *> maps(count);
+    const float edges[]={20,0,-10,-15};
+    assert(count<=3);
+    for(size_t i=0;i<count;++i) {
+        levels[i]=specs[i].level;maps[i]=specs[i].map;
+        lights[i].height=(i?(int)edges[i]:3000)*FRACUNIT;
+        lights[i].flags=specs[i].flags;lights[i].lightlevel=&levels[i];lights[i].extra_colormap=&maps[i];
+    }
+    listSector.lightlevel=250;listSector.numlights=(INT32)count;listSector.lightlist=lights.data();
+    // A fog 3D floor's side is lit with the light of its control sector, and the colormap of that sector
+    static extracolormap_t masterMap;masterMap=extracolormap_t{};
+    sector_t master{};line_t masterLine{};ffloor_t floor{};
+    master.lightlevel=77;master.extra_colormap=&masterMap;masterLine.frontsector=&master;floor.master=&masterLine;
+    FSurfaceInfo surf{};surf.PolyColor.s.alpha=77;
+    Wall w=MakeWall(-20,-20,20,20);const Wall original=w;
+    ffloor_t *pfloor=(kind==Side||kind==FogSide)?&floor:nullptr;
+    INT32 cut=kind==MidTranslucent?FOF_TRANSLUCENT:FOF_CUTLEVEL;
+    if(kind==FogSide){floor.fofflags=static_cast<ffloortype_e>(FOF_FOG);cut=FOF_FOG|FOF_EXTRA|FOF_SWIMMABLE;}
+    else if(kind==Side){floor.fofflags=static_cast<ffloortype_e>(FOF_EXISTS|FOF_RENDERALL);cut=floor.fofflags;}
+    hwr_splitvoid=kind==Solid;
+    HWR_SplitWall(&listSector,w.data(),43,44,&surf,cut,pfloor,polyflags);
+    hwr_splitvoid=false;
+    CheckVertices(original,polyflags);
+
+    // What each band is expected to get: the state of the last light that is not NOSHADE, from the top of the wall down
+    const bool fogPieces=polyflags&PF_Fog;
+    INT16 level=250;extracolormap_t *map=nullptr;bool skips=false;
+    for(size_t i=0;i<count;++i) {
+        if(!(specs[i].flags&FOF_NOSHADE)) {
+            if(kind==FogSide){level=77;map=&masterMap;}
+            else {
+                level=specs[i].level;map=specs[i].map;
+                // The translucent middle texture is lit at full brightness, where the colormap isn't fog
+                if(kind==MidTranslucent && !(specs[i].flags&FOF_FOG))level=(map&&(map->flags&CMF_FOG))?level:255;
+            }
+            // Software's rule, written out again from R_RenderMaskedSegRange, R_RenderSegLoop, and R_RenderThickSideRange
+            const bool fogMap=map&&(map->flags&CMF_FOG);
+            if(kind==Solid)skips=map!=nullptr;
+            else if(kind==MidMasked||kind==MidTranslucent)skips=fogMap;
+            else skips=kind==FogSide||(specs[i].flags&FOF_FOG)||fogMap;
+        }
+        // The band's piece: its middle is between this light's height and the next's
+        const float top=i?edges[i]:20,bottom=(i+1<count)?edges[i+1]:-20;
+        const Draw *piece=nullptr;
+        for(const Draw &d:draws) {
+            const float mid=(d.v[0].y+d.v[3].y+d.v[1].y+d.v[2].y)/4;
+            if(mid<top && mid>bottom){assert(!piece);piece=&d;}
+        }
+        assert(piece);
+        int expected=level;
+        if(stepsOn && !fogPieces && !skips)expected=min(255,level+8);
+        if(piece->light!=expected || piece->color!=map || piece->stepped!=(stepsOn && !fogPieces && !skips)
+            || (piece->stepped && piece->stepSector!=&listSector)) {
+            std::fprintf(stderr,"%s, steps %d, polyflags %x, light %zu: light %d expected %d, stepped %d (sector %p, the list's %p)\n",
+                kKindNames[kind],stepsOn,(unsigned)polyflags,i,piece->light,expected,piece->stepped,(const void *)piece->stepSector,(const void *)&listSector);
+        }
+        assert(piece->light==expected && piece->color==map);
+        assert(piece->stepped==(stepsOn && !fogPieces && !skips));
+        // The sector is the one HWR_SplitWall was given, never the seg's front sector
+        if(piece->stepped)assert(piece->stepSector==&listSector && piece->stepSector!=seg.frontsector);
+        ++sectorPieces;
+    }
+    assert(draws.size()==count);
+    // Without Software's steps the light is HWR_CalcWallLight's, which takes the seg, and is asked for every piece but fog's
+    assert(wallLightCalls==((stepsOn||fogPieces)?0:(int)count));
+    ++cases;
+}
+static void OffsetSectors()
+{
+    extracolormap_t plain{},fog{};fog.flags=CMF_FOG;
+    extracolormap_t *const maps[]={nullptr,&plain,&fog};
+    const INT32 lightFlags[]={0,FOF_FOG};
+    for(bool stepsOn:{false,true}) for(Kind kind:{Solid,MidMasked,MidTranslucent,Side,FogSide}) {
+        // The polygon flags of what is queued or not, and with the fog's own
+        std::vector<FBITFIELD> flagSets={PF_Masked,PF_EnvironmentTrans};
+        if(kind==FogSide)flagSets.push_back(PF_Fog);
+        for(FBITFIELD pf:flagSets)
+            for(extracolormap_t *a:maps) for(extracolormap_t *b:maps) for(INT32 fa:lightFlags) for(INT32 fb:lightFlags) {
+                // Two lights: each one's colormap and flags decide for its own piece
+                SectorCheck(kind,stepsOn,pf,{{200,a,fa},{100,b,fb}});
+                // A third that is NOSHADE keeps the one above it, whatever its own colormap or flags
+                SectorCheck(kind,stepsOn,pf,{{200,a,fa},{100,b,fb|FOF_NOSHADE},{60,maps[2],0}});
+                SectorCheck(kind,stepsOn,pf,{{200,a,fa},{100,maps[2],FOF_NOSHADE|FOF_FOG},{60,b,fb}});
+            }
+    }
+    steps=false;
+    gl_curline=&segment;
+}
+int main() {
+    for(bool stepsOn:{false,true}) { steps=stepsOn;Existing(); }
+    steps=false;
+    OffsetSectors();
+    printf("%d wall light fixtures: clipped geometry, texture UVs, exact coverage, lighting, solid holes and their black fill, queued modes, and the sector each piece's offset is judged by (%d pieces)\n",cases,sectorPieces);
 }

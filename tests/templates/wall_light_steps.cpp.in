@@ -1,0 +1,460 @@
+// Light of a wall (src/hardware/hw_main.c, HWR_CalcWallLight): a wall in a sector with directional lighting has the light
+// offset of its seg added. Where VibeRant draws with shaders, its light is cut into Software's 32 light numbers, so the
+// offset goes in Software's steps: the coarse offset (lightOffset, in light numbers) in eights of a light level, where
+// P_ApplyLightOffset says it applies to the light number. Otherwise (OpenGL, or VibeRant without shaders) it is the fine
+// offset (hwLightOffset, in light levels), where P_ApplyLightOffsetFine says it applies. Light 192 with a fine offset of
+// -1 and a coarse one of 0 fell to 191, light number 23, where Software's is 24.
+//
+// It also covers the steps path's exceptions: Software gives some walls no offset at all (R_RenderMaskedSegRange,
+// R_RenderThickSideRange, R_RenderSegLoop, R_StoreWallRange), which HWR_SoftwareSkipsWallOffset says, HWR_StepWallLight (the
+// offset, judged by the sector it is given) and HWR_SliceWallLight (which takes the exception, or not on the old path) carry
+// out, and HWR_FogColormapWallLight does for a wall without a light list.
+#include <cassert>
+#include <cstdio>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "doomstat.h"
+#include "p_setup.h"
+#include "r_main.h"
+#include "r_state.h"
+#include "hardware/hw_driver.h"
+#include "hardware/hw_main.h"
+#include "hardware/hw_defs.h"
+
+// Which hardware driver draws, and whether it has shaders (what HWR_UseShader reads): this test runs the function as each
+#undef HWR_D3D12
+static bool viberant;
+#define HWR_D3D12() viberant
+consvar_t cv_glshaders;
+boolean gl_shadersavailable = true;
+@@USE_SHADER@@
+@@STEPS@@
+
+// What the two offset rules were asked, and what they answer. Under useRealRule the coarse one is the production
+// P_ApplyLightOffset, with only the sector's lighting model stubbed.
+static bool offsetApplies;
+static bool useRealRule;
+static bool sectorDirectional = true;
+static int fineCalls, coarseCalls;
+static UINT8 fineBase, coarseBase;
+static const sector_t *fineSector, *coarseSector;
+boolean P_ApplyLightOffsetFine(UINT8 baselightlevel, const sector_t *sector)
+{ fineCalls++; fineBase = baselightlevel; fineSector = sector; return offsetApplies; }
+// The sectors that don't have directional lighting where the others do (sectorDirectional), as a sector's own lighting model
+static const sector_t *undirectional[2];
+boolean P_SectorUsesDirectionalLighting(const sector_t *sector)
+{
+    for (const sector_t *s : undirectional)
+        if (s && s == sector) return !sectorDirectional;
+    return sectorDirectional;
+}
+#define P_ApplyLightOffset RealApplyLightOffset
+@@REAL_RULE@@
+#undef P_ApplyLightOffset
+boolean P_ApplyLightOffset(UINT8 baselightnum, const sector_t *sector)
+{
+    coarseCalls++; coarseBase = baselightnum; coarseSector = sector;
+    return useRealRule ? RealApplyLightOffset(baselightnum, sector) : offsetApplies;
+}
+
+@@CALC@@
+static seg_t *gl_curline;
+@@SKIPS_OFFSET@@
+@@SLICE_LIGHT@@
+@@FOG_LIGHT@@
+
+static void Mode(bool vib, bool shaders, bool available = true)
+{
+    viberant = vib; cv_glshaders.value = shaders; gl_shadersavailable = available;
+}
+static bool StepsPath() { return viberant && cv_glshaders.value && gl_shadersavailable; }
+
+static void Light(int expected, FUINT lightnum, seg_t *seg)
+{
+    fineCalls = coarseCalls = 0;
+    const FUINT got = HWR_CalcWallLight(lightnum, seg);
+    if (got != static_cast<FUINT>(expected))
+        std::fprintf(stderr, "steps %d light %lu fine %d coarse %d: got %lu expected %d\n", StepsPath(), lightnum,
+            seg ? seg->hwLightOffset : 0, seg ? seg->lightOffset : 0, got, expected);
+    assert(got == static_cast<FUINT>(expected));
+    // Only the rule of the path is asked, and only when there is a seg to give an offset
+    assert(fineCalls == (seg && !StepsPath() ? 1 : 0));
+    assert(coarseCalls == (seg && StepsPath() ? 1 : 0));
+}
+
+// The drivers and settings that keep the fine offset: OpenGL, and VibeRant without shaders (off, or not available)
+static void OldPath(int which)
+{
+    switch (which)
+    {
+    case 0: Mode(false, true); break;
+    case 1: Mode(true, false); break;
+    case 2: Mode(false, false); break;
+    default: Mode(true, true, false); break;
+    }
+    assert(!StepsPath());
+}
+static const int kOldPaths = 4;
+
+// The old rule, on every setting that keeps it. A coarse offset that disagrees with the fine one is set, and must be ignored.
+static void OldRule()
+{
+    sector_t sector = {};
+    seg_t seg = {};
+    seg.frontsector = &sector;
+    offsetApplies = true;
+    seg.lightOffset = -3;
+
+    seg.hwLightOffset = 30;
+    Light(130, 100, &seg);
+    seg.hwLightOffset = -30;
+    Light(70, 100, &seg);
+    // The fine rule is asked about the light level itself, and about the front sector
+    assert(fineSector == &sector && fineBase == 100);
+
+    // Clamped to 0 to 255 in both directions
+    seg.hwLightOffset = 60;
+    Light(255, 220, &seg);
+    seg.hwLightOffset = -60;
+    Light(0, 40, &seg);
+    seg.hwLightOffset = 255;
+    Light(255, 255, &seg);
+    seg.hwLightOffset = -255;
+    Light(0, 100, &seg);
+
+    // The fine offsets the steps path would get wrong, kept here: a light of 192 with -1 falls to 191, and 199 with +4
+    // is 203
+    seg.hwLightOffset = -1;
+    Light(191, 192, &seg);
+    seg.hwLightOffset = 4;
+    Light(203, 199, &seg);
+
+    // No offset where the sector gives none, or there is no seg
+    seg.hwLightOffset = 30;
+    offsetApplies = false;
+    Light(100, 100, &seg);
+    offsetApplies = true;
+    Light(100, 100, nullptr);
+}
+
+// The steps rule: the fine offset is set to something else throughout, and must never be used
+static void StepsRule()
+{
+    sector_t sector = {};
+    seg_t seg = {};
+    seg.frontsector = &sector;
+    offsetApplies = true;
+    seg.hwLightOffset = 77;
+    assert(StepsPath());
+
+    // The coarse offset in eights
+    seg.lightOffset = 4;
+    Light(132, 100, &seg);
+    seg.lightOffset = -4;
+    Light(68, 100, &seg);
+    // The coarse rule is asked about the light number, a light level over eight, and about the front sector
+    assert(coarseSector == &sector && coarseBase == (100 >> 3));
+    Light(71, 103, &seg); // the light number is 12, not the level
+    assert(coarseBase == 12);
+    Light(223, 255, &seg); // light number 31, asked all the same: the stub says it applies
+    assert(coarseBase == 31);
+
+    // Clamped to 0 to 255 in both directions
+    seg.lightOffset = 7;
+    Light(255, 220, &seg);
+    seg.lightOffset = -7;
+    Light(0, 40, &seg);
+    seg.lightOffset = 127;
+    Light(255, 220, &seg);
+    seg.lightOffset = -128;
+    Light(0, 220, &seg);
+
+    // The steps of Software: a light of 192 (light number 24) with a fine offset of -1 and a coarse one of 0 stays 192, and
+    // 199 with a fine offset of +4 and a coarse one of +1 is 207 (light number 25)
+    seg.hwLightOffset = -1; seg.lightOffset = 0;
+    Light(192, 192, &seg);
+    seg.hwLightOffset = 4; seg.lightOffset = 1;
+    Light(207, 199, &seg);
+    assert(207 >> 3 == 25);
+    seg.hwLightOffset = 77;
+
+    // Light of 0 to 7 (light number 0) and of 248 to 255 (light number 31) is left alone, where the fine rule offsets all
+    // but 0 and 255
+    useRealRule = true;
+    seg.lightOffset = 3;
+    for (int level : {0, 1, 5, 7, 248, 250, 254, 255})
+        Light(level, level, &seg);
+    Light(8 + 24, 8, &seg); // light number 1
+    Light(255, 247, &seg); // light number 30, to 271 and cut
+    seg.lightOffset = -3;
+    Light(0, 8, &seg);
+    Light(223, 247, &seg);
+    // And no offset at all without directional lighting in the sector
+    sectorDirectional = false;
+    Light(100, 100, &seg);
+    sectorDirectional = true;
+    useRealRule = false;
+
+    // No offset where the sector gives none, or there is no seg
+    seg.lightOffset = 4;
+    offsetApplies = false;
+    Light(100, 100, &seg);
+    offsetApplies = true;
+    Light(100, 100, nullptr);
+}
+
+// Software's light number for a wall of a light level and a coarse offset (R_RenderThickSideRange and the like): the
+// offset applies to the light numbers 1 to 30, and the number is cut to 0 to 31
+static int SoftwareLightNumber(int level, int offset)
+{
+    const int number = level >> LIGHTSEGSHIFT;
+    const int applied = (number > 0 && number < LIGHTLEVELS - 1) ? number + offset : number;
+    return applied < 0 ? 0 : applied > LIGHTLEVELS - 1 ? LIGHTLEVELS - 1 : applied;
+}
+
+// Every light level and every coarse offset, with the real range rule: the light number of the steps path's result is
+// Software's
+static void EveryLevel()
+{
+    sector_t sector = {};
+    seg_t seg = {};
+    seg.frontsector = &sector;
+    Mode(true, true);
+    useRealRule = true;
+    sectorDirectional = true;
+    seg.hwLightOffset = 77; // is never used
+    for (int offset = -6; offset <= 6; offset++)
+    {
+        seg.lightOffset = offset;
+        for (int level = 0; level < 256; level++)
+        {
+            const FUINT got = HWR_CalcWallLight(level, &seg);
+            const int expected = SoftwareLightNumber(level, offset);
+            if (got > 255 || static_cast<int>(got >> LIGHTSEGSHIFT) != expected)
+                std::fprintf(stderr, "level %d offset %d: light number %lu, Software's %d\n", level, offset,
+                    got >> LIGHTSEGSHIFT, expected);
+            assert(got <= 255 && static_cast<int>(got >> LIGHTSEGSHIFT) == expected);
+            // Light numbers 0 and 31 are left as they are, to the level
+            if (level < 8 || level > 247)
+                assert(got == static_cast<FUINT>(level));
+        }
+    }
+    useRealRule = false;
+    Mode(false, true);
+}
+
+// HWR_StepWallLight: the coarse offset of the seg, where the rule says it applies to the light number of the sector it is
+// given, with the sector's own lighting model: the seg's front sector, which here disagrees, is never asked.
+static void StepLight()
+{
+    Mode(true, true);
+    sector_t directional = {}, flat = {};
+    seg_t seg = {};
+    useRealRule = true;
+    undirectional[0] = &flat;
+    seg.hwLightOffset = 77; // is never used
+    for (const sector_t *front : {static_cast<const sector_t *>(&directional), static_cast<const sector_t *>(&flat)})
+    {
+        seg.frontsector = const_cast<sector_t *>(front);
+        for (int offset : {-4, -1, 0, 3, 6})
+        {
+            seg.lightOffset = offset;
+            for (int level = 0; level < 256; level++)
+            {
+                const FUINT with = HWR_StepWallLight(level, &seg, &directional);
+                const int number = level >> LIGHTSEGSHIFT;
+                const int applied = (number > 0 && number < LIGHTLEVELS - 1) ? level + offset * 8 : level;
+                const int expected = applied < 0 ? 0 : applied > 255 ? 255 : applied;
+                if (with != static_cast<FUINT>(expected))
+                    std::fprintf(stderr, "level %d offset %d: got %lu expected %d\n", level, offset, with, expected);
+                assert(with == static_cast<FUINT>(expected));
+                // A sector without directional lighting gives none, whatever the seg's front sector is
+                assert(HWR_StepWallLight(level, &seg, &flat) == static_cast<FUINT>(level));
+            }
+        }
+    }
+    // The rule is asked about the light number, and the sector given
+    seg.frontsector = &directional;
+    seg.lightOffset = 1;
+    coarseCalls = 0;
+    HWR_StepWallLight(100, &seg, &flat);
+    assert(coarseCalls == 1 && coarseSector == &flat && coarseBase == 12);
+    undirectional[0] = nullptr;
+    useRealRule = false;
+}
+
+// HWR_SoftwareSkipsWallOffset, row by row: where Software gives a wall no offset under a light of a light list
+enum Part { SideOf3DFloor, SolidWall, MiddleTexture };
+static void Skips(Part part, bool floorFog, bool lightFog, const extracolormap_t *map, bool expected)
+{
+    ffloor_t floor = {};
+    floor.fofflags = floorFog ? FOF_FOG : static_cast<ffloortype_e>(0);
+    const INT32 lightflags = lightFog ? FOF_FOG : 0;
+    // A solid wall is the flag, and only when there is no 3D floor; a 3D floor's side is solid in neither
+    for (bool solidflag : {false, true})
+    {
+        if (part == SideOf3DFloor)
+        {
+            const bool got = HWR_SoftwareSkipsWallOffset(&floor, solidflag, lightflags, map);
+            if (got != expected)
+                std::fprintf(stderr, "side: floor fog %d light fog %d map %s: got %d\n", floorFog, lightFog,
+                    !map ? "none" : (map->flags & CMF_FOG) ? "fog" : "plain", got);
+            assert(got == expected);
+        }
+        else if (solidflag == (part == SolidWall))
+        {
+            const bool got = HWR_SoftwareSkipsWallOffset(nullptr, solidflag, lightflags, map);
+            if (got != expected)
+                std::fprintf(stderr, "%s: light fog %d map %s: got %d\n", part == SolidWall ? "solid" : "middle", lightFog,
+                    !map ? "none" : (map->flags & CMF_FOG) ? "fog" : "plain", got);
+            assert(got == expected);
+        }
+    }
+}
+static void SkipsTable()
+{
+    extracolormap_t plain = {}, fog = {};
+    fog.flags = CMF_FOG;
+    plain.flags = static_cast<UINT8>(~CMF_FOG & 0xFF); // every other flag set: only fog counts
+    const extracolormap_t *none = nullptr, *p = &plain, *f = &fog;
+    //   part            3D floor fog  light fog  colormap  skips
+    // A 3D floor's side: its own fog, the light's fog flag, or a fog colormap
+    Skips(SideOf3DFloor, false, false, none, false);
+    Skips(SideOf3DFloor, false, false, p, false);
+    Skips(SideOf3DFloor, false, false, f, true);
+    Skips(SideOf3DFloor, false, true, none, true);
+    Skips(SideOf3DFloor, false, true, p, true);
+    Skips(SideOf3DFloor, false, true, f, true);
+    Skips(SideOf3DFloor, true, false, none, true);
+    Skips(SideOf3DFloor, true, false, p, true);
+    Skips(SideOf3DFloor, true, false, f, true);
+    Skips(SideOf3DFloor, true, true, none, true);
+    Skips(SideOf3DFloor, true, true, p, true);
+    Skips(SideOf3DFloor, true, true, f, true);
+    // A solid wall: any colormap, and neither fog flag matters
+    for (bool lightFog : {false, true})
+    {
+        Skips(SolidWall, false, lightFog, none, false);
+        Skips(SolidWall, false, lightFog, p, true);
+        Skips(SolidWall, false, lightFog, f, true);
+    }
+    // A middle texture: only a fog colormap
+    for (bool lightFog : {false, true})
+    {
+        Skips(MiddleTexture, false, lightFog, none, false);
+        Skips(MiddleTexture, false, lightFog, p, false);
+        Skips(MiddleTexture, false, lightFog, f, true);
+    }
+}
+
+// HWR_SliceWallLight: off the steps path it is HWR_CalcWallLight's, with the fine offset and the seg's front sector,
+// whatever sector it is given (even none); on it, the light as it is for none, and the coarse offset where the given
+// sector's lighting model says there is one for a sector.
+static void SliceLight()
+{
+    sector_t directional = {}, flat = {};
+    seg_t seg = {};
+    seg.hwLightOffset = 30;
+    seg.lightOffset = 2;
+    gl_curline = &seg;
+    offsetApplies = true;
+    for (int which = 0; which < kOldPaths; which++)
+    {
+        OldPath(which);
+        seg.frontsector = &directional;
+        for (const sector_t *given : {static_cast<const sector_t *>(nullptr), static_cast<const sector_t *>(&directional), static_cast<const sector_t *>(&flat)})
+        {
+            fineCalls = coarseCalls = 0;
+            const FUINT got = HWR_SliceWallLight(100, given);
+            assert(got == 130); // 100 and the fine offset, 30
+            assert(got == HWR_CalcWallLight(100, gl_curline));
+            assert(fineCalls == 2 && coarseCalls == 0); // both asked the seg's front sector
+            assert(fineSector == &directional);
+        }
+        // The fine rule decides, from the seg's own front sector, not the given one
+        useRealRule = false;
+        offsetApplies = false;
+        assert(HWR_SliceWallLight(100, &directional) == 100);
+        offsetApplies = true;
+    }
+    Mode(true, true);
+    assert(StepsPath());
+    useRealRule = true;
+    undirectional[0] = &flat;
+    for (const sector_t *front : {static_cast<const sector_t *>(&directional), static_cast<const sector_t *>(&flat)})
+    {
+        seg.frontsector = const_cast<sector_t *>(front);
+        // None: the light as it is, without either rule asked
+        fineCalls = coarseCalls = 0;
+        assert(HWR_SliceWallLight(100, nullptr) == 100);
+        assert(HWR_SliceWallLight(0, nullptr) == 0 && HWR_SliceWallLight(255, nullptr) == 255);
+        assert(fineCalls == 0 && coarseCalls == 0);
+        // A sector with directional lighting gives the offset, eight levels to the coarse offset; one without, none
+        fineCalls = coarseCalls = 0;
+        assert(HWR_SliceWallLight(100, &directional) == 116);
+        assert(coarseCalls == 1 && coarseSector == &directional && coarseBase == (100 >> 3) && fineCalls == 0);
+        assert(HWR_SliceWallLight(100, &flat) == 100);
+        assert(coarseSector == &flat);
+    }
+    // A sector in the same state as the front sector of the seg gives the same as HWR_CalcWallLight, which asks the front
+    seg.frontsector = &directional;
+    assert(HWR_SliceWallLight(150, &directional) == HWR_CalcWallLight(150, &seg));
+    undirectional[0] = nullptr;
+    useRealRule = false;
+}
+
+// HWR_FogColormapWallLight, where there is no light list: on the steps path, a fog colormap that is the sector's own gives
+// the sector's light, without the seg's offset that the light given has. Anything else gives the light as it is.
+static void FogColormap()
+{
+    extracolormap_t plain = {}, fog = {}, otherFog = {};
+    fog.flags = otherFog.flags = CMF_FOG;
+    sector_t sector = {};
+    sector.lightlevel = 100;
+    struct Case { const char *name; extracolormap_t *sectorMap; const extracolormap_t *map; bool takesSector; };
+    const Case cases[] = {
+        {"no colormap", nullptr, nullptr, false},
+        {"no colormap, the sector has fog", &fog, nullptr, false},
+        {"the sector's fog colormap", &fog, &fog, true},
+        {"the sector's plain colormap", &plain, &plain, false},
+        {"fog that is not the sector's, which has none", nullptr, &fog, false},
+        {"fog that is not the sector's, which has a plain one", &plain, &fog, false},
+        {"fog that is not the sector's, which has another fog", &fog, &otherFog, false},
+        {"plain, where the sector has fog", &fog, &plain, false},
+    };
+    for (int which = 0; which < kOldPaths; which++)
+    {
+        OldPath(which);
+        for (const Case &c : cases)
+        {
+            sector.extra_colormap = c.sectorMap;
+            assert(HWR_FogColormapWallLight(140, c.map, &sector) == 140);
+        }
+    }
+    Mode(true, true);
+    for (const Case &c : cases)
+    {
+        sector.extra_colormap = c.sectorMap;
+        const FUINT got = HWR_FogColormapWallLight(140, c.map, &sector);
+        if (got != (c.takesSector ? 100u : 140u))
+            std::fprintf(stderr, "%s: got %lu\n", c.name, got);
+        assert(got == (c.takesSector ? 100u : 140u));
+    }
+}
+
+int main()
+{
+    for (int which = 0; which < kOldPaths; which++)
+    {
+        OldPath(which);
+        OldRule();
+    }
+    Mode(true, true);
+    StepsRule();
+    EveryLevel();
+    StepLight();
+    SkipsTable();
+    SliceLight();
+    FogColormap();
+    std::puts("wall_light_steps: a wall's offset in light levels, and in Software's steps with VibeRant's shaders, and where Software gives none");
+}
