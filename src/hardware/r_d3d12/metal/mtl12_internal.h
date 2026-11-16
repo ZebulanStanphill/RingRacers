@@ -467,6 +467,7 @@ struct Context
 	// 0 for no limit. Set for Apple's paravirtual GPU (see CreateDevice).
 	unsigned encoderDraws = 0, encoderCopies = 0;
 	int failNextSubmission = 0; // FailNextSubmissionForTest's
+	bool failNextNullImage = false; // FailNextNullViewForTest's
 	char description[512] = {};
 
 	// Buffers by the made-up address ranges root CBVs and buffer views name them with
@@ -500,6 +501,9 @@ extern Completions completions;
 void FlushMessages();
 // A command buffer of the queue's, reporting as much as the device's options ask for
 id<MTLCommandBuffer> NewCommandBuffer();
+// Commits command buffers as one submission of the queue, which fences and waits count and whose failure is the
+// device's (Completions); the last one presents drawable, if there is one
+void Commit(const std::vector<id<MTLCommandBuffer>> &buffers, id<MTLDrawable> drawable);
 // Blocks until every submission has completed, or ms pass
 bool WaitIdle(DWORD ms);
 
@@ -507,6 +511,7 @@ bool FindBuffer(D3D12_GPU_VIRTUAL_ADDRESS address, id<MTLBuffer> __unsafe_unreta
 HRESULT CreateResource(D3D12_HEAP_TYPE type, Heap *heap, const D3D12_RESOURCE_DESC &desc, Resource **out);
 // The bytes of a texture's mips, without any padding
 uint64_t TextureBytes(const D3D12_RESOURCE_DESC &desc, const FormatInfo &format);
+// The texture a null view of this kind shows, made and written as zero on first use; null if that couldn't be done
 Resource *NullImage(DXGI_FORMAT format, bool volume);
 
 } // namespace rr_mtl12

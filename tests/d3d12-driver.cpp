@@ -356,13 +356,43 @@ static void metalPresenterHooks() {
         puts("Metal presenter hooks: WrapTexture checked, and a drawable of a layer without a window presented with a submission");
     }
 }
+// A null view of a kind the driver makes none of (a 3D texture of 16-bit integers), in a heap of the test's own. mtl12
+// shows a null view a texture of one texel, which it makes and writes as zero the first time a kind is asked for.
+static void metalNullView(ComPtr<ID3D12DescriptorHeap> &heap) {
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc={}; heapDesc.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heapDesc.NumDescriptors=1;
+    if(!heap && FAILED(Core_Device()->CreateDescriptorHeap(&heapDesc,IID_PPV_ARGS(&heap)))) throw std::runtime_error("Metal null views: no descriptor heap");
+    D3D12_SHADER_RESOURCE_VIEW_DESC view={}; view.Format=DXGI_FORMAT_R16_UINT; view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE3D;
+    view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING; view.Texture3D.MipLevels=1;
+    Core_Device()->CreateShaderResourceView(nullptr,&view,heap->GetCPUDescriptorHandleForHeapStart());
+}
+// A null view's texture that can't be set up must not be kept as if it had been written: the next view of its kind tries
+// again, and one that worked is made once. Not a scene, like the hooks above.
+static void metalNullViews() {
+    ComPtr<ID3D12DescriptorHeap> heap;
+    const size_t before=rr_mtl12::CountsForTest().nullViews;
+    rr_mtl12::FailNextNullViewForTest(); metalNullView(heap);
+    if(rr_mtl12::CountsForTest().nullViews!=before) throw std::runtime_error("Metal null views: a texture that couldn't be set up was kept");
+    if(logs.find("a null view's texture couldn't be written as zero")==std::string::npos) throw std::runtime_error("Metal null views: the log doesn't say that one couldn't be set up");
+    metalNullView(heap);
+    if(rr_mtl12::CountsForTest().nullViews!=before+1) throw std::runtime_error("Metal null views: the view after one that failed made no texture");
+    metalNullView(heap);
+    if(rr_mtl12::CountsForTest().nullViews!=before+1) throw std::runtime_error("Metal null views: a second view of a kind made a second texture");
+    // The texture is written by a command buffer of its own, which is a submission like the driver's: a fence signaled
+    // after it waits for it, and what Metal reports of it is counted
+    const UINT64 fence=Core_Submit("null views");
+    if(!fence || !Core_Wait(fence,30000,"null views")) throw std::runtime_error("Metal null views: the commands didn't finish");
+    validate(validationQueue);
+    puts("Metal null views: one that couldn't be set up wasn't kept, the next of its kind was made, and once");
+}
 // A command buffer that Metal fails, for whatever reason, did part of its work and not the rest, so the driver has to see
 // what Direct3D 12 would show it: the wait for that submission fails, the fence reads as UINT64_MAX, the device says it
 // was removed and why, and the frame that follows stops the game. Nothing here can make Metal fail a command buffer, so
 // mtl12 treats the next one as failed with the given MTLCommandBufferError code (FailNextSubmissionForTest). A run of
 // its own (--metal-command-buffer-error <code>, from metal-controls.py), since nothing goes on after it: it must end in
-// I_Error, which exits with 1.
+// I_Error, which exits with 1. With "null-view" after the code, the command buffer that fails is the one that writes a
+// null view's texture, which mtl12 submits by itself.
 static int metalFailure=0;
+static bool metalFailureInNullView=false;
 static void metalFailedCommandBuffer() {
     const HRESULT reason=metalFailure==11 ? DXGI_ERROR_DEVICE_REMOVED : metalFailure==1 ? DXGI_ERROR_DRIVER_INTERNAL_ERROR
         : metalFailure==2 || metalFailure==4 || metalFailure==7 ? DXGI_ERROR_DEVICE_HUNG : DXGI_ERROR_DEVICE_RESET;
@@ -372,15 +402,21 @@ static void metalFailedCommandBuffer() {
         throw std::runtime_error("Metal failed command buffer: the device wasn't a working one to begin with");
     reset();
     rr_mtl12::FailNextSubmissionForTest(metalFailure);
+    if(metalFailureInNullView) {
+        ComPtr<ID3D12DescriptorHeap> heap; metalNullView(heap);
+        // Nothing of the driver's is submitted: the failure has to come from the null view's own command buffer
+        for(int i=0;i<3000 && !rr_mtl12::DeviceLost();i++) Sleep(10);
+        if(!rr_mtl12::DeviceLost()) throw std::runtime_error("Metal failed command buffer: the null view's command buffer wasn't the device's to fail");
+    }
     const UINT64 fence=Core_Submit("failed command buffer");
-    if(!fence) throw std::runtime_error("Metal failed command buffer: nothing was submitted");
-    if(Core_Wait(fence,30000,"failed command buffer")) throw std::runtime_error("Metal failed command buffer: the wait for its fence succeeded");
+    if(!metalFailureInNullView && !fence) throw std::runtime_error("Metal failed command buffer: nothing was submitted");
+    if(fence && Core_Wait(fence,30000,"failed command buffer")) throw std::runtime_error("Metal failed command buffer: the wait for its fence succeeded");
     if(!Core_DeviceRemoved() || !rr_mtl12::DeviceLost()) throw std::runtime_error("Metal failed command buffer: the device doesn't say it was removed");
     if(Core_RemovedReason()!=reason) { fprintf(stderr,"reason 0x%08X, expected 0x%08X\n",(unsigned)Core_RemovedReason(),(unsigned)reason); throw std::runtime_error("Metal failed command buffer: the device gives another reason"); }
     if(Core_CompletedFence()!=UINT64_MAX) throw std::runtime_error("Metal failed command buffer: the fence still reads as a value");
     if(rr_mtl12::ValidationErrors()!=1) throw std::runtime_error("Metal failed command buffer: the failure wasn't counted once");
     if(logs.find("a command buffer failed: a failure injected by a test")==std::string::npos) throw std::runtime_error("Metal failed command buffer: the log doesn't say so");
-    printf("METAL_FAILURE_REACHED_DRIVER: %d as 0x%08X\n",metalFailure,(unsigned)reason); fflush(stdout);
+    printf("METAL_FAILURE_REACHED_DRIVER: %d%s as 0x%08X\n",metalFailure,metalFailureInNullView ? " null-view" : "",(unsigned)reason); fflush(stdout);
     // The driver ends the frame by stopping the game, as it does for a Direct3D 12 device that was removed
     deviceFailsOnPurpose=true; D3D12_FinishUpdate(0);
     throw std::runtime_error("Metal failed command buffer: the frame after it didn't stop the game");
@@ -492,7 +528,7 @@ static void selfTest() {
 int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
 #ifdef HAVE_METAL
-    else if(argc==3 && !strcmp(argv[1],"--metal-command-buffer-error") && atoi(argv[2])>0) metalFailure=atoi(argv[2]);
+    else if((argc==3 || (argc==4 && !strcmp(argv[3],"null-view"))) && !strcmp(argv[1],"--metal-command-buffer-error") && atoi(argv[2])>0) { metalFailure=atoi(argv[2]); metalFailureInNullView=argc==4; }
 #endif
     else if(argc!=1) return 2;
 #ifdef HAVE_D3D12_NATIVE
@@ -1922,6 +1958,7 @@ int main(int argc,char **argv) {
             deleteTexture(&customTexture); D3D12_FinishUpdate(0);
         }
 #ifdef HAVE_METAL
+        metalNullViews();
         metalPresenterHooks();
 #endif
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(validationQueue);

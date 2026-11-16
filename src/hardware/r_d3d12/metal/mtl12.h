@@ -67,11 +67,14 @@ bool DeviceLost();
 struct TestCounts
 {
 	size_t shaders; // compiled Metal functions in the shader cache
+	size_t nullViews; // the textures null views show, one per format and dimension asked for
 };
 TestCounts CountsForTest();
 // For the driver test: the last command buffer of the next submission completes as if Metal had failed it with this
 // MTLCommandBufferError code
 void FailNextSubmissionForTest(int code);
+// For the driver test: the texture of the next null view of a new kind can't be set up
+void FailNextNullViewForTest();
 
 // For the presenter, which owns the layer and its drawables
 

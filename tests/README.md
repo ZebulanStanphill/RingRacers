@@ -1164,6 +1164,16 @@ differ:
   `METAL_FAILURE_REACHED_DRIVER` line, and the error's text. With mtl12 as it was
   before (only the device removed counted; not kept in the tree) the run for a
   timeout failed with "the wait for its fence succeeded".
+- **Null views** are checked after the scenes, outside the registry: mtl12 is
+  told that the texture of the next null view of a new kind can't be set up
+  (`FailNextNullViewForTest`), and a null view of a kind the driver makes none of
+  must then leave no texture behind, the next one of that kind must make it, and a
+  third must reuse it. A fifth failed-command-buffer run (`--metal-command-buffer-error
+  2 null-view`) fails the command buffer that writes such a texture, which mtl12
+  submits by itself, and requires the same as the other four. Both were tried
+  against mtl12 as it was (not kept in the tree): keeping the texture failed the
+  first, and committing its command buffer outside the submissions failed the
+  second with "the null view's command buffer wasn't the device's to fail".
 - **The shader cache** is checked after the add-on shader scenes, outside the
   registry as well: sixteen add-on shaders are each compiled, drawn with (the
   pixel is checked), and cleaned, and once the frames that used them are done,

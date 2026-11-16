@@ -82,7 +82,7 @@ is locked.
 | a root constant buffer named by GPU virtual address | each buffer gets a made-up address range; the address resolves to a buffer and an offset |
 | descriptor heap slots | records of a texture or a sampler |
 | views | a view of all of a texture's mips is the texture; one of fewer is a texture view the resource keeps. A view of another format than its texture's isn't implemented (the driver has none) |
-| a null view | a 1x1 (or 1x1x1) texture of the view's format, written as zero by a command buffer of its own when it is made |
+| a null view | a 1x1 (or 1x1x1) texture of the view's format, written as zero by a command buffer of its own when it is made: a submission like the driver's, so fences wait for it and its failure is the device's. If it can't be set up, the view is left empty (a draw that needs it is skipped, with a line in the log) and the next null view of that kind tries again |
 | resource states and `ResourceBarrier` | nothing: Metal tracks what textures are used for. A target that stops being one ends its pass |
 | `OMSetRenderTargets`, draws | a render pass that loads and stores everything, begun at the first draw after the targets are set and ended by whatever can't be in one (a copy, a clear, other targets). One color target, and a depth target of its size (the driver's always are) |
 | `ClearRenderTargetView`, `ClearDepthStencilView` | the load action of the next pass on that target. If the target is used otherwise first (copied, handed to a shader, the list closed), a pass of its own with no draws. Only whole targets: a clear of rectangles isn't implemented (the driver has none) |

@@ -56,6 +56,11 @@ void FailNextSubmissionForTest(int code)
 	g.failNextSubmission = code;
 }
 
+void FailNextNullViewForTest()
+{
+	g.failNextNullImage = true;
+}
+
 uint64_t ValidationErrors()
 {
 	return completions.errors;
@@ -65,6 +70,7 @@ TestCounts CountsForTest()
 {
 	TestCounts counts = {};
 	counts.shaders = ShaderCount();
+	counts.nullViews = g.nullImages.size();
 	return counts;
 }
 
@@ -263,6 +269,33 @@ void PresentWithNextSubmit(void *drawable)
 	g.nextDrawable = (__bridge id<MTLDrawable>)drawable;
 }
 
+void Commit(const std::vector<id<MTLCommandBuffer>> &buffers, id<MTLDrawable> drawable)
+{
+	// The submission is done when its last command buffer is: the queue runs them in the order they are committed
+	uint64_t submission;
+	{
+		std::lock_guard<std::mutex> lock(completions.mutex);
+		submission = ++completions.last;
+		if (!buffers.empty())
+			completions.running.insert(submission);
+	}
+	const int injected = buffers.empty() ? 0 : g.failNextSubmission;
+	if (injected)
+		g.failNextSubmission = 0;
+	for (size_t i = 0; i < buffers.size(); i++)
+	{
+		const bool last = i + 1 == buffers.size();
+		const uint64_t completes = last ? submission : 0;
+		if (last && drawable)
+			[buffers[i] presentDrawable:drawable];
+		const int fails = last ? injected : 0;
+		[buffers[i] addCompletedHandler:^(id<MTLCommandBuffer> done) {
+			Completed(done, completes, fails);
+		}];
+		[buffers[i] commit];
+	}
+}
+
 void Queue::ExecuteCommandLists(UINT count, ID3D12CommandList *const *lists)
 {
 	@autoreleasepool
@@ -284,30 +317,7 @@ void Queue::ExecuteCommandLists(UINT count, ID3D12CommandList *const *lists)
 		g.nextDrawable = nil;
 		if (drawable && buffers.empty())
 			buffers.push_back(NewCommandBuffer());
-
-		// The submission is done when its last command buffer is: the queue runs them in the order they are committed
-		uint64_t submission;
-		{
-			std::lock_guard<std::mutex> lock(completions.mutex);
-			submission = ++completions.last;
-			if (!buffers.empty())
-				completions.running.insert(submission);
-		}
-		const int injected = buffers.empty() ? 0 : g.failNextSubmission;
-		if (injected)
-			g.failNextSubmission = 0;
-		for (size_t i = 0; i < buffers.size(); i++)
-		{
-			const bool last = i + 1 == buffers.size();
-			const uint64_t completes = last ? submission : 0;
-			if (last && drawable)
-				[buffers[i] presentDrawable:drawable];
-			const int fails = last ? injected : 0;
-			[buffers[i] addCompletedHandler:^(id<MTLCommandBuffer> done) {
-				Completed(done, completes, fails);
-			}];
-			[buffers[i] commit];
-		}
+		Commit(buffers, drawable);
 	}
 	FlushMessages();
 }

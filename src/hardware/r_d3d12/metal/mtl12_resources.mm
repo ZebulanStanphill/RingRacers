@@ -220,24 +220,31 @@ Resource *NullImage(DXGI_FORMAT format, bool volume)
 	image->SetName(L"null view");
 
 	// A null view reads as zero in Direct3D 12, so the one texel is written as zero before anything can sample it: by a
-	// command buffer of its own, which the queue runs before whatever the driver commits next
+	// command buffer of its own, which the queue runs before whatever the driver commits next. It is a submission like
+	// the driver's, so if it fails on the GPU the device says so, and the device isn't released while it runs.
 	@autoreleasepool
 	{
 		const NSUInteger texel = std::max(1u, image->format.bytes);
-		id<MTLBuffer> zero = [g.device newBufferWithLength:16 options:MTLResourceStorageModeShared];
-		id<MTLCommandBuffer> commands = [g.queue commandBuffer];
-		if (zero && commands)
+		const bool refused = g.failNextNullImage;
+		g.failNextNullImage = false;
+		id<MTLBuffer> zero = refused ? nil : [g.device newBufferWithLength:16 options:MTLResourceStorageModeShared];
+		id<MTLCommandBuffer> commands = zero ? NewCommandBuffer() : nil;
+		id<MTLBlitCommandEncoder> blit = commands ? [commands blitCommandEncoder] : nil;
+		if (!blit)
 		{
-			memset(zero.contents, 0, 16);
-			id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
-			[blit copyFromBuffer:zero sourceOffset:0 sourceBytesPerRow:texel sourceBytesPerImage:texel
-				sourceSize:MTLSizeMake(1, 1, 1) toTexture:image->texture destinationSlice:0 destinationLevel:0
-				destinationOrigin:MTLOriginMake(0, 0, 0)];
-			[blit endEncoding];
-			[commands commit];
+			// Not kept: its texel would be whatever the memory held. The view stays empty, a draw that needs it is
+			// skipped with a line in the log, and the next null view of this kind tries again.
+			Log("a null view's texture couldn't be written as zero, so the view is left empty");
+			image->Release();
+			return nullptr;
 		}
-		else
-			Log("a null view's texture couldn't be cleared");
+		memset(zero.contents, 0, 16);
+		blit.label = @"null view";
+		[blit copyFromBuffer:zero sourceOffset:0 sourceBytesPerRow:texel sourceBytesPerImage:texel
+			sourceSize:MTLSizeMake(1, 1, 1) toTexture:image->texture destinationSlice:0 destinationLevel:0
+			destinationOrigin:MTLOriginMake(0, 0, 0)];
+		[blit endEncoding];
+		Commit({commands}, nil);
 	}
 	g.nullImages.push_back(image);
 	return image;
