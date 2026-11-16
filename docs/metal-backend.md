@@ -115,7 +115,12 @@ window like the first for Metal (`SDL_WINDOW_METAL`, with SDL's Metal view and i
 and makes the second the game's window (`sdlmain.h`'s `window`), which is what the video code sizes, makes
 fullscreen, and takes input from. When Software takes over, the first window comes back as the second one was. The
 OpenGL window is made hidden and only shown once a renderer that presents on it is the one the game runs with
-(`I_ShowDeferredWindow`), so starting the game shows one window.
+(`I_ShowDeferredWindow`), so starting the game shows one window. Quitting shows none: when the game ends with
+VibeRant Metal, the presenter closes the Metal window and leaves the OpenGL window as it is, hidden, for the video
+system to destroy a moment later. (It used to bring it back as for Software: a window nothing had drawn into, shown
+for the moment before it went, and from fullscreen on its way into a Space of its own.) The log's last line of the
+presenter says what SDL says of that window then: "closed the Metal window as the game quits; the game's OpenGL
+window is hidden".
 
 - **Size.** The layer's drawables are the size of the window's content in points, not in the display's pixels: the
   game's window isn't a high-resolution one (it is made without `SDL_WINDOW_ALLOW_HIGHDPI`), so on a Retina display

@@ -62,6 +62,8 @@ ALLOWED = [
     re.compile(r"frame \d+ done: 0 errors"),
 ]
 DEVICE_LINE = re.compile(r"Metal: device: .*")
+# The presenter's last word on a window it presented on: given back to Software, or closed with the game
+PRESENTER_DONE = r"presenter: (?:gave the game's OpenGL window back|closed the Metal window as the game quits; the game's OpenGL window is \w+)"
 # What the log says when the game is about to show its error dialog
 STOPPED = re.compile(r"An error occurred within|Process killed by signal|I_Error\(\)|failed assertion")
 
@@ -158,7 +160,14 @@ def check_log(log_path, need_metal=True, validation=True):
             problems.append(("no Metal", "the log has no Metal device line"))
         elif validation and not ("API validation on" in device.group(0) and "shader validation on" in device.group(0)):
             problems.append(("no validation", "the device wasn't made with API and shader validation: " + device.group(0)))
-    presented = [int(n) for n in re.findall(r"presenter: gave the game's OpenGL window back; (\d+) frames presented", text)]
+        # A game that ends with VibeRant Metal closes the Metal window and leaves its OpenGL window, which nothing ever
+        # drew into, hidden: the log says what SDL says of that window at the end
+        quit_with = re.findall(r"presenter: closed the Metal window as the game quits; the game's OpenGL window is (\w+)", text)
+        if not quit_with:
+            problems.append(("quit", "the log doesn't say that the Metal window was closed as the game quit"))
+        elif quit_with[-1] != "hidden":
+            problems.append(("quit", "the game's OpenGL window was %s as the game quit from VibeRant Metal" % quit_with[-1]))
+    presented = [int(n) for n in re.findall(PRESENTER_DONE + r"; (\d+) frames presented", text)]
     return problems, (device.group(0) if device else ""), sum(presented)
 
 

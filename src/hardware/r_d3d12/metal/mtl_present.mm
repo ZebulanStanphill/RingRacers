@@ -196,14 +196,16 @@ bool CreateWindowAndLayer()
 	return true;
 }
 
-// The game's own window back, as the Metal one was
-void GiveBackWindow(bool idle)
+// The game's own window back, as the Metal one was. quitting: the game is ending, so its window isn't shown again:
+// nothing would draw into it before it is destroyed, and a fullscreen one would begin to move into a Space of its own.
+void GiveBackWindow(bool idle, bool quitting)
 {
 	if (!g_mtl.owned)
 		return;
 	if (!idle)
 		idle = Core_WaitIdle(2000, "giving the window back");
 	(void)idle; // the layer has to go with its window either way; Metal keeps what its command buffers still use
+	char what[160] = "gave the game's OpenGL window back";
 	@autoreleasepool
 	{
 		Core_Device()->CreateRenderTargetView(nullptr, nullptr, Core_Rtv(kSlot));
@@ -211,7 +213,9 @@ void GiveBackWindow(bool idle)
 
 		SDL_Window *metal = g_mtl.metalWindow;
 		SDL_Window *game = g_mtl.gameWindow;
-		if (game)
+		if (game && quitting)
+			rr_mtl_present::SetGameWindow(game);
+		else if (game)
 		{
 			const Uint32 flags = SDL_GetWindowFlags(metal);
 			int x, y, w, h;
@@ -233,9 +237,13 @@ void GiveBackWindow(bool idle)
 			SDL_DestroyWindow(metal);
 		g_mtl.metalWindow = g_mtl.gameWindow = nullptr;
 		g_mtl.owned = false;
+		// What the log says of the OpenGL window is what SDL says of it now, not what was meant
+		if (quitting)
+			snprintf(what, sizeof what, "closed the Metal window as the game quits; the game's OpenGL window is %s",
+				!game ? "gone" : (SDL_GetWindowFlags(game) & SDL_WINDOW_SHOWN) ? "shown" : "hidden");
 	}
-	Log("presenter: gave the game's OpenGL window back; %d frames presented, %d skipped while the window was out of sight, %d without a drawable",
-		g_totals.presented, g_totals.unseen, g_totals.noDrawable);
+	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable",
+		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable);
 }
 
 } // namespace
@@ -406,12 +414,13 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 
 void Present_ReleaseWindow()
 {
-	GiveBackWindow(false);
+	GiveBackWindow(false, false);
 }
 
+// The driver shuts down when the game ends (I_ShutdownGraphics), and the video system goes right after it
 void Present_Shutdown(bool idle)
 {
-	GiveBackWindow(idle);
+	GiveBackWindow(idle, true);
 	g_mtl.stopped = true; // nothing presents after this
 }
 

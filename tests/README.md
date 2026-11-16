@@ -1255,7 +1255,9 @@ Every run of the game gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
 with 0 in time (a game that stops at its error dialog is killed after five seconds),
 if the log doesn't say that the backend is Metal with both kinds of validation on, if
 a frame the capture mode announced is missing, if no frame was presented to the
-window (the presenter counts them in the log), or if the log has a validation
+window (the presenter counts them in the log), if the game's OpenGL window wasn't
+still hidden when the game quit with VibeRant Metal (the presenter's last line says
+what SDL says of it), or if the log has a validation
 message, a failed command buffer, a "not implemented" line, an error of the driver's,
 a wait for the GPU that the driver gave up on, or a fallback to Software. `summary.json` in each artifact has every run's result.
 
