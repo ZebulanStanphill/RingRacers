@@ -1283,7 +1283,9 @@ workflow is on the default branch), or by pushing a commit to a branch named
   the latter taken when the log says the game has reached the moment. The scenes:
   the game started without naming a renderer; the title screen and a menu, with keys
   sent through the system (CoreGraphics events from `osascript`, which reach whatever
-  window has the keyboard); 3D models on and off; changing the
+  window has the keyboard); quitting through that menu (`menu-quit`: the same keys
+  and then yes to Exit Program's question, with a command line that would only end
+  the game after the run's two minutes are up); 3D models on and off; changing the
   renderer while a replay plays, starting in VibeRant Metal and starting in Software,
   in a window and in fullscreen (`fullscreen-switch`, `fullscreen-switch-software`,
   where each of the two windows that trade places is in a Space of its own, and

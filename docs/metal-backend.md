@@ -454,7 +454,9 @@ the screen (`screencapture`), which were looked at:
 - started without naming a renderer: the log says the Metal backend, the intro and the title screen show in the
   window;
 - the keyboard reaches the Metal window: keys sent through the system leave the title screen, confirm the
-  warning that follows, open the first menu and its Exit Program question, and cancel it;
+  warning that follows, open the first menu and its Exit Program question, and cancel it; and, in a scene of its
+  own, answer it with yes, which ends the game with 0 (`menu-quit`, whose command line would only end it minutes
+  after the run is over);
 - 3D models on and off, each against VibeRant Vulkan's frames with the same setting (0.13% to 0.16% of the pixels);
 - changing the renderer while a replay plays, from VibeRant Metal to Software and back, twice: each time the
   Metal window goes or comes, the picture on screen is the renderer's, and the game goes on; and the same starting

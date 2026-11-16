@@ -403,6 +403,15 @@ def scene_list():
             keys([key], pause=3)
             screencapture(os.path.join(scene_dir, "screen-%d-%s.png" % (index + 2, name)))
 
+    def menu_quit(process, scene_dir, log_path):
+        # The same keys up to Exit Program's question, and then A, which answers it with yes: the game must end by
+        # that, since nothing else ends it (its command line only waits, for longer than the run may take)
+        time.sleep(25)
+        for index, (key, name) in enumerate([(KEY_RETURN, "warning"), (KEY_A, "menu"), (KEY_A, "question")]):
+            keys([key], pause=3)
+            screencapture(os.path.join(scene_dir, "screen-%d-%s.png" % (index + 1, name)))
+        keys([KEY_A], pause=0)
+
     def scaling(mode):
         # A 320x200 frame on the whole screen, so that Fit, Integer, and 1:1 put it in three different rectangles. The
         # game starts in fullscreen, as it does for a player (-win, which the other scenes have, keeps it in a window).
@@ -414,6 +423,8 @@ def scene_list():
         "default-title": {"args": wait(700) + shot + ["+quit"], "during": pictures((took, 1, 9, "intro")), "shots": 1,
                           "renderer": None, "check": True},
         "title-menu": {"args": wait(2100) + shot + ["+quit"], "during": menu, "shots": 1},
+        # Quitting as a player does, through the menu. 20,000 tics are nearly ten minutes, and the run gets two.
+        "menu-quit": {"args": wait(20000) + ["+quit"], "during": menu_quit, "shots": 0, "timeout": 120},
         "models-on": {"args": race + ["+gr_models", "on"], "shots": 2},
         "models-off": {"args": race + ["+gr_models", "off"], "shots": 2},
         "switch-renderer": {"args": replay + wait(600) + shot + ["+renderer", "Software"] + wait(400) + shot
@@ -469,7 +480,8 @@ def scenes(options):
                 + scene["args"] + options.extra)
         during = scene.get("during")
         wrapped = (lambda process, d=during, s=scene_dir, l=log_path: d(process, s, l)) if during else None
-        code, seconds = run_game(options.game, options.data, home, args, log_path, options.timeout, wrapped)
+        timeout = scene.get("timeout", options.timeout)
+        code, seconds = run_game(options.game, options.data, home, args, log_path, timeout, wrapped)
         problems, device, text = check_log(log_path, quits_with_metal=not scene.get("ends_in_software"))
         # A scene's window is on the screen the whole time, except where the scene has the presenter think otherwise
         presented = check_presenting(text, problems, in_sight=not scene.get("blind"))
@@ -478,7 +490,7 @@ def scenes(options):
         for index, shot in enumerate(shots):
             shutil.move(shot, os.path.join(scene_dir, "game-%d-%s" % (index + 1, os.path.basename(shot))))
         if code is None:
-            problems.append(("timeout", "the game didn't exit in %d s" % options.timeout))
+            problems.append(("timeout", "the game didn't exit in %d s" % timeout))
         elif code != 0:
             problems.append(("exit", "the game exited with %s" % code))
         if len(shots) != scene["shots"]:
