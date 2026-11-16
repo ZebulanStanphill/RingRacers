@@ -101,9 +101,9 @@ Presenter g_mtl;
 // What Metal says became of the drawables presented, which it says on a thread of its own. Every presented drawable
 // has a number, and a drawable Metal has reported on (shown, or let go) settles the ones before it too.
 std::atomic<uint64_t> g_presentedSerial{0}, g_reportedSerial{0};
-// Of the frames presented to a window the system called out of sight
-std::atomic<int> g_probesShown{0}, g_probesDropped{0};
-std::atomic<bool> g_probeDropped{false}; // since the last frame
+// What the reports said, since the window was taken: the drawable has a time at which it was shown, or it has none
+// (dropped, or a system that gives no times). Of all presented drawables, and of the probes among them.
+std::atomic<int> g_timed{0}, g_untimed{0}, g_probesTimed{0}, g_probesUntimed{0};
 
 void Reported(uint64_t serial)
 {
@@ -323,6 +323,8 @@ bool CreateWindowAndLayer()
 		layer.framebufferOnly = g_check.on ? NO : YES;
 		layer.opaque = YES;
 		layer.displaySyncEnabled = g_mtl.vsync;
+		// What the layer has by default, and what deciding whether a drawable is free counts on (mtl_present_seen.h)
+		layer.maximumDrawableCount = rr_mtl_present::kDrawables;
 
 		g_mtl.metalWindow = made;
 		g_mtl.view = view;
@@ -340,8 +342,7 @@ bool CreateWindowAndLayer()
 		g_mtl.decide = rr_mtl_present::Seen();
 		// No drawable of this layer is out, whatever became of another window's
 		Reported(g_presentedSerial.load());
-		g_probesShown = g_probesDropped = 0;
-		g_probeDropped = false;
+		g_timed = g_untimed = g_probesTimed = g_probesUntimed = 0;
 		g_mtl.failure[0] = '\0';
 		g_totals = PresentStats();
 		Log("presenter: presenting on a Metal window in place of the game's OpenGL window (%s)",
@@ -401,9 +402,9 @@ void GiveBackWindow(bool idle, bool quitting)
 	if (g_check.on)
 		Log("presenter: %d drawables were read back and compared with the frames placed in them (-mtlcheck): %d differed, %d unread",
 			g_check.made + g_check.missed, g_check.differed, g_check.missed);
-	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped); the layer took %.2f ms to give a drawable on average, %.1f ms at worst",
-		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesShown.load(), g_probesDropped.load(),
-		g_totals.acquireMs / std::max(1, g_totals.presented + g_totals.noDrawable), g_totals.worstAcquireMs);
+	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped); the layer took %.2f ms to give a drawable on average, %.1f ms at worst; Metal reported %d drawables with a time shown and %d without",
+		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesTimed.load(), g_probesUntimed.load(),
+		g_totals.acquireMs / std::max(1, g_totals.presented + g_totals.noDrawable), g_totals.worstAcquireMs, g_timed.load(), g_untimed.load());
 }
 
 } // namespace
@@ -461,7 +462,6 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		now.force = force;
 		// Without reports, only a window's first frame goes out regardless
 		now.out = reports ? (int)std::min<uint64_t>(g_presentedSerial.load() - g_reportedSerial.load(), 1000) : g_totals.presented ? 1 : 0;
-		now.dropped = g_probeDropped.exchange(false);
 		const rr_mtl_present::Frame decided = rr_mtl_present::Decide(g_mtl.decide, now);
 		const bool seen = now.usable && (now.visible || now.force);
 		if (seen != g_mtl.seen)
@@ -469,7 +469,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			g_mtl.seen = seen;
 			Log(seen ? "presenter: the game window shows again, so frames are presented"
 				: !now.usable ? "presenter: the game window is out of sight (minimized, hidden, or without a size), so nothing is presented until it shows"
-				: "presenter: the system says none of the game window is on screen (covered, on another Space, or behind a locked screen), so a frame is only presented once the display has taken the one before");
+				: "presenter: the system says none of the game window is on screen (covered, on another Space, or behind a locked screen), so a frame is only presented while a drawable is surely free");
 		}
 		if (decided == rr_mtl_present::Frame::Unseen)
 		{
@@ -516,7 +516,9 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			SubmitWithoutPresenting();
 			return;
 		}
-		rr_mtl_present::GotDrawable(g_mtl.decide);
+		if (!rr_mtl_present::GotDrawable(g_mtl.decide, decided, MsSince(g_start), acquireMs))
+			LOG_ONCE("presenter: the layer took %.0f ms to give a drawable for a window the system calls out of sight, so frames go to it less often for a while",
+				acquireMs);
 		if (g_mtl.width != (UINT)texture.width || g_mtl.height != (UINT)texture.height)
 		{
 			g_mtl.width = (UINT)texture.width;
@@ -587,16 +589,10 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		if (@available(macOS 10.15.4, *))
 		{
 			[drawable addPresentedHandler:^(id<MTLDrawable> done) {
+				const bool timed = done.presentedTime > 0;
+				(timed ? g_timed : g_untimed)++;
 				if (probe)
-				{
-					if (done.presentedTime > 0)
-						g_probesShown++;
-					else
-					{
-						g_probesDropped++;
-						g_probeDropped = true;
-					}
-				}
+					(timed ? g_probesTimed : g_probesUntimed)++;
 				Reported(serial);
 			}];
 		}

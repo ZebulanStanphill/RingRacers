@@ -165,24 +165,31 @@ window is hidden".
   sleeping display count as out of sight too.
 - **In case the system is wrong about that.** If AppKit ever called a window out of sight that a player is looking
   at, presenting nothing would freeze the picture while the race goes on. So a window the system calls out of sight
-  still gets frames, one at a time (`mtl_present_seen.h`, plain C++ so that a test can run it): a frame is presented,
-  a probe, only when no drawable presented before it is still out. Metal reports for each presented drawable when it
-  reached the display, or that it never did (`addPresentedHandler`, macOS 10.15.4). A probe that was shown is
-  followed by the next frame at once, so a window that is in fact on screen keeps its picture, at up to one frame
-  per refresh of the display. A probe that is never heard of again is followed by nothing, and since no drawable but
-  the one on screen is out when a probe asks for one, the layer has one to give and asking doesn't wait. A probe
-  the system drops is followed by another a second later. A window the game itself minimized or hid, or one without
-  a size, gets nothing. A new window's first frame goes out the same way, since a window doesn't count as visible
-  until the system has put it on screen. (On a system older than 10.15.4, which has no reports, only that first
-  frame goes out regardless, as before.) Behind the Mac mini's locked screen this is what the log shows: a replay of
-  1,487 frames presented five of them, one a second, the system dropped each, and the time per frame was what it is
-  without presenting (2.6 ms). What it does when the report is wrong can't be seen behind a locked screen, and no
-  wrong report has been observed: `-mtlblind` acts one out (the presenter takes the window for out of sight whatever
-  AppKit says), for `capture.py`'s `blind` scene on a screen that can be seen, and the test `metal_present_seen` runs
-  the decision against a model of the layer and the display (`tests/README.md`).
+  still gets frames, as long as asking for a drawable can't wait (`mtl_present_seen.h`, plain C++ so that a test can
+  run it): a frame is presented, a probe, while at most one drawable presented before it is unaccounted for. Metal
+  reports for each presented drawable when the system is done with it (`addPresentedHandler`, macOS 10.15.4), and
+  the layer has three drawables: with one on screen and at most one more out, a third is free. While the system
+  takes what it is given, a probe follows each report, so a window that is in fact on screen keeps its picture, at
+  up to one frame per refresh of the display. When the system takes nothing, two probes go out and no more. A window
+  the game itself minimized or hid, or one without a size, gets nothing. A new window's first frames go out the same
+  way, since a window doesn't count as visible until the system has put it on screen. (On a system older than
+  10.15.4, which has no reports, only a window's first frame goes out regardless, as before.) In case the system
+  hands drawables back slowly to a window nobody sees, a probe that waited more than a quarter of a second for its
+  drawable, or got none, is followed by a pause of a second, then two, doubling to thirty, until thirty probes in a
+  row are quick or the window is in sight.
+
+  This took three tries, and the runner's virtual display decided each. The first waited a second after a probe
+  that Metal reported without a time shown, taking that for a dropped frame: but on the runner every report of every
+  frame has no time, for a window in plain sight too. The second presented a probe only when nothing was
+  unreported: but on the runner the report of a drawable only comes when the next one takes its place, so that gave a
+  frame a second there, while behind the Mac mini's locked screen each report came at once. Hence "at most one".
+  `-mtlblind` acts a wrong report out (the presenter takes its window for out of sight whatever AppKit says), for
+  `capture.py`'s `blind` scene, and the test `metal_present_seen` runs the decision against a model of the layer and
+  the display with both kinds of report (`tests/README.md`). What the scene showed where is under "What was tested,
+  and what wasn't".
 - **A layer without a drawable.** If the layer of a window in sight gives no drawable, that frame isn't shown and
   the layer isn't asked again for a quarter of a second, doubling up to four seconds while it keeps giving none; if
-  it has none for a probe, no more probes go out until the window is in sight. The log says when presenting stops
+  it has none for a probe, probes pause as above. The log says when presenting stops
   and starts again, and, when the window is given back or closed, how many frames were presented, skipped, and left
   without a drawable, how many of those presented were probes, shown or dropped, and how long the layer took to
   give a drawable, on average and at worst.

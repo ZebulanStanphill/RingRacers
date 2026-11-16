@@ -61,18 +61,26 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 - **Metal presenter, a window out of sight:** `metal_present_seen` runs the production
   decision of VibeRant Metal's presenter (`metal/mtl_present_seen.h`, plain C++; the
   presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three
-  drawables and a display that takes a drawable per refresh from a window it shows and
-  none from one it doesn't. A window in sight gets every frame. A window that really is
-  out of sight gets at most one probe and never makes the game wait for a drawable, at
-  four frame rates. A window the system wrongly calls out of sight is shown a frame
-  per refresh, with no gap longer than two. Also: a probe the layer has no drawable
-  for ends the probes until the window is in sight, a dropped probe is tried again a
-  second later, a minimized or hidden window gets nothing, `-mtlunseen` presents
-  regardless, and a layer in sight without a drawable is left alone for a quarter of a
-  second doubling to four. The model's own negative control (no probes: the picture
-  freezes under a wrong report) passes, and four defects put into the header one at a
-  time (not kept) each failed an assertion. What a real layer and display do is not
-  covered here: `capture.py`'s `blind` scene is for that ("On a Mac", below).
+  drawables and a display that, per refresh, takes a drawable from a window it serves
+  (to show it, or to let it go) and none from one it doesn't, with Metal's reports
+  coming either as the display takes a drawable (a Mac's own GPU) or only when the next
+  one takes its place (a runner's virtual display). A window in sight gets every
+  frame. A window that really is out of sight gets two probes at most and never makes
+  the game wait for a drawable, at four frame rates. A window the system wrongly calls
+  out of sight is shown a frame per refresh, with no gap longer than two, with either
+  kind of report. A window whose drawables the system takes without showing them (a
+  locked screen) gets frames at that pace, and nothing waits. A window the system
+  hands drawables back to slowly makes the game wait six times in the first minute and
+  once per half minute after. Also: no probe goes out while two drawables are
+  unaccounted for, the pause after a slow probe doubles from one second to thirty and
+  ends after thirty quick ones or when the window is in sight, a minimized or hidden
+  window gets nothing, `-mtlunseen` presents regardless, and a layer in sight without
+  a drawable is left alone for a quarter of a second doubling to four. The model's own
+  negative controls pass (no probes: the picture freezes under a wrong report; a probe
+  only after every report: a frame a second where reports come late), and eight
+  defects put into the header one at a time (not kept) each failed an assertion. What a
+  real layer and display do is not covered here: `capture.py`'s `blind` scenes are for
+  that ("Metal frames" and "On a Mac", below).
 
 - **Metal presenter, what a drawable holds:** `metal_present_check` runs the production
   comparison behind `-mtlcheck` (`metal/mtl_present_check.h`, plain C++) on drawables
@@ -1275,12 +1283,14 @@ workflow is on the default branch), or by pushing a commit to a branch named
   the latter taken when the log says the game has reached the moment. The scenes:
   the game started without naming a renderer; the title screen and a menu, with keys
   sent through the system (CoreGraphics events from `osascript`, which reach whatever
-  window has the keyboard); 3D models on and off; changing the renderer while a
-  replay plays, starting in VibeRant Metal and starting in Software; the three
+  window has the keyboard); 3D models on and off; changing the
+  renderer while a replay plays, starting in VibeRant Metal and starting in Software; the three
   Screen Scaling modes in fullscreen with a 320x200 frame; `vid_wait`;
   `-mtldebug`; and `blind`, where `-mtlblind` has the presenter take its window for
-  out of sight although it is on the runner's screen, and the display must still show
-  at least ten frames for every second of the replay (the log counts them).
+  out of sight although it is on the runner's screen: at least ten frames must be
+  presented for every second of the replay all the same (the log counts them), the
+  layer must never be without a drawable, and two pictures of the screen taken two
+  seconds apart must not be the same file.
 
 `tests/metal-frames/capture.py` (Python's standard library only) does the running, on
 a Mac as well ("On a Mac", below): `capture.py sweep --game <the binary in the .app>
@@ -1394,9 +1404,9 @@ screen. Each scene is a run of the game (or two), judged like the sweep's, and b
   should take a refresh of the display per frame. To a window behind a locked screen the system hands drawables
   back at a pace of its own either way, so there the two only show that presenting works.
 - `blind`: the replay with `-mtlblind`, which has the presenter act as if the system had called its window out of
-  sight. On a screen that can be seen, the display must show at least ten frames for every second all the same (each
-  presented once the display has taken the one before), and the layer must never be without a drawable. Behind a
-  locked screen the system drops such frames, one a second, and the scene says so instead of judging.
+  sight. At least ten frames must be presented for every second all the same (each while a drawable is surely free),
+  and the layer must never be without a drawable. Behind a locked screen the system takes the frames
+  too, and nobody sees them; the line says that the screen is locked.
 - `autorelease`: the replay with `OBJC_DEBUG_MISSING_POOLS=YES`; the driver's thread, which mtl12 names in the log
   when that variable is set, must have no report of an object autoreleased without a pool
   (`docs/metal-backend.md`, "Autorelease pools").

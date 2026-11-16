@@ -21,7 +21,7 @@ COLORS = ('VibeRant Metal: presenter: colors are matched to the display as the O
 def done(presented, unseen=0, no_drawable=0, probes=(0, 0, 0), how="closed the Metal window as the game quits; the game's OpenGL window is hidden"):
     return ("VibeRant Metal: presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; "
             "%d of those presented went to a window the system called out of sight (%d shown, %d dropped); "
-            "the layer took 0.41 ms to give a drawable on average, 8.3 ms at worst\n"
+            "the layer took 0.41 ms to give a drawable on average, 8.3 ms at worst; Metal reported 5 drawables with a time shown and 7 without\n"
             % ((how, presented, unseen, no_drawable) + probes))
 
 
@@ -115,23 +115,22 @@ def main():
     assert judge(good + passed) == []
     assert judge(good + failed) == ["the drawable isn't the frame"]
 
-    # -mtlblind: the presenter takes its window for out of sight; on a screen that can be seen the display must show
-    # ten frames a second all the same
+    # -mtlblind: the presenter takes its window for out of sight, and must go on presenting, a frame whenever the
+    # system is done with the one before: ten a second or more, whatever the reports say of their times
     def blind(text, locked):
         capture.screen_locked = lambda: locked
         problems = []
         said = capture.check_blind(text, problems)
         return said, [kind for kind, _ in problems]
 
-    seen = done(601, 4000, probes=(601, 600, 1))
-    assert blind(seen, False) == ("601 frames presented blind, 600 shown, 1 dropped", [])
+    assert blind(done(601, 4000, probes=(601, 600, 1)), False) == ("601 frames presented blind (600 reported with a time shown, 1 without)", [])
+    assert blind(done(601, 4000, probes=(601, 0, 601)), False)[1] == []
     assert blind(done(100, 4000, probes=(100, 100, 0)), False)[1] == []
     assert blind(done(99, 4000, probes=(99, 99, 0)), False)[1] == ["blind"]
     assert blind(done(9, 433, probes=(9, 0, 9)), False)[1] == ["blind"]
-    assert blind(done(9, 433, probes=(9, 0, 9)), None)[1] == ["blind"]
-    assert blind(done(9, 433, probes=(9, 0, 9)), True) == ("the screen is locked: 9 frames presented blind, 0 shown, 9 dropped by the system", [])
+    assert blind(done(9, 433, probes=(9, 0, 9)), True)[1] == ["blind"]
+    assert blind(done(1200, 300, probes=(1200, 0, 1200)), True) == ("the screen is locked: 1200 frames presented blind (0 reported with a time shown, 1200 without)", [])
     assert blind(done(601, 4000, 12, probes=(601, 600, 1)), False)[1] == ["blind"]
-    assert blind(done(9, 433, 3, probes=(9, 0, 9)), True)[1] == ["blind"]
     assert capture.drawable_waits(done(300, how=GAVE_BACK) + done(400)) == (0.41, 8.3)
     assert capture.drawable_waits("") is None
     print("test_capture: passed")

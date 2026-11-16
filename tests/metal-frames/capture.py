@@ -164,8 +164,8 @@ def drawable_waits(text):
 
 
 def probes(text):
-    """Of the frames presented to a window the system called out of sight: how many, how many of them the display
-    showed, and how many the system dropped"""
+    """Of the frames presented to a window the system called out of sight: how many, how many of them Metal reported
+    with a time at which they were shown, and how many without (dropped, or a system that gives no times)"""
     found = re.findall(r"(\d+) of those presented went to a window the system called out of sight \((\d+) shown, (\d+) dropped\)", text)
     return tuple(sum(int(n[i]) for n in found) for i in range(3))
 
@@ -174,21 +174,20 @@ BLIND_TICS = 350  # ten seconds of game
 
 
 def check_blind(text, problems):
-    """A run with -mtlblind, where the presenter acts as if the system called its window out of sight: on a screen
-    that can be seen the picture must keep going all the same, each frame presented once the display has taken the
-    one before. Behind a locked screen the system drops such frames, so there the run can only show that the game
-    isn't held up. Returns what to say of it."""
-    count, shown, dropped = probes(text)
+    """A run with -mtlblind, where the presenter acts as if the system called its window out of sight: the picture
+    must keep going all the same, a frame presented whenever the system is done with the one before, at ten frames a
+    second or more, and the layer must never be without a drawable. (Behind a locked screen the system takes the
+    frames too, at a pace of its own, and shows them to nobody.) Returns what to say of it."""
+    count, timed, untimed = probes(text)
     waited = sum(int(n) for n in re.findall(r"(\d+) without a drawable", text))
     if waited:
         problems.append(("blind", "the layer had no drawable for %d frames" % waited))
-    if screen_locked():
-        return "the screen is locked: %d frames presented blind, %d shown, %d dropped by the system" % (count, shown, dropped)
     wanted = 10 * BLIND_TICS // 35
-    if shown < wanted:
-        problems.append(("blind", "%d frames presented to a window called out of sight, and the display showed %d of them (%d dropped): "
-                         "at least %d should have been shown in %d s" % (count, shown, dropped, wanted, BLIND_TICS // 35)))
-    return "%d frames presented blind, %d shown, %d dropped" % (count, shown, dropped)
+    if count < wanted:
+        problems.append(("blind", "%d frames were presented to a window called out of sight: at least %d should have been in %d s"
+                         % (count, wanted, BLIND_TICS // 35)))
+    return "%s%d frames presented blind (%d reported with a time shown, %d without)" % (
+        "the screen is locked: " if screen_locked() else "", count, timed, untimed)
 
 
 def wait_until_idle():
@@ -426,7 +425,8 @@ def scene_list():
                   "during": pictures((playing, 1, 8, "race")), "shots": 1},
         # The system calls the window out of sight and is wrong (-mtlblind acts it out): the picture must keep going
         "blind": {"args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
-                  "during": pictures((playing, 1, 6, "race")), "shots": 1, "blind": True},
+                  "during": pictures((playing, 1, 5, "race-1"), (playing, 1, 2, "race-2")), "shots": 1, "blind": True,
+                  "moving": ("race-1", "race-2")},
         # -mtldebug has Metal end every pass with an encoder of its own, which is what the paravirtual GPU's driver
         # couldn't take before mtl12 kept its encoders small
         "mtldebug": {"args": race + ["-mtldebug"], "shots": 2},
@@ -466,6 +466,16 @@ def scenes(options):
         if len(shots) != scene["shots"]:
             problems.append(("capture", "%d screenshots of the game's own, expected %d" % (len(shots), scene["shots"])))
         blind = check_blind(text, problems) if scene.get("blind") else ""
+        if scene.get("moving"):
+            # Two pictures of the screen, seconds apart while the replay plays: a picture that stands still is the same
+            # file twice
+            first, second = (os.path.join(scene_dir, "screen-%s.png" % name) for name in scene["moving"])
+            try:
+                with open(first, "rb") as one, open(second, "rb") as other:
+                    if one.read() == other.read():
+                        problems.append(("frozen", "the screen showed the same picture %s and %s" % scene["moving"]))
+            except OSError:
+                problems.append(("frozen", "the pictures of the screen weren't taken"))
         results.append({"scene": name, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots), "presented": presented,
                         "not_presented": sum(presenting(text)[1:]), "drawables_checked": checked, "blind": blind, "device": device,
                         "problems": problems})
@@ -534,9 +544,9 @@ def hardware_list():
         # frame, which is the system's business: the game's memory doesn't grow by it.)
         "autorelease": [{"renderer": "-metal", "args": timed + ["+vid_wait", "off"], "validation": False, "shots": 2,
                          "env": {"OBJC_DEBUG_MISSING_POOLS": "YES"}, "pools": True, "needs": [took]}],
-        # The system calls the window out of sight and is wrong, which -mtlblind acts out: on a screen that can be seen,
-        # every frame is presented once the display has taken the one before, so the picture keeps going. (Behind a
-        # locked screen the system drops what it is given, and the run shows only that nothing waits.)
+        # The system calls the window out of sight and is wrong, which -mtlblind acts out: a frame is presented whenever
+        # the system is done with the one before, so the picture keeps going. (Behind a locked screen the system takes
+        # the frames too, and shows them to nobody.)
         "blind": [{"renderer": "-metal", "args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
                    "shots": 1, "unseen": False, "blind": True, "needs": [took]}],
         "fullscreen": fullscreen({}),
