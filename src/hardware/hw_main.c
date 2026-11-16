@@ -5905,6 +5905,75 @@ static void HWR_SpriteVertices(gl_vissprite_t *spr, FOutVector *wallVerts)
 
 }
 
+// [UWP]: How far the floor under a floor sprite rises over the sprite, whose corners are v. A floor sprite lies on one
+// plane, its own height or the slope its object stands on, and the floor under it can be made of several.
+#define HWR_SPLATSAMPLES 5 // along each side
+static float HWR_FloorOverFloorSprite(const mobj_t *mobj, const FOutVector *v)
+{
+	const float flip = (float)P_MobjFlip(mobj);
+	const float limit = FIXED_TO_FLOAT(P_BaseStepUp()); // farther than a step: another floor, not the one it lies on
+	float over = -1.0f;
+	INT32 i, j;
+
+	for (i = 0; i < HWR_SPLATSAMPLES; i++)
+	{
+		const float a = (float)i / (HWR_SPLATSAMPLES - 1);
+
+		for (j = 0; j < HWR_SPLATSAMPLES; j++)
+		{
+			// the corners go around the sprite: 0 and 1 share a side, 3 and 2 the opposite one
+			const float b = (float)j / (HWR_SPLATSAMPLES - 1);
+			const float x = (1 - a) * ((1 - b) * v[0].x + b * v[1].x) + a * ((1 - b) * v[3].x + b * v[2].x);
+			const float y = (1 - a) * ((1 - b) * v[0].z + b * v[1].z) + a * ((1 - b) * v[3].z + b * v[2].z);
+			const float z = (1 - a) * ((1 - b) * v[0].y + b * v[1].y) + a * ((1 - b) * v[3].y + b * v[2].y);
+			const fixed_t fx = FLOAT_TO_FIXED(x), fy = FLOAT_TO_FIXED(y);
+			const float surface = FIXED_TO_FLOAT(flip > 0 ? P_FloorzAtPos(fx, fy, mobj->z, mobj->height)
+				: P_CeilingzAtPos(fx, fy, mobj->z, mobj->height));
+			const float d = flip * (surface - z);
+
+			if (d > over && d <= limit)
+				over = d;
+		}
+	}
+	return over;
+}
+
+// [UWP]: Software never hides a floor sprite behind a floor. It draws the sprite after every floor, cut only by the
+// walls it sorts behind. Here each of the sprite's pixels is tested against the depth of the level, so wherever the
+// floor rises over the sprite's plane the sprite was hidden: all of a sneaker panel on Robotnik Coaster's track,
+// whose floor is a different slope every few units. This gives the sprite the depth it would have on its plane
+// raised to clear that floor, by moving its corners toward the camera along their lines of sight, all by the same
+// share of the way: the sprite stays flat, and its picture stays where Software draws it.
+static void HWR_ClearFloorUnderSprite(const gl_vissprite_t *spr, FOutVector *v)
+{
+	const float flip = (float)P_MobjFlip(spr->mobj);
+	const float clearance = 0.05f; // what HWR_SpriteVertices puts between a floor sprite and its plane
+	const float over = HWR_FloorOverFloorSprite(spr->mobj, v) + clearance;
+	// the sprite's plane, from three of its corners, and how far the camera is over it
+	const double ax = v[1].x - v[0].x, ay = v[1].y - v[0].y, az = v[1].z - v[0].z;
+	const double bx = v[3].x - v[0].x, by = v[3].y - v[0].y, bz = v[3].z - v[0].z;
+	const double nx = ay*bz - az*by, ny = az*bx - ax*bz, nz = ax*by - ay*bx;
+	double camera, share;
+	INT32 i;
+
+	if (over <= 0.001f || fabs(ny) < 1e-6)
+		return;
+
+	camera = flip * ((gl_viewz - v[0].y) + (nx * (gl_viewx - v[0].x) + nz * (gl_viewy - v[0].z)) / ny);
+	if (camera <= over) // seen from behind, or from inside the gap: nothing in front of it to clear
+		return;
+	share = (camera - over * 1.25) / camera; // a quarter more, for a rise between two samples
+	if (share < 0.25)
+		share = 0.25;
+
+	for (i = 0; i < 4; i++)
+	{
+		v[i].x = (float)(gl_viewx + share * (v[i].x - gl_viewx));
+		v[i].y = (float)(gl_viewz + share * (v[i].y - gl_viewz));
+		v[i].z = (float)(gl_viewy + share * (v[i].z - gl_viewy));
+	}
+}
+
 static void HWR_DrawSprite(gl_vissprite_t *spr)
 {
 	FOutVector wallVerts[4];
@@ -5956,6 +6025,8 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 	//  0--1
 
 	HWR_SpriteVertices(spr, wallVerts);
+	if (splat)
+		HWR_ClearFloorUnderSprite(spr, wallVerts); // [UWP]
 
 	// cache the patch in the graphics card memory
 	//12/12/99: Hurdler: same comment as above (for md2)

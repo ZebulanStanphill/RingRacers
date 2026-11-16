@@ -89,6 +89,29 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   ticker fails the UWP immediate associates-card skip case. See
   [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
+- **Floor sprites under the floor:** `splat_clear` executes the production
+  `HWR_FloorOverFloorSprite` and `HWR_ClearFloorUnderSprite` (cut from
+  `hw_main.c`) and the lines of `HWR_DrawSprite` that call them after
+  `HWR_SpriteVertices`, with the level's `P_FloorzAtPos`, `P_CeilingzAtPos`, and
+  `P_BaseStepUp` stubbed. For a level and a sloped sprite (a camera that isn't over
+  its center), a floor exactly the clearance under the sprite, far under it, or a
+  hair above the clearance must leave the corners bit for bit as they were. A
+  rise at any one of the 25 sample points (interior, edge, or corner) must move
+  all four corners toward the camera along their lines of sight by one common
+  share, onto a plane parallel to the sprite's and raised by 1.25 times the
+  clearance it needed, with the picture unmoved. The largest rise wins; one
+  of more than a step is another floor and is ignored, even beside a smaller
+  one that counts, while one of exactly a step counts. A camera under the plane,
+  in it, or above it by less than the clearance leaves the quad alone, a camera
+  barely above it clamps the share to a quarter, and an edge-on sprite is left
+  alone. A flipped sprite on a ceiling asks `P_CeilingzAtPos` (and an upright one
+  only `P_FloorzAtPos`), and moves toward a camera below it. The points asked
+  must be the grid over the quad, including its four corners and its center,
+  with the object's `z` and height. The call must happen after
+  `HWR_SpriteVertices` and only for a floor sprite. Prevents a sneaker panel on
+  Robotnik Coaster's track from being hidden by the floor under it in the
+  hardware renderers.
+
 - **Upside-down walls:** `upright_wall` executes the production cut of a
   one-sided wall to the part whose top is above its bottom, and the call that
   uses it. For VibeRant, a wall of a sector whose ceiling is below its floor

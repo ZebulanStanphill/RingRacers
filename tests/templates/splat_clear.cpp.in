@@ -1,0 +1,484 @@
+// A floor sprite against the floor under it (src/hardware/hw_main.c). Software draws a floor sprite after every floor;
+// the hardware renderers test each pixel against the level's depth and hid it wherever the floor rose over the sprite's
+// plane (a sneaker panel on Robotnik Coaster's track). HWR_DrawSprite measures the rise at 25 points and moves the
+// sprite's corners toward the camera along their lines of sight, all by the same share.
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <vector>
+#include "doomdef.h"
+#include "hardware/hw_defs.h"
+#include "r_defs.h"
+#include "p_mobj.h"
+#include "p_local.h"
+#include "hardware/hw_glob.h"
+
+// The camera: x, map y, and height
+static float gl_viewx = 0, gl_viewy = 0, gl_viewz = 0;
+
+// The level under the sprite: what P_FloorzAtPos and P_CeilingzAtPos answer, and what they were asked
+struct Query { fixed_t x, y, z, height; bool ceiling; };
+static std::vector<Query> queries;
+static std::function<double(double, double)> surfaceAt;
+static fixed_t stepUp = 24 * FRACUNIT;
+
+fixed_t P_BaseStepUp(void) { return stepUp; }
+SINT8 P_MobjFlip(const mobj_t *mobj) { return (mobj->eflags & MFE_VERTICALFLIP) ? -1 : 1; }
+fixed_t P_FloorzAtPos(fixed_t x, fixed_t y, fixed_t z, fixed_t height)
+{
+    queries.push_back({x, y, z, height, false});
+    return FLOAT_TO_FIXED((float)surfaceAt(FIXED_TO_FLOAT(x), FIXED_TO_FLOAT(y)));
+}
+fixed_t P_CeilingzAtPos(fixed_t x, fixed_t y, fixed_t z, fixed_t height)
+{
+    queries.push_back({x, y, z, height, true});
+    return FLOAT_TO_FIXED((float)surfaceAt(FIXED_TO_FLOAT(x), FIXED_TO_FLOAT(y)));
+}
+
+// The production functions, extracted from the engine's source
+@@SPLAT@@
+
+// What HWR_SpriteVertices gives HWR_DrawSprite, and the production call that follows it in HWR_DrawSprite
+using Quad = std::array<FOutVector, 4>;
+static Quad billboard;
+static int vertexCalls;
+static void HWR_SpriteVertices(gl_vissprite_t *, FOutVector *v)
+{
+    ++vertexCalls;
+    std::memcpy(v, billboard.data(), sizeof billboard);
+}
+static void DrawSpriteVertices(gl_vissprite_t *spr, FOutVector *wallVerts, bool isFloorSprite)
+{
+    const boolean splat = isFloorSprite;
+    @@CALL@@
+    (void)splat;
+}
+
+static const char *context = "";
+#define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "%s:%d: %s [%s]\n", __FILE__, __LINE__, #c, context); std::abort(); } } while (0)
+
+// A plane of heights, h0 + sx * x + sy * y (y is the map's y)
+struct Plane
+{
+    double h0, sx, sy;
+    double at(double x, double y) const { return h0 + sx * x + sy * y; }
+};
+
+// The corners go around the quad: 0 and 1 share a side, 3 and 2 the opposite one. x is map x, z is map y, y is height.
+static const float corners[4][2] = {{100, -40}, {150, -30}, {160, 20}, {95, 15}};
+static Quad MakeQuad(const Plane &p)
+{
+    Quad q{};
+    for (int i = 0; i < 4; i++)
+        q[i] = {corners[i][0], (float)p.at(corners[i][0], corners[i][1]), corners[i][1], 0, 0};
+    return q;
+}
+
+// Sample (i, j) of the 5 by 5 grid, found from the corners as the production code is meant to: i runs from the side
+// 0-1 to the side 3-2, j from corner 0 (or 3) to corner 1 (or 2)
+static void Sample(const Quad &q, int i, int j, double &x, double &y)
+{
+    const double a = i / 4.0, b = j / 4.0;
+    x = (1 - a) * ((1 - b) * q[0].x + b * q[1].x) + a * ((1 - b) * q[3].x + b * q[2].x);
+    y = (1 - a) * ((1 - b) * q[0].z + b * q[1].z) + a * ((1 - b) * q[3].z + b * q[2].z);
+}
+
+static mobj_t object;
+static gl_vissprite_t sprite;
+
+static void SetObject(bool flipped)
+{
+    std::memset(&object, 0, sizeof object);
+    object.z = 7 * FRACUNIT + 123;
+    object.height = 33 * FRACUNIT + 77;
+    object.eflags = flipped ? MFE_VERTICALFLIP : 0;
+    std::memset(&sprite, 0, sizeof sprite);
+    sprite.mobj = &object;
+}
+
+static void SetCamera(double x, double y, double z)
+{
+    gl_viewx = (float)x;
+    gl_viewy = (float)y;
+    gl_viewz = (float)z;
+}
+
+static bool Same(const Quad &a, const Quad &b) { return !std::memcmp(a.data(), b.data(), sizeof a); }
+static bool Near(double a, double b, double tolerance = 2e-3) { return std::fabs(a - b) <= tolerance; }
+
+// Runs the clear on a copy of the quad
+static Quad Clear(const Quad &q)
+{
+    Quad v = q;
+    queries.clear();
+    HWR_ClearFloorUnderSprite(&sprite, v.data());
+    return v;
+}
+
+// The floor's height at the point nearest to sample (i, j) of the quad, and below the sprite's plane everywhere else.
+// With a flipped sprite the ceiling is the same, mirrored: it is `rise` below the sprite there and above it elsewhere.
+static void RiseAt(const Quad &q, const Plane &p, int i, int j, double rise, bool flipped)
+{
+    double tx, ty;
+    Sample(q, i, j, tx, ty);
+    surfaceAt = [=](double x, double y) {
+        const double sprite_height = p.at(x, y);
+        const bool there = std::fabs(x - tx) < 0.01 && std::fabs(y - ty) < 0.01;
+        if (flipped)
+            return there ? sprite_height - rise : sprite_height + 50;
+        return there ? sprite_height + rise : sprite_height - 50;
+    };
+}
+
+// What the corners must be when the floor rises `rise` over the sprite and the camera is `camera` over its plane
+// (on the side it faces): every corner moves toward the camera along its line of sight, all by one share.
+// Returns the share.
+static double ExpectMoved(const Quad &before, const Quad &after, const Plane &p, double rise, bool flipped)
+{
+    const double over = rise + 0.05;
+    const double flip = flipped ? -1 : 1;
+    const double camera = flip * (gl_viewz - p.at(gl_viewx, gl_viewy));
+    CHECK(camera > over);
+    const double share = std::max(0.25, (camera - over * 1.25) / camera);
+    for (int i = 0; i < 4; i++)
+    {
+        CHECK(Near(after[i].x, gl_viewx + share * (before[i].x - gl_viewx)));
+        CHECK(Near(after[i].y, gl_viewz + share * (before[i].y - gl_viewz)));
+        CHECK(Near(after[i].z, gl_viewy + share * (before[i].z - gl_viewy)));
+    }
+    // Its picture stays where it was: each corner is on the segment from the camera to the old corner
+    for (int i = 0; i < 4; i++)
+    {
+        const double dx = before[i].x - gl_viewx, dy = before[i].y - gl_viewz, dz = before[i].z - gl_viewy;
+        const double ex = after[i].x - gl_viewx, ey = after[i].y - gl_viewz, ez = after[i].z - gl_viewy;
+        const double t = (ex * dx + ey * dy + ez * dz) / (dx * dx + dy * dy + dz * dz);
+        CHECK(t > 0 && t < 1 && Near(t, share, 1e-4));
+    }
+    // Texture coordinates are not the clear's business
+    for (int i = 0; i < 4; i++)
+        CHECK(after[i].s == before[i].s && after[i].t == before[i].t);
+    // Unless it was clamped, the new corners are on a plane parallel to the sprite's, raised (or lowered, for a
+    // flipped sprite) by 1.25 times the clearance it needed: the sprite stays flat
+    if (share > 0.25)
+        for (int i = 0; i < 4; i++)
+            CHECK(Near(after[i].y, p.at(after[i].x, after[i].z) + flip * 1.25 * over));
+    return share;
+}
+
+int main()
+{
+    const Plane level{10, 0, 0}, slope{10, 0.3, -0.2};
+    const Plane *planes[] = {&level, &slope};
+    const double cameras[2][2] = {{113, -20}, {250, 90}}; // the slope's camera is not over the quad at all
+
+    // A flat floor exactly the clearance under the sprite, below it, or a hair above that: nothing to clear
+    for (int k = 0; k < 2; k++)
+    {
+        const Plane &p = *planes[k];
+        const Quad q = MakeQuad(p);
+        SetObject(false);
+        SetCamera(cameras[k][0], cameras[k][1], p.at(cameras[k][0], cameras[k][1]) + 200);
+
+        context = "floor exactly the clearance under the sprite";
+        surfaceAt = [&](double x, double y) { return p.at(x, y) - 0.05; };
+        CHECK(Same(Clear(q), q));
+        CHECK(queries.size() == 25);
+
+        context = "floor far below the sprite";
+        surfaceAt = [&](double x, double y) { return p.at(x, y) - 30; };
+        CHECK(Same(Clear(q), q));
+
+        context = "floor a hair above the clearance (not enough to matter)";
+        surfaceAt = [&](double x, double y) { return p.at(x, y) - 0.0495; };
+        CHECK(Same(Clear(q), q));
+
+        context = "floor level with the sprite's vertices";
+        surfaceAt = [&](double x, double y) { return p.at(x, y); };
+        {
+            const Quad after = Clear(q);
+            CHECK(!Same(after, q));
+            ExpectMoved(q, after, p, 0, false);
+        }
+    }
+
+    // A rise at any one of the 25 samples is found: the interior ones, the edges, and the corners
+    for (int k = 0; k < 2; k++)
+    {
+        const Plane &p = *planes[k];
+        const Quad q = MakeQuad(p);
+        SetObject(false);
+        SetCamera(cameras[k][0], cameras[k][1], p.at(cameras[k][0], cameras[k][1]) + 100);
+        for (int i = 0; i < 5; i++)
+            for (int j = 0; j < 5; j++)
+            {
+                char name[64];
+                std::snprintf(name, sizeof name, "%s sprite, rise at sample %d,%d", k ? "sloped" : "level", i, j);
+                context = name;
+                RiseAt(q, p, i, j, 2, false);
+                const Quad after = Clear(q);
+                CHECK(!Same(after, q));
+                const double share = ExpectMoved(q, after, p, 2, false);
+                CHECK(share > 0.9); // 100 over the plane: only a little of the way
+            }
+    }
+
+    // The largest rise counts, and it is found among others
+    {
+        const Plane &p = slope;
+        const Quad q = MakeQuad(p);
+        SetObject(false);
+        SetCamera(cameras[1][0], cameras[1][1], p.at(cameras[1][0], cameras[1][1]) + 100);
+        double t1x, t1y, t2x, t2y;
+        Sample(q, 1, 3, t1x, t1y);
+        Sample(q, 4, 4, t2x, t2y);
+        context = "two rises, 1 at one sample and 3 at another";
+        surfaceAt = [=](double x, double y) {
+            const bool a = std::fabs(x - t1x) < 0.01 && std::fabs(y - t1y) < 0.01;
+            const bool b = std::fabs(x - t2x) < 0.01 && std::fabs(y - t2y) < 0.01;
+            return p.at(x, y) + (b ? 3 : a ? 1 : -50);
+        };
+        const Quad after = Clear(q);
+        ExpectMoved(q, after, p, 3, false);
+    }
+
+    // A rise of more than a step is another floor, not the one the sprite lies on; one of exactly a step counts
+    {
+        const Plane &p = level;
+        const Quad q = MakeQuad(p);
+        SetObject(false);
+        SetCamera(120, -10, 10 + 200);
+
+        context = "a floor more than a step above the sprite";
+        RiseAt(q, p, 2, 2, 24 + 1.0 / 64, false);
+        CHECK(Same(Clear(q), q));
+        context = "a floor much higher than a step above the sprite";
+        RiseAt(q, p, 0, 0, 90, false);
+        CHECK(Same(Clear(q), q));
+
+        context = "a floor exactly a step above the sprite";
+        RiseAt(q, p, 2, 2, 24, false);
+        {
+            const Quad after = Clear(q);
+            CHECK(!Same(after, q));
+            ExpectMoved(q, after, p, 24, false);
+        }
+
+        context = "a rise beyond a step does not hide a smaller one";
+        double t1x, t1y, t2x, t2y;
+        Sample(q, 0, 2, t1x, t1y);
+        Sample(q, 3, 1, t2x, t2y);
+        surfaceAt = [=](double x, double y) {
+            const bool a = std::fabs(x - t1x) < 0.01 && std::fabs(y - t1y) < 0.01;
+            const bool b = std::fabs(x - t2x) < 0.01 && std::fabs(y - t2y) < 0.01;
+            return p.at(x, y) + (a ? 60 : b ? 4 : -50);
+        };
+        {
+            const Quad after = Clear(q);
+            ExpectMoved(q, after, p, 4, false);
+        }
+
+        // The limit is the engine's: a step of another height moves it
+        stepUp = 8 * FRACUNIT;
+        context = "a lower step limit";
+        RiseAt(q, p, 2, 2, 8.5, false);
+        CHECK(Same(Clear(q), q));
+        RiseAt(q, p, 2, 2, 8, false);
+        CHECK(!Same(Clear(q), q));
+        stepUp = 24 * FRACUNIT;
+    }
+
+    // Seen from behind, from inside the gap, or edge-on: nothing in front of the sprite to clear
+    for (int k = 0; k < 2; k++)
+    {
+        const Plane &p = *planes[k];
+        const Quad q = MakeQuad(p);
+        SetObject(false);
+        const double cx = cameras[k][0], cy = cameras[k][1];
+        const double plane = p.at(cx, cy);
+        RiseAt(q, p, 2, 2, 2, false); // over = 2.05
+
+        context = "camera far below the plane";
+        SetCamera(cx, cy, plane - 40);
+        CHECK(Same(Clear(q), q));
+        context = "camera in the plane";
+        SetCamera(cx, cy, plane);
+        CHECK(Same(Clear(q), q));
+        context = "camera above the plane by less than the clearance";
+        SetCamera(cx, cy, plane + 2.0);
+        CHECK(Same(Clear(q), q));
+        SetCamera(cx, cy, plane + 2.04);
+        CHECK(Same(Clear(q), q));
+
+        // A hair more is clear of it, and the share is clamped to a quarter
+        context = "camera barely above the clearance";
+        SetCamera(cx, cy, plane + 2.07);
+        {
+            const Quad after = Clear(q);
+            CHECK(!Same(after, q));
+            CHECK(ExpectMoved(q, after, p, 2, false) == 0.25);
+        }
+        context = "camera a little higher still";
+        SetCamera(cx, cy, plane + 2.55);
+        {
+            const Quad after = Clear(q);
+            CHECK(ExpectMoved(q, after, p, 2, false) == 0.25);
+        }
+        // Where the share is first more than a quarter: (c - 1.25 * 2.05) / c > 0.25 for c > 3.416...
+        context = "camera 4 over the plane";
+        SetCamera(cx, cy, plane + 4);
+        {
+            const Quad after = Clear(q);
+            const double share = ExpectMoved(q, after, p, 2, false);
+            CHECK(share > 0.25 && Near(share, (4 - 2.05 * 1.25) / 4, 1e-4));
+        }
+    }
+
+    // A vertical sprite has no plane to clear
+    {
+        Quad q{};
+        q[0] = {100, 0, -40, 0, 0};
+        q[1] = {140, 0, -40, 0, 0};
+        q[2] = {140, 50, -40, 0, 0};
+        q[3] = {100, 50, -40, 0, 0};
+        SetObject(false);
+        SetCamera(120, 80, 100);
+        context = "a vertical sprite";
+        surfaceAt = [](double, double) { return 20.0; };
+        CHECK(Same(Clear(q), q));
+    }
+
+    // A sprite on a ceiling looks at the ceiling, and moves toward a camera below it
+    for (int k = 0; k < 2; k++)
+    {
+        const Plane p = k ? Plane{300, 0.3, -0.2} : Plane{300, 0, 0};
+        const Quad q = MakeQuad(p);
+        const double cx = cameras[k][0], cy = cameras[k][1];
+        SetObject(true);
+        for (int i = 0; i < 5; i++)
+            for (int j = 0; j < 5; j++)
+            {
+                char name[64];
+                std::snprintf(name, sizeof name, "flipped %s sprite, rise at sample %d,%d", k ? "sloped" : "level", i, j);
+                context = name;
+                SetCamera(cx, cy, p.at(cx, cy) - 100);
+                RiseAt(q, p, i, j, 2, true);
+                const Quad after = Clear(q);
+                CHECK(!Same(after, q));
+                CHECK(ExpectMoved(q, after, p, 2, true) > 0.9);
+                CHECK(queries.size() == 25);
+                for (const Query &query : queries)
+                    CHECK(query.ceiling);
+            }
+
+        context = "flipped sprite, camera above it";
+        SetCamera(cx, cy, p.at(cx, cy) + 100);
+        RiseAt(q, p, 2, 2, 2, true);
+        CHECK(Same(Clear(q), q));
+
+        context = "flipped sprite, floor under it where it is the ceiling that matters";
+        SetCamera(cx, cy, p.at(cx, cy) - 100);
+        surfaceAt = [&](double x, double y) { return p.at(x, y) + 3; }; // a ceiling above the sprite: nothing over it
+        CHECK(Same(Clear(q), q));
+
+        context = "flipped sprite, a step of rise at the limit";
+        RiseAt(q, p, 4, 0, 24, true);
+        CHECK(!Same(Clear(q), q));
+        RiseAt(q, p, 4, 0, 24 + 1.0 / 64, true);
+        CHECK(Same(Clear(q), q));
+    }
+
+    // An upright sprite asks the floor, never the ceiling
+    {
+        const Quad q = MakeQuad(level);
+        SetObject(false);
+        SetCamera(120, -10, 110);
+        RiseAt(q, level, 2, 2, 2, false);
+        Clear(q);
+        CHECK(!queries.empty());
+        for (const Query &query : queries)
+            CHECK(!query.ceiling);
+    }
+
+    // The 25 points cover the quad: its four corners and its center, and the object's own height and z go with them
+    for (int k = 0; k < 2; k++)
+    {
+        const Plane &p = *planes[k];
+        const Quad q = MakeQuad(p);
+        SetObject(false);
+        SetCamera(cameras[k][0], cameras[k][1], p.at(cameras[k][0], cameras[k][1]) + 100);
+        context = "sample positions";
+        surfaceAt = [&](double x, double y) { return p.at(x, y) - 30; };
+        Clear(q);
+        CHECK(queries.size() == 25);
+        for (const Query &query : queries)
+        {
+            CHECK(query.z == object.z && query.height == object.height);
+            CHECK(!query.ceiling);
+        }
+        // every point of the grid is asked, and no other
+        for (int i = 0; i < 5; i++)
+            for (int j = 0; j < 5; j++)
+            {
+                double x, y;
+                Sample(q, i, j, x, y);
+                int found = 0;
+                for (const Query &query : queries)
+                    found += std::fabs(FIXED_TO_FLOAT(query.x) - x) < 0.01 && std::fabs(FIXED_TO_FLOAT(query.y) - y) < 0.01;
+                CHECK(found == 1);
+            }
+        // the corners and the center
+        for (int c = 0; c < 4; c++)
+        {
+            int found = 0;
+            for (const Query &query : queries)
+                found += std::fabs(FIXED_TO_FLOAT(query.x) - corners[c][0]) < 0.01
+                    && std::fabs(FIXED_TO_FLOAT(query.y) - corners[c][1]) < 0.01;
+            CHECK(found == 1);
+        }
+        {
+            double x = 0, y = 0;
+            for (int c = 0; c < 4; c++)
+                x += corners[c][0] / 4, y += corners[c][1] / 4;
+            // the center of the grid is the average of the corners
+            int found = 0;
+            for (const Query &query : queries)
+                found += std::fabs(FIXED_TO_FLOAT(query.x) - x) < 0.01 && std::fabs(FIXED_TO_FLOAT(query.y) - y) < 0.01;
+            CHECK(found == 1);
+        }
+    }
+
+    // The call in HWR_DrawSprite: after HWR_SpriteVertices, and only for a floor sprite
+    {
+        const Plane &p = slope;
+        billboard = MakeQuad(p);
+        SetObject(false);
+        SetCamera(cameras[1][0], cameras[1][1], p.at(cameras[1][0], cameras[1][1]) + 100);
+        RiseAt(billboard, p, 3, 1, 2, false);
+        const Quad expected = Clear(billboard);
+        CHECK(!Same(expected, billboard));
+
+        context = "a floor sprite in HWR_DrawSprite";
+        Quad drawn{};
+        vertexCalls = 0;
+        DrawSpriteVertices(&sprite, drawn.data(), true);
+        CHECK(vertexCalls == 1);
+        CHECK(Same(drawn, expected));
+
+        context = "an ordinary sprite in HWR_DrawSprite";
+        drawn = Quad{};
+        vertexCalls = 0;
+        queries.clear();
+        DrawSpriteVertices(&sprite, drawn.data(), false);
+        CHECK(vertexCalls == 1);
+        CHECK(Same(drawn, billboard));
+        CHECK(queries.empty());
+    }
+
+    std::puts("ok");
+    return 0;
+}

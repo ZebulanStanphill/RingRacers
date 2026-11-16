@@ -178,6 +178,7 @@ regression(slope_light slope_light HWRENDER)
 regression(sprite_brightmap sprite_brightmap _UWP HWRENDER HWPRECIP)
 regression(encore_brightmap encore_brightmap _UWP HWRENDER)
 regression(spring_clip spring_clip _UWP HWRENDER)
+regression(splat_clear splat_clear HWRENDER)
 regression(title_lightlist title_lightlist _UWP HWRENDER)
 if(RR_SANITIZERS)
     target_compile_options(title_lightlist PRIVATE

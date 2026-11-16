@@ -635,6 +635,13 @@ def generate(engine, output):
             "static void HWR_DrawVisSprite(gl_vissprite_t *spr)"),
     }, output / "spring_clip.cpp")
 
+    render(templates / "splat_clear.cpp.in", {
+        "SPLAT": hardware.section("// [UWP]: How far the floor under a floor sprite rises over the sprite",
+            "static void HWR_DrawSprite(gl_vissprite_t *spr)"),
+        "CALL": function_section(hardware, "HWR_DrawSprite", "\tHWR_SpriteVertices(spr, wallVerts);",
+            "\n\n\t// cache the patch in the graphics card memory"),
+    }, output / "splat_clear.cpp")
+
     render(templates / "distortion.cpp.in", {
         "VERTEX": Source(engine / "src/hardware/r_d3d12/d3d12_screens.inc").function("PostImageVertex"),
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),

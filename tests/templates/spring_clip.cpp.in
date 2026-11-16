@@ -75,6 +75,8 @@ static void HWR_SpriteVertices(gl_vissprite_t *s,FOutVector *v){++vertexCalls;st
     auto [lo,hi]=std::minmax_element(fixture.begin(),fixture.end(),[](const FOutVector &a,const FOutVector &b){return a.y<b.y;});
     s->gz=std::isnan(stubGz)?lo->y:stubGz;s->gzt=std::isnan(stubGzt)?hi->y:stubGzt;}
 static void HWR_SplitSprite(gl_vissprite_t *) { ++splitCalls; }
+// Floor sprites are not under test here (R_ThingIsFloorSprite is false); splat_clear tests this one.
+static void HWR_ClearFloorUnderSprite(const gl_vissprite_t *,FOutVector *){}
 static boolean R_ThingIsFloorSprite(mobj_t *){return false;}
 static boolean R_ThingIsPaperSprite(mobj_t *){return false;}
 static boolean R_ThingIsFullBright(mobj_t *){return false;}
