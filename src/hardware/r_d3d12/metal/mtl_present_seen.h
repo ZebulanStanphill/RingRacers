@@ -23,10 +23,11 @@
 ///
 /// "At most one" and not "none", so that a report that is a frame late doesn't halve the pace. But reports can be
 /// much later than that. On a Mac's own GPU, behind a locked screen, each came at once. On a virtual machine's display
-/// (GitHub's runners) each came about a second after its drawable was presented, for a window in plain sight too,
-/// while the layer went on giving drawables without a wait: there the count of drawables out says nothing, and
-/// waiting for it left a picture that stood still for seconds. So the presenter tells this the time each report took,
-/// and where most reports have come late, a probe goes out without asking the count.
+/// (GitHub's runners) some came about a second after their drawable was presented, in one run nearly all and in
+/// another a quarter of them, for a window in plain sight too, while the layer went on giving drawables without a
+/// wait: there the count of drawables out says nothing, and waiting for it left a picture that stood still for a
+/// second at every late report. So the presenter counts the reports that took long, and where more than a few have
+/// (ReportsLate), a probe goes out without asking the count.
 ///
 /// A report also doesn't say reliably whether the drawable was shown: its time is zero for a frame the system
 /// dropped, and was zero for every frame of a window in plain sight on that virtual machine. So the time is only
@@ -77,7 +78,7 @@ struct Now
 	bool visible;   // the system says some of the window is on screen
 	bool force;     // -mtlunseen: present whatever the system says
 	int out;        // presented drawables that Metal hasn't yet reported on
-	bool late;      // most of Metal's reports have taken longer than kLateReportMs to come, so out says nothing
+	bool late;      // too many of Metal's reports have taken long to come (ReportsLate), so out says nothing
 };
 
 // The layer's drawables (CAMetalLayer's maximumDrawableCount, which the presenter sets): one on screen, and with at
@@ -89,6 +90,14 @@ constexpr double kSlowProbeMs = 250;
 constexpr double kFirstPauseMs = 1000, kLastPauseMs = 300000;
 // A report that takes longer than this is no use for telling what the layer has free
 constexpr double kLateReportMs = 250;
+
+// Whether Metal's reports come late too often to go by: three at least, so that one slow start doesn't decide it, and
+// more than one in twenty. On two Macs' own GPUs it was none and one of some 1,400; on a virtual machine's display, a
+// quarter of them and more.
+inline bool ReportsLate(int prompt, int late)
+{
+	return late >= 3 && late * 20 > prompt + late;
+}
 // After this many quick probes in a row the next slow one pauses for a second again. One quick probe says little: a
 // layer that gives a drawable every so often gives the first one after a pause at once.
 constexpr int kQuickProbes = 30;

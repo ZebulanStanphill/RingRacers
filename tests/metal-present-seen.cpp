@@ -20,8 +20,9 @@ struct Model
 	bool reported = true;    // the system says the window is on screen
 	bool usable = true, force = false;
 	// How long after the display took a drawable Metal reports on it: at once (a Mac's own GPU), or a second later (a
-	// virtual machine's display)
+	// virtual machine's display), there for every drawable or for one in lateEvery
 	double reportLagMs = 0;
+	int lateEvery = 1, taken = 0;
 	double refreshMs = 16, frameMs = 4;
 	double handBackMs = 0;   // the layer gives a drawable no sooner than this after the last one
 
@@ -46,7 +47,7 @@ struct Model
 				continue;
 			--queued;
 			held = true;
-			reports.push_back({nextRefreshMs + reportLagMs, presentedAt.front()});
+			reports.push_back({nextRefreshMs + (++taken % lateEvery == 0 ? reportLagMs : 0), presentedAt.front()});
 			presentedAt.pop_front();
 			if (!shows)
 				continue;
@@ -59,6 +60,7 @@ struct Model
 	// What the presenter knows: the drawables not yet reported on, and whether most reports so far took long
 	void Reports()
 	{
+		// (A late report holds the ones behind it up here, as it did on the runner)
 		for (; !reports.empty() && reports.front().first <= ms; reports.pop_front())
 		{
 			--unreported;
@@ -70,7 +72,7 @@ struct Model
 	{
 		Refresh();
 		Reports();
-		const Now now = {ms, usable, reported, force, unreported, lateReports > promptReports};
+		const Now now = {ms, usable, reported, force, unreported, ReportsLate(promptReports, lateReports)};
 		const rr_mtl_present::Frame frame = Decide(seen, now);
 		if (frame == Frame::Present || frame == Frame::Probe)
 		{
@@ -163,7 +165,7 @@ int main()
 		Model m;
 		m.reportLagMs = 1000;
 		m.Run(5000);
-		assert(m.lateReports > m.promptReports);
+		assert(ReportsLate(m.promptReports, m.lateReports));
 		m.composited = m.reported = false;
 		m.Run(600000);
 		assert(m.stalledMs <= 10000 && m.noDrawable <= 10);
@@ -185,7 +187,7 @@ int main()
 			Model m;
 			m.reportLagMs = late ? 1000 : 0;
 			m.frameMs = frameMs;
-			m.Run(1000);
+			m.Run(3000); // by when three reports have come late, where they do
 			m.reported = false;
 			const int before = m.shown;
 			m.lastShownMs = m.ms;
@@ -199,6 +201,32 @@ int main()
 			assert(m.stalledMs == 0 && m.noDrawable == 0 && m.longestProbeWaitMs <= (late ? m.refreshMs : 0));
 			assert(m.probes >= m.shown - before - 3);
 		}
+
+	// The same where one report in four is a second late, as in one run on a runner: after the first few of those the
+	// picture moves at every refresh. (Going by the count there shows a frame in four of the refreshes.)
+	for (bool trust : {false, true})
+	{
+		Model m;
+		m.reportLagMs = 1000;
+		m.lateEvery = 4;
+		m.Run(1000);
+		m.reported = false;
+		if (trust)
+			m.promptReports = 1000000; // as if the reports were taken for prompt
+		m.Run(5000);
+		const int before = m.shown;
+		m.lastShownMs = m.ms;
+		m.longestGapMs = 0;
+		m.Run(10000);
+		if (trust)
+			assert(m.shown - before <= 200 && m.longestGapMs >= 900);
+		else
+			assert(m.shown - before >= 600 && m.longestGapMs <= 2 * m.refreshMs + m.frameMs && m.stalledMs == 0);
+	}
+
+	// What counts as reports that come late too often
+	assert(!ReportsLate(1487, 0) && !ReportsLate(1387, 1) && !ReportsLate(0, 2) && !ReportsLate(57, 3));
+	assert(ReportsLate(0, 3) && ReportsLate(56, 3) && ReportsLate(43, 17) && ReportsLate(260, 79));
 
 	// A window the display takes drawables from without showing them (behind a locked screen, where the system lets them
 	// go at a pace of its own): frames go out at that pace, and the game is never held up

@@ -205,21 +205,24 @@ window is hidden".
     none, is followed by a pause of a second, then two, doubling to five minutes, until thirty probes in a row are
     quick or the window is in sight.
 
-  Where most reports have come late, the count is not asked and only the pause holds probes back. That is for a
-  virtual machine's display (GitHub's runners), where every report came about a second after its drawable was
-  presented, for a window in plain sight too, while the layer went on giving drawables at once: going by the count
-  there left the picture standing for seconds at a time. The price is that a window that really is out of sight on
-  such a system makes the game wait a second for a drawable, at intervals that double to five minutes.
+  Where reports come late too often (three at least, and more than one in twenty: `ReportsLate`), the count is not
+  asked and only the pause holds probes back. That is for a virtual machine's display (GitHub's runners), where
+  reports came about a second after their drawable was presented, in one run nearly all of them and in others a
+  quarter, for a window in plain sight too, while the layer went on giving drawables at once: going by the count
+  there left the picture standing for a second at every late report. The price is that a window that really is out
+  of sight on such a system makes the game wait a second for a drawable, at intervals that double to five minutes.
 
   A window the game itself minimized or hid, or one without a size, gets nothing. A new window's first frames go
   out as probes, since a window doesn't count as visible until the system has put it on screen. On a system older
   than 10.15.4, which has no reports, only a window's first frame goes out regardless, as before.
 
-  It took four tries, and the runner's display decided each, being the only screen there was to try it on that
+  It took five tries, and the runner's display decided each, being the only screen there was to try it on that
   wasn't locked. The first waited a second after a probe that Metal reported without a time shown, taking that for
   a dropped frame: but on the runner every report of every frame has no time. The second presented a probe only
-  when nothing was unreported, and the third when at most one thing was: but the runner's reports are a second
-  late, so both left a picture that two pictures of the screen, two seconds apart, showed standing still.
+  when nothing was unreported, and the third when at most one thing was: but the runner's reports can be a second
+  late, so both left a picture that two pictures of the screen, two seconds apart, showed standing still. The
+  fourth left the count aside where most reports had been late: but in the next run a quarter were, and the
+  picture stood still for that quarter's seconds.
   `-mtlblind` acts a wrong report out (the presenter takes its window for out of sight whatever AppKit says), for
   `capture.py`'s `blind` scenes, and the test `metal_present_seen` runs the decision against a model of the layer
   and the display with prompt and late reports (`tests/README.md`). What the scenes showed where is under "What was

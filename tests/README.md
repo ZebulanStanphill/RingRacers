@@ -63,9 +63,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three
   drawables and a display that, per refresh, takes a drawable from a window it serves
   (to show it, or to let it go) and none from one it doesn't, with Metal's reports
-  coming at once (a Mac's own GPU) or a second late (a runner's virtual display). A
-  window in sight gets every frame. A window the system wrongly calls out of sight is
-  shown a frame per refresh, with no gap longer than two, with either kind of report.
+  coming at once (a Mac's own GPU) or a second late (a runner's virtual display), all
+  of them or one in four. A window in sight gets every frame. A window the system
+  wrongly calls out of sight is shown a frame per refresh, with no gap longer than
+  two, with any of these kinds of report.
   A window that really is out of sight gets two probes at most and never makes the
   game wait, where reports are prompt; where they are late, the game waits a second
   ten times in the first ten minutes and once per five minutes after. A window whose
@@ -78,8 +79,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   nothing, `-mtlunseen` presents regardless, and a layer in sight without a drawable
   is left alone for a quarter of a second doubling to four. The model's own negative
   controls pass (no probes: the picture freezes under a wrong report; going by the
-  count with late reports: gaps of most of a second), and ten defects put into the
-  header one at a time (not kept) each failed an assertion. What a real layer and
+  count with late reports, all or a quarter of them: gaps of most of a second), and
+  defects put into the header one at a time (not kept) each failed an assertion. What a real layer and
   display do is not covered here: `capture.py`'s `blind` scenes are for that ("Metal
   frames" and "On a Mac", below).
 

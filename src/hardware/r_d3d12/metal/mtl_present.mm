@@ -504,7 +504,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		now.force = force;
 		// Without reports, only a window's first frame goes out regardless
 		now.out = reports ? (int)std::min<uint64_t>(g_presentedSerial.load() - g_reportedSerial.load(), 1000) : g_totals.presented ? 1 : 0;
-		now.late = g_lateReports.load() > g_promptReports.load();
+		now.late = rr_mtl_present::ReportsLate(g_promptReports.load(), g_lateReports.load());
 		const rr_mtl_present::Frame decided = rr_mtl_present::Decide(g_mtl.decide, now);
 		const bool seen = now.usable && (now.visible || now.force);
 		if (seen != g_mtl.seen)
