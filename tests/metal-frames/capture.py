@@ -1,29 +1,35 @@
 #!/usr/bin/env python3
 """Runs the macOS game with VibeRant Metal under Metal's validation and collects what it drew.
 
-  capture.py sweep  --game BIN --data DIR --out DIR [--shard K/N] [--ghosts FILE] [--tics LIST] [--only A,B]
-  capture.py scenes --game BIN --data DIR --out DIR [--only A,B]
+  capture.py sweep    --game BIN --data DIR --out DIR [--shard K/N] [--ghosts FILE] [--tics LIST] [--only A,B]
+  capture.py scenes   --game BIN --data DIR --out DIR [--only A,B]
+  capture.py hardware --game BIN --data DIR --out DIR [--only A,B]
   (each: [--idle SECONDS] [--timeout SECONDS] [-- more arguments for the game])
 
 sweep: plays staff ghosts in the engine's frame capture mode (-shotghost, -shottics; tests/frame-compare/README.md),
 one game per ghost, and moves the screenshots to <out>/frames. scenes: what the ghosts don't reach (the title screen,
 a menu, models, Screen Scaling, fullscreen, changing the renderer while the game runs, quitting), as screenshots the
-game takes itself and pictures of the screen (screencapture), in <out>/scenes/<scene>.
+game takes itself and pictures of the screen (screencapture), in <out>/scenes/<scene>. hardware: what only a Mac with
+a display can show and a log can tell, for a Mac nobody sits at: the display sync on and off, fullscreen and back,
+another video mode and back, every change of renderer the game allows while it runs, and how long a replay takes with
+each renderer. It takes no pictures of the screen and presses no keys, so it needs none of the system's permissions,
+and its games present even while the screen is locked (-mtlunseen).
+
+--idle SECONDS starts each game only once nobody has touched the Mac's keyboard or mouse for that long, and waits
+otherwise: the game opens a window on the Mac's screen.
 
 Every run gets a fresh home directory and MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1, and its output goes to
 <out>/logs. A run fails if the game doesn't exit with 0 in time, if the log doesn't say that the Metal backend with
 both kinds of validation is in use, if a frame is missing, or if the log has a validation message, a "not
 implemented" line, or an error of the driver's. The exit status is 1 if any run failed; <out>/summary.json has the
 details. Standard library only, so that it runs on a macOS runner as it is. See tests/README.md, "Metal frames".
-
---idle SECONDS starts each game only once nobody has touched the Mac's keyboard or mouse for that long, and waits
-otherwise: the game opens a window on the Mac's screen, which matters on a Mac that is someone's own.
 """
 import argparse
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import threading
@@ -90,17 +96,19 @@ def wait_until_idle():
         time.sleep(20)
 
 
-def run_game(game, data, home, args, log_path, timeout, during=None, validation=True):
+def run_game(game, data, home, args, log_path, timeout, during=None, validation=True, fresh_home=True, more_env=None):
     """One run of the game. during(process) runs on another thread while the game does. Returns (exit code or None on a
     timeout, seconds)."""
     wait_until_idle()
-    shutil.rmtree(home, ignore_errors=True)
-    os.makedirs(home)
+    if fresh_home:
+        shutil.rmtree(home, ignore_errors=True)
+    os.makedirs(home, exist_ok=True)
     env = dict(os.environ)
     env["RINGRACERSWADDIR"] = data
     if validation:
         env["MTL_DEBUG_LAYER"] = "1"
         env["MTL_SHADER_VALIDATION"] = "1"
+    env.update(more_env or {})
     command = [game, "-home", home] + args
     start = time.time()
     with open(log_path, "wb") as log:
@@ -342,9 +350,178 @@ def scenes(options):
     return results
 
 
+def png_size(path):
+    with open(path, "rb") as handle:
+        return struct.unpack(">II", handle.read(24)[16:24])
+
+
+def hardware_list():
+    """name -> a list of runs of the game, one after another in one home directory. A run: the renderer's argument
+    ("renderer", None for the one the config names), whether the game starts in a window ("window"), its arguments
+    ("args"), whether Metal's validation is on ("validation", off where a time is measured), how many screenshots it
+    must write ("shots") and their sizes in order ("sizes"), the sizes of the presenter's drawables that the log
+    must name in order ("drawables", None for the display's own, whatever it is), text the log must have ("needs")
+    and must not have ("lacks"), whether the time per frame between the two frames of -shottics is worked out
+    ("timed"), whether the game presents even to a window nobody can see ("unseen", -mtlunseen, unless turned off),
+    and more of the environment ("env")."""
+    ghost = "RR_AERIALHIGHLANDS-battlekukku-FerronNuff"
+    replay = ["-shotghost", ghost, "-shottics", "99999", "+framecapture_ghost", ghost]
+    # The capture mode draws one frame per tic of game logic as fast as it can, so the time from one level time to
+    # another is the time those frames took
+    timed = ["-shotghost", ghost, "-shottics", "350,1400", "+fpscap", "-1"]
+    took = "presenter: presenting on a Metal window"
+    gave_back = "presenter: gave the game's OpenGL window back"
+
+    def wait(tics):
+        return ["+wait", str(tics)]
+
+    shot = ["+screenshot"] + wait(5)
+
+    def speed(renderer, vsync, unseen=True):
+        return [{"renderer": renderer, "args": timed + ["+vid_wait", vsync], "validation": False, "shots": 2, "timed": True,
+                 "unseen": unseen, "needs": [took] if renderer == "-metal" else [], "lacks": [] if renderer == "-metal" else [took]}]
+
+    def fullscreen(env):
+        # Started as a player starts it, on the whole screen; then a window through the game's own setting, and back
+        return [{"renderer": "-metal", "window": False, "env": env,
+                 "args": replay + wait(300) + shot + ["+fullscreen", "No"] + wait(300) + shot + ["+fullscreen", "Yes"]
+                 + wait(300) + shot + ["+quit"],
+                 "shots": 3, "sizes": [(1280, 720)] * 3, "drawables": [None, (1280, 720), None]}]
+
+    return {
+        # How long a frame of the replay takes with each renderer, with vid_wait off. VibeRant Metal as the game runs
+        # on this Mac: presenting if its window can be seen, and only drawing if the screen is locked or asleep.
+        "speed-metal": speed("-metal", "off", unseen=False),
+        "speed-software": speed("-software", "off"),
+        "speed-legacy-gl": speed("-opengl", "off"),
+        # vid_wait is the layer's display sync: on, a frame takes a refresh of the display; off, as long as it takes.
+        # (To a window nobody can see, the system hands drawables back at a pace of its own, either way.)
+        "vsync-on": speed("-metal", "on"),
+        "vsync-off": speed("-metal", "off"),
+        # The game's fullscreen is a Space of its own, which the system doesn't make while the screen is locked: there
+        # the game stays in its window, and this scene says so. Without Spaces (SDL's hint) the window covers the screen
+        # as it is, which works either way.
+        # The game's main loop has no autorelease pool, so the driver and the presenter bring one to every call that can
+        # autorelease; an object autoreleased without one stays for good. The Objective-C runtime reports each such
+        # object, by thread, and the driver's thread must have none. (Metal's own threads report several per presented
+        # frame, which is the system's business: the game's memory doesn't grow by it.)
+        "autorelease": [{"renderer": "-metal", "args": timed + ["+vid_wait", "off"], "validation": False, "shots": 2,
+                         "env": {"OBJC_DEBUG_MISSING_POOLS": "YES"}, "pools": True, "needs": [took]}],
+        "fullscreen": fullscreen({}),
+        "fullscreen-no-space": fullscreen({"SDL_VIDEO_MAC_FULLSCREEN_SPACES": "0"}),
+        # vid_mode 14 is 800x600 and 10 is 1280x720 in a window (windowedModes in i_video.cpp)
+        "video-mode": [{"renderer": "-metal", "args": replay + wait(300) + shot + ["+vid_mode", "14"] + wait(300) + shot
+                        + ["+vid_mode", "10"] + wait(300) + shot + ["+quit"],
+                        "shots": 3, "sizes": [(1280, 720), (800, 600), (1280, 720)],
+                        "drawables": [(1280, 720), (800, 600), (1280, 720)]}],
+        "metal-software-metal": [{"renderer": "-metal", "args": replay + wait(300) + shot + ["+renderer", "Software"] + wait(300) + shot
+                                  + ["+renderer", "VibeRant Metal"] + wait(300) + shot + ["+quit"], "shots": 3,
+                                  "needs": [took, gave_back, "(?s)%s.*%s.*%s" % (took, gave_back, took)]}],
+        "software-metal-software": [{"renderer": "-software", "args": replay + wait(300) + shot + ["+renderer", "VibeRant Metal"]
+                                     + wait(300) + shot + ["+renderer", "Software"] + wait(300) + shot + ["+quit"], "shots": 3,
+                                     "needs": ["(?s)%s.*%s" % (took, gave_back)]}],
+        "legacy-gl-software-legacy-gl": [{"renderer": "-opengl", "args": replay + wait(300) + shot + ["+renderer", "Software"] + wait(300)
+                                          + shot + ["+renderer", "Legacy GL"] + wait(300) + shot + ["+quit"], "shots": 3,
+                                          "lacks": [took]}],
+        # Between the two hardware renderers the setting takes effect at the next start: the first game goes on with
+        # VibeRant Metal and saves the setting, and the second, started without naming a renderer, is Legacy GL's
+        "metal-then-legacy-gl": [
+            {"renderer": "-metal", "args": replay + wait(300) + ["+renderer", "Legacy GL"] + wait(300) + shot + ["+quit"], "shots": 1,
+             "needs": [took], "lacks": [gave_back + "(?s:.*)" + took]},
+            {"renderer": None, "args": replay + wait(300) + shot + ["+renderer", "VibeRant Metal"] + wait(300) + shot + ["+quit"],
+             "shots": 2, "lacks": [took], "metal": False}],
+    }
+
+
+def hardware(options):
+    scenes_dir = os.path.join(options.out, "hardware")
+    logs_dir = os.path.join(options.out, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    home = os.path.join(options.out, "home")
+    results = []
+    for name, runs in hardware_list().items():
+        if options.only and name not in options.only.split(","):
+            continue
+        scene_dir = os.path.join(scenes_dir, name)
+        os.makedirs(scene_dir, exist_ok=True)
+        for index, run in enumerate(runs):
+            log_path = os.path.join(logs_dir, "hardware-%s%s.log" % (name, "-%d" % (index + 1) if len(runs) > 1 else ""))
+            renderer = run.get("renderer")
+            validation = run.get("validation", True)
+            metal = run.get("metal", renderer == "-metal")
+            args = (game_args(1280, 720, renderer, run.get("window", True)) + (["-mtlunseen"] if run.get("unseen", True) else [])
+                    + run["args"] + options.extra)
+            code, seconds = run_game(options.game, options.data, home, args, log_path, options.timeout, validation=validation,
+                                     fresh_home=index == 0, more_env=run.get("env"))
+            problems, device, presented = check_log(log_path, need_metal=metal, validation=validation)
+            with open(log_path, errors="replace") as handle:
+                text = handle.read()
+            shots = sorted(pngs_under(home), key=os.path.getmtime)
+            result = {"scene": name, "run": index + 1, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots),
+                      "presented": presented, "device": device, "problems": problems}
+            if run.get("timed") and len(shots) == 2:
+                # One frame per tic between the two level times
+                result["ms_per_frame"] = round((os.path.getmtime(shots[1]) - os.path.getmtime(shots[0])) * 1000 / (1400 - 350), 3)
+            sizes = [png_size(shot) for shot in shots]
+            for number, shot in enumerate(shots):
+                shutil.move(shot, os.path.join(scene_dir, "run%d-%d-%s" % (index + 1, number + 1, os.path.basename(shot))))
+            drawables = [(int(w), int(h)) for w, h in re.findall(r"presenter: (\d+)x(\d+) drawables", text)]
+            # The game begins at 320x200 before it takes the size it was started with
+            drawables = [size for size in drawables if size != (320, 200)]
+            result["drawables"] = drawables
+            scale = re.findall(r"presenter: \d+x\d+ drawables.*", text)
+            result["display"] = scale[-1] if scale else ""
+            if code is None:
+                problems.append(("timeout", "the game didn't exit in %d s" % options.timeout))
+            elif code != 0:
+                problems.append(("exit", "the game exited with %s" % code))
+            if len(shots) != run["shots"]:
+                problems.append(("capture", "%d screenshots, expected %d" % (len(shots), run["shots"])))
+            elif "sizes" in run and sizes != [tuple(size) for size in run["sizes"]]:
+                problems.append(("capture", "screenshots of %s, expected %s" % (sizes, run["sizes"])))
+            if "drawables" in run:
+                wanted = run["drawables"]
+                if len(drawables) != len(wanted) or any(w is not None and w != d for w, d in zip(wanted, drawables)):
+                    problems.append(("present", "drawables of %s, expected %s (None: the display's size)" % (drawables, wanted)))
+                elif any(w is None and d == (1280, 720) for w, d in zip(wanted, drawables)):
+                    problems.append(("present", "the fullscreen drawables are the window's size: %s" % drawables))
+            for pattern in run.get("needs", []):
+                if not re.search(pattern, text):
+                    problems.append(("log", "the log lacks: " + pattern))
+            for pattern in run.get("lacks", []):
+                if re.search(pattern, text):
+                    problems.append(("log", "the log has: " + pattern))
+            if metal and presented == 0:
+                problems.append(("present", "the log doesn't say that any frame was presented"))
+            if run.get("pools"):
+                thread = re.search(r"Metal: the driver's thread is (0x[0-9a-f]+)", text)
+                reports = re.findall(r"MISSING POOLS: \((0x[0-9a-f]+)\) Object 0x[0-9a-f]+ of class (\w+)", text)
+                if not thread:
+                    problems.append(("pools", "the log doesn't say which thread is the driver's"))
+                else:
+                    mine = [name for who, name in reports if who == thread.group(1)]
+                    result["autoreleased_without_pool"] = {"driver_thread": len(mine), "other_threads": len(reports) - len(mine)}
+                    if mine:
+                        problems.append(("pools", "the driver's thread autoreleased %d objects with no pool in place: %s" % (
+                            len(mine), ", ".join("%d %s" % (mine.count(name), name) for name in sorted(set(mine))[:6]))))
+            if metal:
+                result["unseen_frames"] = sum(int(n) for n in re.findall(r"(\d+) skipped while the window was out of sight", text))
+            results.append(result)
+            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s" % (
+                name, " (run %d)" % (index + 1) if len(runs) > 1 else "", code, seconds, len(shots), presented,
+                ", %d not (the window was out of sight)" % result["unseen_frames"] if result.get("unseen_frames") else "",
+                ", %.2f ms per frame" % result["ms_per_frame"] if "ms_per_frame" in result else "",
+                ", autoreleased without a pool: %(driver_thread)d on the driver's thread, %(other_threads)d on others"
+                % result["autoreleased_without_pool"] if "autoreleased_without_pool" in result else "",
+                ", drawables %s" % drawables if drawables else "",
+                "" if not problems else "  PROBLEMS: " + "; ".join("%s: %s" % p for p in problems[:5])), flush=True)
+    shutil.rmtree(home, ignore_errors=True)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("mode", choices=["sweep", "scenes"])
+    parser.add_argument("mode", choices=["sweep", "scenes", "hardware"])
     parser.add_argument("--game", required=True, help="the game's binary")
     parser.add_argument("--data", required=True, help="the game's data directory (bios.pk3, data/, models/)")
     parser.add_argument("--out", required=True)
@@ -368,7 +545,7 @@ def main():
     options.data = os.path.abspath(options.data)
     options.out = os.path.abspath(options.out)
     os.makedirs(options.out, exist_ok=True)
-    results = sweep(options) if options.mode == "sweep" else scenes(options)
+    results = {"sweep": sweep, "scenes": scenes, "hardware": hardware}[options.mode](options)
     failed = [r for r in results if r["problems"]]
     with open(os.path.join(options.out, "summary.json"), "w") as handle:
         json.dump({"mode": options.mode, "runs": results}, handle, indent=1)

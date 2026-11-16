@@ -1234,8 +1234,9 @@ workflow is on the default branch), or by pushing a commit to a branch named
   `-mtldebug`.
 
 `tests/metal-frames/capture.py` (Python's standard library only) does the running, on
-a Mac as well: `capture.py sweep --game <the binary in the .app> --data <game data>
---out results [--only AERIAL,MARBLE] [--shard 0/5]`, or `capture.py scenes ...`.
+a Mac as well ("On a Mac", below): `capture.py sweep --game <the binary in the .app>
+--data <game data> --out results [--only AERIAL,MARBLE] [--shard 0/5]`, or
+`capture.py scenes ...`.
 Every run of the game gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
 `MTL_SHADER_VALIDATION=1`. A run fails, and with it the job, if the game doesn't exit
 with 0 in time (a game that stops at its error dialog is killed after five seconds),
@@ -1267,6 +1268,54 @@ The runners' display is 1024x768, so the game's 1280x720 window doesn't fit it: 
 system cuts the window to the display's height, and the frame is fitted into what is
 left, which the pictures of the screen show. The capture mode's screenshots are read
 back from the driver and are 1280x720 regardless.
+
+## On a Mac
+
+The driver test and the game run on a Mac as they do on the runner, and a Mac has what the runner lacks: a real GPU
+and a real display. `tests/run-metal.sh` needs CMake and Apple's command line tools. The game needs SDL2, libpng, and
+Opus besides (built from source into a prefix of their own they need no Homebrew: `-DCMAKE_PREFIX_PATH=<prefix>` and
+`PKG_CONFIG_PATH=<prefix>/lib/pkgconfig`), and the official assets unpacked somewhere. Then:
+
+```sh
+game=build/bin/ringracers_*.app/Contents/MacOS/ringracers_*
+python3 tests/metal-frames/capture.py sweep --game $game --data <assets> --out sweep --idle 180 -- -mtlunseen
+python3 tests/metal-frames/capture.py hardware --game $game --data <assets> --out hardware --idle 180
+```
+
+`--idle 180` starts each game only once nobody has touched the Mac's keyboard or mouse for three minutes: the game
+opens a window on the Mac's screen. `--shard K/N` splits the sweep, and several shards can run side by side, each
+with its own `--out`. A Mac nobody sits at usually has its screen locked, and VibeRant Metal presents nothing to a
+window nobody can see; `-mtlunseen` makes it present anyway, so that the sweep covers presenting too (the frames
+themselves are read back from the driver either way).
+
+`capture.py hardware` is for what only a Mac with a display can show and a log can tell. It takes no pictures of
+the screen and sends no keys, so it needs no screen-recording or accessibility permission, and it works on a locked
+screen. Each scene is a run of the game (or two), judged like the sweep's, and by what it is there for:
+
+- `speed-metal`, `speed-software`, `speed-legacy-gl`: a replay in the capture mode, which draws one frame per tic
+  of game logic as fast as it can, with `vid_wait` off and without Metal's validation; the time per frame is the
+  time between the frames captured at level times 350 and 1400, divided by 1,050. VibeRant Metal runs here as the
+  game would on that Mac: presenting if its window can be seen, only drawing if the screen is locked, and the line
+  says which.
+- `vsync-on`, `vsync-off`: the same with `-mtlunseen` and `vid_wait` on and off. On a screen that can be seen, on
+  should take a refresh of the display per frame. To a window behind a locked screen the system hands drawables
+  back at a pace of its own either way, so there the two only show that presenting works.
+- `autorelease`: the replay with `OBJC_DEBUG_MISSING_POOLS=YES`; the driver's thread, which mtl12 names in the log
+  when that variable is set, must have no report of an object autoreleased without a pool
+  (`docs/metal-backend.md`, "Autorelease pools").
+- `fullscreen`: started on the whole screen as a player starts it, then `fullscreen No` and `fullscreen Yes`; the
+  presenter's drawables must go from the display's size to the window's and back. The game's fullscreen is a Space
+  of its own, which the system doesn't make while the screen is locked: there the game stays in its window and this
+  scene fails, which is the scene telling the truth. `fullscreen-no-space` is the same with SDL's hint
+  `SDL_VIDEO_MAC_FULLSCREEN_SPACES=0`, where the window covers the screen as it is, locked or not.
+- `video-mode`: `vid_mode` to 800x600 and back to 1280x720; frames and drawables must follow.
+- `metal-software-metal`, `software-metal-software`, `legacy-gl-software-legacy-gl`: the renderer changed while a
+  replay plays, there and back, with a screenshot at each stop.
+- `metal-then-legacy-gl`: between the two hardware renderers the setting takes effect at the next start, so the
+  first game must go on with VibeRant Metal and the second, started without naming a renderer, must be Legacy GL's.
+
+What it can't tell is what the screen looks like. For that someone has to look, or `capture.py scenes` has to run
+on a Mac whose screen is unlocked and where the terminal may record the screen and send keys.
 
 ## CI and adding cases
 
