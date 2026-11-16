@@ -3,7 +3,7 @@
 
   capture.py sweep  --game BIN --data DIR --out DIR [--shard K/N] [--ghosts FILE] [--tics LIST] [--only A,B]
   capture.py scenes --game BIN --data DIR --out DIR [--only A,B]
-  (each: [--timeout SECONDS] [-- more arguments for the game])
+  (each: [--idle SECONDS] [--timeout SECONDS] [-- more arguments for the game])
 
 sweep: plays staff ghosts in the engine's frame capture mode (-shotghost, -shottics; tests/frame-compare/README.md),
 one game per ghost, and moves the screenshots to <out>/frames. scenes: what the ghosts don't reach (the title screen,
@@ -15,6 +15,9 @@ Every run gets a fresh home directory and MTL_DEBUG_LAYER=1 and MTL_SHADER_VALID
 both kinds of validation is in use, if a frame is missing, or if the log has a validation message, a "not
 implemented" line, or an error of the driver's. The exit status is 1 if any run failed; <out>/summary.json has the
 details. Standard library only, so that it runs on a macOS runner as it is. See tests/README.md, "Metal frames".
+
+--idle SECONDS starts each game only once nobody has touched the Mac's keyboard or mouse for that long, and waits
+otherwise: the game opens a window on the Mac's screen, which matters on a Mac that is someone's own.
 """
 import argparse
 import json
@@ -66,9 +69,31 @@ def bad_lines(text):
     return found
 
 
+IDLE_SECONDS = 0  # --idle
+
+
+def idle_seconds():
+    """How long the Mac has had no keyboard or mouse input"""
+    try:
+        text = subprocess.run(["ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True, timeout=20).stdout
+        return int(re.search(r'"HIDIdleTime" = (\d+)', text).group(1)) // 1000000000
+    except (OSError, AttributeError, subprocess.TimeoutExpired):
+        return 0
+
+
+def wait_until_idle():
+    said = False
+    while IDLE_SECONDS and idle_seconds() < IDLE_SECONDS:
+        if not said:
+            print("someone is at the Mac: waiting until it has been idle for %d s" % IDLE_SECONDS, flush=True)
+            said = True
+        time.sleep(20)
+
+
 def run_game(game, data, home, args, log_path, timeout, during=None, validation=True):
     """One run of the game. during(process) runs on another thread while the game does. Returns (exit code or None on a
     timeout, seconds)."""
+    wait_until_idle()
     shutil.rmtree(home, ignore_errors=True)
     os.makedirs(home)
     env = dict(os.environ)
@@ -328,6 +353,8 @@ def main():
     parser.add_argument("--tics", default=DEFAULT_TICS)
     parser.add_argument("--only", default="", help="sweep: ghosts whose name contains one of these; scenes: these scenes")
     parser.add_argument("--timeout", type=int, default=600, help="seconds a run of the game may take")
+    parser.add_argument("--idle", type=int, default=0,
+                        help="start a game only once the Mac has had no keyboard or mouse input for this many seconds")
     # More arguments for the game come after "--", wherever the mode stands
     arguments, extra = sys.argv[1:], []
     if "--" in arguments:
@@ -335,6 +362,8 @@ def main():
         arguments = arguments[:arguments.index("--")]
     options = parser.parse_args(arguments)
     options.extra = extra
+    global IDLE_SECONDS
+    IDLE_SECONDS = options.idle
     options.game = os.path.abspath(options.game)
     options.data = os.path.abspath(options.data)
     options.out = os.path.abspath(options.out)
