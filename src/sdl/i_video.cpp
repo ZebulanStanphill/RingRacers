@@ -1840,9 +1840,10 @@ void VID_StartupOpenGL(void)
 	{
 		CONS_Printf("VID_StartupOpenGL()...\n");
 #if defined(HAVE_D3D12) && !defined(_UWP)
-		// -vkdebug: Vulkan's validation layers, whose messages go to the log
+		// -vkdebug or -d3ddebug: the backend's validation or debug layer, whose messages go to the log; -warp: a software device
 		if (HWR_D3D12())
-			D3D12_SelectBackend(HWR_Vulkan(), M_CheckParm("-vkdebug") != 0);
+			D3D12_SelectBackend(HWR_Vulkan(), (M_CheckParm("-vkdebug") || M_CheckParm("-d3ddebug")) != 0,
+				M_CheckParm("-warp") != 0);
 #endif
 		*(void**)&HWD.pfnInit             = hwSym("Init",NULL);
 		*(void**)&HWD.pfnFinishUpdate     = NULL;

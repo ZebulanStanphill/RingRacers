@@ -47,8 +47,10 @@ boolean D3D12_ReadFitRectForTest(INT32 screenWidth, INT32 screenHeight, INT32 x,
 	INT32 dst_stride, UINT16 *dst_data);
 
 // Which backend the driver starts on, where the build has both: Vulkan (VibeRant Vulkan) or Direct3D 12 itself. validation
-// turns on Vulkan's validation layers. Call before the driver is first started; later calls change nothing.
-void D3D12_SelectBackend(boolean vulkan, boolean validation);
+// turns on the backend's debugging layer (Vulkan's validation layers, or Direct3D 12's debug layer, whose errors go to the
+// log). software picks a software device, WARP or lavapipe, over the GPU, for machines without one. Call before the driver
+// is first started; later calls change nothing.
+void D3D12_SelectBackend(boolean vulkan, boolean validation, boolean software);
 void *D3D12_GetDriverFunction(const char *name);
 boolean D3D12_Surface(INT32 w, INT32 h);
 void D3D12_FinishUpdate(INT32 waitvbl);

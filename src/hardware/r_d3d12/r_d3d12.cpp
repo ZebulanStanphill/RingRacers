@@ -3103,10 +3103,11 @@ const struct
 
 boolean D3D_CanRollSprite(void) { return CanRollSprite(); }
 
-void D3D12_SelectBackend(boolean vulkan, boolean validation)
+void D3D12_SelectBackend(boolean vulkan, boolean validation, boolean software)
 {
 	Core_UseVulkan(vulkan);
 	Core_VulkanValidation(validation);
+	Core_ForceWarp(software != 0);
 }
 
 void *D3D12_GetDriverFunction(const char *name)

@@ -124,7 +124,24 @@ using the same DRED auto-breadcrumb dump as a device removal, so a hang that nev
 still shows which command list and operation the GPU stopped on. Later timeouts log only the stall
 warning. The dump needs DRED, which Xbox may not provide; then nothing extra is logged.
 
+## Running without a GPU: `-warp` and `-d3ddebug` (desktop builds)
+
+Two startup options exist for running a desktop build where there is no GPU to draw on, such as a CI runner. Neither
+is in any menu, and neither changes anything when it isn't on the command line. UWP builds ignore both.
+
+- `-warp` makes the driver use a software device in place of the first hardware one: Windows' WARP adapter for
+  VibeRant D3D (the log says `using WARP for testing`), a CPU Vulkan device (lavapipe) for VibeRant Vulkan. If there is
+  none, the renderer fails to start, and the game falls back to Software and says so, as it does for any other renderer
+  that can't start. Without the option a software device is never chosen.
+- `-d3ddebug` turns on the Direct3D 12 debug layer before the device is made (`D3D12 debug layer enabled`), and every
+  submission then copies the debug layer's messages of error severity or worse to the log as
+  `D3D12 debug ERROR: <message>`, counting each as a driver error. The layer is the "Graphics Tools" optional feature
+  of Windows; if it isn't installed the renderer fails to start with `D3D12 debug layer unavailable`. With
+  VibeRant Vulkan the option means what `-vkdebug` does, Vulkan's validation layers, so one command line can ask for
+  validation of either backend. The layer makes the game several times slower.
+
 ## Tests
 
 The `surface-probe` WARP scene covers the probe (see [tests/README.md](../tests/README.md)). The other
-features, including the swap chain and its hand-offs with ANGLE, are untested off Xbox.
+features, including the swap chain and its hand-offs with ANGLE, are untested off Xbox. The two startup options are
+not covered by the WARP harness, which makes its device without them.

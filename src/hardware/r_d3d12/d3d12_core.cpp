@@ -11,6 +11,9 @@
 /// complete in order: an allocator or retired object tagged with a value is free once the fence reaches it.
 
 #include "d3d12_core.h"
+#ifdef HAVE_D3D12_NATIVE
+#include <d3d12sdklayers.h>
+#endif
 #ifdef HAVE_VULKAN
 #include "vulkan/vk12.h"
 #endif
@@ -435,6 +438,17 @@ bool Core_Init()
 	{
 #ifdef HAVE_D3D12_NATIVE
 	Core_Log("starting VibeRant's Direct3D 12 backend");
+	if (g_vulkanValidation)
+	{
+		ComPtr<ID3D12Debug> debug;
+		if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
+		{
+			Core_Log("D3D12 debug layer unavailable");
+			return false;
+		}
+		debug->EnableDebugLayer();
+		Core_Log("D3D12 debug layer enabled");
+	}
 
 	ComPtr<IDXGIFactory4> factory;
 	if (Core_Failed(CreateDXGIFactory2(0, IID_PPV_ARGS(&factory)), "CreateDXGIFactory2"))
@@ -616,6 +630,28 @@ void Core_SetListBegin(void (*callback)(void))
 
 UINT64 Core_Submit(const char *reason)
 {
+#ifdef HAVE_D3D12_NATIVE
+	if (!g_vulkan && g_vulkanValidation && g_device)
+	{
+		ComPtr<ID3D12InfoQueue> info;
+		if (SUCCEEDED(g_device.As(&info)))
+		{
+			for (UINT64 i = 0; i < info->GetNumStoredMessages(); i++)
+			{
+				SIZE_T size = 0;
+				info->GetMessage(i, nullptr, &size);
+				std::vector<unsigned char> storage(size);
+				auto *message = reinterpret_cast<D3D12_MESSAGE *>(storage.data());
+				if (SUCCEEDED(info->GetMessage(i, message, &size)) && message->Severity <= D3D12_MESSAGE_SEVERITY_ERROR)
+				{
+					Core_Log("D3D12 debug ERROR: %s", message->pDescription);
+					g_errors++;
+				}
+			}
+			info->ClearStoredMessages();
+		}
+	}
+#endif
 	if (!g_list)
 		return 0;
 	if (!g_listOpen)
