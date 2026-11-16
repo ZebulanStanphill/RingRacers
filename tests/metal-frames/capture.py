@@ -175,7 +175,7 @@ def probes(text):
     return tuple(sum(int(n[i]) for n in found) for i in range(3))
 
 
-BLIND_TICS = 350  # ten seconds of game
+BLIND_TICS = 525  # fifteen seconds of game
 
 
 def check_blind(text, problems):
@@ -464,7 +464,8 @@ def scene_list():
                   "during": pictures((playing, 1, 8, "race")), "shots": 1},
         # The system calls the window out of sight and is wrong (-mtlblind acts it out): the picture must keep going
         "blind": {"args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
-                  "during": pictures((playing, 1, 5, "race-1", MIDDLE), (playing, 1, 2, "race-2", MIDDLE), (playing, 1, 1, "race")),
+                  # The race is under way some four seconds after the replay starts, and the game ends after fifteen
+                  "during": pictures((playing, 1, 6, "race-1", MIDDLE), (playing, 1, 2, "race-2", MIDDLE), (playing, 1, 1, "race")),
                   "shots": 1, "blind": True, "moving": ("race-1", "race-2")},
         # -mtldebug has Metal end every pass with an encoder of its own, which is what the paravirtual GPU's driver
         # couldn't take before mtl12 kept its encoders small

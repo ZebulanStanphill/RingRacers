@@ -127,8 +127,8 @@ def main():
 
     assert blind(done(601, 4000, probes=(601, 600, 1)), False) == ("601 frames presented blind (600 reported with a time shown, 1 without)", [])
     assert blind(done(601, 4000, probes=(601, 0, 601)), False)[1] == []
-    assert blind(done(100, 4000, probes=(100, 100, 0)), False)[1] == []
-    assert blind(done(99, 4000, probes=(99, 99, 0)), False)[1] == ["blind"]
+    assert blind(done(150, 4000, probes=(150, 150, 0)), False)[1] == []
+    assert blind(done(149, 4000, probes=(149, 149, 0)), False)[1] == ["blind"]
     assert blind(done(9, 433, probes=(9, 0, 9)), False)[1] == ["blind"]
     assert blind(done(9, 433, probes=(9, 0, 9)), True)[1] == ["blind"]
     assert blind(done(1200, 300, probes=(1200, 0, 1200)), True) == ("the screen is locked: 1200 frames presented blind (0 reported with a time shown, 1200 without)", [])
