@@ -1954,6 +1954,35 @@ int main(int argc,char **argv) {
                 if(most<=before) throw std::runtime_error("Metal shader cache: the add-on shaders never reached the cache");
                 if(after!=before) throw std::runtime_error("Metal shader cache: shaders that no pipeline state uses were kept");
             }
+            // The sprite shader's clipping hack pulls a vertex's clip z in by 80 / z, which is infinite at a z of exactly zero:
+            // a sprite about two near planes from the camera, as a replay on Gust Planet had one. Nothing of such a sprite
+            // shows, on either side of zero (in front of the near plane on one, beyond the far plane on the other), but
+            // Metal's shader validation on Apple's own GPUs reports a vertex function that puts out an infinity. With no
+            // rotation the view depth is the quad's z itself, so clip z is m10 * -z + m14 of the driver's projection
+            // (Perspective in r_d3d12.cpp, with GClipRect's near plane), and the quads here are at the 49 floats around the
+            // z where that is zero: whichever way a GPU rounds, some of them should land on it. Not a scene: what it
+            // checks beyond "nothing drawn" is the validation, and only some devices' validation sees it.
+            {
+                volatile float zNear=.1f, zFar=131072.f; volatile float deltaZ=zFar-zNear;
+                volatile float sum=zFar+zNear; volatile float m10=-sum/deltaZ;
+                volatile float twice=-2.f*zNear; volatile float scaled=twice*zFar; volatile float m14=scaled/deltaZ;
+                float z=m14/m10; for(int i=0;i<24;i++) z=std::nextafter(z,0.f);
+                clean(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON); shader(SHADER_SPRITECLIPHACK);
+                drawPolygon(128.125f);
+                { auto p=pixels(); validate(validationQueue); if(!within(at(p,32,32),builtIn)) throw std::runtime_error("Metal sprite clip pole: a sprite far away wasn't drawn"); }
+                reset(); setTransform(&identity); texture(&customTexture);
+                auto white=surface({255,255,255}); white.LightInfo.light_level=255; white.LightInfo.fade_end=31;
+                const FBITFIELD flags=PF_Modulated|PF_ColorMapped|PF_NoDepthTest; blend(flags);
+                int zeros=0;
+                for(int i=0;i<49;i++,z=std::nextafter(z,1.f)) {
+                    volatile float product=m10*-z; volatile float clipZ=product+m14; if(clipZ==0) zeros++;
+                    auto q=quad(z); polygon(&white,q.data(),4,flags);
+                }
+                auto p=pixels(); validate(validationQueue);
+                for(int y:{8,32,56}) for(int x:{8,32,56}) if(!within(at(p,x,y),{48,80,112})) throw std::runtime_error("Metal sprite clip pole: a sprite at the pole was drawn");
+                printf("Metal sprite clip pole: 49 sprites around a clip z of zero drew nothing (%d of them exactly zero by this CPU's arithmetic), and no infinity was reported\n",zeros);
+                shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
+            }
 #endif
             deleteTexture(&customTexture); D3D12_FinishUpdate(0);
         }

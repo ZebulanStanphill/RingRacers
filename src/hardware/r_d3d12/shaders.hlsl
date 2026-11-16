@@ -183,7 +183,10 @@ RR_RS
 VSOut VSPolyClip(float3 pos : POSITION, float2 uv : TEXCOORD0)
 {
 	float4 clip = Transform(pos);
-	clip.z -= 80.0 / clip.z;
+	// At a clip z of exactly zero the quotient would be infinite, and the position with it. A sprite there is out of
+	// sight on either side of zero (pulled in front of the near plane on one, pushed beyond the far plane on the other),
+	// so zero goes with the side that is pulled in, by a quotient that is merely huge.
+	clip.z -= 80.0 / (clip.z == 0.0 ? 1.0e-30 : clip.z);
 	return FinishWorld(pos, clip, u_color, uv);
 }
 

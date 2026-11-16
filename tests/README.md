@@ -1174,6 +1174,15 @@ differ:
   against mtl12 as it was (not kept in the tree): keeping the texture failed the
   first, and committing its command buffer outside the submissions failed the
   second with "the null view's command buffer wasn't the device's to fail".
+- **The sprite shader's pole** is checked with the add-on shader scenes, outside
+  the registry: the clipping hack pulls a sprite vertex's clip z in by `80 / z`,
+  which was infinite at a z of exactly zero. 49 quads are drawn at the 49 floats
+  around the depth where the driver's projection gives zero (whichever way a GPU
+  rounds, some should land on it), nothing may show, and validation must stay
+  clean. Only the shader validation of Apple's own GPUs reports an infinity that a
+  vertex function puts out: on an M4 Pro the check failed with "INF or NAN
+  detected in interpolant" before the shader's fix and passes with it. On the
+  runner's virtual GPU and on Intel's it can only check that nothing is drawn.
 - **The shader cache** is checked after the add-on shader scenes, outside the
   registry as well: sixteen add-on shaders are each compiled, drawn with (the
   pixel is checked), and cleaned, and once the frames that used them are done,
