@@ -3,6 +3,7 @@
 
   capture.py sweep  --game BIN --data DIR --out DIR [--shard K/N] [--ghosts FILE] [--tics LIST] [--only A,B]
   capture.py scenes --game BIN --data DIR --out DIR [--only A,B]
+  (each: [--timeout SECONDS] [-- more arguments for the game])
 
 sweep: plays staff ghosts in the engine's frame capture mode (-shotghost, -shottics; tests/frame-compare/README.md),
 one game per ghost, and moves the screenshots to <out>/frames. scenes: what the ghosts don't reach (the title screen,
@@ -327,8 +328,13 @@ def main():
     parser.add_argument("--tics", default=DEFAULT_TICS)
     parser.add_argument("--only", default="", help="sweep: ghosts whose name contains one of these; scenes: these scenes")
     parser.add_argument("--timeout", type=int, default=600, help="seconds a run of the game may take")
-    parser.add_argument("extra", nargs="*", help="more arguments for the game, after --")
-    options = parser.parse_args()
+    # More arguments for the game come after "--", wherever the mode stands
+    arguments, extra = sys.argv[1:], []
+    if "--" in arguments:
+        extra = arguments[arguments.index("--") + 1:]
+        arguments = arguments[:arguments.index("--")]
+    options = parser.parse_args(arguments)
+    options.extra = extra
     options.game = os.path.abspath(options.game)
     options.data = os.path.abspath(options.data)
     options.out = os.path.abspath(options.out)
