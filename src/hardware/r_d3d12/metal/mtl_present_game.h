@@ -29,6 +29,10 @@ void SetWindowIcon(SDL_Window *target);
 // Options > Video > Screen Scaling (cv_scr_scaling): a screen_scaling::Mode
 int ScreenScalingMode();
 
+// -mtlunseen: present to the window even while the system says none of it is on screen, which is how a test gets
+// frames onto the display of a Mac whose screen is locked or asleep
+bool PresentUnseen();
+
 // A line of the log as it is (I_OutputMsg)
 void Output(const char *line);
 

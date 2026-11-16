@@ -131,6 +131,9 @@ OpenGL window is made hidden and only shown once a renderer that presents on it 
   If the layer gives no drawable anyway, that frame isn't shown and the layer isn't asked again for a quarter of a
   second, doubling up to four seconds while it keeps giving none. The log says when presenting stops and starts
   again, and, when the window is given back, how many frames were presented, skipped, and left without a drawable.
+  A locked screen and a sleeping display count as out of sight too, so a Mac nobody sits at presents nothing.
+  `-mtlunseen` presents regardless of what AppKit says, for tests on such a Mac: on both Macs this was tried on,
+  the layer went on giving drawables with the screen locked (and, on the MacBook, the display asleep).
 - **The game's headers.** `mtl_present.mm` is Objective-C++, and the game's headers don't go into one file with
   Apple's, so what the presenter needs of the game (the window, the icon, the Screen Scaling setting, the log, and
   `I_Error`) comes through `mtl_present_game.h`, which a C++ file implements.

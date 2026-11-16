@@ -109,6 +109,9 @@ void Fail(const char *what)
 // Whether anything of the window is on screen. AppKit says so for the window the layer's view is in.
 bool WindowSeen()
 {
+	static const bool unseen = rr_mtl_present::PresentUnseen();
+	if (unseen)
+		return true;
 	NSView *view = (__bridge NSView *)g_mtl.view;
 	NSWindow *cocoa = view.window;
 	if (!cocoa)

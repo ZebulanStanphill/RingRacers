@@ -13,6 +13,7 @@
 
 #include "../../../doomdef.h"
 #include "../../../i_system.h"
+#include "../../../m_argv.h"
 #include "../../../screen.h"
 #include "../../../sdl/sdlmain.h"
 
@@ -37,6 +38,11 @@ void SetWindowIcon(SDL_Window *target)
 int ScreenScalingMode()
 {
 	return cv_scr_scaling.value;
+}
+
+bool PresentUnseen()
+{
+	return M_CheckParm("-mtlunseen") != 0;
 }
 
 void Output(const char *line)
