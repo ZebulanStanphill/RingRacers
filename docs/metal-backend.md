@@ -136,8 +136,20 @@ window is hidden".
   Screen Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the
   frame's aspect ratio. A drawable is BGRA8 and only a render target (`framebufferOnly`), which a draw suits and a
   copy from the RGBA8 screen wouldn't.
-- **Colors.** `BGRA8Unorm`, not an sRGB format, and no color space set on the layer, so the frame's values reach the
-  display as they are, which is how the game's OpenGL window shows the other renderers' frames.
+- **Colors.** `BGRA8Unorm`, not an sRGB format, so the frame's values go into the drawable as they are. What the
+  display makes of them is a matter of color spaces, and the aim is that it makes of them what it makes of
+  Software's frames in the game's OpenGL window. SDL gives every window it makes the sRGB color space (since SDL
+  2.26; the commit that did it says OpenGL "was getting a much more saturated colorspace" before), and the system
+  matches what OpenGL draws in such a window from sRGB to the display. A `CAMetalLayer` has no color space unless it
+  is given one, and Apple's documentation of the property says that its content then "isn't color-matched": on a
+  display of a wider gamut than sRGB, such as a MacBook's P3 panel, the same frame would look more saturated from
+  VibeRant Metal than from Software. So the presenter sees to it that the layer has its window's color space
+  (`MatchWindowColors`), which is the OpenGL window's, since the same SDL makes both. On the Mac mini the system had
+  already given the layer the window's color space when the presenter looked, so nothing changed there, and the log
+  says which it was: "colors are matched to the display as the OpenGL window's are: the layer has its window's color
+  space, "sRGB IEC61966-2.1" (the system gave it), and the display's is ...". Taking it away on purpose and letting
+  the presenter set it gives the same line with "set here". This is from documentation and logs: nobody has
+  compared the two renderers on a wide-gamut panel, by eye or with a meter.
 - **Vsync** is `vid_wait`, as the layer's `displaySyncEnabled`, set again whenever the setting changes. On the
   MacBook's 60 Hz display, with the screen unlocked, a replay drawn as fast as it goes took 16.76 ms per frame with
   `vid_wait` on and 7.47 ms with it off. Behind a locked screen the system hands drawables back at a pace of its

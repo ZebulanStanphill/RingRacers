@@ -119,6 +119,42 @@ bool WindowSeen()
 	return (cocoa.occlusionState & NSWindowOcclusionStateVisible) != 0;
 }
 
+// Sees to it that the layer has its window's color space, so that the system treats the frame's colors as it treats
+// what OpenGL draws in the game's other window, which shows the other renderers' frames. SDL gives every window it
+// makes the sRGB color space (since SDL 2.26: "By default, OpenGL was getting a much more saturated colorspace", its
+// commit says), and the system matches an OpenGL surface in such a window from sRGB to the display. A CAMetalLayer
+// without a color space "isn't color-matched" (Apple's documentation of the property): its values go to the display
+// as they are, which on a display of a wider gamut than sRGB (a MacBook's P3 panel) would show every color more
+// saturated than the same frame from Software. On the Macs this ran on, the system had already given the layer of
+// SDL's view the window's color space by the time this looks, and the log says so; this sets it where it hasn't.
+// The Metal window is made by the same SDL as the OpenGL one, so its color space is that window's, whatever SDL's
+// version: with an SDL that sets none, neither window's content is matched.
+// Nobody has compared the two renderers on a wide-gamut panel by eye or with a meter: this is the documentation's
+// word and the log's.
+void MatchWindowColors(bool say)
+{
+	CAMetalLayer *layer = g_mtl.layer;
+	NSWindow *cocoa = ((__bridge NSView *)g_mtl.view).window;
+	if (!layer || !cocoa)
+		return;
+	NSColorSpace *space = cocoa.colorSpace;
+	CGColorSpaceRef wanted = space ? space.CGColorSpace : NULL;
+	CGColorSpaceRef has = layer.colorspace;
+	const bool had = has == wanted || (has && wanted && CFEqual(has, wanted));
+	if (!had)
+		layer.colorspace = wanted;
+	if (had && !say)
+		return;
+	NSColorSpace *display = cocoa.screen ? cocoa.screen.colorSpace : nil;
+	const char *displayName = display.localizedName ? display.localizedName.UTF8String : "unknown";
+	if (layer.colorspace)
+		Log("presenter: colors are matched to the display as the OpenGL window's are: the layer has its window's color space, \"%s\" (%s), and the display's is \"%s\"",
+			space.localizedName ? space.localizedName.UTF8String : "unnamed", had ? "the system gave it" : "set here", displayName);
+	else
+		Log("presenter: the window has no color space to give the layer, so the frame's colors reach the display (\"%s\") as they are",
+			displayName);
+}
+
 void DestroyLayer()
 {
 	g_mtl.layer = nil;
@@ -166,8 +202,8 @@ bool CreateWindowAndLayer()
 			SDL_DestroyWindow(made);
 			return false;
 		}
-		// The frame's colors as they are: BGRA8 without an sRGB conversion, and no color space of the layer's own, which
-		// is how the game's OpenGL window shows the other renderers' frames
+		// The frame's values as they are, BGRA8 without an sRGB conversion; what the display makes of them is the color
+		// space's business (MatchWindowColors)
 		layer.device = device;
 		layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
 		layer.framebufferOnly = YES;
@@ -179,6 +215,7 @@ bool CreateWindowAndLayer()
 		g_mtl.layer = layer;
 		rr_mtl_present::SetWindowIcon(made);
 		SDL_ShowWindow(made);
+		MatchWindowColors(true);
 
 		g_mtl.gameWindow = game;
 		g_mtl.hideGameWindow = true;
@@ -343,6 +380,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		{
 			g_mtl.width = (UINT)texture.width;
 			g_mtl.height = (UINT)texture.height;
+			MatchWindowColors(false); // again, in case the window had none to give while it was off screen
 			// What the system then does with them, which a log can say and only a look at the screen can show: on a
 			// display with more pixels than points (a Retina display), it scales the layer up
 			NSWindow *cocoa = ((__bridge NSView *)g_mtl.view).window;

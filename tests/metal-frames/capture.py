@@ -160,6 +160,10 @@ def check_log(log_path, need_metal=True, validation=True):
             problems.append(("no Metal", "the log has no Metal device line"))
         elif validation and not ("API validation on" in device.group(0) and "shader validation on" in device.group(0)):
             problems.append(("no validation", "the device wasn't made with API and shader validation: " + device.group(0)))
+        # The layer must have its window's color space, as the OpenGL window's content has, or the two renderers'
+        # colors differ on a display that isn't sRGB
+        if "presenter: " in text and "presenter: colors are matched to the display" not in text:
+            problems.append(("colors", "the log doesn't say that the Metal layer has its window's color space"))
         # A game that ends with VibeRant Metal closes the Metal window and leaves its OpenGL window, which nothing ever
         # drew into, hidden: the log says what SDL says of that window at the end
         quit_with = re.findall(r"presenter: closed the Metal window as the game quits; the game's OpenGL window is (\w+)", text)

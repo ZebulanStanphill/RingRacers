@@ -1262,7 +1262,8 @@ if the log doesn't say that the backend is Metal with both kinds of validation o
 a frame the capture mode announced is missing, if no frame was presented to the
 window (the presenter counts them in the log), if the game's OpenGL window wasn't
 still hidden when the game quit with VibeRant Metal (the presenter's last line says
-what SDL says of it), or if the log has a validation
+what SDL says of it), if the log doesn't say that the Metal layer has its window's
+color space, or if the log has a validation
 message, a failed command buffer, a "not implemented" line, an error of the driver's,
 a wait for the GPU that the driver gave up on, or a fallback to Software. `summary.json` in each artifact has every run's result.
 
