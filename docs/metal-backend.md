@@ -6,11 +6,12 @@ VibeRant Vulkan ([vulkan-backend.md](vulkan-backend.md)): the driver keeps calli
 underneath implements the part of Direct3D 12 it calls.
 
 **State.** A macOS build of the game has it and starts with it: `SRB2_CONFIG_METAL` is on by default there, the
-Renderer setting lists **VibeRant Metal**, and a new config uses it. Everything known about how it runs comes from
-GitHub's macOS runners, whose GPU is a virtual one ("Apple Paravirtual device", macOS 15 on Apple silicon): the
-driver test passes there (`tests/README.md`, "Metal driver harness"), and so does the game itself, playing a replay on
-every map with Metal's API and shader validation on, with its frames compared with VibeRant Vulkan's (below, "What was
-tested, and what wasn't"). No Mac with a real GPU has run it, no Intel Mac, and nobody has played it.
+Renderer setting lists **VibeRant Metal**, and a new config uses it. It has run on three GPUs: the virtual one of
+GitHub's macOS runners ("Apple Paravirtual device"), an Apple M4 Pro, and an Intel Iris Plus Graphics 645. On each
+the driver test passes (`tests/README.md`, "Metal driver harness") and the game plays a replay on every map, or on
+the Intel GPU on 89 of them, with Metal's API and shader validation on and nothing reported, drawing the frames
+VibeRant Vulkan draws to within what two GPUs differ by (below, "What was tested, and what wasn't"). Nobody has
+played it, and nobody has looked at a screen it drew on: the two Macs were tested over the network, unattended.
 
 ## How
 
@@ -118,14 +119,25 @@ OpenGL window is made hidden and only shown once a renderer that presents on it 
   the system scales the frame up, as it does Software's and Legacy GL's. SDL's view keeps the drawable size at the
   window's as the window changes, and the presenter takes each drawable's own size as the size to place the frame in.
   The log says so with each new size: "1280x720 drawables for a window of 1280x720 points on a display with 2 pixels
-  per point (the system scales the frame up) and 60 frames per second".
+  per point (the system scales the frame up) and 60 frames per second". That line is from a MacBook Pro whose
+  2560x1600 panel is set, as it comes, to look like 1440x900: fullscreen there is a 1440x900 drawable, which the
+  system doubles to its 2880x1800 backing and then fits to the panel. So on that display the picture isn't
+  pixel-sharp, and couldn't be made so by drawables in pixels either, since nothing on it is; on a display of one
+  pixel per point (a Mac mini's 1920x1080 monitor) the drawable is the screen's pixels.
 - **Placement.** The driver's placement draws each frame into the drawable, as on the other desktop presenters: at
   Screen Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the
   frame's aspect ratio. A drawable is BGRA8 and only a render target (`framebufferOnly`), which a draw suits and a
   copy from the RGBA8 screen wouldn't.
 - **Colors.** `BGRA8Unorm`, not an sRGB format, and no color space set on the layer, so the frame's values reach the
   display as they are, which is how the game's OpenGL window shows the other renderers' frames.
-- **Vsync** is `vid_wait`, as the layer's `displaySyncEnabled`, set again whenever the setting changes.
+- **Vsync** is `vid_wait`, as the layer's `displaySyncEnabled`, set again whenever the setting changes. On the
+  MacBook's 60 Hz display, with the screen unlocked, a replay drawn as fast as it goes took 16.76 ms per frame with
+  `vid_wait` on and 7.47 ms with it off. Behind a locked screen the system hands drawables back at a pace of its
+  own, whatever the setting (8.4 ms per frame on the Mac mini, on or off).
+- **Fullscreen** is SDL's: a Space of its own for the window. The system doesn't make one while the screen is
+  locked, so there the game stays in its window; with SDL's hint against Spaces
+  (`SDL_VIDEO_MAC_FULLSCREEN_SPACES=0`) the window covers the screen as it is. Both ways the layer's drawables follow
+  the window to the display's size and back.
 - **A window nobody sees.** A layer's drawables only come back from the display, so asking the layer of a window
   that is minimized, hidden, on another Space, or covered for its next drawable waits a second and gives nothing.
   The presenter asks AppKit whether any of the window is on screen (`NSWindow`'s occlusion state) and doesn't present
@@ -180,7 +192,7 @@ bytes and a reference to the device that was never given back. The destructors o
 states, and lists now open a pool too, as does the completion handler, and the same replay has no report on the
 driver's thread: `capture.py hardware`'s `autorelease` scene checks that (`tests/README.md`, "On a Mac").
 
-The other reports, about eight per presented frame, are on Metal's and Core Animation's own threads, from their own
+The other reports, four to eight per presented frame, are on Metal's and Core Animation's own threads, from their own
 code (`CAMetalLayer`, the arrays and numbers of a presented drawable, a frame-pacing record), on macOS 15 and 27
 alike; a pool around the driver's completion handler doesn't change their number. They don't accumulate: without the
 debug variable (with it the runtime leaks what it reports), the game presented 39,614 frames in eleven minutes on
@@ -241,57 +253,132 @@ shader compiler rounds differently in the last bit, and depth is 32-bit float wh
 
 ## What was tested, and what wasn't
 
-Everything here ran on GitHub's `macos-15` runners (macOS 15.8, Apple silicon, the paravirtual GPU above), with
-`MTL_DEBUG_LAYER=1` and `MTL_SHADER_VALIDATION=1`. `tests/README.md` ("Metal frames") has the workflow that does it
-and how to run it again.
+It ran on three GPUs, each under Metal's API validation and shader validation (`MTL_DEBUG_LAYER=1`,
+`MTL_SHADER_VALIDATION=1`):
 
-**Replays on every map.** The macOS game played the first staff ghost of each of the 213 maps with `-metal` in the
-frame capture mode (five level times each; 1,002 frames, as some replays are shorter), one game per map. All 213
-runs exited with 0, with no validation message, no failed command buffer, no "not implemented" line, and no error of
-the driver's in any log; 436,000 frames were presented to the window on the way.
+| | GPU | System | Display |
+| --- | --- | --- | --- |
+| GitHub's `macos-15` runners | "Apple Paravirtual device", a virtual machine's on Apple silicon | macOS 15.8 | 1024x768, virtual |
+| a Mac mini | Apple M4 Pro | macOS 27.0.1 | 1920x1080 at 60 Hz, one pixel per point |
+| a MacBook Pro | Intel Iris Plus Graphics 645 (Core i5-8257U) | macOS 15.8.3 | its own 2560x1600 Retina panel at 60 Hz, set to look like 1440x900 |
 
-The frames were compared pixel by pixel with VibeRant Vulkan's frames of the same commit's game logic, made on a
-Linux PC with an AMD Radeon (RADV). In the median frame 0.14% of the pixels differ, in 95% of the frames fewer than
-0.76%, and in the worst 20%. Most of that is one level of one color channel:
+The two Macs were reached over SSH and nobody sat at them. The Mac mini's screen was locked the whole time; the
+MacBook's was locked with its display asleep at first, and later unlocked by someone there and left alone, which is when
+the scenes that need a visible screen ran there. Nobody looked at either screen, and no picture of one could be
+taken: `screencapture` from an SSH session gets the desktop picture and no windows, for want of the screen-recording
+permission. So what follows about the Macs comes from the game's logs and from frames read back from the driver.
+`tests/README.md` has how to run all of it again ("Metal driver harness", "Metal frames", "On a Mac").
+
+### The driver test
+
+`tests/run-metal.sh` passes on all three: the 118 scenes, the checks beside them (the shader cache, null views, the
+sprite shader's pole, the presenter's hooks), the five runs that fail a command buffer on purpose, the six negative
+controls, and no object autoreleased without a pool on the test's thread. Shader validation is `MTLGPUDebugDevice`
+on the M4 Pro and the older `MTLLegacySVDevice` on the runner and on the Intel GPU.
+
+### Replays on every map
+
+`capture.py sweep` plays the first staff ghost of each of the 213 maps with `-metal` in the frame capture mode (five
+level times each; 1,002 frames, as some replays are shorter), one game per map, and a run fails on anything but an
+exit with 0, every frame written, and a log without a validation message, a failed command buffer, a "not
+implemented" line, an error of the driver's, or a wait for the GPU that the driver gave up on.
+
+- **The runner**: all 213 clean, twice, with 436,000 frames presented to the window on the way.
+- **The M4 Pro**, four games at a time, presenting with `-mtlunseen`: all 213 exited with 0 and wrote their 1,002
+  frames in each of three sweeps, with 436,371 frames presented in each. The first, of the code as the runner had
+  passed it, had shader validation messages in 29 replays, which the runner's and the Intel GPU's validation
+  don't give, since they don't check what a vertex function puts out: "INF or NAN detected in interpolant" for the
+  sky's vertex function in 21 maps, for the polygons' in seven, and for the sprites' in two. Each was a fault in
+  code shared with the other renderers ("What the M4 Pro's validation found", below). With those fixed, the third
+  sweep is clean on all 213, and its 1,002 frames are the first sweep's to the pixel.
+- **The Intel Iris Plus 645**: two games at a time, presenting to its unlocked screen: the replays of 89 of the 213
+  maps (every third map of the list, and every map this section names), 103 runs in all, exited with 0 with nothing
+  reported, wrote their 424 frames, and presented 214,032 frames. A first sweep of all the maps, three games at a
+  time, was more than this GPU keeps up with ("Speed", below) and doesn't count: 188 replays ran and exited with 0,
+  none with a validation message, but 110 of their 835 screenshots were never written.
+
+The paravirtual GPU's limit on encoders ("Apple's paravirtual GPU", above) is off on both Macs: their device lines
+name `AGXG16SDevice` and `MTLIGAccelDevice`, and no log has the line that announces the limit.
+
+### What the M4 Pro's validation found
+
+Three things, none of them Metal's, all in code that every hardware renderer of the game runs:
+
+- **The sky dome's caps had no texture coordinates.** `HWR_SkyDomeVertex` never wrote them, so the two fans that
+  close the dome sampled the sky texture at whatever `malloc` had left in the vertex array: infinities and
+  not-a-numbers in 21 maps' replays with that build, zeros with another. That was the frame that had changed between
+  two runs on the runner: Neon Resort at level time 700, where the camera is pitched up on a slope, had 198 dim
+  pixels in the top 43 rows of the black sky in one run of four. Giving the caps random coordinates on the M4 Pro
+  (temporary instrumentation) changes 202 pixels in the top 41 rows of that frame, over the same columns, and none
+  of the frame at 650. The caps now get the middle of the texture's first texel. Ten more replays of Neon Resort to
+  700 on the M4 Pro gave ten identical frames, and seven on the Intel GPU seven.
+- **A sprite two near planes from the camera** has a clip-space z of exactly zero, where the sprite shader's
+  clipping hack (`80 / z`) is infinite. One replay had one for a frame (Gust Planet), another one too (Malign Egg
+  Shrine). The shader now divides zero like a tiny positive number.
+- **A sprite without height**, in a sector whose light changes at 3D floors, got texture coordinates divided by its
+  height. Seven maps' replays have one. It isn't drawn any more.
+
+None of the three changed a pixel of the 1,002 frames on the M4 Pro: a sprite at the pole or without height shows
+nothing either way, and no captured frame of that build had a cap in view with anything but zeros behind it.
+
+### The frames
+
+Compared pixel by pixel with `compare.py`. "Beyond texel edges" counts a pixel only if neither frame has its color
+within a pixel of it: a pixel whose texture coordinate falls on the edge between two texels can take either, and two
+GPUs disagree about that more often than two backends on one GPU.
+
+| Frames of | against | differ: median, 95% of frames under, worst | more than one level apart | beyond texel edges: frames at most 0.02%, above 0.1% |
+| --- | --- | --- | --- | --- |
+| the runner (1,002) | VibeRant Vulkan on a Radeon (RADV, Linux) | 0.141%, 0.756%, 20.0% | 0.024%, 0.169%, 3.27% | 936, 11 |
+| the M4 Pro (1,002) | the runner | 0.002%, 0.026%, 0.100% | the same | 1,002, 0 |
+| the M4 Pro (1,002) | the Radeon | 0.141%, 0.754%, 20.0% | 0.024%, 0.166%, 3.25% | 939, 12 |
+| the Intel GPU (424, of 89 maps) | the M4 Pro | 0.094%, 0.241%, 6.84% | 0.089%, 0.213%, 1.22% | 387, 8 |
+| the Intel GPU (424) | the runner | 0.093%, 0.226%, 6.84% | 0.087%, 0.214%, 1.23% | 387, 7 |
+| the Intel GPU (424) | the Radeon | 0.208%, 1.435%, 19.8% | 0.085%, 0.215%, 3.28% | 389, 11 |
+
+The M4 Pro draws what the runner's virtual GPU draws, which is no surprise if the runner's host is Apple silicon
+too: the frame that differs most (0.1%) is fine textures far away, and the one with the most pixels beyond texel
+edges (171) is the runner's Neon Resort with its cap. The Intel GPU's frames are a tenth of a percent from both, nearly
+all of it texel edges. Its eight frames with more than 0.1% of the pixels beyond them, against the M4 Pro, are fine
+textures far away (Daytona Speedway and Blizzard Peaks Classic), two effects that come out differently on the Intel
+Mac than on the ARM ones, as they do between other systems (Test Track's puff of dust at 350, Haunted Ship's effect
+at 70), and Vermilion Vessel's wall (below). Its frame that differs most, Dragonspire Sewer 1 at 70 with 6.8%, is
+bands of water one level apart.
+
+Against the Radeon, the differences are the ones the runner had, on the same frames:
 
 - **One level on blended surfaces.** Where a translucent surface is blended over another (water above all), whole
   bands of one color come out one level apart, up to a fifth of the frame in nine frames of water levels
   (Dragonspire Sewer, Deluged Metroplex, Whirl Waters, Aquatic Cathedral, Water Palace, Thunder Piston, Honeycomb
   Hollow, Carnival Night, Chemical Facility). It is the Radeon that rounds differently, not Metal: four of those
-  frames were drawn again with the Vulkan backend on lavapipe, Mesa's CPU device, and Metal's frames differ from
-  lavapipe's in 0.04% to 2% of the pixels where the Radeon's differ from lavapipe's in 5.6% to 22%. The same
-  rounding is why the driver test's grouped water scene starts from another green on Vulkan. Counting only pixels
-  more than one level apart, the median frame differs in 0.02% of its pixels, 95% of the frames in fewer than
-  0.17%, and the worst in 3.3%.
-- **Texel edges.** As between the other backends, a pixel whose texture coordinate falls on the edge between two
-  texels can take the other texel, and two GPUs disagree more often than two backends on one GPU. Setting those
-  pixels aside (a pixel counts only if neither frame has its color within a pixel of it), 936 of the 1,002 frames
-  differ in at most 0.02% of their pixels, and 11 in more than 0.1%:
+  frames were drawn again with the Vulkan backend on lavapipe, Mesa's CPU device, and the runner's frames differ
+  from lavapipe's in 0.04% to 2% of the pixels where the Radeon's differ from lavapipe's in 5.6% to 22%.
+  The Intel GPU agrees with Apple's: its frames of Deluged Metroplex, Whirl Waters, and Aquatic Cathedral are within
+  0.15% of the M4 Pro's and 13% to 20% from the Radeon's. The same rounding is why the driver test's grouped water scene starts from another green on Vulkan.
+- **Texel edges**, more than 0.1% of the pixels beyond them in eleven frames:
   - five at level time 70 (Mega Sandopolis, Mega Scrap Brain, Dragonspire Sewer 2, Zoned City, Barren Badlands, up to
     2.9%), where it is the Linux build's game that differs: effects around the kart at the start are other ones than
     in the frames an earlier commit's Windows build drew under Wine, which Metal's frames match (0.05% at most). The
     Linux and Windows builds differed in the same frames when VibeRant Vulkan was compared with VibeRant D3D;
-  - Test Track at 350 (0.39%), a puff of dust behind the kart that is placed differently on each of the three
-    systems;
+  - Test Track at 350 (0.39%), a puff of dust behind the kart that is placed differently on each system;
   - Haunted Ship at 70 (0.37%), the effect in one plane with another that already differed between Vulkan and
     Direct3D 12;
   - Daytona Speedway at 350 and 1400, and Blizzard Peaks Classic at 350 and 1400 (0.13% to 0.23%), fine textures
     far away, where texel edges are everywhere.
-- **One depth tie.** In Vermilion Vessel at 1400, about 870 pixels of a distant red wall show the sky through a
-  stipple on Metal and the wall whole on the Radeon (with either of its backends). A sky wall (the invisible
-  polygon that keeps the sky in front of what is behind it) lies in the wall's plane there, and which of two
-  surfaces in one plane shows is decided by rounding, pixel by pixel on the runner's GPU. Software shows no wall
-  there at all, only sky. It is the only such place the 1,002 frames have, so depth isn't less precise on Metal in
-  general; it would take a change to the hardware renderer, for every backend, to settle it.
-- **One frame that changed between runs.** The 213 replays were played twice from the same code (the figures here
-  are the second run's). 1,001 of the 1,002 frames came out the same to the pixel. Neon Resort at 700 had 198 dim
-  pixels scattered over the black sky at the top of the frame in the second run, and none in the first or in two
-  more runs of that replay made to look for them (thirteen frames each around that time, all alike). Nothing in the
-  logs differs between the runs, and it is unexplained. It looks like texture memory that was read without ever
-  being written, somewhere on the sky's way through the engine or mtl12, which is a guess.
+- **One depth tie.** In Vermilion Vessel at 1400, a strip of a distant red wall shows the sky through a stipple:
+  about 870 pixels on the runner and 950 on the M4 Pro, in the same place with another pattern. The Intel GPU draws the wall whole.
+  So does the Radeon, with either of its backends. A sky wall (the invisible polygon that keeps the sky
+  in front of what is behind it) lies in the wall's plane there, and which of two surfaces in one plane shows is
+  decided by rounding, pixel by pixel. Software shows no wall there at all, only sky. It is the only such place the
+  1,002 frames have, so depth isn't less precise on Metal in general; it would take a change to the hardware
+  renderer, for every backend, to settle it.
 
-**Beyond replays**, each as a run of the game on a runner, with screenshots the game took itself and pictures of the
-screen (`screencapture`), which were looked at:
+The frames that stand out in each comparison were looked at, with a sample of ordinary ones from each Mac.
+
+### Beyond replays, on the runner
+
+Each as a run of the game on a runner (`capture.py scenes`), with screenshots the game took itself and pictures of
+the screen (`screencapture`), which were looked at:
 
 - started without naming a renderer: the log says the Metal backend, the intro and the title screen show in the
   window;
@@ -309,9 +396,52 @@ screen (`screencapture`), which were looked at:
 - `vid_wait` on, and `-mtldebug`;
 - quitting, by the `quit` command and through the menu: the game exits with 0 and doesn't hang.
 
-**Not tested**, because it takes a Mac and a person: a real GPU (Apple silicon, or an Intel Mac's AMD or Intel one),
-a Retina display (the frame is drawn at the window's size in points and scaled by the system, by design, and that
-was never seen), more than one display, resizing or minimizing the window by hand and switching Spaces (the code that
-stops presenting to a window nobody sees only ran in the moments after the window is made), the look of colors on a
-wide-gamut display, how fast it is, split-screen (a staff ghost is one player), netgames, add-on shaders and screen
-effects in the game (the driver test covers them), and playing with a controller.
+### The window, on the Macs
+
+`capture.py hardware` runs these and judges them by the log and the game's own screenshots. All of its fourteen runs
+pass on the MacBook with its screen unlocked. On the Mac mini, whose screen was locked, all pass but `fullscreen`,
+which can't: the system makes no fullscreen Space behind a locked screen.
+
+- **Presenting.** Every frame of a replay is presented, none without a drawable, with the screen unlocked, locked,
+  or locked with the display asleep (the latter two with `-mtlunseen`). Without it, behind a locked screen, the
+  first frame is presented and the rest are drawn and not presented, as intended.
+- **`vid_wait`** on the MacBook's visible 60 Hz display: 16.76 ms per frame on, 7.47 ms off.
+- **Fullscreen and back** through the game's `fullscreen` setting: drawables of 1440x900, 1280x720, and 1440x900 on
+  the MacBook (in a Space of its own, and with SDL's hint against Spaces); 1920x1080, 1280x720, and 1920x1080 on the
+  Mac mini (with the hint only).
+- **Another video mode and back** (`vid_mode` to 800x600 and to 1280x720): frames and drawables follow.
+- **The renderer changed while a replay plays**: VibeRant Metal to Software and back, Software to VibeRant Metal
+  and back, Legacy GL to Software and back; and VibeRant Metal to Legacy GL, which takes effect at the next start
+  and does.
+- **Quitting**: every one of the runs above, and of the sweeps, exited with 0.
+- **A Retina display**: the drawables are the window's size in points, as designed, and the MacBook's display has
+  two pixels per point, so the system scales the frame up ("The window", above). Nobody saw what that looks like.
+
+### Speed
+
+The time per frame of a replay (Aerial Highlands, level times 350 to 1400) in the capture mode, which draws one
+frame per tic of game logic as fast as it can, at 1280x720 with `vid_wait` off and no validation:
+
+| | VibeRant Metal | Software | Legacy GL |
+| --- | --- | --- | --- |
+| M4 Pro | 2.3 ms (the screen was locked, so nothing was presented) | 4.0 ms | 4.3 ms |
+| Intel Iris Plus 645 | 7.5 ms (presenting to the visible screen) | 9.3 ms | 8.4 ms |
+
+One run each, of one replay, so these say which way it goes and not much more. Presenting to a window behind the
+Mac mini's locked screen took 8.4 ms per frame, which is the system's pace for a window nobody sees and not the
+renderer's. The driver's own time counters are logged on Xbox only.
+
+Three games at a time under validation were too much for the Intel GPU: it fell more than half a second behind,
+which is where the driver stops waiting for it (for a readback, a command allocator, room in the upload ring), in 124
+of 188 replays, and 110 of 835 screenshots were never written. Two at a time had no such wait in 107 replays,
+nor had one at a time.
+
+### Not tested
+
+Because it takes a person at the Mac: what the screen looks like (on either Mac, and on the Retina display above
+all), fullscreen in a Space of its own on the M4 Pro, `vid_wait` on a visible screen there, more than one display,
+resizing or minimizing the window by hand and switching Spaces, the menu's own Renderer row and anything else done
+with a keyboard or a controller (the runner had keys sent to it; the Macs didn't, since that takes the accessibility
+permission), the look of colors on a wide-gamut display, split-screen (a staff ghost is one player), netgames, and
+add-on shaders and screen effects in the game (the driver test covers them). Not tested for want of the hardware: an
+AMD GPU, a Mac with two GPUs, and an Apple GPU older than the M4. And nobody has played it.

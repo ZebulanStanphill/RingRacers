@@ -1097,6 +1097,9 @@ arguments to the configuration), runs the scenes, and then the negative controls
 The first configuration fetches the production pins of glslang, SPIRV-Cross, and
 DirectX-Headers, and builds glslang and SPIRV-Cross with its Metal target.
 
+It passes on an Apple M4 Pro (macOS 27) and on an Intel Iris Plus Graphics 645
+(macOS 15) as it does on the runner, whose GPU is a virtual one.
+
 Metal code can't be built or run off macOS, so on other systems the way to run
 this is the `metal` CI job, on `macos-15` (arm64). GitHub's runner has a Metal
 device, "Apple Paravirtual device": the virtual machine's GPU, which passes
@@ -1208,7 +1211,7 @@ differ:
 ## Metal frames (the game on a macOS runner)
 
 There is no Mac among the machines this fork is developed on, so the macOS game with
-VibeRant Metal is run where there is one: on GitHub's `macos-15` runners (Apple
+VibeRant Metal is run where there always is one: on GitHub's `macos-15` runners (Apple
 silicon, with the virtual GPU "Apple Paravirtual device"), by the workflow
 `.github/workflows/metal-frames.yml`. It takes about three runner-hours, so it runs
 only when asked: from the Actions page (**Metal frames** → Run workflow, once the
@@ -1316,7 +1319,8 @@ screen. Each scene is a run of the game (or two), judged like the sweep's, and b
 - `metal-then-legacy-gl`: between the two hardware renderers the setting takes effect at the next start, so the
   first game must go on with VibeRant Metal and the second, started without naming a renderer, must be Legacy GL's.
 
-What it can't tell is what the screen looks like. For that someone has to look, or `capture.py scenes` has to run
+What these gave on a Mac mini with an M4 Pro and on a MacBook Pro with an Intel Iris Plus 645 is in
+`docs/metal-backend.md` ("What was tested, and what wasn't"). What the mode can't tell is what the screen looks like. For that someone has to look, or `capture.py scenes` has to run
 on a Mac whose screen is unlocked and where the terminal may record the screen and send keys.
 
 ## CI and adding cases
