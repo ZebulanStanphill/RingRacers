@@ -20,9 +20,13 @@ otherwise: the game opens a window on the Mac's screen.
 
 Every run gets a fresh home directory and MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1, and its output goes to
 <out>/logs. A run fails if the game doesn't exit with 0 in time, if the log doesn't say that the Metal backend with
-both kinds of validation is in use, if a frame is missing, or if the log has a validation message, a "not
-implemented" line, or an error of the driver's. The exit status is 1 if any run failed; <out>/summary.json has the
-details. Standard library only, so that it runs on a macOS runner as it is. See tests/README.md, "Metal frames".
+both kinds of validation is in use, if a frame is missing, if the presenter didn't present the frames it was given
+(all but a few: the window is expected to be on screen, or the game to have -mtlunseen), or if the log has a
+validation message, a "not implemented" line, or an error of the driver's. With -mtlcheck among the game's arguments
+(some scenes have it; a sweep takes it after "--"), the presenter also reads drawables back and compares them with
+the frames it placed in them, and a run fails if one differs. The exit status is 1 if any run failed;
+<out>/summary.json has the details. Standard library only, so that it runs on a macOS runner as it is. See
+tests/README.md, "Metal frames". test_capture.py checks the judging against made-up logs.
 """
 import argparse
 import json
@@ -50,6 +54,7 @@ BAD = [
     (re.compile(r"not implemented", re.I), "not implemented"),
     (re.compile(r"validation (error|fault|failure)|failed assertion|-\[MTL\w*Debug\w* |MTLDebug.*:\d+: failed", re.I), "Metal validation"),
     (re.compile(r"Metal: (?!device: ).*(command buffer .*(failed|error)|shader validation|device (was )?(lost|removed))", re.I), "Metal error"),
+    (re.compile(r"presenter: drawable check \d+ FAILED"), "the drawable isn't the frame"),
     (re.compile(r"(UWP D3D12|VibeRant \w+): .*(failed|error|couldn't|can't place|removed|gave no drawable)", re.I), "driver error"),
     # The driver waits half a second for the GPU and then goes on without it: a screenshot whose readback it gave up
     # on is whatever its memory held
@@ -104,6 +109,50 @@ def screen_locked():
         return found.group(1) == "Yes"
     # The session's record is there and has no such entry while the screen is unlocked
     return False if "IOConsoleUsers" in text else None
+
+
+def presenting(text):
+    """What the presenter says became of the frames it was given, over every window it took: presented, not presented
+    because the window was out of sight, and not presented for want of a drawable"""
+    found = re.findall(PRESENTER_DONE + r"; (\d+) frames presented, (\d+) skipped while the window was out of sight, (\d+) without a drawable", text)
+    return tuple(sum(int(n[i]) for n in found) for i in range(3))
+
+
+# A window that was only just made doesn't count as visible for its first frames, and a run has a window or a few
+FEW_FRAMES = 20
+
+
+def check_presenting(text, problems, in_sight=True):
+    """A run that presents nothing fails. in_sight: the game's window is expected to be on screen (or the game has
+    -mtlunseen), so that all but a few frames, or all but a twentieth, must have been presented too. Returns how many
+    were."""
+    presented, unseen, no_drawable = presenting(text)
+    given = presented + unseen + no_drawable
+    if presented == 0:
+        problems.append(("present", "the log doesn't say that any frame was presented"))
+    elif in_sight and unseen + no_drawable > max(FEW_FRAMES, given // 20):
+        problems.append(("present", "%d of %d frames weren't presented: %d while the system called the window out of sight, %d for "
+                         "want of a drawable. Behind a locked screen, or with several games' windows on top of each other, "
+                         "give the game -mtlunseen (after --)" % (unseen + no_drawable, given, unseen, no_drawable)))
+    return presented
+
+
+# With -mtlcheck the presenter reads a window's first three drawables back, and every sixtieth after
+FEW_CHECKS = 3
+
+
+def check_drawables(text, problems):
+    """A run with -mtlcheck: the presenter read drawables back and compared each with the frame it had placed in it.
+    Returns how many it compared."""
+    found = re.findall(r"presenter: (\d+) drawables were read back and compared with the frames placed in them \(-mtlcheck\): "
+                       r"(\d+) differed, (\d+) unread", text)
+    tried, differed, unread = (sum(int(n[i]) for n in found) for i in range(3))
+    if differed:
+        problems.append(("drawable", "%d of %d drawables read back didn't hold the frame placed in them" % (differed, tried - unread)))
+    if tried - unread < FEW_CHECKS:
+        problems.append(("drawable", "%d drawables were read back and compared with their frames, of %d tried: fewer than %d"
+                         % (tried - unread, tried, FEW_CHECKS)))
+    return tried - unread
 
 
 def probes(text):
@@ -213,8 +262,7 @@ def check_log(log_path, need_metal=True, validation=True):
             problems.append(("quit", "the log doesn't say that the Metal window was closed as the game quit"))
         elif quit_with[-1] != "hidden":
             problems.append(("quit", "the game's OpenGL window was %s as the game quit from VibeRant Metal" % quit_with[-1]))
-    presented = [int(n) for n in re.findall(PRESENTER_DONE + r"; (\d+) frames presented", text)]
-    return problems, (device.group(0) if device else ""), sum(presented)
+    return problems, (device.group(0) if device else ""), text
 
 
 def pngs_under(directory):
@@ -243,13 +291,15 @@ def sweep(options):
         log_path = os.path.join(logs_dir, ghost + ".log")
         args = game_args() + ["-shotghost", ghost, "-shottics", options.tics, "+fpscap", "300"] + options.extra
         code, seconds = run_game(options.game, options.data, home, args, log_path, options.timeout)
-        problems, device, presented = check_log(log_path)
+        problems, device, text = check_log(log_path)
+        # The frames themselves are read back from the driver's screen, whatever the window got. So the sweep also
+        # holds the presenter to its word that it presented them, and with -mtlcheck to what it found in its drawables.
+        presented = check_presenting(text, problems)
+        checked = check_drawables(text, problems) if "-mtlcheck" in options.extra else None
         shots = [shot for shot in pngs_under(home) if os.path.basename(os.path.dirname(shot)) == "framecapture"]
         for shot in shots:
             shutil.move(shot, os.path.join(frames_dir, os.path.basename(shot)))
         # A replay shorter than the last tics ends the run with fewer frames, which the log says
-        with open(log_path, errors="replace") as handle:
-            text = handle.read()
         finished = re.search(r"framecapture: .*; (\d+) of (\d+) screenshots taken", text)
         if code is None:
             problems.append(("timeout", "the game didn't exit in %d s" % options.timeout))
@@ -262,9 +312,11 @@ def sweep(options):
         if not shots:
             problems.append(("capture", "no frame was written"))
         result = {"ghost": ghost, "exit": code, "seconds": round(seconds, 1), "frames": len(shots), "of": len(tics),
-                  "presented": presented, "device": device, "problems": problems}
+                  "presented": presented, "not_presented": sum(presenting(text)[1:]), "drawables_checked": checked,
+                  "device": device, "problems": problems}
         results.append(result)
-        print("%s: %d/%d frames, exit %s, %.0f s, %d frames presented%s" % (ghost, len(shots), len(tics), code, seconds, presented,
+        print("%s: %d/%d frames, exit %s, %.0f s, %d frames presented%s%s" % (ghost, len(shots), len(tics), code, seconds, presented,
+              "" if checked is None else ", %d drawables checked" % checked,
               "" if not problems else "  PROBLEMS: " + "; ".join("%s: %s" % p for p in problems[:5])), flush=True)
     shutil.rmtree(home, ignore_errors=True)
     return results
@@ -341,12 +393,12 @@ def scene_list():
         # A 320x200 frame on the whole screen, so that Fit, Integer, and 1:1 put it in three different rectangles. The
         # game starts in fullscreen, as it does for a player (-win, which the other scenes have, keeps it in a window).
         return {"args": ["+scr_scaling", mode] + replay + wait(900) + shot + ["+quit"],
-                "during": pictures((playing, 1, 9, "fullscreen")), "shots": 1, "size": (320, 200), "window": False}
+                "during": pictures((playing, 1, 9, "fullscreen")), "shots": 1, "size": (320, 200), "window": False, "check": True}
 
     return {
         # The game as a player starts it: no renderer named, so the default has to be VibeRant Metal
         "default-title": {"args": wait(700) + shot + ["+quit"], "during": pictures((took, 1, 9, "intro")), "shots": 1,
-                          "renderer": None},
+                          "renderer": None, "check": True},
         "title-menu": {"args": wait(2100) + shot + ["+quit"], "during": menu, "shots": 1},
         "models-on": {"args": race + ["+gr_models", "on"], "shots": 2},
         "models-off": {"args": race + ["+gr_models", "off"], "shots": 2},
@@ -354,7 +406,7 @@ def scene_list():
                             + ["+renderer", "VibeRant Metal"] + wait(400) + shot + ["+renderer", "Software"] + wait(100)
                             + ["+renderer", "VibeRant Metal"] + wait(300) + shot + ["+quit"],
                             "during": pictures((playing, 1, 6, "1-metal"), (gave_back, 1, 3, "2-software"), (took, 2, 3, "3-metal")),
-                            "shots": 4},
+                            "shots": 4, "check": True},
         "software-start": {"args": replay + wait(600) + shot + ["+renderer", "VibeRant Metal"] + wait(400) + shot + ["+quit"],
                            "during": pictures((playing, 1, 3, "1-software-start"), (playing, 1, 5, "2-software"),
                                               (took, 1, 3, "3-metal")), "shots": 2,
@@ -387,11 +439,15 @@ def scenes(options):
         log_path = os.path.join(logs_dir, "scene-" + name + ".log")
         width, height = scene.get("size", (1280, 720))
         renderer = scene.get("renderer", "-metal")
-        args = game_args(width, height, renderer, scene.get("window", True)) + scene["args"] + options.extra
+        args = (game_args(width, height, renderer, scene.get("window", True)) + (["-mtlcheck"] if scene.get("check") else [])
+                + scene["args"] + options.extra)
         during = scene.get("during")
         wrapped = (lambda process, d=during, s=scene_dir, l=log_path: d(process, s, l)) if during else None
         code, seconds = run_game(options.game, options.data, home, args, log_path, options.timeout, wrapped)
-        problems, device, presented = check_log(log_path)
+        problems, device, text = check_log(log_path)
+        # A scene's window is on the screen the whole time, except where the scene has the presenter think otherwise
+        presented = check_presenting(text, problems, in_sight=not scene.get("blind"))
+        checked = check_drawables(text, problems) if scene.get("check") else None
         shots = pngs_under(home)
         for index, shot in enumerate(shots):
             shutil.move(shot, os.path.join(scene_dir, "game-%d-%s" % (index + 1, os.path.basename(shot))))
@@ -401,16 +457,12 @@ def scenes(options):
             problems.append(("exit", "the game exited with %s" % code))
         if len(shots) != scene["shots"]:
             problems.append(("capture", "%d screenshots of the game's own, expected %d" % (len(shots), scene["shots"])))
-        if presented == 0:
-            problems.append(("present", "the log doesn't say that any frame was presented"))
-        blind = ""
-        if scene.get("blind"):
-            with open(log_path, errors="replace") as handle:
-                blind = check_blind(handle.read(), problems)
+        blind = check_blind(text, problems) if scene.get("blind") else ""
         results.append({"scene": name, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots), "presented": presented,
-                        "blind": blind, "device": device, "problems": problems})
-        print("%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s" % (name, code, seconds, len(shots), presented,
-              ", " + blind if blind else "",
+                        "not_presented": sum(presenting(text)[1:]), "drawables_checked": checked, "blind": blind, "device": device,
+                        "problems": problems})
+        print("%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s" % (name, code, seconds, len(shots), presented,
+              "" if checked is None else ", %d drawables checked" % checked, ", " + blind if blind else "",
               "" if not problems else "  PROBLEMS: " + "; ".join("%s: %s" % p for p in problems[:5])), flush=True)
     shutil.rmtree(home, ignore_errors=True)
     return results
@@ -429,7 +481,8 @@ def hardware_list():
     must name in order ("drawables", None for the display's own, whatever it is), text the log must have ("needs")
     and must not have ("lacks"), whether the time per frame between the two frames of -shottics is worked out
     ("timed"), whether the game presents even to a window nobody can see ("unseen", -mtlunseen, unless turned off),
-    and more of the environment ("env")."""
+    whether the presenter reads drawables back and compares them with their frames ("check", -mtlcheck), whether it
+    is made to take its window for out of sight ("blind"), and more of the environment ("env")."""
     ghost = "RR_AERIALHIGHLANDS-battlekukku-FerronNuff"
     replay = ["-shotghost", ghost, "-shottics", "99999", "+framecapture_ghost", ghost]
     # The capture mode draws one frame per tic of game logic as fast as it can, so the time from one level time to
@@ -452,7 +505,7 @@ def hardware_list():
         return [{"renderer": "-metal", "window": False, "env": env,
                  "args": replay + wait(300) + shot + ["+fullscreen", "No"] + wait(300) + shot + ["+fullscreen", "Yes"]
                  + wait(300) + shot + ["+quit"],
-                 "shots": 3, "sizes": [(1280, 720)] * 3, "drawables": [None, (1280, 720), None]}]
+                 "shots": 3, "sizes": [(1280, 720)] * 3, "drawables": [None, (1280, 720), None], "check": True}]
 
     return {
         # How long a frame of the replay takes with each renderer, with vid_wait off. VibeRant Metal as the game runs
@@ -484,9 +537,9 @@ def hardware_list():
         "video-mode": [{"renderer": "-metal", "args": replay + wait(300) + shot + ["+vid_mode", "14"] + wait(300) + shot
                         + ["+vid_mode", "10"] + wait(300) + shot + ["+quit"],
                         "shots": 3, "sizes": [(1280, 720), (800, 600), (1280, 720)],
-                        "drawables": [(1280, 720), (800, 600), (1280, 720)]}],
+                        "drawables": [(1280, 720), (800, 600), (1280, 720)], "check": True}],
         "metal-software-metal": [{"renderer": "-metal", "args": replay + wait(300) + shot + ["+renderer", "Software"] + wait(300) + shot
-                                  + ["+renderer", "VibeRant Metal"] + wait(300) + shot + ["+quit"], "shots": 3,
+                                  + ["+renderer", "VibeRant Metal"] + wait(300) + shot + ["+quit"], "shots": 3, "check": True,
                                   "needs": [took, gave_back, "(?s)%s.*%s.*%s" % (took, gave_back, took)]}],
         "software-metal-software": [{"renderer": "-software", "args": replay + wait(300) + shot + ["+renderer", "VibeRant Metal"]
                                      + wait(300) + shot + ["+renderer", "Software"] + wait(300) + shot + ["+quit"], "shots": 3,
@@ -521,15 +574,21 @@ def hardware(options):
             validation = run.get("validation", True)
             metal = run.get("metal", renderer == "-metal")
             args = (game_args(1280, 720, renderer, run.get("window", True)) + (["-mtlunseen"] if run.get("unseen", True) else [])
+                    + (["-mtlcheck"] if run.get("check") else [])
                     + run["args"] + options.extra)
             code, seconds = run_game(options.game, options.data, home, args, log_path, options.timeout, validation=validation,
                                      fresh_home=index == 0, more_env=run.get("env"))
-            problems, device, presented = check_log(log_path, need_metal=metal, validation=validation)
-            with open(log_path, errors="replace") as handle:
-                text = handle.read()
+            problems, device, text = check_log(log_path, need_metal=metal, validation=validation)
+            presented = presenting(text)[0]
+            if metal or presented:
+                # With -mtlunseen every frame is presented wherever the window is. Without it, the game is as a
+                # player has it: presenting on a screen that can be seen, and not behind a locked one.
+                in_sight = not run.get("blind") and (run.get("unseen", True) or screen_locked() is False)
+                check_presenting(text, problems, in_sight=in_sight)
+            checked = check_drawables(text, problems) if run.get("check") else None
             shots = sorted(pngs_under(home), key=os.path.getmtime)
             result = {"scene": name, "run": index + 1, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots),
-                      "presented": presented, "device": device, "problems": problems}
+                      "presented": presented, "drawables_checked": checked, "device": device, "problems": problems}
             if run.get("timed") and len(shots) == 2:
                 # One frame per tic between the two level times
                 result["ms_per_frame"] = round((os.path.getmtime(shots[1]) - os.path.getmtime(shots[0])) * 1000 / (1400 - 350), 3)
@@ -562,8 +621,6 @@ def hardware(options):
             for pattern in run.get("lacks", []):
                 if re.search(pattern, text):
                     problems.append(("log", "the log has: " + pattern))
-            if metal and presented == 0:
-                problems.append(("present", "the log doesn't say that any frame was presented"))
             if run.get("pools"):
                 thread = re.search(r"Metal: the driver's thread is (0x[0-9a-f]+)", text)
                 reports = re.findall(r"MISSING POOLS: \((0x[0-9a-f]+)\) Object 0x[0-9a-f]+ of class (\w+)", text)
@@ -581,8 +638,9 @@ def hardware(options):
             if run.get("blind"):
                 result["blind"] = check_blind(text, problems)
             results.append(result)
-            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s%s" % (
+            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s%s%s" % (
                 name, " (run %d)" % (index + 1) if len(runs) > 1 else "", code, seconds, len(shots), presented,
+                "" if checked is None else ", %d drawables checked" % checked,
                 ", %d not (the window was out of sight)" % result["unseen_frames"] if result.get("unseen_frames") else "",
                 ", " + result["blind"] if result.get("blind") else "",
                 ", %.2f ms per frame" % result["ms_per_frame"] if "ms_per_frame" in result else "",

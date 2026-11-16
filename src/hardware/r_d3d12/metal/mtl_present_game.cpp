@@ -50,6 +50,11 @@ bool PresentBlind()
 	return M_CheckParm("-mtlblind") != 0;
 }
 
+bool CheckDrawables()
+{
+	return M_CheckParm("-mtlcheck") != 0;
+}
+
 void Output(const char *line)
 {
 	I_OutputMsg("%s", line);

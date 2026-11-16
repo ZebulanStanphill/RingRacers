@@ -37,6 +37,10 @@ bool PresentUnseen();
 // presenter does about a wrong report of that kind, on a Mac whose screen can be seen.
 bool PresentBlind();
 
+// -mtlcheck: read some drawables back, with the frames that were placed in them, and say in the log whether each
+// holds its frame (mtl_present_check.h). For tests: the layer's drawables are then more than render targets.
+bool CheckDrawables();
+
 // A line of the log as it is (I_OutputMsg)
 void Output(const char *line);
 

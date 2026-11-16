@@ -74,6 +74,19 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   time (not kept) each failed an assertion. What a real layer and display do is not
   covered here: `capture.py`'s `blind` scene is for that ("On a Mac", below).
 
+- **Metal presenter, what a drawable holds:** `metal_present_check` runs the production
+  comparison behind `-mtlcheck` (`metal/mtl_present_check.h`, plain C++) on drawables
+  made here from a frame the way the driver's placement makes them: at the frame's own
+  size, a level's rounding apart, centered in a larger drawable, a 320x200 frame as
+  Fit and as Integer on a 1024x768 screen, and a 1280x720 frame made smaller and
+  larger. Each must match; and each of these must not: a black drawable, red and blue
+  swapped, upside down, another frame, moved by four pixels, scaled where it was meant
+  at its own size, filtered half a pixel off, ten levels too bright, a pixel outside
+  the rectangle that isn't black, and a rectangle that isn't in the drawable. Five
+  defects put into the header one at a time (not kept) each failed an assertion.
+  `metal_capture_judging` (`tests/metal-frames/test_capture.py`) checks how
+  `capture.py` judges a run by its log ("Metal frames", below).
+
 - **Texture atlas:** `d3d12_texture_atlas` tests the production shelf allocator
   with rounded dimensions, full pages, fence-deferred frees, coalescing, and
   empty-page reset. GPU sampling and Xbox resource creation timing require
@@ -1277,13 +1290,50 @@ Every run of the game gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
 `MTL_SHADER_VALIDATION=1`. A run fails, and with it the job, if the game doesn't exit
 with 0 in time (a game that stops at its error dialog is killed after five seconds),
 if the log doesn't say that the backend is Metal with both kinds of validation on, if
-a frame the capture mode announced is missing, if no frame was presented to the
-window (the presenter counts them in the log), if the game's OpenGL window wasn't
+a frame the capture mode announced is missing, if the presenter didn't present
+the frames it was given (below), if the game's OpenGL window wasn't
 still hidden when the game quit with VibeRant Metal (the presenter's last line says
 what SDL says of it), if the log doesn't say that the Metal layer has its window's
 color space, or if the log has a validation
 message, a failed command buffer, a "not implemented" line, an error of the driver's,
 a wait for the GPU that the driver gave up on, or a fallback to Software. `summary.json` in each artifact has every run's result.
+
+**What a run says about the window.** The frames a sweep collects are read back from
+the driver's screen, before the presenter has anything to do with them, so by
+themselves they say nothing of the window. Three things are checked beside them:
+
+- *That frames were presented.* The presenter counts, in its last line of the log,
+  the frames it presented, the frames it didn't because the system called the window
+  out of sight, and the frames the layer had no drawable for. A run fails if none was
+  presented, and, since the window is expected to be on screen, if more than twenty
+  frames and more than a twentieth of them weren't. (A new window doesn't count as
+  visible for its first frames: runs on the runners skipped at most six.) This holds
+  for sweeps too, which used to print the count and pass whatever it was. Behind a
+  locked screen, or with several games' windows on top of each other, the game needs
+  `-mtlunseen`, and the failure says so. The two exceptions are `capture.py hardware`'s
+  `speed-metal` on a Mac whose screen is locked, which is the game as it runs there,
+  and the `blind` scenes.
+- *That a drawable holds the frame* (`-mtlcheck`). The presenter reads a window's
+  first three drawables back, and every sixtieth after, with the frame it was given,
+  and compares them (`metal/mtl_present_check.h`): the frame must be at the rectangle
+  Screen Scaling placed it at, pixel for pixel where it is at its own size and by the
+  mean colors of 8 by 8 blocks where it is scaled, and the rest of the drawable must be
+  black. A drawable that differs fails the run, as do fewer than three compared. The
+  scenes that have it are the three Screen Scaling ones, `default-title`, and
+  `switch-renderer` on the runner, and `fullscreen`, `fullscreen-no-space`,
+  `video-mode`, and `metal-software-metal` on a Mac; a sweep has it when the game is
+  given `-mtlcheck` after `--`. It is a test's path: a drawable that can be read back
+  is made with the layer's `framebufferOnly` off, which a player's never is, so the
+  runner's sweep and the other scenes run without it.
+- *Not checked: that the display showed it.* Nothing here reads the screen. On the
+  runner the `scenes` job takes pictures of the screen, which a person has to look at;
+  on a Mac reached over SSH there are none. So "the frame is in the drawable that was
+  presented" is as far as an unattended run goes.
+
+`tests/metal-frames/test_capture.py` (the test `metal_capture_judging`, which runs
+with the native tests) holds `capture.py` to this with logs made up from the
+presenter's own lines: logs that must pass, and for each reason to fail a log that
+must fail for it and for nothing else.
 
 What the jobs can't judge is whether the pictures are right. For the frames, compare
 them with another renderer's frames of the same game logic, such as VibeRant Vulkan's
@@ -1317,7 +1367,7 @@ Opus besides (built from source into a prefix of their own they need no Homebrew
 
 ```sh
 game=build/bin/ringracers_*.app/Contents/MacOS/ringracers_*
-python3 tests/metal-frames/capture.py sweep --game $game --data <assets> --out sweep --idle 180 -- -mtlunseen
+python3 tests/metal-frames/capture.py sweep --game $game --data <assets> --out sweep --idle 180 -- -mtlunseen -mtlcheck
 python3 tests/metal-frames/capture.py hardware --game $game --data <assets> --out hardware --idle 180
 ```
 
@@ -1326,8 +1376,10 @@ opens a window on the Mac's screen. `--shard K/N` splits the sweep, and several 
 with its own `--out`, as far as the GPU keeps up: four at once were no load for an M4 Pro, and three at once under
 validation put an Intel Iris Plus 645 more than half a second behind, which is where the driver stops waiting for
 it (a screenshot it gives up on is noise, and the run fails with "the GPU fell behind"). A Mac nobody sits at usually has its screen locked, and VibeRant Metal presents nothing to a
-window nobody can see; `-mtlunseen` makes it present anyway, so that the sweep covers presenting too (the frames
-themselves are read back from the driver either way).
+window nobody can see; `-mtlunseen` makes it present anyway, and without it such a sweep fails, since a sweep requires
+its frames to have been presented. `-mtlcheck` has the presenter read drawables back and compare them with the frames
+it placed in them ("Metal frames", above, has what the two do and don't show). The frames the sweep collects are read
+back from the driver either way.
 
 `capture.py hardware` is for what only a Mac with a display can show and a log can tell. It takes no pictures of
 the screen and sends no keys, so it needs no screen-recording or accessibility permission, and it works on a locked

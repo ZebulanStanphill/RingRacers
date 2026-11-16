@@ -188,6 +188,15 @@ window is hidden".
 - **`-mtlunseen`** presents every frame regardless of what AppKit says, for tests on a Mac nobody sits at: on both
   Macs this was tried on, the layer went on giving drawables with the screen locked (and, on the MacBook, the
   display asleep).
+- **`-mtlcheck`** has the presenter read drawables back: a window's first three and every sixtieth after, each with
+  the frame that was placed in it, compared once the copies are done (`mtl_present_check.h`, plain C++ with a test of
+  its own). The frame must be at the rectangle it was placed at, pixel for pixel where it is at its own size and by
+  the mean colors of 8 by 8 blocks where it is scaled, and the rest of the drawable must be black; the log has a line
+  per drawable, and "FAILED" in it where one differs. It is there because the game's screenshots and the capture
+  mode's frames are read from the driver's screen, before the presenter, and so can't tell a window that shows the
+  frame from one that shows black, or the frame with red and blue swapped. It is a test's path, not a player's: a
+  layer's drawables can only be read with `framebufferOnly` off. And it reads the texture that was presented, not the
+  screen: what the display did with it is still something only a look at the screen can tell.
 - **The game's headers.** `mtl_present.mm` is Objective-C++, and the game's headers don't go into one file with
   Apple's, so what the presenter needs of the game (the window, the icon, the Screen Scaling setting, the log, and
   `I_Error`) comes through `mtl_present_game.h`, which a C++ file implements.
@@ -319,8 +328,11 @@ on the M4 Pro and the older `MTLLegacySVDevice` on the runner and on the Intel G
 
 `capture.py sweep` plays the first staff ghost of each of the 213 maps with `-metal` in the frame capture mode (five
 level times each; 1,002 frames, as some replays are shorter), one game per map, and a run fails on anything but an
-exit with 0, every frame written, and a log without a validation message, a failed command buffer, a "not
-implemented" line, an error of the driver's, or a wait for the GPU that the driver gave up on.
+exit with 0, every frame written, all but a few frames presented to the window by the presenter's own count, and a
+log without a validation message, a failed command buffer, a "not implemented" line, an error of the driver's, or a
+wait for the GPU that the driver gave up on. (The sweeps counted below ran before the presenter's count was a
+condition; their counts are given with them. `tests/README.md`, "Metal frames", has what a run does and doesn't show
+about the window.)
 
 - **The runner**: all 213 clean, twice, with 436,000 frames presented to the window on the way.
 - **The M4 Pro**, four games at a time, presenting with `-mtlunseen`: all 213 exited with 0 and wrote their 1,002

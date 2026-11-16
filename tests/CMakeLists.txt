@@ -274,6 +274,26 @@ add_test(NAME metal_present_seen COMMAND metal_present_seen)
 set_tests_properties(metal_present_seen PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
+# Whether a drawable holds the frame VibeRant Metal's presenter placed in it (-mtlcheck): the comparison is a header
+# with no dependencies too.
+add_executable(metal_present_check metal-present-check.cpp)
+target_compile_features(metal_present_check PRIVATE cxx_std_17)
+target_include_directories(metal_present_check PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(metal_present_check PRIVATE -UNDEBUG -Wall -Wextra -Werror -O2)
+if(RR_SANITIZERS)
+    target_compile_options(metal_present_check PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(metal_present_check PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME metal_present_check COMMAND metal_present_check)
+set_tests_properties(metal_present_check PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
+# How tests/metal-frames/capture.py judges a run of the macOS game by its log, against logs made up from the
+# presenter's own lines: no game is started.
+add_test(NAME metal_capture_judging COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/metal-frames/test_capture.py")
+set_tests_properties(metal_capture_judging PROPERTIES TIMEOUT 60)
+
 # The placement Screen Scaling's renderers share is a header of its own, with no dependencies.
 add_executable(screen_scaling screen-scaling.cpp)
 target_compile_features(screen_scaling PRIVATE cxx_std_17)

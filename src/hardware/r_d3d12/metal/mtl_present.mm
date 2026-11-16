@@ -42,6 +42,7 @@
 // Nothing of Apple's after this: it brings Direct3D's declarations, with Windows' BOOL under another name
 #include "mtl12_internal.h"
 #include "../d3d12_present.h"
+#include "mtl_present_check.h"
 #include "mtl_present_game.h"
 #include "mtl_present_seen.h"
 
@@ -113,6 +114,100 @@ void Reported(uint64_t serial)
 }
 
 const Clock::time_point g_start = Clock::now();
+
+// -mtlcheck: some drawables are read back with the frame they were given, and compared (mtl_present_check.h). For
+// tests: a drawable that can be read isn't quite the one a player gets (the layer's framebufferOnly is off).
+struct DrawableCheck
+{
+	bool on = false;
+	ComPtr<ID3D12Resource> frame, shown; // readback buffers
+	UINT64 frameBytes = 0, shownBytes = 0;
+	int made = 0, differed = 0, missed = 0; // since the window was taken
+};
+DrawableCheck g_check;
+// A window's first three frames, and every sixtieth after
+constexpr int kCheckFirst = 3, kCheckEvery = 60;
+
+UINT CheckPitch(UINT64 width)
+{
+	return (UINT)((width * 4 + 255) & ~UINT64(255));
+}
+
+bool CheckBuffer(ComPtr<ID3D12Resource> &buffer, UINT64 &has, UINT64 bytes)
+{
+	if (buffer && has >= bytes)
+		return true;
+	Core_Retire(buffer);
+	D3D12_HEAP_PROPERTIES heap = {};
+	heap.Type = D3D12_HEAP_TYPE_READBACK;
+	D3D12_RESOURCE_DESC desc = {};
+	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	desc.Width = bytes;
+	desc.Height = 1;
+	desc.DepthOrArraySize = desc.MipLevels = 1;
+	desc.SampleDesc.Count = 1;
+	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	has = 0;
+	if (Core_Failed(Core_Device()->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+		IID_PPV_ARGS(&buffer)), "CreateCommittedResource (drawable check)"))
+		return false;
+	has = bytes;
+	return true;
+}
+
+// Copies all of a texture, which is in state and stays in it, into a readback buffer
+void CopyForCheck(ID3D12Resource *texture, D3D12_RESOURCE_STATES state, ID3D12Resource *buffer)
+{
+	const D3D12_RESOURCE_DESC desc = texture->GetDesc();
+	D3D12_TEXTURE_COPY_LOCATION source = {}, destination = {};
+	source.pResource = texture;
+	source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	destination.pResource = buffer;
+	destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	destination.PlacedFootprint.Footprint = {desc.Format, (UINT)desc.Width, desc.Height, 1, CheckPitch(desc.Width)};
+	Core_Transition(texture, state, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	Core_FlushBarriers();
+	Core_List()->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+	Core_Transition(texture, D3D12_RESOURCE_STATE_COPY_SOURCE, state);
+	Core_FlushBarriers();
+}
+
+// Once the copies are done: is the frame in the drawable where it was placed?
+void CompareForCheck(UINT64 fence, const D3D12_RESOURCE_DESC &frameDesc, UINT width, UINT height, const D3D12_RESOURCE_DESC &shownDesc,
+	const screen_scaling::Placement &placement)
+{
+	const int number = g_check.made + g_check.missed + 1;
+	void *frameData = nullptr, *shownData = nullptr;
+	if (!Core_Wait(fence, 2000, "the drawable check") || FAILED(g_check.frame->Map(0, nullptr, &frameData)))
+	{
+		g_check.missed++;
+		Log("presenter: drawable check %d wasn't made: the copies didn't come back", number);
+		return;
+	}
+	if (FAILED(g_check.shown->Map(0, nullptr, &shownData)))
+	{
+		g_check.frame->Unmap(0, nullptr);
+		g_check.missed++;
+		Log("presenter: drawable check %d wasn't made: the copies didn't come back", number);
+		return;
+	}
+	const rr_mtl_present::Pixels frame = {static_cast<const uint8_t *>(frameData), (int)std::min<UINT64>(width, frameDesc.Width),
+		(int)std::min(height, frameDesc.Height), (int)CheckPitch(frameDesc.Width), frameDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM};
+	const rr_mtl_present::Pixels drawable = {static_cast<const uint8_t *>(shownData), (int)shownDesc.Width, (int)shownDesc.Height,
+		(int)CheckPitch(shownDesc.Width), shownDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM};
+	const rr_mtl_present::Rect placed = {placement.x, placement.y, placement.w, placement.h};
+	const rr_mtl_present::Shown shown = rr_mtl_present::CompareShown(frame, drawable, placed);
+	g_check.shown->Unmap(0, nullptr);
+	g_check.frame->Unmap(0, nullptr);
+	g_check.made++;
+	g_check.differed += !shown.matches;
+	char pixels[96] = "scaled";
+	if (shown.unscaled)
+		snprintf(pixels, sizeof pixels, "at its own size, %ld of %ld pixels differ", shown.pixelsOff, shown.pixels);
+	Log("presenter: drawable check %d%s: the %dx%d frame %s the %dx%d drawable at %d,%d as %dx%d (%s; a block's mean color at most %.2f levels off; %ld pixels outside aren't black)",
+		number, shown.matches ? "" : " FAILED", frame.width, frame.height, shown.matches ? "is in" : "is NOT what is in", drawable.width, drawable.height,
+		placed.x, placed.y, placed.w, placed.h, pixels, shown.worstBlock, shown.outside);
+}
 
 void SubmitWithoutPresenting()
 {
@@ -222,7 +317,10 @@ bool CreateWindowAndLayer()
 		// space's business (MatchWindowColors)
 		layer.device = device;
 		layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-		layer.framebufferOnly = YES;
+		// Only a render target, unless a test wants to read it back (-mtlcheck)
+		g_check.on = rr_mtl_present::CheckDrawables();
+		g_check.made = g_check.differed = g_check.missed = 0;
+		layer.framebufferOnly = g_check.on ? NO : YES;
 		layer.opaque = YES;
 		layer.displaySyncEnabled = g_mtl.vsync;
 
@@ -266,6 +364,8 @@ void GiveBackWindow(bool idle, bool quitting)
 	{
 		Core_Device()->CreateRenderTargetView(nullptr, nullptr, Core_Rtv(kSlot));
 		DestroyLayer();
+		Core_Retire(g_check.frame);
+		Core_Retire(g_check.shown);
 
 		SDL_Window *metal = g_mtl.metalWindow;
 		SDL_Window *game = g_mtl.gameWindow;
@@ -298,6 +398,9 @@ void GiveBackWindow(bool idle, bool quitting)
 			snprintf(what, sizeof what, "closed the Metal window as the game quits; the game's OpenGL window is %s",
 				!game ? "gone" : (SDL_GetWindowFlags(game) & SDL_WINDOW_SHOWN) ? "shown" : "hidden");
 	}
+	if (g_check.on)
+		Log("presenter: %d drawables were read back and compared with the frames placed in them (-mtlcheck): %d differed, %d unread",
+			g_check.made + g_check.missed, g_check.differed, g_check.missed);
 	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped)",
 		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesShown.load(), g_probesDropped.load());
 }
@@ -438,6 +541,8 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 
 		const Clock::time_point drawStart = Clock::now();
 		ID3D12GraphicsCommandList *list = Core_List();
+		bool placed = false, checking = false;
+		D3D12_RESOURCE_DESC frameDesc = {}, shownDesc = {};
 		const D3D12_CPU_DESCRIPTOR_HANDLE rtv = Core_Rtv(kSlot);
 		if (list)
 		{
@@ -446,11 +551,25 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			Core_Device()->CreateRenderTargetView(back.Get(), nullptr, rtv);
 			Core_Transition(back.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 			Core_FlushBarriers();
-			if (!place || !place(source, sourceState, back.Get(), rtv, placement, g_mtl.width, g_mtl.height))
+			placed = place && place(source, sourceState, back.Get(), rtv, placement, g_mtl.width, g_mtl.height);
+			if (!placed)
 			{
 				const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 				list->ClearRenderTargetView(rtv, black, 0, nullptr);
 				LOG_ONCE("couldn't place the frame in the drawable, so it shows black");
+			}
+			// -mtlcheck: copies of the frame and of the drawable it was placed in, to compare once they are done
+			if (g_check.on && placed && (g_totals.presented < kCheckFirst || g_totals.presented % kCheckEvery == 0))
+			{
+				frameDesc = source->GetDesc();
+				shownDesc = back->GetDesc();
+				if (CheckBuffer(g_check.frame, g_check.frameBytes, (UINT64)CheckPitch(frameDesc.Width) * frameDesc.Height)
+					&& CheckBuffer(g_check.shown, g_check.shownBytes, (UINT64)CheckPitch(shownDesc.Width) * shownDesc.Height))
+				{
+					CopyForCheck(source, sourceState, g_check.frame.Get());
+					CopyForCheck(back.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, g_check.shown.Get());
+					checking = true;
+				}
 			}
 			Core_Transition(back.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 			Core_FlushBarriers();
@@ -489,6 +608,8 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			Reported(serial);
 			return;
 		}
+		if (checking)
+			CompareForCheck(fence, frameDesc, width, height, shownDesc, placement);
 		g_stats.presented++;
 		g_totals.presented++;
 		g_stats.probes += probe;
