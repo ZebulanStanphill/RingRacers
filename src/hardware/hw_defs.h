@@ -323,6 +323,10 @@ enum hwdsetspecialstate
 	HWD_SET_PALETTE_RENDERING, // [UWP]
 	HWD_SET_WATER_SURFACE, // [UWP] 0: standalone, 1: new coplanar run, 2: continue
 
+#ifdef HAVE_D3D12
+	HWD_SET_TEXTUREATLAS,
+#endif
+
 	HWD_NUMSTATE
 };
 typedef enum hwdsetspecialstate hwdspecialstate_t;

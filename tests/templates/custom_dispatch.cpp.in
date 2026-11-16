@@ -52,6 +52,8 @@ static bool LogHas(const char *text) {
     for(const auto &line:logLines) if(line.find(text)!=std::string::npos) return true;
     return false;
 }
+static unsigned textureFlushes = 0;
+static void Flush() { ++textureFlushes; }
 static int deviceStub;
 static void *Core_Device() { return &deviceStub; }
 static void Core_Retire(ComPtr<ID3D12PipelineState> &) {}
@@ -106,7 +108,9 @@ static ID3D12PipelineState *FindOrCreatePipeline(const PipelineKey &key) {
 @@LOAD@@
 @@SET_SHADER@@
 static void Load(int type,const char *code,bool fragment=true) {
+    const unsigned before = textureFlushes;
     D3D_LoadCustomShader(type,const_cast<char*>(code),std::strlen(code),fragment);
+    assert(textureFlushes == before + 1);
 }
 static const CustomProgram *Draw(int type,Layout layout) { g_program=type; return CustomDrawProgram(layout); }
 static int CustomPipelines(int type) {

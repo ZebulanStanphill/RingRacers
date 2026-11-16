@@ -20,6 +20,7 @@
 #include "d3d12_upload.h"
 #include "mips.h"
 #include "custom_shader.h"
+#include "texture_atlas.h"
 #include "../hw_glsl.h"
 #ifdef _WIN32
 #include <d3dcompiler.h>
@@ -382,9 +383,12 @@ struct Constants
 	float postImageRect[4];
 	float postImageInfo[4];
 	INT32 roll[16];
+	float atlasRect[2][4], atlasClamp[2][4];
 };
 static_assert(offsetof(Constants, roll) == 336, "Roll constants must follow post-image constants");
-static_assert(sizeof(Constants) == 400, "Constants must match DrawConstants in shaders.hlsl");
+static_assert(offsetof(Constants, atlasRect) == 400, "Atlas constants must follow roll constants");
+static_assert(offsetof(Constants, atlasClamp) == 432, "Atlas clamps must follow both rectangles");
+static_assert(sizeof(Constants) == 464, "Constants must match DrawConstants in shaders.hlsl");
 
 
 bool ProgramExists(int type)
@@ -479,10 +483,19 @@ DXGI_QUERY_VIDEO_MEMORY_INFO g_localMemory = {};
 bool g_localMemoryValid = false;
 void RetireTexture(GpuTexture &texture);
 
+struct AtlasPage { GpuTexture texture; TextureAtlas allocator; };
+std::vector<AtlasPage> g_atlasPages;
+bool g_textureAtlas = true;
+UINT64 g_atlasPlaced = 0, g_atlasFreed = 0;
+UINT64 g_atlasReasons[7] = {}; // off, custom, mip, wrap, size, anisotropy, allocation
+bool AtlasCustomShaders();
+
 // An OpenGL texture object
 struct Texture : GpuTexture
 {
 	UINT32 id = 0;
+	int atlasPage = -1;
+	TextureAtlas::Rect atlasRect;
 	char probeName[9] = {}; // filled only during a requested surface probe
 
 	// Its parameters, with OpenGL's defaults
@@ -497,6 +510,15 @@ struct Texture : GpuTexture
 	GLMipmap_t *mipmap = nullptr;
 	UINT32 listFormat = 0, listWidth = 0, listHeight = 0;
 };
+
+void RetireTexture(Texture &texture)
+{
+	if (texture.atlasPage < 0) { RetireTexture(static_cast<GpuTexture &>(texture)); return; }
+	g_atlasPages[texture.atlasPage].allocator.Free(texture.atlasRect, Core_PendingFence());
+	++g_atlasFreed;
+	texture.atlasPage = -1; texture.atlasRect = {};
+	static_cast<GpuTexture &>(texture) = {};
+}
 
 // Keyed by name, as in OpenGL. Pointers to them stay valid until they're erased.
 std::unordered_map<UINT32, Texture> g_textures;
@@ -572,11 +594,14 @@ void SetNoTexture(int unit)
 	}
 }
 
+bool PromoteAtlas(Texture &texture);
+
 // glTexParameteri on unit 0's texture
 void SetRepeatS(bool repeat)
 {
 	if (g_units[0] && g_units[0]->repeatS != repeat)
 	{
+		if (repeat && !PromoteAtlas(*g_units[0])) return;
 		g_units[0]->repeatS = repeat;
 		g_units[0]->sampler = UINT32_MAX;
 	}
@@ -586,6 +611,7 @@ void SetRepeatT(bool repeat)
 {
 	if (g_units[0] && g_units[0]->repeatT != repeat)
 	{
+		if (repeat && !PromoteAtlas(*g_units[0])) return;
 		g_units[0]->repeatT = repeat;
 		g_units[0]->sampler = UINT32_MAX;
 	}
@@ -645,6 +671,12 @@ struct CustomShader
 };
 CustomShader g_customShaders[NUMBASESHADERS];
 UINT16 g_customGeneration = 0;
+bool AtlasCustomShaders()
+{
+	for (const auto &shader : g_customShaders)
+		if (!shader.vertex.empty() || !shader.fragment.empty()) return true;
+	return false;
+}
 const CustomProgram *CustomDrawProgram(Layout layout)
 {
 	if (g_postImage || g_allowShaders != HWD_SHADEROPTION_ON || g_program < 0 || g_program >= NUMBASESHADERS
@@ -871,7 +903,7 @@ UINT FullMipCount(UINT width, UINT height)
 	while (width > 1 || height > 1) { width = std::max(1u, width / 2); height = std::max(1u, height / 2); ++count; }
 	return count;
 }
-bool UploadTexture(GpuTexture &texture, const void *data)
+bool UploadTexture(GpuTexture &texture, const void *data, UINT width = 0, UINT height = 0, UINT x = 0, UINT y = 0)
 {
 	std::vector<MipLevelRGBA8> chain;
 	if (texture.mips > 1)
@@ -883,7 +915,8 @@ bool UploadTexture(GpuTexture &texture, const void *data)
 		g_stats.mipMs += (end.QuadPart - begin.QuadPart) * 1000.0 / frequency.QuadPart;
 		g_stats.mipsGenerated += chain.size() - 1;
 	}
-	const auto desc = texture.res->GetDesc();
+	auto desc = texture.res->GetDesc();
+	if (width) { desc.Width = width; desc.Height = height; }
 	std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(texture.mips);
 	std::vector<UINT> rows(texture.mips);
 	std::vector<UINT64> rowBytes(texture.mips);
@@ -909,7 +942,7 @@ bool UploadTexture(GpuTexture &texture, const void *data)
 		from.pResource = g_textureRing.Resource(); from.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 		from.PlacedFootprint = footprints[mip];
 		to.pResource = texture.res.Get(); to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; to.SubresourceIndex = mip;
-		Core_List()->CopyTextureRegion(&to, 0, 0, 0, &from, nullptr);
+		Core_List()->CopyTextureRegion(&to, x, y, 0, &from, nullptr);
 	}
 	Transition(texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	return true;
@@ -1101,6 +1134,64 @@ bool CreateTextureStorage(GpuTexture *texture, UINT id, UINT width, UINT height,
 	return true;
 }
 
+bool UploadAtlas(Texture &texture, UINT w, UINT h, const void *data)
+{
+	if (texture.atlasPage >= 0 && (texture.width != w || texture.height != h)) RetireTexture(texture);
+	if (texture.atlasPage < 0)
+	{
+		TextureAtlas::Rect rect;
+		size_t page = 0;
+		for (; page < g_atlasPages.size(); ++page)
+		{
+			auto &allocator = g_atlasPages[page].allocator;
+			allocator.Collect(Core_CompletedFence());
+			rect = allocator.Allocate(w, h);
+			if (rect) break;
+		}
+		if (!rect)
+		{
+			AtlasPage fresh;
+			if (!CreateTextureStorage(&fresh.texture, 0, TextureAtlas::Size, TextureAtlas::Size,
+				DXGI_FORMAT_R8G8B8A8_UNORM, false, nullptr)) return false;
+			rect = fresh.allocator.Allocate(w, h);
+			g_atlasPages.push_back(std::move(fresh));
+		}
+		RetireTexture(texture);
+		texture.atlasPage = (int)page; texture.atlasRect = rect;
+		texture.res = g_atlasPages[page].texture.res;
+		texture.srv = g_atlasPages[page].texture.srv;
+		texture.width = w; texture.height = h; texture.mips = 1;
+		texture.format = DXGI_FORMAT_R8G8B8A8_UNORM; texture.bytes = (UINT64)w * h * 4;
+		++g_atlasPlaced;
+	}
+	return UploadTexture(g_atlasPages[texture.atlasPage].texture, data, w, h, texture.atlasRect.x, texture.atlasRect.y);
+}
+
+// A polygon can temporarily force wrapping even on an upload marked CLAMP.
+// Preserve its pixels in a standalone resource before allowing that sampler.
+bool PromoteAtlas(Texture &texture)
+{
+	if (texture.atlasPage < 0) return true;
+	GpuTexture replacement;
+	if (!CreateTextureStorage(&replacement, texture.id, texture.width, texture.height,
+		DXGI_FORMAT_R8G8B8A8_UNORM, false, nullptr)) return false;
+	auto &page = g_atlasPages[texture.atlasPage].texture;
+	Transition(page, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	Transition(replacement, D3D12_RESOURCE_STATE_COPY_DEST);
+	Core_FlushBarriers();
+	D3D12_TEXTURE_COPY_LOCATION from = {}, to = {};
+	from.pResource = page.res.Get(); from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	to.pResource = replacement.res.Get(); to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	D3D12_BOX box = {texture.atlasRect.x, texture.atlasRect.y, 0,
+		texture.atlasRect.x + texture.width, texture.atlasRect.y + texture.height, 1};
+	Core_List()->CopyTextureRegion(&to, 0, 0, 0, &from, &box);
+	Transition(page, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	Transition(replacement, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	RetireTexture(texture);
+	static_cast<GpuTexture &>(texture) = std::move(replacement);
+	return true;
+}
+
 UINT GetSampler(Texture *texture)
 {
 	if (texture->sampler != UINT32_MAX)
@@ -1279,12 +1370,20 @@ void UpdateTextureInternal(GLMipmap_t *pTexInfo)
 	{
 		const bool mipmapped = g_mipmap;
 
-		bool uploaded;
-		if (texture->res && texture->width == (UINT)w && texture->height == (UINT)h
-			&& texture->mips == (mipmapped ? FullMipCount(w, h) : 1))
-			uploaded = UploadTexture(*texture, ptex);
-		else
-			uploaded = CreateTextureStorage(texture, texture->id, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, mipmapped, ptex);
+		const int reason = !g_textureAtlas ? 0 : AtlasCustomShaders() ? 1 : mipmapped ? 2
+			: (pTexInfo->flags & (TF_WRAPX | TF_WRAPY)) ? 3 : (w > 256 || h > 256) ? 4
+			: (g_anisotropicFilter > 1 && (texture->minFilter != FILTER_NEAREST || texture->magFilter != FILTER_NEAREST)) ? 5 : -1;
+		bool uploaded = false;
+		if (reason < 0) uploaded = UploadAtlas(*texture, w, h, ptex);
+		if (reason >= 0 || !uploaded)
+		{
+			++g_atlasReasons[reason < 0 ? 6 : reason];
+			if (texture->atlasPage >= 0) RetireTexture(*texture);
+			if (texture->res && texture->width == (UINT)w && texture->height == (UINT)h
+				&& texture->mips == (mipmapped ? FullMipCount(w, h) : 1))
+				uploaded = UploadTexture(*texture, ptex);
+			else uploaded = CreateTextureStorage(texture, texture->id, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, mipmapped, ptex);
+		}
 
 		if (uploaded)
 		{
@@ -1481,6 +1580,20 @@ INT32 g_roll[16] = {};
 bool ApplyConstants(bool custom)
 {
 	Constants c = {};
+	for (int unit = 0; unit < 2; ++unit)
+	{
+		auto *t = g_units[unit];
+		float *r = c.atlasRect[unit], *v = c.atlasClamp[unit];
+		// Left zero (no transform) unless the texture is in an atlas page; see AtlasUV in shaders.hlsl
+		if (t && t->atlasPage >= 0)
+		{
+			const float a = (float)TextureAtlas::Size;
+			r[0] = t->atlasRect.x / a; r[1] = t->atlasRect.y / a;
+			r[2] = t->width / a; r[3] = t->height / a;
+			v[0] = r[0] + 0.5f / a; v[1] = r[1] + 0.5f / a;
+			v[2] = r[0] + (t->width - 0.5f) / a; v[3] = r[1] + (t->height - 0.5f) / a;
+		}
+	}
 	memcpy(c.roll, g_roll, sizeof(c.roll));
 	memcpy(c.projection, g_projection.m, sizeof c.projection);
 	memcpy(c.modelview, g_modelview.back().m, sizeof c.modelview);
@@ -2574,6 +2687,9 @@ void D3D_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 			memset(g_boundPaletteTables, 0, sizeof g_boundPaletteTables);
 			break;
 
+		case HWD_SET_TEXTUREATLAS:
+			if (g_textureAtlas != !!Value) { Flush(); g_textureAtlas = !!Value; }
+			break;
 		case HWD_SET_TEXTUREANISOTROPICMODE:
 			g_anisotropicFilter = std::min((int)Value, kMaximumAnisotropy);
 			Log("anisotropic filtering %d", g_anisotropicFilter);
@@ -2896,6 +3012,7 @@ void D3D_LoadCustomShader(int number, char *code, size_t size, boolean isfragmen
 		Log("invalid custom shader %d (%u bytes); keeping the built-in shader", number, (unsigned)size);
 		return;
 	}
+	Flush(); // Custom programs sample raw UVs; retire any existing atlas views.
 	std::string source(code, size);
 	while (!source.empty() && source.back() == 0) source.pop_back();
 	CustomShader &shader = g_customShaders[number];
@@ -3358,6 +3475,15 @@ void D3D12_LogPerf(double seconds)
 		vertex.peakBytes / 1048576.0, index.peakBytes / 1048576.0, constants.peakBytes / 1048576.0,
 		vertex.wraps, index.wraps, constants.wraps, vertex.stalls + index.stalls + constants.stalls,
 		vertex.stallMs + index.stallMs + constants.stallMs, vertex.grows + index.grows + constants.grows);
+	unsigned atlasAlive = 0; UINT64 used = 0;
+	for (const auto &entry : g_textures) atlasAlive += entry.second.atlasPage >= 0;
+	for (auto &page : g_atlasPages) { page.allocator.Collect(Core_CompletedFence()); used += page.allocator.UsedArea(); }
+	I_OutputMsg("UWP perf:   D3D12: atlas: %u textures in %u pages (%.1f%% used), %llu placed and %llu freed this period; standalone: off %llu, custom %llu, mip %llu, wrap %llu, size %llu, anisotropy %llu, allocation %llu\n",
+		atlasAlive, (unsigned)g_atlasPages.size(), g_atlasPages.empty() ? 0.0 : used * 100.0 / (g_atlasPages.size() * TextureAtlas::Size * TextureAtlas::Size),
+		(unsigned long long)g_atlasPlaced, (unsigned long long)g_atlasFreed,
+		(unsigned long long)g_atlasReasons[0], (unsigned long long)g_atlasReasons[1], (unsigned long long)g_atlasReasons[2],
+		(unsigned long long)g_atlasReasons[3], (unsigned long long)g_atlasReasons[4], (unsigned long long)g_atlasReasons[5], (unsigned long long)g_atlasReasons[6]);
+	g_atlasPlaced = g_atlasFreed = 0; for (auto &reason : g_atlasReasons) reason = 0;
 	const RingStats staging = g_textureRing.TakeStats();
 	I_OutputMsg("UWP perf:   D3D12: textures: %llu created, %llu uploads (%.2f MB), %llu deleted, %d flushes, %u alive; SRVs used %u/65536, samplers %u/2048; allocated %.2f MB vs requested %.2f MB; staging ring peak %.2f MB, %u wraps, %u stalls (%.2f ms), %u grows\n",
 		(unsigned long long)s.texturesCreated, (unsigned long long)s.textureUploads, s.textureUploadBytes / 1048576.0,
@@ -3542,6 +3668,8 @@ void D3D12_Shutdown(void)
 	g_vertexRing.Shutdown(); g_indexRing.Shutdown(); g_constantRing.Shutdown();
 	g_textureRing.Shutdown();
 	while (!g_textures.empty()) DeleteTextureObject(g_textures.begin()->first);
+	for (auto &page : g_atlasPages) RetireTexture(page.texture);
+	g_atlasPages.clear();
 	D3D_ClearLightTables();
 	RetireTexture(g_paletteLookup);
 	RetireTexture(g_screenPalette);

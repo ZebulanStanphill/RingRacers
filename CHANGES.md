@@ -24,6 +24,8 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 
 ## VibeRant D3D renderer
 
+- **Small-texture atlas** *(untested on Xbox)*. Less slowdown when many color-changing sprites appear, such as multiplayer invincibility: VibeRant shares texture pages instead of creating a resource for every sprite translation. `gr_textureatlas` (On by default) flushes textures when toggled for comparison. See [the atlas notes](docs/d3d12-texture-atlas.md).
+
 ### Direct3D 12 driver
 
 - **Renderer and default** *(works on Xbox)*. VibeRant D3D draws upstream Legacy GL through `src/hardware/r_d3d12/` and is the default for new configs; valid saved renderer choices remain effective. Startup logs `UWP: VibeRant backend: D3D12`, and a failed driver start falls back to Software.

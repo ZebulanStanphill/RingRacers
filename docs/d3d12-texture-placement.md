@@ -56,3 +56,6 @@ The 64×64×64 R8 palette lookup table uses `CreateTextureResource` too: its las
 ## Counters
 
 The perf summary's `texture heaps:` line counts textures created in each kind of storage: `placed` (shared heap blocks), `dedicated` (heaps of their own) and `committed` (the last resort, expected to stay at 0).
+
+Small sprite resources can also share [texture atlas pages](d3d12-texture-atlas.md);
+the page resources retain the same placed-resource guard.

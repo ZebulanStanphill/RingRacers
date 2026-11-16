@@ -58,6 +58,12 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
 
+- **Texture atlas:** `d3d12_texture_atlas` tests the production shelf allocator
+  with rounded dimensions, full pages, fence-deferred frees, coalescing, and
+  empty-page reset. GPU sampling and Xbox resource creation timing require
+  renderer captures and device testing; see [atlas notes](../docs/d3d12-texture-atlas.md).
+
+
 - **Plane polygon loops:** `plane_polygon_loops` runs the production plane polygon
   construction and seg adjustment on a four-subsector map whose partitions cross a
   quarter of a unit apart. It checks that each polygon has exactly its GL seg loop's

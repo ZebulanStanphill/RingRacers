@@ -26,6 +26,9 @@ int u_wipe_mode, u_wipe_wiggle, u_wipe_reverse;
 struct VSOut {
     float4 pos;
 };
+// Wipe screen captures are standalone, so their atlas transforms are identity.
+float2 TexUV(float2 uv) { return uv; }
+float2 BrightUV(float2 uv) { return uv; }
 int s_tex;
 float2 sampledMask, sampledScreen;
 float raw;

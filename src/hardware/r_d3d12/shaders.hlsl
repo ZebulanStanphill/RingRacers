@@ -74,7 +74,21 @@ cbuffer DrawConstants : register(b0)
 	int4 u_roll_canvas;
 	int4 u_roll_source;
 	float4 u_roll_scale;
+	float4 u_atlas_rect[2];
+	float4 u_atlas_clamp[2];
 };
+
+// A texture in an atlas page: its rectangle (offset, scale) and the texel centers to clamp to, like CLAMP addressing.
+// A zero scale means a texture of its own, as in the zeroed b0 that fullscreen passes bind.
+float2 AtlasUV(float2 uv, int unit)
+{
+	const float4 rect = unit ? u_atlas_rect[1] : u_atlas_rect[0];
+	const float4 bounds = unit ? u_atlas_clamp[1] : u_atlas_clamp[0];
+	const float2 placed = clamp(rect.xy + uv * rect.zw, bounds.xy, bounds.zw);
+	return rect.z != 0.0 ? placed : uv;
+}
+float2 TexUV(float2 uv) { return AtlasUV(uv, 0); }
+float2 BrightUV(float2 uv) { return AtlasUV(uv, 1); }
 
 Texture2D t_tex : register(t0);
 Texture2D t_brightmap : register(t1); // also the fade mask of screen wipes
@@ -395,7 +409,7 @@ float4 SoftwareFade(float4 final_color, float final_lighting, float z)
 RR_RS
 float4 PSFixed(VSOut i) : SV_Target
 {
-	float4 texel = t_tex.Sample(s_tex, i.uv);
+	float4 texel = t_tex.Sample(s_tex, TexUV(i.uv));
 	float4 color = i.color;
 
 	if (u_tex_mode == 1)
@@ -410,7 +424,7 @@ float4 PSFixed(VSOut i) : SV_Target
 RR_RS
 float4 PSDefault(VSOut i) : SV_Target
 {
-	return AlphaTest(t_tex.Sample(s_tex, i.uv) * u_poly_color);
+	return AlphaTest(t_tex.Sample(s_tex, TexUV(i.uv)) * u_poly_color);
 }
 
 // Whole canvas pixels make FixedMul exact integer products. HLSL signed >>
@@ -435,9 +449,9 @@ float4 PSSoftware(VSOut i) : SV_Target
 		if (u_roll_source.z) sx = u_roll_source.x - 1 - sx;
 		uv = (float2(sx, sy) + 0.5) * u_roll_scale.xy;
 	}
-	float4 texel = t_tex.Sample(s_tex, uv);
+	float4 texel = t_tex.Sample(s_tex, TexUV(uv));
 	float4 base_color = texel * u_poly_color;
-	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, uv).r);
+	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, BrightUV(uv)).r);
 	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 	float final_lighting = u_lighting + light_gain;
 	if (u_palette)
@@ -452,10 +466,10 @@ float4 PSSoftware(VSOut i) : SV_Target
 RR_RS
 float4 PSSoftwareModelLight(VSOut i) : SV_Target
 {
-	float4 texel = t_tex.Sample(s_tex, i.uv);
+	float4 texel = t_tex.Sample(s_tex, TexUV(i.uv));
 	float4 base_color = texel * u_poly_color;
 	float final_lighting = i.color.r * 255.0;
-	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
+	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, BrightUV(i.uv)).r);
 	float light_gain = (255.0 - final_lighting) * brightmap_mix;
 	final_lighting += light_gain;
 	if (u_palette)
@@ -479,9 +493,9 @@ float4 PSWater(VSOut i) : SV_Target
 	float a = -pi * (z * freq) + (u_leveltime * speed);
 	float sdistort = sin(a) * amp;
 	float cdistort = cos(a) * amp;
-	float4 texel = t_tex.Sample(s_tex, float2(i.uv.x - sdistort, i.uv.y - cdistort));
+	float4 texel = t_tex.Sample(s_tex, TexUV(float2(i.uv.x - sdistort, i.uv.y - cdistort)));
 	float4 base_color = texel * u_poly_color;
-	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, i.uv).r);
+	float brightmap_mix = floor(t_brightmap.Sample(s_brightmap, BrightUV(i.uv)).r);
 	float light_gain = (255.0 - u_lighting) * brightmap_mix;
 	float final_lighting = u_lighting + light_gain;
 	if (u_palette)
@@ -570,14 +584,14 @@ float4 PSFogRemap(VSOut i) : SV_Target
 RR_RS
 float4 PSSky(VSOut i) : SV_Target
 {
-	return AlphaTest(t_tex.Sample(s_tex, i.uv) * i.color * u_poly_color);
+	return AlphaTest(t_tex.Sample(s_tex, TexUV(i.uv)) * i.color * u_poly_color);
 }
 
 // The second pass of DoScreenWipe: the end screen (GL_REPLACE) modulated by the fade mask on the second unit
 RR_RS
 float4 PSWipe(VSOut i) : SV_Target
 {
-	return AlphaTest(t_tex.Sample(s_tex, i.uv) * t_brightmap.Sample(s_brightmap, i.uv1));
+	return AlphaTest(t_tex.Sample(s_tex, TexUV(i.uv)) * t_brightmap.Sample(s_brightmap, BrightUV(i.uv1)));
 }
 
 // [UWP]: The RHI's rhi_glsl_fragment_postprocesswipe, with D3D's top-first screen textures.
@@ -600,7 +614,7 @@ float4 PSWipeFull(VSOut i) : SV_Target
 	// Clamp to the captured screen, rather than the unused part of the square texture.
 	float2 halfPixel = 0.5 / u_wipe_screen_size;
 	float2 uv = clamp(screen, halfPixel, 1.0 - halfPixel) * u_wipe_screen_fix;
-	float3 start = t_tex.Sample(s_tex, uv).rgb;
+	float3 start = t_tex.Sample(s_tex, TexUV(uv)).rgb;
 	float3 color;
 	if (u_wipe_mode == 1)
 		color = lerp(start, 1.0 - start, fade);
@@ -619,7 +633,7 @@ float4 PSWipeFull(VSOut i) : SV_Target
 		color = saturate(start + float3(radd, gadd, badd));
 	}
 	else
-		color = lerp(start, t_brightmap.Sample(s_tex, uv).rgb, fade);
+		color = lerp(start, t_brightmap.Sample(s_tex, BrightUV(uv)).rgb, fade);
 	return float4(color, 1.0); // Keep the screen alpha at 1, including the invert wipe.
 }
 
@@ -664,5 +678,5 @@ float2 PostImageUV(float2 uv)
 RR_RS
 float4 PSPostImage(VSOut i) : SV_Target
 {
-	return t_tex.Sample(s_tex, PostImageUV(i.uv));
+	return t_tex.Sample(s_tex, TexUV(PostImageUV(i.uv)));
 }

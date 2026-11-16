@@ -592,6 +592,23 @@ int main(int argc,char **argv) {
         // Each block must contain its own complete blind guard, including mixed alignments.
         struct Placement { UINT32 heap; UINT64 offset, block, reported, alignment; };
         {
+            // A small clamped texture goes to an atlas page by default: no placed storage of its own,
+            // drawn through the page's rectangle.
+            std::vector<UINT8> pixels(64*64*4);
+            for(size_t pixel=0;pixel<64*64;pixel++) { pixels[pixel*4]=24; pixels[pixel*4+1]=120; pixels[pixel*4+2]=232; pixels[pixel*4+3]=255; }
+            GLMipmap_t atlased={}; atlased.format=GL_TEXFMT_RGBA; atlased.width=atlased.height=64; atlased.data=pixels.data();
+            texture(&atlased);
+            Placement p={};
+            if(D3D12_GetTexturePlacementForTest(atlased.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
+                throw std::runtime_error("texture-guard 64x64 texture did not go to the atlas");
+            reset(); texture(&atlased); textured();
+            expect("texture-guard",RGB{24,120,232});
+            deleteTexture(&atlased);
+            D3D12_FinishUpdate(0);
+        }
+        // The placement checks below need standalone resources.
+        special(HWD_SET_TEXTUREATLAS,0);
+        {
             std::array<GLMipmap_t,4> textures={};
             std::array<std::vector<UINT8>,4> data;
             std::array<Placement,4> placements={};
@@ -629,6 +646,7 @@ int main(int argc,char **argv) {
             }
             D3D12_FinishUpdate(0);
         }
+        special(HWD_SET_TEXTUREATLAS,1);
         // A 1024x1024 texture exceeds the shared heaps' largest class once its guard is counted. It must get a heap
         // of its own rather than committed storage, whose last texel the Xbox One driver's state word can zero.
         {

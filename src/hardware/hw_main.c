@@ -9057,6 +9057,14 @@ void CV_glanisotropic_OnChange(void)
 }
 
 #ifdef HAVE_D3D12
+static void TextureAtlas_OnChange(void);
+static consvar_t cv_grtextureatlas = CVAR_INIT("gr_textureatlas", "On", CV_SAVE|CV_CALL, CV_OnOff, TextureAtlas_OnChange);
+static void TextureAtlas_OnChange(void)
+{
+	if (rendermode == render_opengl && HWR_D3D12())
+		HWD.pfnSetSpecialState(HWD_SET_TEXTUREATLAS, cv_grtextureatlas.value);
+}
+
 static void HWR_SurfaceProbe_f(void)
 {
 	INT32 x = 15, y = 35;
@@ -9133,6 +9141,7 @@ void HWR_AddSessionCommands(void)
 	if (gl_sessioncommandsadded)
 		return;
 #ifdef HAVE_D3D12
+	CV_RegisterVar(&cv_grtextureatlas);
 	COM_AddCommand("gr_surfaceprobe", HWR_SurfaceProbe_f);
 #endif
 #ifdef _UWP
@@ -9181,6 +9190,9 @@ void HWR_Switch(void)
 
 	// Set special states from CVARs
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
+#ifdef HAVE_D3D12
+	if (HWR_D3D12()) HWD.pfnSetSpecialState(HWD_SET_TEXTUREATLAS, cv_grtextureatlas.value);
+#endif
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
 	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, gl_palette_rendering_state); // [UWP]
 	HWR_UpdatePaletteRendering(); // [UWP]
