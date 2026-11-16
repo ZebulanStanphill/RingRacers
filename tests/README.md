@@ -631,6 +631,28 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   comes within twice its size is marked as well. Each of these fails with the matching line of the
   production code changed. Seg traversal, GPU depth and Xbox visuals still need separate validation;
   the stencil mask itself is a driver scene (`spring-mask`, below).
+  A spring's pass over the recorded entries keeps what depends only on an entry and the
+  camera (its near-clipped corners, the numbers that decide whether Software draws it over
+  a spring, and its silhouette planes), so a differential oracle holds the production
+  `HWR_SpringSubtract` to what it returned before that was cached: `tests/fixtures/spring-clip-reference.inc`
+  is a frozen copy of the earlier subtraction and the helpers that changed, under its own
+  names, with its own piece buffers and mark list. Over 4,000 seeded scenes (SplitMix64 again)
+  of up to 400 recorded entries each, mixing sides, 3D floor sides, planes (sloped, level with the
+  camera, with up to 32 corners, or without area), entries crossing the near plane or with an end at
+  the camera, entries edge-on to the camera (flat silhouettes), and ones the recording drops
+  (a side with no height, a see-through floor), several springs of random size are subtracted
+  from the same recording, with and without `mask` (the model path's doubled area), with and
+  without the probe, with a mark that fails, and with the sprite not a spring or drawn on top.
+  Between springs the camera moves a little, a lot, or by a few ulps, entries are recorded again
+  from a random slot (or after a zone purge), and others are added past the 256 a first
+  allocation holds. `memcmp` compares the pieces, their count, the return value, the
+  marked sides (the driver's calls and the list kept for clearing them), the peak piece count, and
+  the probe's log lines; in the default run all of the roughly 24,000 comparisons must be identical. The
+  oracle must be able to fail, so two negative controls run the same scenes with a cache
+  made stale on purpose and must report mismatches: entries changed in place without being recorded
+  again, and a camera change hidden from the cache by overwriting the camera it remembers. The
+  controls only touch the test's own copy of the code's state; nothing in production is
+  switched on for them.
 - **Shared brightmap textures:** `shared_brightmap_texture`, `shared_brightmap_flat`
   and `shared_brightmap_patch` execute production texture/texture-flat and patch
   collection after the same mipmap was used as a brightmap. Its flag must be clear

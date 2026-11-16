@@ -646,6 +646,7 @@ def generate(engine, output):
     render(templates / "spring_clip.cpp.in", {
         "HELPERS": hardware.section("// [ZE]: Software hides a spring that sits inside a wall.",
             "// End [ZE] spring silhouette geometry."),
+        "REFERENCE": (templates.parent / "fixtures" / "spring-clip-reference.inc").read_text(encoding="utf-8"),
         "DRAW_SPRITE": hardware.function("HWR_SpriteUV") + draw_sprite,
         "ROUTES": routes,
         "MODEL": hardware.section("// How a spring's 3D model is to be drawn, from what Software leaves of the spring's sprite.",

@@ -47,7 +47,13 @@ float gl_viewcos=1,gl_viewsin=0;
 static float gl_viewx=0,gl_viewy=0,gl_viewz=0;
 #include <cstdarg>
 static int probeLines;
-void I_OutputMsg(const char *fmt,...){++probeLines;va_list ap;va_start(ap,fmt);std::vprintf(fmt,ap);va_end(ap);}
+static std::string *probeCapture; // when set, log lines are appended here instead of printed
+void I_OutputMsg(const char *fmt,...){
+    ++probeLines;va_list ap;va_start(ap,fmt);
+    if(probeCapture){char line[2048];std::vsnprintf(line,sizeof line,fmt,ap);*probeCapture+=line;}
+    else std::vprintf(fmt,ap);
+    va_end(ap);
+}
 // Which hardware driver draws: the stencil marks for a spring's model are VibeRant's.
 static bool viberant=true;
 #undef HWR_VibeRant
@@ -59,6 +65,7 @@ boolean VibeRant_DrawSpringMask(const FOutVector *v,INT32 n,boolean set){
     assert(n>=3&&n<=32);if(markFails)return false;marks.push_back({{v,v+n},set!=0});return true;
 }
 @@HELPERS@@
+@@REFERENCE@@
 
 // Dependencies of the entire production draw entry. Geometry is supplied as a
 // pitched billboard fixture; texture and lighting stubs leave draw routing real.
@@ -873,9 +880,206 @@ static void Models(){
     }
     PurgeLevel();
 }
+
+// What a cached spring subtraction must return exactly as the uncached one did (the frozen copy of it in
+// spring-clip-reference.inc), over random scenes of every kind of recorded entry, springs and cameras. The
+// recording is production's and shared; each spring is subtracted by both, and the pieces, return value, marks,
+// peak and probe log are compared byte for byte. Between springs a scene's camera moves, entries are recorded
+// again over the same slots (also from nothing, after the zone is purged), and others are added.
+struct Outcome {
+    bool changed=false,left=false;size_t count=0,peak=0;
+    std::vector<hwr_springtriangle_t> pieces;std::vector<Mark> marks;std::vector<size_t> masks;std::string log;
+};
+static bool SameOutcome(const Outcome &a,const Outcome &b){
+    if(a.changed!=b.changed||a.left!=b.left||a.count!=b.count||a.peak!=b.peak||a.masks!=b.masks||a.log!=b.log)return false;
+    if(a.pieces.size()!=b.pieces.size()||(!a.pieces.empty()&&std::memcmp(a.pieces.data(),b.pieces.data(),a.pieces.size()*sizeof a.pieces[0])))return false;
+    if(a.marks.size()!=b.marks.size())return false;
+    for(size_t i=0;i<a.marks.size();++i){
+        if(a.marks[i].set!=b.marks[i].set||a.marks[i].v.size()!=b.marks[i].v.size())return false;
+        if(std::memcmp(a.marks[i].v.data(),b.marks[i].v.data(),a.marks[i].v.size()*sizeof(FOutVector)))return false;
+    }
+    return true;
+}
+static Outcome Subtract(bool reference,const FOutVector *quad,const FOutVector *area,FBITFIELD fl,bool mask,bool probe){
+    Outcome o;marks.clear();hwr_springprobe=probe;probeCapture=&o.log;
+    INT32 buffer=-1;size_t count=SIZE_MAX;
+    if(reference){refNumMasks=0;refPeakPieces=0;o.changed=RefSubtract(quad,area,fl,&spr,mask,&buffer,&count);}
+    else{hwr_numspringmasks=0;hwr_springpeakpieces=0;o.changed=HWR_SpringSubtract(quad,area,fl,&spr,mask,&buffer,&count);}
+    probeCapture=nullptr;hwr_springprobe=false;
+    o.left=buffer<0;o.count=count;
+    o.peak=reference?refPeakPieces:hwr_springpeakpieces;
+    if(buffer>=0){
+        const hwr_springtriangle_t *p=reference?refPieces[buffer]:hwr_springpieces[buffer];
+        o.pieces.assign(p,p+count);
+    }
+    o.masks.assign(reference?refMasks:hwr_springmasks,(reference?refMasks:hwr_springmasks)+(reference?refNumMasks:hwr_numspringmasks));
+    o.marks=marks;
+    return o;
+}
+struct Spec { bool plane=false,fof=false,seeThrough=false;std::vector<FOutVector> v; };
+// One recorded entry of any kind around the spring at (ox,oy,oz) as seen from the current camera: sides and planes
+// between them, ones that cross the near plane, ones edge-on to the camera (flat silhouettes), planes level with
+// the camera, many-cornered planes, and ones the recording drops.
+static Spec RandomEntry(SplitMix &r,double ox,double oy,double oz){
+    Spec e;e.fof=r.I(0,2)==0;e.seeThrough=r.I(0,29)==0;
+    const double camx=gl_viewx,camy=gl_viewy,camz=gl_viewz;
+    const double t=r.U(-0.2,1.1),cx=ox+(camx-ox)*t+r.U(-80,80),cy=oy+(camy-oy)*t+r.U(-80,80);
+    const int kind=r.I(0,99);
+    auto side=[&](double x0,double z0,double x1,double z1,double b0,double b1,double t0,double t1){
+        e.v={{(float)x0,(float)b0,(float)z0,0,0},{(float)x1,(float)b1,(float)z1,0,0},{(float)x1,(float)t1,(float)z1,0,0},{(float)x0,(float)t0,(float)z0,0,0}};
+    };
+    auto heights=[&](double &b0,double &b1,double &t0,double &t1){
+        b0=oz+r.U(-80,40);t0=b0+r.U(-10,200);
+        b1=r.I(0,1)?b0:oz+r.U(-80,40);t1=r.I(0,1)?t0:b1+r.U(-10,200);
+    };
+    auto polygon=[&](double centerx,double centery,double radius,double pa,double pb,double pc,bool subdivide){
+        e.plane=true;
+        const int corners=r.I(3,4);const double rot=r.U(0,2*M_PI);
+        std::vector<std::array<double,2>> base;
+        for(int c=0;c<corners;++c){double an=rot+2*M_PI*c/corners;base.push_back({centerx+radius*std::cos(an),centery+radius*std::sin(an)});}
+        for(int c=0;c<corners&&(int)e.v.size()<HWR_SPRINGMAXVERTS;++c){
+            auto p=base[c],q=base[(c+1)%corners];int sub=subdivide&&c==0?r.I(20,29):0;
+            for(int k=0;k<=sub&&(int)e.v.size()<HWR_SPRINGMAXVERTS;++k){
+                double u=(double)k/(sub+1);float x=(float)(p[0]+(q[0]-p[0])*u),z=(float)(p[1]+(q[1]-p[1])*u);
+                e.v.push_back({x,(float)(pa*x+pb*z+pc-pa*centerx-pb*centery),z,0,0});
+            }
+        }
+    };
+    if(kind<30){ // a side between the camera and a bit past the spring
+        double an=r.U(0,2*M_PI),len=r.U(2,200),b0,b1,t0,t1;heights(b0,b1,t0,t1);
+        side(cx,cy,cx+len*std::cos(an),cy+len*std::sin(an),b0,b1,t0,t1);
+    }else if(kind<55){ // a plane, sloped half of the time, with up to 32 corners
+        double pa=r.I(0,1)?r.U(-0.6,0.6):0,pb=r.I(0,1)?r.U(-0.6,0.6):0;
+        polygon(cx,cy,r.U(4,200),pa,pb,oz+r.U(-60,60),r.I(0,3)==0);
+    }else if(kind<65){ // a side that crosses the near plane, or has an end at the camera
+        double an=r.U(0,2*M_PI),len=r.U(50,300),b0,b1,t0,t1;heights(b0,b1,t0,t1);
+        double x0=camx+r.U(-20,20),y0=camy+r.U(-20,20);
+        if(r.I(0,5)==0)x0=camx,y0=camy;
+        side(x0,y0,x0+len*std::cos(an),y0+len*std::sin(an),b0,b1,t0,t1);
+    }else if(kind<72){ // a plane around the camera
+        double pa=r.I(0,1)?r.U(-0.6,0.6):0,pb=r.I(0,1)?r.U(-0.6,0.6):0;
+        polygon(camx+r.U(-30,30),camy+r.U(-30,30),r.U(20,400),pa,pb,camz+r.U(-60,60),r.I(0,3)==0);
+    }else if(kind<80){ // a side edge-on to the camera: its corners and the camera on one line, within rounding
+        double an=r.U(0,2*M_PI),u0=r.U(-100,300),u1=r.U(-100,300),b0,b1,t0,t1,jitter=r.I(0,1)?0:r.U(-1e-3,1e-3);
+        heights(b0,b1,t0,t1);
+        side(camx+u0*std::cos(an),camy+u0*std::sin(an),camx+u1*std::cos(an+jitter),camy+u1*std::sin(an+jitter),b0,b1,t0,t1);
+    }else if(kind<85){ // a plane level with the camera, or within a few ulps of it
+        polygon(cx,cy,r.U(4,200),0,0,camz,r.I(0,3)==0);
+        if(r.I(0,1))for(auto &p:e.v)p.y=std::nextafter(p.y,r.I(0,1)?1e9f:-1e9f);
+    }else if(kind<89){ // a side with no height, or whose top and bottom cross
+        double an=r.U(0,2*M_PI),len=r.U(2,100),b=oz+r.U(-40,40);
+        if(r.I(0,1))side(cx,cy,cx+len*std::cos(an),cy+len*std::sin(an),b,b,b-r.U(0,20),b-r.U(0,20));
+        else side(cx,cy,cx+len*std::cos(an),cy+len*std::sin(an),b,b+20,b+20,b);
+    }else if(kind<92){ // a plane without area
+        e.plane=true;double an=r.U(0,2*M_PI);
+        for(int c=0;c<r.I(3,5);++c)e.v.push_back({(float)(cx+c*10*std::cos(an)),(float)oz,(float)(cy+c*10*std::sin(an)),0,0});
+    }else{ // a tall wedge-like side of a 3D floor with sloped top and bottom
+        double an=r.U(0,2*M_PI),len=r.U(20,120),b=oz+r.U(-40,0);
+        side(cx,cy,cx+len*std::cos(an),cy+len*std::sin(an),b,b+r.U(0,60),b+r.U(40,120),b+r.U(40,200));e.fof=true;
+    }
+    return e;
+}
+static void Record(const Spec &e){
+    auto solid=Solid(),see=Solid();see.fofflags=Flags(see.fofflags|FOF_FOG);
+    if(e.plane)HWR_AddSpringPlane(e.v.data(),(INT32)e.v.size(),e.seeThrough?&see:&solid);
+    else HWR_AddSpringWall(e.v.data(),e.seeThrough?&see:e.fof?&solid:nullptr);
+}
+static void SetCamera(SplitMix &r,double ox,double oy,double oz){
+    double dist=r.I(0,9)?r.U(20,600):r.U(1,20),dir=r.U(0,2*M_PI),ang=r.I(0,9)?dir+M_PI+r.U(-0.7,0.7):r.U(0,2*M_PI);
+    gl_viewx=(float)(ox+dist*std::cos(dir));gl_viewy=(float)(oy+dist*std::sin(dir));gl_viewz=(float)(oz+r.U(-150,250));
+    gl_viewcos=(float)std::cos(ang);gl_viewsin=(float)std::sin(ang);
+}
+// The spring's sprite at (ox,oy,oz): a camera-facing billboard, as HWR_SpriteVertices makes it.
+static void SpringAt(double ox,double oy,double oz,float half,Quad &quad){
+    float lx=gl_viewsin,ly=-gl_viewcos;int i=0;
+    for(auto uv:std::array<std::array<float,2>,4>{{{0,0},{1,0},{1,1},{0,1}}}){
+        float a=2*uv[0]-1,b=2*uv[1]-1;
+        quad[i++]={(float)ox+half*a*lx,(float)oz-1+half*(b+1),(float)oy+half*a*ly,uv[0],1-uv[1]};
+    }
+    thing.x=FLOAT_TO_FIXED((float)ox);thing.y=FLOAT_TO_FIXED((float)oy);thing.z=FLOAT_TO_FIXED((float)oz);
+    spr.gx=(float)ox;spr.gy=(float)oy;spr.gz=(float)oz-1;spr.gzt=(float)oz-1+2*half;
+}
+// What the model path subtracts for marking: the quad at twice its size about its centre.
+static Quad Doubled(const Quad &quad){
+    Quad area;float x=0,y=0,z=0;
+    for(auto &q:quad){x+=q.x/4;y+=q.y/4;z+=q.z/4;}
+    for(int i=0;i<4;++i){area[i]=quad[i];area[i].x=x+(quad[i].x-x)*2;area[i].y=y+(quad[i].y-y)*2;area[i].z=z+(quad[i].z-z)*2;}
+    return area;
+}
+struct DiffStats { int scenes=0,springs=0,changed=0,hidden=0,partial=0,pieces=0,marked=0,logged=0,mismatches=0;size_t entries=0; };
+// stale 0: production as it is. 1: entries are changed behind the cache's back (without recording them again). 2: the
+// camera is changed and the camera the caches were found with is overwritten to match. A cache that was kept past
+// either would make these differ from the reference, so they must report mismatches.
+static DiffStats Differential(int scenes,int stale,uint64_t seed){
+    SplitMix r{seed};DiffStats st;
+    for(int scene=0;scene<scenes;++scene){
+        if(r.I(0,3)==0)PurgeLevel(); // the zone released the level's memory
+        Begin();++st.scenes;
+        double ox=r.U(-4000,4000),oy=r.U(-4000,4000),oz=r.U(-200,600);
+        SetCamera(r,ox,oy,oz);
+        int entries=r.I(0,59)==0?r.I(260,400):r.I(1,40);
+        for(int k=0;k<entries;++k)Record(RandomEntry(r,ox,oy,oz));
+        const int springs=r.I(1,7);
+        for(int s=0;s<springs;++s){
+            // Between springs: the camera moves (or doesn't), entries are recorded again from a slot on, or added.
+            if(s&&r.I(0,2)==0){
+                switch(r.I(0,4)){
+                case 0:{float c[5]={gl_viewx,gl_viewy,gl_viewz,gl_viewsin,gl_viewcos};
+                    SetCamera(r,ox,oy,oz);if(r.I(0,1)){gl_viewx=c[0];gl_viewy=c[1];gl_viewz=c[2];gl_viewsin=c[3];gl_viewcos=c[4];} // or not at all
+                    break;}
+                case 1:gl_viewx+=(float)r.U(-0.5,0.5);gl_viewcos=(float)(gl_viewcos*(1+r.U(-1e-6,1e-6)));break; // a few ulps
+                case 2:{size_t keep=r.I(0,(int)hwr_numspringwalls);hwr_numspringwalls=keep;int more=r.I(0,25);for(int k=0;k<more;++k)Record(RandomEntry(r,ox,oy,oz));break;}
+                case 3:{int more=r.I(0,25);for(int k=0;k<more;++k)Record(RandomEntry(r,ox,oy,oz));break;}
+                case 4:PurgeLevel();hwr_numspringwalls=0;{int more=r.I(1,30);for(int k=0;k<more;++k)Record(RandomEntry(r,ox,oy,oz));}break;
+                }
+            }
+            if(stale==1&&s&&hwr_numspringwalls){
+                auto &w=hwr_springwalls[r.I(0,(int)hwr_numspringwalls-1)];
+                for(int c=0;c<w.numverts;++c){w.v[c].x+=(float)r.U(-30,30);w.v[c].z+=(float)r.U(-30,30);w.v[c].y+=(float)r.U(-5,5);}
+            }
+            if(stale==2){
+                const float now[5]={gl_viewx,gl_viewy,gl_viewz,gl_viewsin,gl_viewcos};
+                std::memcpy(hwr_springcamera,now,sizeof now);
+            }
+            if(stale==2&&s&&r.I(0,1)){SetCamera(r,ox,oy,oz);const float now[5]={gl_viewx,gl_viewy,gl_viewz,gl_viewsin,gl_viewcos};std::memcpy(hwr_springcamera,now,sizeof now);}
+            // The spring: usually near the first one, sometimes anywhere in the scene.
+            double sx=s&&r.I(0,3)?ox+r.U(-120,120):ox,sy=s&&r.I(0,3)?oy+r.U(-120,120):oy,sz=oz+r.U(-30,30);
+            Quad quad;SpringAt(sx,sy,sz,r.I(0,1)?8.f:(float)r.U(2,48),quad);
+            thing.flags=r.I(0,19)?MF_SPRING:0;
+            FBITFIELD fl=r.I(0,29)?0:PF_NoDepthTest;
+            const bool probe=r.I(0,3)==0;
+            markFails=r.I(0,9)==0;
+            for(int pass=0;pass<2;++pass){
+                if(pass&&r.I(0,1))break; // the model path's marking pass follows half of them
+                const Quad area=pass?Doubled(quad):quad;
+                Outcome got=Subtract(false,quad.data(),area.data(),fl,pass!=0,probe&&!pass);
+                Outcome want=Subtract(true,quad.data(),area.data(),fl,pass!=0,probe&&!pass);
+                ++st.springs;st.changed+=want.changed;st.hidden+=want.changed&&!want.count;st.partial+=want.changed&&want.count;st.pieces+=want.changed&&want.count>1;st.marked+=!want.marks.empty();st.logged+=!want.log.empty();
+                if(!SameOutcome(got,want)){
+                    ++st.mismatches;
+                    if(!stale){std::fprintf(stderr,"spring subtraction differs from the reference: scene %d spring %d pass %d (seed %llu)\n",scene,s,pass,(unsigned long long)seed);assert(false);}
+                }
+            }
+            markFails=false;
+        }
+        st.entries+=hwr_numspringwalls;
+    }
+    thing.flags=MF_SPRING;ResetView();PurgeLevel();
+    return st;
+}
+static void CachedSubtractionMatchesReference(){
+    DiffStats st=Differential(4000,0,1);
+    // The scenes must exercise every outcome, or equality would prove little.
+    assert(st.springs>8000&&st.changed>800&&st.hidden>50&&st.marked>200&&st.logged>800&&st.entries>40000);
+    // A cache kept past a change to an entry, or past a camera change, must be seen as different.
+    assert(Differential(300,1,2).mismatches>10);
+    assert(Differential(300,2,3).mismatches>10);
+    std::printf("cached subtraction matches the reference: %d scenes, %d springs, %d changed (%d hidden, %d partly, %d of those in several pieces), %d marked, %d probed\n",
+        st.scenes,st.springs,st.changed,st.hidden,st.partial,st.pieces,st.marked,st.logged);
+}
 int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return 2;
-    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();Models();BeamSide();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);
+    RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();Models();BeamSide();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);CachedSubtractionMatchesReference();
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }

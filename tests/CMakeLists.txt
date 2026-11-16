@@ -19,7 +19,7 @@ file(GLOB templates CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/templates/*.i
 file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/addons/shader-smoke/source/*")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
-    ${templates} fixtures/sprite-rotation-baseline.c source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
+    ${templates} fixtures/sprite-rotation-baseline.c fixtures/spring-clip-reference.inc source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
     "${RR_SOURCE_DIR}/src/f_finale.c"
     "${RR_SOURCE_DIR}/src/sdl/i_video.cpp"
     "${RR_SOURCE_DIR}/src/sdl/i_system.cpp"

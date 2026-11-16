@@ -333,6 +333,59 @@ typedef struct
 	double bottom, top; // world height of the quad's lowest and highest corners
 } hwr_springview_t;
 
+// Most of what a spring's pass over the recorded entries works out depends on the entry and the camera alone, not on
+// the spring, so it is found once per entry for each camera and kept: the entry's polygon clipped to the near plane,
+// what decides whether Software draws it over a spring, and the planes of its silhouette. A recorded entry's cache
+// is empty, and all of them are emptied when the camera changes (see HWR_SpringSyncCamera).
+typedef struct
+{
+	double ax, ay, bx, by; // first and second corner relative to the camera, on the ground
+	double da, db; // their depths
+	double nearest, farthest;
+	double sa, sb; // their screen columns; found only when the side is wholly in front of the camera
+	double cross; // ax * by - ay * bx
+} hwr_springsideinfo_t;
+
+typedef struct
+{
+	double a, b, c; // the entry's own, so that a plane's height is found without reading the entry
+	double cameraz; // the plane's height below the camera
+	double nearest, left, right, low, high; // its near-clipped corners' depth, screen columns, and rows
+} hwr_springplaneinfo_t;
+
+#define HWR_SPRINGKIND_THICK 1 // the entry's own thick and plane, which are fixed once it is recorded
+#define HWR_SPRINGKIND_PLANE 2
+#define HWR_SPRINGHAS_CORNERS 1 // what has been found for this camera
+#define HWR_SPRINGHAS_INFO 2
+#define HWR_SPRINGHAS_EDGES 4
+
+typedef struct
+{
+	UINT32 stamp; // the camera this was found for (hwr_springstamp); 0 once the entry is recorded
+	UINT32 cornerat, edgeat; // first near-clipped corner in hwr_springcorners, first silhouette plane in hwr_springedges
+	UINT8 kind, has;
+	UINT8 corners; // the near-clipped polygon's corners, 0 when it doesn't fit
+	UINT8 edges; // the silhouette's planes, 0 when it has none
+	union
+	{
+		hwr_springsideinfo_t side;
+		hwr_springplaneinfo_t plane;
+	} info;
+} hwr_springcache_t;
+
+static hwr_springcache_t *hwr_springcache; // one for each hwr_springwalls entry
+static size_t hwr_springcachecapacity;
+static UINT32 hwr_springstamp = 1;
+static float hwr_springcamera[5]; // gl_viewx, gl_viewy, gl_viewz, gl_viewsin, gl_viewcos the caches were found with
+static boolean hwr_springcameraset;
+
+// The near-clipped corners and silhouette planes of the entries, for the current camera. Entries refer to them by
+// index, since growing moves them.
+static FOutVector *hwr_springcorners;
+static size_t hwr_springcornerused, hwr_springcornercapacity;
+static hwr_springplane_t *hwr_springedges;
+static size_t hwr_springedgeused, hwr_springedgecapacity;
+
 // Software draws neither a fog 3D floor nor a see-through one over a sprite as a solid.
 static boolean HWR_SpringSeeThrough(const ffloor_t *fof)
 {
@@ -344,12 +397,29 @@ static hwr_springwall_t *HWR_SpringNewWall(void)
 {
 	if (!hwr_springwalls)
 		hwr_springwallcapacity = 0; // PU_LEVEL was released.
+	if (!hwr_springcache)
+		hwr_springcachecapacity = 0;
 	if (hwr_numspringwalls == hwr_springwallcapacity)
 	{
 		hwr_springwallcapacity = hwr_springwallcapacity ? hwr_springwallcapacity * 2 : 256;
 		Z_Realloc(hwr_springwalls, hwr_springwallcapacity * sizeof(hwr_springwall_t), PU_LEVEL, &hwr_springwalls);
 	}
+	if (hwr_springcachecapacity < hwr_springwallcapacity)
+	{
+		hwr_springcachecapacity = hwr_springwallcapacity;
+		Z_Realloc(hwr_springcache, hwr_springcachecapacity * sizeof(hwr_springcache_t), PU_LEVEL, &hwr_springcache);
+	}
+	if (!hwr_numspringwalls) // A new recording: nothing cached describes an entry of it.
+		hwr_springcornerused = hwr_springedgeused = 0;
+	memset(&hwr_springcache[hwr_numspringwalls], 0, offsetof(hwr_springcache_t, info));
 	return &hwr_springwalls[hwr_numspringwalls++];
+}
+
+// Notes what kind of entry the recording just made, which the caches read without going through the entry.
+static void HWR_SpringRecorded(const hwr_springwall_t *entry)
+{
+	hwr_springcache[entry - hwr_springwalls].kind = (entry->thick ? HWR_SPRINGKIND_THICK : 0)
+		| (entry->plane ? HWR_SPRINGKIND_PLANE : 0);
 }
 
 // Software draws a column of a wall only where the wall's top is above its bottom. A sector whose ceiling is below its
@@ -435,6 +505,7 @@ static void HWR_AddSpringWall(const FOutVector *v, const ffloor_t *fof)
 		}
 	}
 	wall->thick = fof != NULL;
+	HWR_SpringRecorded(wall);
 }
 
 // Records the convex polygon of a 3D floor's top or bottom plane (GL coordinates, y the height), which Software
@@ -474,6 +545,7 @@ static void HWR_AddSpringPlane(const FOutVector *v, INT32 n, const ffloor_t *fof
 	plane->a = (ey * fz - fy * ez) / det;
 	plane->b = (ex * fy - fx * ey) / det;
 	plane->c = v[0].y - plane->a * v[0].x - plane->b * v[0].z;
+	HWR_SpringRecorded(plane);
 }
 
 static double HWR_SpringDistance(const hwr_springplane_t *p, const FOutVector *v)
@@ -594,22 +666,153 @@ static INT32 HWR_SpringClipNear(const hwr_springwall_t *wall, FOutVector *v)
 	return n;
 }
 
-// Whether R_CreateDrawNodes sorts the spring behind this 3D floor plane (its r2->plane test).
-static boolean HWR_SpringPlaneApplies(const hwr_springwall_t *plane, const hwr_springview_t *view)
+// Reserves room for n more corners (or silhouette planes) in the storage the caches share, and returns the index of the
+// first. An entry's keep their place there until the camera changes or the view is recorded again.
+static size_t HWR_SpringReserveCorners(size_t n)
 {
-	FOutVector v[HWR_SPRINGMAXNEAR];
-	double cameraz = plane->a * gl_viewx + plane->b * gl_viewy + plane->c;
+	size_t at;
+	if (!hwr_springcorners)
+		hwr_springcornerused = hwr_springcornercapacity = 0; // PU_LEVEL was released.
+	if (hwr_springcornerused + n > hwr_springcornercapacity)
+	{
+		hwr_springcornercapacity = (hwr_springcornerused + n) * 2 + 256;
+		Z_Realloc(hwr_springcorners, hwr_springcornercapacity * sizeof(FOutVector), PU_LEVEL, &hwr_springcorners);
+	}
+	at = hwr_springcornerused;
+	hwr_springcornerused += n;
+	return at;
+}
+
+static size_t HWR_SpringReserveEdges(size_t n)
+{
+	size_t at;
+	if (!hwr_springedges)
+		hwr_springedgeused = hwr_springedgecapacity = 0;
+	if (hwr_springedgeused + n > hwr_springedgecapacity)
+	{
+		hwr_springedgecapacity = (hwr_springedgeused + n) * 2 + 256;
+		Z_Realloc(hwr_springedges, hwr_springedgecapacity * sizeof(hwr_springplane_t), PU_LEVEL, &hwr_springedges);
+	}
+	at = hwr_springedgeused;
+	hwr_springedgeused += n;
+	return at;
+}
+
+// Empties every entry's cache when the camera is not the one they were found with. Compared by bits: the same bits give
+// the same results. Called by HWR_SpringSubtract before it reads any.
+static void HWR_SpringSyncCamera(void)
+{
+	const float current[5] = {gl_viewx, gl_viewy, gl_viewz, gl_viewsin, gl_viewcos};
+	if (hwr_springcameraset && !memcmp(current, hwr_springcamera, sizeof current))
+		return;
+	memcpy(hwr_springcamera, current, sizeof current);
+	hwr_springcameraset = true;
+	hwr_springcornerused = hwr_springedgeused = 0;
+	if (++hwr_springstamp == 0)
+	{
+		size_t w;
+		for (w = 0; w < hwr_numspringwalls; w++)
+			hwr_springcache[w].stamp = 0;
+		hwr_springstamp = 1;
+	}
+}
+
+// An entry's cache, emptied first if it was found for another camera.
+static hwr_springcache_t *HWR_SpringCache(size_t w)
+{
+	hwr_springcache_t *cache = &hwr_springcache[w];
+	if (cache->stamp != hwr_springstamp)
+	{
+		cache->stamp = hwr_springstamp;
+		cache->has = 0;
+	}
+	return cache;
+}
+
+// The entry's polygon clipped to the near plane (see HWR_SpringClipNear), NULL if it doesn't fit. Valid until another
+// entry's corners are found.
+static const FOutVector *HWR_SpringCorners(size_t w, hwr_springcache_t *cache, INT32 *count)
+{
+	if (!(cache->has & HWR_SPRINGHAS_CORNERS))
+	{
+		FOutVector v[HWR_SPRINGMAXNEAR];
+		INT32 n = HWR_SpringClipNear(&hwr_springwalls[w], v);
+		cache->corners = (UINT8)n;
+		cache->cornerat = n ? (UINT32)HWR_SpringReserveCorners(n) : 0;
+		if (n)
+			memcpy(&hwr_springcorners[cache->cornerat], v, sizeof(FOutVector) * n);
+		cache->has |= HWR_SPRINGHAS_CORNERS;
+	}
+	*count = cache->corners;
+	return cache->corners ? &hwr_springcorners[cache->cornerat] : NULL;
+}
+
+static const hwr_springplaneinfo_t *HWR_SpringPlaneInfo(size_t w, hwr_springcache_t *cache)
+{
+	hwr_springplaneinfo_t *info = &cache->info.plane;
+	if (!(cache->has & HWR_SPRINGHAS_INFO))
+	{
+		const hwr_springwall_t *plane = &hwr_springwalls[w];
+		const FOutVector *v;
+		INT32 i, n;
+		info->a = plane->a; info->b = plane->b; info->c = plane->c;
+		info->cameraz = plane->a * gl_viewx + plane->b * gl_viewy + plane->c;
+		info->nearest = DBL_MAX; info->left = DBL_MAX; info->right = -DBL_MAX; info->low = DBL_MAX; info->high = -DBL_MAX;
+		v = HWR_SpringCorners(w, cache, &n);
+		for (i = 0; i < n; i++)
+		{
+			double x = v[i].x - gl_viewx, y = v[i].z - gl_viewy, depth = fmax(HWR_SpringDepth(x, y), 1e-6);
+			double screen = HWR_SpringLateral(x, y) / depth, row = (v[i].y - gl_viewz) / depth;
+			info->nearest = fmin(info->nearest, depth);
+			info->left = fmin(info->left, screen);
+			info->right = fmax(info->right, screen);
+			info->low = fmin(info->low, row);
+			info->high = fmax(info->high, row);
+		}
+		cache->has |= HWR_SPRINGHAS_INFO;
+	}
+	return info;
+}
+
+static const hwr_springsideinfo_t *HWR_SpringSideInfo(size_t w, hwr_springcache_t *cache)
+{
+	hwr_springsideinfo_t *info = &cache->info.side;
+	if (!(cache->has & HWR_SPRINGHAS_INFO))
+	{
+		const hwr_springwall_t *wall = &hwr_springwalls[w];
+		info->ax = wall->v[0].x - gl_viewx; info->ay = wall->v[0].z - gl_viewy;
+		info->bx = wall->v[1].x - gl_viewx; info->by = wall->v[1].z - gl_viewy;
+		info->da = HWR_SpringDepth(info->ax, info->ay); info->db = HWR_SpringDepth(info->bx, info->by);
+		info->nearest = fmin(info->da, info->db); info->farthest = fmax(info->da, info->db);
+		if (info->nearest > HWR_SPRINGNEAR)
+		{
+			info->sa = HWR_SpringLateral(info->ax, info->ay) / info->da;
+			info->sb = HWR_SpringLateral(info->bx, info->by) / info->db;
+		}
+		else
+			info->sa = info->sb = 0;
+		info->cross = info->ax * info->by - info->ay * info->bx;
+		cache->has |= HWR_SPRINGHAS_INFO;
+	}
+	return info;
+}
+
+// Whether R_CreateDrawNodes sorts the spring behind this 3D floor plane (its r2->plane test).
+static boolean HWR_SpringPlaneApplies(size_t w, hwr_springcache_t *cache, const hwr_springview_t *view)
+{
+	const hwr_springplaneinfo_t *plane = HWR_SpringPlaneInfo(w, cache);
+	const FOutVector *v;
 	double objectz = plane->a * (view->originx + gl_viewx) + plane->b * (view->originy + gl_viewy) + plane->c;
-	double nearest = DBL_MAX, left = DBL_MAX, right = -DBL_MAX, low = DBL_MAX, high = -DBL_MAX;
+	double nearest = plane->nearest;
 	INT32 i, n;
 
 	// The spring has to lie wholly on the far side of the plane from the camera.
-	if (cameraz < gl_viewz)
+	if (plane->cameraz < gl_viewz)
 	{
 		if (view->top >= objectz)
 			return false;
 	}
-	else if (cameraz > gl_viewz)
+	else if (plane->cameraz > gl_viewz)
 	{
 		if (view->bottom <= objectz)
 			return false;
@@ -617,23 +820,13 @@ static boolean HWR_SpringPlaneApplies(const hwr_springwall_t *plane, const hwr_s
 	else
 		return false; // Edge-on: Software never draws it.
 
-	n = HWR_SpringClipNear(plane, v);
+	v = HWR_SpringCorners(w, cache, &n);
 	if (n < 3)
 		return false;
-	for (i = 0; i < n; i++)
-	{
-		double x = v[i].x - gl_viewx, y = v[i].z - gl_viewy, depth = fmax(HWR_SpringDepth(x, y), 1e-6);
-		double screen = HWR_SpringLateral(x, y) / depth, row = (v[i].y - gl_viewz) / depth;
-		nearest = fmin(nearest, depth);
-		left = fmin(left, screen);
-		right = fmax(right, screen);
-		low = fmin(low, row);
-		high = fmax(high, row);
-	}
 
 	// The plane shares screen columns and rows with the sprite.
-	if (right < view->left || left > view->right
-		|| (view->bottom - gl_viewz) / view->depth > high || (view->top - gl_viewz) / view->depth < low)
+	if (plane->right < view->left || plane->left > view->right
+		|| (view->bottom - gl_viewz) / view->depth > plane->high || (view->top - gl_viewz) / view->depth < plane->low)
 		return false;
 
 	// Part of the plane is nearer than the sprite's origin in the sprite's own screen columns: Software looks for
@@ -660,45 +853,43 @@ static boolean HWR_SpringPlaneApplies(const hwr_springwall_t *plane, const hwr_s
 }
 
 // Whether Software draws this side over the spring, rather than the spring over it.
-static boolean HWR_SpringWallApplies(const hwr_springwall_t *wall, const hwr_springview_t *view)
+static boolean HWR_SpringWallApplies(size_t w, const hwr_springview_t *view)
 {
-	double ax, ay, bx, by, da, db, nearest, farthest;
+	hwr_springcache_t *cache = HWR_SpringCache(w);
+	const hwr_springsideinfo_t *side;
+	const boolean thick = (cache->kind & HWR_SPRINGKIND_THICK) != 0;
 
-	if (wall->plane)
-		return HWR_SpringPlaneApplies(wall, view);
+	if (cache->kind & HWR_SPRINGKIND_PLANE)
+		return HWR_SpringPlaneApplies(w, cache, view);
 
-	ax = wall->v[0].x - gl_viewx; ay = wall->v[0].z - gl_viewy;
-	bx = wall->v[1].x - gl_viewx; by = wall->v[1].z - gl_viewy;
-	da = HWR_SpringDepth(ax, ay); db = HWR_SpringDepth(bx, by);
-	nearest = fmin(da, db); farthest = fmax(da, db);
+	side = HWR_SpringSideInfo(w, cache);
 
 	// Scale of the whole side is below the sprite's: it's entirely behind it.
-	if (wall->thick ? nearest >= view->depth : nearest > view->depth)
+	if (thick ? side->nearest >= view->depth : side->nearest > view->depth)
 		return false;
 
 	// The silhouette has to share a screen column with the sprite.
-	if (nearest > HWR_SPRINGNEAR)
+	if (side->nearest > HWR_SPRINGNEAR)
 	{
-		double sa = HWR_SpringLateral(ax, ay) / da, sb = HWR_SpringLateral(bx, by) / db;
-		if (fmax(sa, sb) < view->left || fmin(sa, sb) > view->right)
+		if (fmax(side->sa, side->sb) < view->left || fmin(side->sa, side->sb) > view->right)
 			return false;
 	}
 
-	if (wall->thick)
+	if (thick)
 	{
 		// R_CreateDrawNodes compares scale at the sprite's middle screen column,
 		// extending the side's line past its ends, not each pixel's depth.
-		double cross = view->rayx * (by - ay) - view->rayy * (bx - ax), raydepth;
+		double cross = view->rayx * (side->by - side->ay) - view->rayy * (side->bx - side->ax), raydepth;
 		if (fabs(cross) < 1e-12)
 			return false;
-		raydepth = (ax * by - ay * bx) / cross;
+		raydepth = side->cross / cross;
 		return raydepth > 0 && raydepth < view->depth;
 	}
 
 	// R_ClipVisSprite clips by a seg that is wholly nearer than the origin, or that
 	// crosses it with the origin on its back side (opposite the camera).
-	return farthest <= view->depth || (ax * by - ay * bx)
-		* ((bx - ax) * (view->originy - ay) - (by - ay) * (view->originx - ax)) < 0;
+	return side->farthest <= view->depth || side->cross
+		* ((side->bx - side->ax) * (view->originy - side->ay) - (side->by - side->ay) * (view->originx - side->ax)) < 0;
 }
 
 
@@ -744,11 +935,11 @@ static boolean HWR_SpringFlatSilhouette(const FOutVector *v, INT32 n)
 	return true;
 }
 
-// The pyramid from the camera through the side's silhouette, as inward-facing planes.
-static INT32 HWR_SpringWallPlanes(const hwr_springwall_t *wall, hwr_springplane_t *planes)
+// The pyramid from the camera through the side's near-clipped silhouette v (n corners), as inward-facing planes.
+static INT32 HWR_SpringWallPlanes(const FOutVector *v, INT32 n, hwr_springplane_t *planes)
 {
-	FOutVector v[HWR_SPRINGMAXNEAR], center;
-	INT32 n = HWR_SpringClipNear(wall, v), i;
+	FOutVector center;
+	INT32 i;
 	center.x = center.y = center.z = 0;
 	if (n < 3 || HWR_SpringFlatSilhouette(v, n))
 		return 0;
@@ -781,6 +972,27 @@ static INT32 HWR_SpringWallPlanes(const hwr_springwall_t *wall, hwr_springplane_
 		}
 	}
 	return n;
+}
+
+// The planes of an entry's silhouette (see HWR_SpringWallPlanes), 0 of them when it has none. Valid until another
+// entry's are found.
+static INT32 HWR_SpringEdges(size_t w, const hwr_springplane_t **planes)
+{
+	hwr_springcache_t *cache = HWR_SpringCache(w);
+	if (!(cache->has & HWR_SPRINGHAS_EDGES))
+	{
+		hwr_springplane_t found[HWR_SPRINGMAXNEAR];
+		INT32 n;
+		const FOutVector *v = HWR_SpringCorners(w, cache, &n);
+		INT32 edges = HWR_SpringWallPlanes(v, n, found);
+		cache->edges = (UINT8)edges;
+		cache->edgeat = edges ? (UINT32)HWR_SpringReserveEdges(edges) : 0;
+		if (edges)
+			memcpy(&hwr_springedges[cache->edgeat], found, sizeof(hwr_springplane_t) * edges);
+		cache->has |= HWR_SPRINGHAS_EDGES;
+	}
+	*planes = cache->edges ? &hwr_springedges[cache->edgeat] : NULL;
+	return cache->edges;
 }
 
 // A piece too thin to cover a pixel: under HWR_SPRINGTHIN screen units (lateral/depth) across, about a
@@ -858,11 +1070,12 @@ static double HWR_SpringScreenArea(const FOutVector *v, INT32 n)
 }
 
 // Whether a recorded entry, clipped to the near plane, shares screen columns and rows with the spring.
-static boolean HWR_SpringProbeOverlaps(const hwr_springwall_t *entry, const hwr_springview_t *view)
+static boolean HWR_SpringProbeOverlaps(size_t w, const hwr_springview_t *view)
 {
-	FOutVector v[HWR_SPRINGMAXNEAR];
+	const FOutVector *v;
 	double left = DBL_MAX, right = -DBL_MAX, low = DBL_MAX, high = -DBL_MAX;
-	INT32 i, n = HWR_SpringClipNear(entry, v);
+	INT32 i, n;
+	v = HWR_SpringCorners(w, HWR_SpringCache(w), &n);
 	if (n < 2)
 		return false;
 	for (i = 0; i < n; i++)
@@ -930,6 +1143,18 @@ static size_t hwr_springmasks[HWR_SPRINGMAXMASKS];
 static size_t hwr_numspringmasks;
 #endif
 
+// Whether some edge of the silhouette separates it from the triangle, so that the silhouette doesn't touch it.
+static boolean HWR_SpringSeparated(const hwr_springplane_t *planes, INT32 edges, const FOutVector *tri)
+{
+	INT32 e;
+	for (e = 0; e < edges; e++)
+		if (HWR_SpringDistance(&planes[e], &tri[0]) <= 0
+			&& HWR_SpringDistance(&planes[e], &tri[1]) <= 0
+			&& HWR_SpringDistance(&planes[e], &tri[2]) <= 0)
+			return true;
+	return false;
+}
+
 // Subtracts from `area` the silhouette of every side Software would draw over the spring whose sprite is `quad`
 // (`area` is the quad itself for a sprite). Returns false when the spring is left alone or nothing cuts the area;
 // otherwise *piececount triangles of it remain in hwr_springpieces[*piecebuffer]. With `mask`, the sides that cut
@@ -951,12 +1176,13 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 				(unsigned)hwr_numspringwalls, (unsigned long)flags);
 		return false;
 	}
+	HWR_SpringSyncCamera();
 	HWR_SpringAppend(buffer, &count, area, 4);
 	// R_CreateDrawNodes inserts the sprite before the farthest 3D floor side or plane it sorts behind, so every
 	// one drawn after that (nearer in the BSP order, recorded earlier here) paints over it as well.
 	farthestthick = SIZE_MAX;
 	for (w = 0; w < hwr_numspringwalls; w++)
-		if (hwr_springwalls[w].thick && HWR_SpringWallApplies(&hwr_springwalls[w], &view))
+		if ((hwr_springcache[w].kind & HWR_SPRINGKIND_THICK) && HWR_SpringWallApplies(w, &view))
 			farthestthick = w;
 	if (probe)
 		I_OutputMsg("Spring probe: type=%d at (%.1f,%.1f,%.1f) gz=%.1f gzt=%.1f quad=(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) depth=%.2f entries=%u farthestthick=%ld\n",
@@ -965,62 +1191,66 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 			view.depth, (unsigned)hwr_numspringwalls, farthestthick == SIZE_MAX ? -1L : (long)farthestthick);
 	for (w = 0; w < hwr_numspringwalls && count && count < HWR_SPRINGMAXPIECES; w++)
 	{
-		hwr_springplane_t planes[HWR_SPRINGMAXNEAR];
+		const hwr_springplane_t *planes;
 		INT32 edges, e;
 		size_t nextcount = 0;
-		boolean subtracted = hwr_springwalls[w].thick ? (farthestthick != SIZE_MAX && w <= farthestthick)
-			: HWR_SpringWallApplies(&hwr_springwalls[w], &view), cut = false;
-		if (!subtracted || !(edges = HWR_SpringWallPlanes(&hwr_springwalls[w], planes)))
+		boolean subtracted = (hwr_springcache[w].kind & HWR_SPRINGKIND_THICK) ? (farthestthick != SIZE_MAX && w <= farthestthick)
+			: HWR_SpringWallApplies(w, &view), cut = false;
+		if (!subtracted || !(edges = HWR_SpringEdges(w, &planes)))
 		{
-			if (probe && HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view))
-				HWR_SpringProbeEntry(w, &hwr_springwalls[w], HWR_SpringWallApplies(&hwr_springwalls[w], &view), subtracted, false);
+			if (probe && HWR_SpringProbeOverlaps(w, &view))
+				HWR_SpringProbeEntry(w, &hwr_springwalls[w], HWR_SpringWallApplies(w, &view), subtracted, false);
 			continue;
 		}
+		// A silhouette that misses every piece would copy them all, unchanged, into the other buffer: each was stored
+		// by HWR_SpringAppend under this camera, which keeps it again. So the buffers stay as they are.
 		for (i = 0; i < count; i++)
+			if (!HWR_SpringSeparated(planes, edges, hwr_springpieces[buffer][i].v))
+				break;
+		if (i < count)
 		{
-			const FOutVector *tri = hwr_springpieces[buffer][i].v;
-			FOutVector inside[HWR_SPRINGMAXCLIP], clipped[HWR_SPRINGMAXCLIP], outside[HWR_SPRINGMAXCLIP];
-			size_t mark = nextcount;
-			INT32 n = 3;
-			boolean overflow = false;
-			// A separating edge rejects this entire silhouette without splitting.
-			for (e = 0; e < edges; e++)
-				if (HWR_SpringDistance(&planes[e], &tri[0]) <= 0
-					&& HWR_SpringDistance(&planes[e], &tri[1]) <= 0
-					&& HWR_SpringDistance(&planes[e], &tri[2]) <= 0)
-					break;
-			if (e == edges)
+			for (i = 0; i < count; i++)
 			{
-				cut = true;
-				memcpy(inside, tri, sizeof(FOutVector) * 3);
-				for (e = 0; e < edges && n >= 3; e++)
+				const FOutVector *tri = hwr_springpieces[buffer][i].v;
+				FOutVector inside[HWR_SPRINGMAXCLIP], clipped[HWR_SPRINGMAXCLIP], outside[HWR_SPRINGMAXCLIP];
+				size_t mark = nextcount;
+				INT32 n = 3;
+				boolean overflow = false;
+				// A separating edge rejects this entire silhouette without splitting.
+				const boolean touched = !HWR_SpringSeparated(planes, edges, tri);
+				if (touched)
 				{
-					INT32 out = HWR_SpringHalfPlane(inside, n, outside, HWR_SPRINGMAXCLIP, &planes[e], false);
-					if (out < 0)
+					cut = true;
+					memcpy(inside, tri, sizeof(FOutVector) * 3);
+					for (e = 0; e < edges && n >= 3; e++)
 					{
-						overflow = true;
-						break;
+						INT32 out = HWR_SpringHalfPlane(inside, n, outside, HWR_SPRINGMAXCLIP, &planes[e], false);
+						if (out < 0)
+						{
+							overflow = true;
+							break;
+						}
+						HWR_SpringAppend(1 - buffer, &nextcount, outside, out);
+						n = HWR_SpringHalfPlane(inside, n, clipped, HWR_SPRINGMAXCLIP, &planes[e], true);
+						if (n < 0)
+						{
+							overflow = true;
+							break;
+						}
+						memcpy(inside, clipped, sizeof(FOutVector) * n);
 					}
-					HWR_SpringAppend(1 - buffer, &nextcount, outside, out);
-					n = HWR_SpringHalfPlane(inside, n, clipped, HWR_SPRINGMAXCLIP, &planes[e], true);
-					if (n < 0)
-					{
-						overflow = true;
-						break;
-					}
-					memcpy(inside, clipped, sizeof(FOutVector) * n);
+				}
+				if (touched && !overflow && e == edges && n >= 3)
+					changed = true; // The parts outside the silhouette were kept above.
+				else
+				{
+					nextcount = mark; // Missed the silhouette, or its cuts outgrew the buffers: keep the triangle whole.
+					HWR_SpringAppend(1 - buffer, &nextcount, tri, 3);
 				}
 			}
-			if (!overflow && e == edges && n >= 3)
-				changed = true; // The parts outside the silhouette were kept above.
-			else
-			{
-				nextcount = mark; // Missed the silhouette, or its cuts outgrew the buffers: keep the triangle whole.
-				HWR_SpringAppend(1 - buffer, &nextcount, tri, 3);
-			}
+			buffer = 1 - buffer;
+			count = nextcount;
 		}
-		buffer = 1 - buffer;
-		count = nextcount;
 		if (count > hwr_springpeakpieces)
 			hwr_springpeakpieces = count;
 #ifdef HAVE_VIBERANT
@@ -1028,9 +1258,9 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 			&& VibeRant_DrawSpringMask(hwr_springwalls[w].v, hwr_springwalls[w].numverts, true))
 			hwr_springmasks[hwr_numspringmasks++] = w;
 #endif
-		if (probe && (cut || HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view)))
-			HWR_SpringProbeEntry(w, &hwr_springwalls[w], hwr_springwalls[w].thick
-				? HWR_SpringWallApplies(&hwr_springwalls[w], &view) : true, true, cut);
+		if (probe && (cut || HWR_SpringProbeOverlaps(w, &view)))
+			HWR_SpringProbeEntry(w, &hwr_springwalls[w], (hwr_springcache[w].kind & HWR_SPRINGKIND_THICK)
+				? HWR_SpringWallApplies(w, &view) : true, true, cut);
 	}
 	if (probe)
 	{
