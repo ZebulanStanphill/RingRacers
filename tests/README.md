@@ -1391,8 +1391,10 @@ python3 tests/metal-frames/capture.py hardware --game $game --data <assets> --ou
 opens a window on the Mac's screen. `--shard K/N` splits the sweep, and several shards can run side by side, each
 with its own `--out`, as far as the GPU keeps up: four at once were no load for an M4 Pro, and three at once under
 validation put an Intel Iris Plus 645 more than half a second behind, which is where the driver stops waiting for
-it (a screenshot it gives up on is noise, and the run fails with "the GPU fell behind"). A Mac nobody sits at usually has its screen locked, and VibeRant Metal presents nothing to a
-window nobody can see; `-mtlunseen` makes it present anyway, and without it such a sweep fails, since a sweep requires
+it (a screenshot it gives up on is noise, and the run fails with "the GPU fell behind"). A Mac nobody sits at usually has its screen locked. To a
+window the system calls out of sight, VibeRant Metal presents only while it can expect the layer to have a drawable
+free (`docs/metal-backend.md`, "The window"), which behind these two Macs' locked screens was every frame, at the
+system's pace. `-mtlunseen` makes it present whatever the system says, as the sweep should, since a sweep requires
 its frames to have been presented. `-mtlcheck` has the presenter read drawables back and compare them with the frames
 it placed in them ("Metal frames", above, has what the two do and don't show). The frames the sweep collects are read
 back from the driver either way.
@@ -1404,8 +1406,9 @@ screen. Each scene is a run of the game (or two), judged like the sweep's, and b
 - `speed-metal`, `speed-software`, `speed-legacy-gl`: a replay in the capture mode, which draws one frame per tic
   of game logic as fast as it can, with `vid_wait` off and without Metal's validation; the time per frame is the
   time between the frames captured at level times 350 and 1400, divided by 1,050. VibeRant Metal runs here as the
-  game would on that Mac: presenting if its window can be seen, only drawing if the screen is locked, and the line
-  says which.
+  game would on that Mac, without `-mtlunseen`: behind a locked screen its frames are presented at the system's
+  pace for a window nobody sees, so the time is that pace and not the renderer's, and the line says how long the
+  layer took to give a drawable.
 - `vsync-on`, `vsync-off`: the same with `-mtlunseen` and `vid_wait` on and off. On a screen that can be seen, on
   should take a refresh of the display per frame. To a window behind a locked screen the system hands drawables
   back at a pace of its own either way, so there the two only show that presenting works.

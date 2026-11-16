@@ -11,7 +11,9 @@ GitHub's macOS runners ("Apple Paravirtual device"), an Apple M4 Pro, and an Int
 the driver test passes (`tests/README.md`, "Metal driver harness") and the game plays a replay on every map, or on
 the Intel GPU on 89 of them, with Metal's API and shader validation on and nothing reported, drawing the frames
 VibeRant Vulkan draws to within what two GPUs differ by (below, "What was tested, and what wasn't"). Nobody has
-played it, and nobody has looked at a screen it drew on: the two Macs were tested over the network, unattended.
+played it, and nobody has looked at a Mac's screen it drew on: the two Macs were tested over the network,
+unattended, with their screens locked for all but a part of the first day. The pictures that exist are of a
+runner's screen. "What a person at a Mac should look at", at the end, is the list that follows from that.
 
 ## How
 
@@ -131,7 +133,15 @@ window is hidden".
   2560x1600 panel is set, as it comes, to look like 1440x900: fullscreen there is a 1440x900 drawable, which the
   system doubles to its 2880x1800 backing and then fits to the panel. So on that display the picture isn't
   pixel-sharp, and couldn't be made so by drawables in pixels either, since nothing on it is; on a display of one
-  pixel per point (a Mac mini's 1920x1080 monitor) the drawable is the screen's pixels.
+  pixel per point (a Mac mini's 1920x1080 monitor) the drawable is the screen's pixels. That is the size Software's
+  frames have there too: the game's OpenGL window isn't a high-resolution one either (SDL turns
+  `wantsBestResolutionOpenGLSurface` off without `SDL_WINDOW_ALLOW_HIGHDPI`), and Apple's documentation of that
+  property says that such a view "uses a 1 pixel per point framebuffer regardless of the backing scale factor" and
+  that "the rendered surface contents are also magnified". So both renderers hand the system a frame in points and
+  the system magnifies it, and VibeRant Metal is not sharper than Software, which is the aim. What the documentation
+  doesn't say is with what filter the system magnifies an OpenGL surface; a layer's default is linear
+  (`magnificationFilter`), which the presenter leaves. Whether the two look exactly alike on a Retina display is
+  therefore something only a look at one can tell.
 - **Placement.** The driver's placement draws each frame into the drawable, as on the other desktop presenters: at
   Screen Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the
   frame's aspect ratio. A drawable is BGRA8 and only a render target (`framebufferOnly`), which a draw suits and a
@@ -144,12 +154,16 @@ window is hidden".
   is given one, and Apple's documentation of the property says that its content then "isn't color-matched": on a
   display of a wider gamut than sRGB, such as a MacBook's P3 panel, the same frame would look more saturated from
   VibeRant Metal than from Software. So the presenter sees to it that the layer has its window's color space
-  (`MatchWindowColors`), which is the OpenGL window's, since the same SDL makes both. On the Mac mini the system had
-  already given the layer the window's color space when the presenter looked, so nothing changed there, and the log
-  says which it was: "colors are matched to the display as the OpenGL window's are: the layer has its window's color
-  space, "sRGB IEC61966-2.1" (the system gave it), and the display's is ...". Taking it away on purpose and letting
-  the presenter set it gives the same line with "set here". This is from documentation and logs: nobody has
-  compared the two renderers on a wide-gamut panel, by eye or with a meter.
+  (`MatchWindowColors`), which is the OpenGL window's, since the same SDL makes both. On both Macs the system had
+  already given the layer the window's color space when the presenter looked (macOS 27 and macOS 15.8, SDL 2.30.9),
+  so nothing changed there, and the log says which it was: "colors are matched to the display as the OpenGL window's
+  are: the layer has its window's color space, "sRGB IEC61966-2.1" (the system gave it), and the display's is "Color
+  LCD"" on the MacBook, whose panel is the wide-gamut one, and the same with a display that is itself "sRGB
+  IEC61966-2.1" on the Mac mini. Taking the layer's color space away on purpose and letting the presenter set it
+  gives the same line with "set here". So the earlier sentence here, that the layer had no color space and showed
+  the frame's values as they were, was wrong about the layer, and the two renderers were being treated alike before
+  this change as well. This is from documentation and logs: nobody has compared the two renderers on a wide-gamut
+  panel, by eye or with a meter.
 - **Vsync** is `vid_wait`, as the layer's `displaySyncEnabled`, set again whenever the setting changes. On the
   MacBook's 60 Hz display, with the screen unlocked, a replay drawn as fast as it goes took 16.76 ms per frame with
   `vid_wait` on and 7.47 ms with it off. Behind a locked screen the system hands drawables back at a pace of its
@@ -487,8 +501,9 @@ pass on the MacBook with its screen unlocked. On the Mac mini, whose screen was 
 which can't: the system makes no fullscreen Space behind a locked screen.
 
 - **Presenting.** Every frame of a replay is presented, none without a drawable, with the screen unlocked, locked,
-  or locked with the display asleep (the latter two with `-mtlunseen`). Without it, behind a locked screen, a
-  frame a second is presented, which the system drops, and the rest are drawn and not presented, as intended.
+  or locked with the display asleep (the latter two with `-mtlunseen`). Without it, behind a locked screen, only
+  the first frame was presented in these runs. (Since the second round, below, a window out of sight gets frames
+  while the layer has a drawable free, which behind these locked screens is every frame.)
 - **`vid_wait`** on the MacBook's visible 60 Hz display: 16.76 ms per frame on, 7.47 ms off.
 - **Fullscreen and back** through the game's `fullscreen` setting: drawables of 1440x900, 1280x720, and 1440x900 on
   the MacBook (in a Space of its own, and with SDL's hint against Spaces); 1920x1080, 1280x720, and 1920x1080 on the
@@ -520,12 +535,146 @@ which is where the driver stops waiting for it (for a readback, a command alloca
 of 188 replays, and 110 of 835 screenshots were never written. Two at a time had no such wait in 107 replays,
 nor had one at a time.
 
+### The second round: on master's renderer changes, and after a review of the presenter
+
+A day later the branch was rebased onto a `master` that had gained the driver's texture atlas, plane polygons with
+polyobjects, the shading of sloped 3D floors, and floor sprites' depth, and a code review of the presenter and of the
+backend's place in the game was worked through (the quit, the menu's wording, the workflow, the build flag, the
+color space, a window wrongly called out of sight, what a sweep proves about the window; each has its commit).
+Everything was then run again. Both Macs' screens were locked throughout, the MacBook's with its display asleep.
+
+**The driver test** passes on the M4 Pro with master's atlas scene: 119 scenes, the six negative controls, the five
+failed command buffers.
+
+**Replays on every map, M4 Pro**, four games at a time, with `-mtlunseen -mtlcheck`: 213 replays, 1,002 frames,
+436,371 frames presented (the earlier sweeps' number to the frame), none withheld, no validation message, and 7,816
+drawables read back and compared with the frames placed in them, none different. Run three times, at three commits
+of this round, the last of them the final one. The first two wrote the same 1,002 frames to the pixel. The third
+differs from them in one pixel in each of two frames (Astral Dimension at 350, Autumn Ring at 1400): a texel at a
+sprite's edge that took its neighbor's color. That wasn't looked into; where the atlas puts a sprite depends on
+when rectangles freed earlier come back from the GPU, which would do it, and it would mean that frames are no
+longer the same from run to run to the last pixel on this GPU, as they were in the first round.
+
+**Those frames against the first round's**, same Mac, same replays:
+
+- 453 are the same to the pixel.
+- 165 changed, in 81 maps, and they are the 165 that changed on VibeRant Vulkan (a Radeon) between the same two
+  versions of `master`: the same frames, and within them the same pixels (the two masks of changed pixels overlap
+  completely in the median frame, by more than nine tenths in all but two, which have one and three changed pixels).
+  That is the shading of sloped 3D floors for the most part (up to 18.7% of a frame, Lost Colony at 1400), with the
+  other two renderer changes.
+- 384 changed on Metal and not on Vulkan, by one pixel in the median frame, twelve at most, 697 pixels in all, and
+  59 of those beyond texel edges. That is the texture atlas: with `gr_textureatlas` off, the frames of nine maps'
+  replays that didn't change on Vulkan (44 frames) are the first round's to the pixel, where 25 of them differ with
+  it on. A sprite in an atlas page is sampled through a rectangle's offset and scale, and Apple's GPU then takes
+  the other texel at an edge here and there. The Radeon doesn't: no frame changed there for the atlas.
+- None changed on Vulkan and not on Metal.
+
+Against VibeRant Vulkan on the Radeon at the same `master`, the figures are the first round's: 0.140% of the pixels
+differ in the median frame, 0.754% in 95 of 100, 20.0% at worst; more than one level apart 0.024%, 0.166%, 3.25%;
+938 frames with at most 0.02% beyond texel edges and the same 12 with more than 0.1%.
+
+**The window, M4 Pro** (`capture.py hardware`, 14 runs, none with a problem; the three scenes about Spaces not run
+behind the locked screen):
+
+- quitting leaves the OpenGL window hidden, in every run that ends with VibeRant Metal;
+- the layer has its window's color space, which the system had given it;
+- 55 drawables read back in three scenes (a window, another video mode, the whole screen without a Space, a change
+  of renderer and back) hold their frames: no pixel different at the frame's own size, a tenth of a level of a
+  block's mean at most where it is scaled to 1920x1080;
+- without `-mtlunseen`, all 1,487 frames of the replay are presented, as probes, at the system's pace for a window
+  behind a locked screen (8.4 ms per frame, 3.2 ms of it the wait for the drawable, 9.4 ms the longest); every
+  report from Metal came within a quarter of a second, and none had a time shown;
+- with `-mtlblind`, 442 frames in ten seconds, likewise.
+
+So the time per frame of VibeRant Metal behind a locked screen is no longer the renderer's (the table under "Speed"
+has it from before, 2.3 ms, when nothing was presented there): 8.4 ms now, against Software's 3.9 and Legacy GL's
+3.9, is the system handing drawables back to a window nobody sees.
+
+**The MacBook (Intel Iris Plus 645)** was a poor witness for most of this round, for a reason that has nothing to do
+with the renderer: behind its locked screen it was in dark wake or asleep. Its power log has twenty entries of going
+to sleep or into dark wake that day. In dark wake a game runs on, slowly and unevenly (and macOS's own
+`mediaanalysisd` was at 15% to 60% of a processor through those hours); asleep, it stands still until the Mac wakes,
+and `capture.py` then finds its time used up. So of the replays of every third map (71, one game at a time, with
+`-mtlunseen -mtlcheck`, over four hours), 44 were clean: 206 frames, 90,078 frames presented, 1,614 drawables
+compared, none different. 25 had a wait for the GPU that the driver gave up on after half a second (41 waits: 36
+for a screenshot's readback, five for the drawable check's), which fails a run because such a screenshot isn't to
+be trusted, and three didn't finish in their fifteen minutes. The first hardware scenes of that morning, in the same
+state, took about twice the first round's time per frame with every renderer (13.4 ms for VibeRant Metal, 13.5 for
+Software, 14.2 for Legacy GL).
+
+At the final commit, in an hour when the Mac was awake (still locked, its display asleep): the driver test passes
+(119 scenes, the controls), and a replay takes 7.2 ms per frame with VibeRant Metal, 9.4 with Software, and 8.4 with
+Legacy GL, which is the first round's order and nearly its numbers. That VibeRant Metal run was without
+`-mtlunseen`, and it is the one place where the pause after a slow probe was seen at work on a real GPU: the layer
+took a second to give its first drawable to the window behind the sleeping display, the presenter held 99 frames
+back for the second that followed, and then presented the other 1,388, with the drawable there in 0.75 ms on
+average and all but one of Metal's reports within a quarter of a second. The Mac then went to sleep for good, in
+the middle of the `blind` scene, so that scene, the ones after it, and a second try at the 27 replays have no
+result there.
+
+The 206 clean frames against the M4 Pro's: 0.101% of the pixels differ in the median frame, 0.259% in 95 of 100,
+2.85% at worst, and 186 have at most 0.02% beyond texel edges, as in the first round. Against the MacBook's own
+frames of the first round: 98 are the same, 32 changed as on Vulkan, and 76 by four pixels at most, with none
+changed on Vulkan alone, which is the M4 Pro's pattern. The log's color line there, on macOS 15: the layer has its
+window's color space, given by the system, and the display's is "Color LCD", the wide-gamut panel.
+
+**On a runner** (`capture.py scenes`, with pictures of the screen, which were looked at):
+
+- quitting through the menu: `menu-quit` exits with 0;
+- the renderer changed in fullscreen, both ways ("The window", above, has the order of the Spaces): the game is on
+  the whole screen after each change;
+- drawables read back in the Screen Scaling, title, and renderer-change scenes hold their frames, among them a
+  320x200 frame as Fit and as Integer on the 1024x768 screen;
+- the layer gave a drawable within 0.14 to 0.6 ms on average with `vid_wait` off (1.8 ms with it on), which answers
+  the review's question about the drawable's wrapper being kept until the frame's commands are done: it holds
+  nothing up there. On the M4 Pro with a screen that is on, nobody has measured it;
+- `blind`, the acted-out wrong report on a screen that is on: with each of the first three rules the picture
+  stood still or nearly (5, 11, and 14 frames presented in ten seconds; with the third, two pictures of the screen
+  two seconds apart showed the same frame of the race), which is what made the rule what it is. With the
+  rule as it is now, the scene had not run on a runner when this was written: GitHub's macOS runners took hardly
+  any jobs for hours that day. Behind the two Macs' locked screens it presents at the system's pace (442 frames in
+  ten seconds on the M4 Pro).
+
 ### Not tested
 
 Because it takes a person at the Mac: what the screen looks like (on either Mac, and on the Retina display above
-all), fullscreen in a Space of its own on the M4 Pro, `vid_wait` on a visible screen there, more than one display,
-resizing or minimizing the window by hand and switching Spaces, the menu's own Renderer row and anything else done
-with a keyboard or a controller (the runner had keys sent to it; the Macs didn't, since that takes the accessibility
-permission), the look of colors on a wide-gamut display, split-screen (a staff ghost is one player), netgames, and
-add-on shaders and screen effects in the game (the driver test covers them). Not tested for want of the hardware: an
-AMD GPU, a Mac with two GPUs, and an Apple GPU older than the M4. And nobody has played it.
+all), fullscreen in a Space of its own on either Mac since the first day, `vid_wait` on a visible screen on the M4
+Pro, more than one display, resizing or minimizing the window by hand and switching Spaces, the menu's own Renderer
+row and anything else done with a keyboard or a controller (the runner had keys sent to it; the Macs didn't, since
+that takes the accessibility permission), the look of colors on a wide-gamut display, split-screen (a staff ghost is
+one player), netgames, and add-on shaders and screen effects in the game (the driver test covers them). Not tested
+for want of the hardware: an AMD GPU, a Mac with two GPUs, and an Apple GPU older than the M4. And nobody has played
+it.
+
+### What a person at a Mac should look at
+
+Ten minutes at a Mac with its screen unlocked would settle most of what the logs can't. Start the game from a
+terminal so that its log can be kept (`<home>/ringracers/latest-log.txt` has it too).
+
+1. **Start it as it comes** (fullscreen, VibeRant Metal). Right: the intro and the title screen fill the screen,
+   letterboxed if the screen isn't 16:10. Wrong: a window, a black screen, or a picture in a corner.
+2. **Sharpness on a Retina display.** Options → Video → Advanced → Renderer: look at the same scene in Software and
+   in VibeRant Metal. Right: equally sharp (neither is pixel-sharp on a scaled Retina mode). Wrong: one clearly
+   softer or blockier than the other.
+3. **Colors on a MacBook's own display.** The same scene in both renderers again, or the title screen. Right: the
+   same colors. Wrong: VibeRant Metal more saturated (reds and greens above all). The log's line "colors are matched
+   to the display" should name the window's color space and "(the system gave it)" or "(set here)".
+4. **Change the renderer in fullscreen**, Software and back, twice. Right: after a second or two of the system's
+   animation the game is on the whole screen again and the keys work without a click; Mission Control (Control-Up)
+   shows one Space for the game and no empty one. Wrong: the desktop, a black Space, the game in a window, or keys
+   that do nothing. The log has a line for each window's way into and out of a Space.
+5. **Quit from fullscreen and from a window**, through the menu. Right: the game is gone. Wrong: an empty window
+   that flashes or flies into a Space as it goes.
+6. **Hide it and bring it back** while a race or a replay runs: minimize to the Dock and restore, Command-H and
+   back, another Space and back (Control-Left and Right), a window dragged over it and away, lock the screen and
+   unlock it, close the lid and open it. Right: the picture is moving again at once each time. Wrong: a picture
+   that stands still while the sound goes on. Afterwards the presenter's last line in the log says how many frames
+   "went to a window the system called out of sight": if that is a large number although the window was in plain
+   sight, the system's report was wrong and the safeguard was what kept the picture going, which is worth telling.
+7. **`vid_wait` on and off** (the console, or Options → Video): on, the motion is even and nothing tears; off, the
+   frame rate is higher and tearing is possible.
+8. **Options → Video → Advanced with Software selected**: the lines above the Renderer row should describe VibeRant
+   Metal, not VibeRant D3D and Direct3D 12.
+9. **A second display, if there is one**: drag the window across, and go fullscreen on each. Right: the picture
+   fits each display. Wrong: a stretched or offset picture after the move.
