@@ -1244,7 +1244,7 @@ if the log doesn't say that the backend is Metal with both kinds of validation o
 a frame the capture mode announced is missing, if no frame was presented to the
 window (the presenter counts them in the log), or if the log has a validation
 message, a failed command buffer, a "not implemented" line, an error of the driver's,
-or a fallback to Software. `summary.json` in each artifact has every run's result.
+a wait for the GPU that the driver gave up on, or a fallback to Software. `summary.json` in each artifact has every run's result.
 
 What the jobs can't judge is whether the pictures are right. For the frames, compare
 them with another renderer's frames of the same game logic, such as VibeRant Vulkan's
@@ -1284,7 +1284,9 @@ python3 tests/metal-frames/capture.py hardware --game $game --data <assets> --ou
 
 `--idle 180` starts each game only once nobody has touched the Mac's keyboard or mouse for three minutes: the game
 opens a window on the Mac's screen. `--shard K/N` splits the sweep, and several shards can run side by side, each
-with its own `--out`. A Mac nobody sits at usually has its screen locked, and VibeRant Metal presents nothing to a
+with its own `--out`, as far as the GPU keeps up: four at once were no load for an M4 Pro, and three at once under
+validation put an Intel Iris Plus 645 more than half a second behind, which is where the driver stops waiting for
+it (a screenshot it gives up on is noise, and the run fails with "the GPU fell behind"). A Mac nobody sits at usually has its screen locked, and VibeRant Metal presents nothing to a
 window nobody can see; `-mtlunseen` makes it present anyway, so that the sweep covers presenting too (the frames
 themselves are read back from the driver either way).
 
