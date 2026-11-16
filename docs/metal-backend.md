@@ -551,10 +551,10 @@ failed command buffers.
 
 **Replays on every map, M4 Pro**, four games at a time, with `-mtlunseen -mtlcheck`: 213 replays, 1,002 frames,
 436,371 frames presented (the earlier sweeps' number to the frame), none withheld, no validation message, and 7,816
-drawables read back and compared with the frames placed in them, none different. Run three times, at three commits
-of this round, the last of them the final one. The first two wrote the same 1,002 frames to the pixel. The third
-differs from them in one pixel in each of two frames (Astral Dimension at 350, Autumn Ring at 1400): a texel at a
-sprite's edge that took its neighbor's color. That wasn't looked into; where the atlas puts a sprite depends on
+drawables read back and compared with the frames placed in them, none different. Run four times, at four commits
+of this round. Three of the runs wrote the same 1,002 frames to the pixel. The other one, the third, differs from
+them in one pixel in each of two frames (Astral Dimension at 350, Autumn Ring at 1400): a texel at a sprite's edge
+that took its neighbor's color. That wasn't looked into; where the atlas puts a sprite depends on
 when rectangles freed earlier come back from the GPU, which would do it, and it would mean that frames are no
 longer the same from run to run to the last pixel on this GPU, as they were in the first round.
 
@@ -634,10 +634,13 @@ window's color space, given by the system, and the display's is "Color LCD", the
   nothing up there. On the M4 Pro with a screen that is on, nobody has measured it;
 - `blind`, the acted-out wrong report on a screen that is on: with each of the first three rules the picture
   stood still or nearly (5, 11, and 14 frames presented in ten seconds; with the third, two pictures of the screen
-  two seconds apart showed the same frame of the race), which is what made the rule what it is. With the
-  rule as it is now, the scene had not run on a runner when this was written: GitHub's macOS runners took hardly
-  any jobs for hours that day. Behind the two Macs' locked screens it presents at the system's pace (442 frames in
-  ten seconds on the M4 Pro).
+  two seconds apart showed the same frame of the race), which is what made the rule what it is. The
+  fourth rule presented 339 frames in ten seconds in one run (a quarter of the reports late) and 60 in fifteen in
+  the next (again a quarter late, and the two pictures the same), which is why reports count as late when more than
+  one in twenty are. With the rule as it is now the scene had not run on a runner when this was written: GitHub's
+  macOS runners took hardly any jobs that day, and the last tries got none. So on a screen that is on, the rule in
+  the tree is tested by its model and not by a display. Behind the Mac mini's locked screen it presents at the
+  system's pace (617 frames in fifteen seconds).
 
 ### Not tested
 
