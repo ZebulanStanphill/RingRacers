@@ -118,6 +118,7 @@ set_tests_properties(shared_brightmap_gl_update shared_brightmap_texture
     shared_brightmap_flat shared_brightmap_patch PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 regression(sprite_fade sprite_fade)
+regression(sprite_height sprite_height)
 regression(shadow_draw shadow_draw)
 regression(drop_shadow_color drop_shadow_color)
 regression(overlay_blend overlay_blend)

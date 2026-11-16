@@ -109,6 +109,10 @@ def generate(engine, output):
         "LOOP": function_section(fade, "HWR_SplitSprite",
             "\t\t// even if we aren't changing colormap", "\n\t\tif (i + 1 < sector->numlights)"),
     }, output / "sprite_fade.cpp")
+    render(templates / "sprite_height.cpp.in", {
+        "HEIGHT": function_section(fade, "HWR_SplitSprite", "\trealtop = top = baseWallVerts[3].y;",
+            "\n\tendrealtop = endtop = baseWallVerts[2].y;").replace("return;", "return false;"),
+    }, output / "sprite_height.cpp")
     shadow_hardware = Source(engine / "src/hardware/hw_main.c")
     shadow_software = Source(engine / "src/r_things.cpp")
     render(templates / "shadow_draw.cpp.in", {

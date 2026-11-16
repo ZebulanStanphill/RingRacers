@@ -1631,6 +1631,10 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   as Software's; this was found comparing Xbox screenshots. Native checks cover
   color conversion and draw inputs, not GPU blending or Xbox pixels.
 
+- **Split sprites without height:** `sprite_height` runs the part of
+  `HWR_SplitSprite` that divides by the sprite's height: a sprite without
+  height isn't drawn, and the thinnest one that has a height gets finite
+  texture coordinates.
 - **Split fullbright colormap fading:** `sprite_fade` executes the production
   split-sprite lighting block and fade helper with real engine types and
   brightness predicates. Check fullbright/ordinary sprites, flagged/unflagged

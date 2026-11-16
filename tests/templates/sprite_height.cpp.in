@@ -1,0 +1,37 @@
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+struct FOutVector { float x, y, z, s, t; };
+// The part of HWR_SplitSprite that works out how a sprite's texture runs down its height. False where the function
+// returns without drawing.
+static bool pieces(float topY, float botY, float tTop, float tBot, float &tmult, float &pieceT)
+{
+    FOutVector baseWallVerts[4] = {};
+    baseWallVerts[3].y = topY; baseWallVerts[0].y = botY;
+    baseWallVerts[3].t = tTop; baseWallVerts[0].t = tBot;
+    float realtop, realbot, top, bot, ttop, tbot;
+@@HEIGHT@@
+    (void)realbot;
+    // A piece's coordinate, as the loop that follows works it out for the sprite's bottom edge
+    pieceT = ttop + ((realtop - bot) * tmult);
+    return true;
+}
+int main()
+{
+    float tmult = 0, t = 0;
+    // A sprite 100 units tall whose texture runs from 0 to 0.75
+    assert(pieces(100, 0, 0, 0.75f, tmult, t));
+    assert(std::fabs(tmult - 0.0075f) < 1e-7f && std::fabs(t - 0.75f) < 1e-6f);
+    // Flipped vertically: the texture runs the other way
+    assert(pieces(100, 0, 0.75f, 0, tmult, t));
+    assert(std::fabs(tmult + 0.0075f) < 1e-7f && std::fabs(t) < 1e-6f);
+    // One without height isn't drawn: the division would give an infinity, and the piece a value that isn't a number
+    tmult = t = 123;
+    assert(!pieces(80, 80, 0, 0.75f, tmult, t));
+    assert(tmult == 123 && t == 123);
+    assert(!pieces(0, 0, 0.75f, 0, tmult, t));
+    // The thinnest sprite that has a height still gets finite coordinates
+    assert(pieces(std::nextafter(80.0f, 81.0f), 80, 0, 0.75f, tmult, t));
+    assert(std::isfinite(tmult) && std::isfinite(t));
+    puts("a split sprite without height isn't drawn, and one with height gets finite texture coordinates");
+}

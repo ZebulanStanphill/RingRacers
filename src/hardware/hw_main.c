@@ -5570,6 +5570,11 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 	realbot = bot = baseWallVerts[0].y;
 	ttop = baseWallVerts[3].t;
 	tbot = baseWallVerts[0].t;
+	// A sprite without height (one squashed flat) has no pixel to draw, and each piece's texture coordinates, and for a
+	// billboard its position, come from dividing by that height: infinities and values that aren't numbers, which a
+	// GPU doesn't have to do anything sensible with. Software draws no row of it either.
+	if (top == bot)
+		return;
 	tmult = (tbot - ttop) / (top - bot);
 
 	endrealtop = endtop = baseWallVerts[2].y;
