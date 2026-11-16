@@ -27,6 +27,8 @@ void D3D12_GetTextureStorageCountsForTest(UINT64 *placed, UINT64 *dedicated, UIN
 // Test hook: queries an existing placed texture's block and the device's current allocation info.
 boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset,
 	UINT64 *blockBytes, UINT64 *reportedBytes, UINT64 *alignment);
+// Test hook: atlas pages that currently have a resource.
+UINT32 D3D12_GetAtlasPagesForTest(void);
 // Test hook: set before initialization; zero keeps the production ring size.
 void D3D12_SetRingBytesForTest(size_t vertex, size_t index, size_t constant);
 // Runs palette rendering's last step and reads its result like ReadRect reads the screen; nothing is read without it

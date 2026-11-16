@@ -277,7 +277,7 @@ static const char *const kOracles[]={
     "opaque", "translucent", "additive", "subtract", "reverse", "multiply", "environment", "masked", "invert", "fog",
     "depth", "nodepth", "noocclude", "portal-supported", "portal-aperture", "portal-nested", "portal-restore", "portal-depth", "portal-plane",
     "spring-mask", "spring-mask-unused", "spring-mask-clear", "spring-mask-portal", "indexed", "line",
-    "texture-guard", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
+    "texture-guard", "atlas-pages", "texture-dedicated", "custom-shader", "custom-shader-clean", "custom-shader-invalid",
     "screen-effect-off", "screen-effect", "screen-effect-fallback", "screen-effect-palette",
     "scaling-integer", "scaling-1to1", "scaling-fallback", "scaling-effect", "scaling-fit",
     "texture", "texture-update", "texture-reuse", "mips", "shared-brightmap",
@@ -605,6 +605,35 @@ int main(int argc,char **argv) {
             expect("texture-guard",RGB{24,120,232});
             deleteTexture(&atlased);
             D3D12_FinishUpdate(0);
+        }
+        {
+            // Empty pages give their memory back, except one kept for the next upload. 192 textures of 256x256
+            // fill three pages; deleting the first 128 empties two, of which the second is released.
+            auto settle=[&](UINT32 pages) { for(int frame=0;frame<8 && D3D12_GetAtlasPagesForTest()!=pages;frame++) D3D12_FinishUpdate(0); };
+            special(HWD_SET_TEXTUREATLAS,0); special(HWD_SET_TEXTUREATLAS,1); settle(1);
+            if(D3D12_GetAtlasPagesForTest()>1) throw std::runtime_error("atlas-pages kept more than one empty page after a flush");
+            std::vector<UINT8> pixels(256*256*4), other(pixels.size());
+            for(size_t pixel=0;pixel<256*256;pixel++) {
+                pixels[pixel*4]=200; pixels[pixel*4+1]=96; pixels[pixel*4+2]=24; pixels[pixel*4+3]=255;
+                other[pixel*4]=32; other[pixel*4+1]=208; other[pixel*4+2]=160; other[pixel*4+3]=255;
+            }
+            std::vector<GLMipmap_t> first(192), second(65);
+            for(auto &t:first) { t={}; t.format=GL_TEXFMT_RGBA; t.width=t.height=256; t.data=pixels.data(); texture(&t); }
+            if(D3D12_GetAtlasPagesForTest()!=3) throw std::runtime_error("atlas-pages 192 textures did not fill three pages");
+            for(size_t i=0;i<128;i++) deleteTexture(&first[i]);
+            settle(2);
+            if(D3D12_GetAtlasPagesForTest()!=2) throw std::runtime_error("atlas-pages did not release the second empty page");
+            // 64 more fill the kept page, and the next one needs the released page again, between the two others.
+            for(auto &t:second) { t={}; t.format=GL_TEXFMT_RGBA; t.width=t.height=256; t.data=(&t==&second.back()?other:pixels).data(); texture(&t); }
+            if(D3D12_GetAtlasPagesForTest()!=3) throw std::runtime_error("atlas-pages did not create the released page again");
+            reset(); texture(&second.back()); textured();
+            expect("atlas-pages",RGB{32,208,160});
+            reset(); texture(&first.back()); textured();
+            expect("atlas-pages",RGB{200,96,24});
+            for(size_t i=128;i<first.size();i++) deleteTexture(&first[i]);
+            for(auto &t:second) deleteTexture(&t);
+            settle(1);
+            if(D3D12_GetAtlasPagesForTest()!=1) throw std::runtime_error("atlas-pages did not release the emptied pages");
         }
         // The placement checks below need standalone resources.
         special(HWD_SET_TEXTUREATLAS,0);

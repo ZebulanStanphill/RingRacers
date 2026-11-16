@@ -593,6 +593,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   the guard and nonoverlap for 256×256 and 64×64 textures, then creates a 1024×1024
   texture, which exceeds the arena's largest class with its guard, and checks that it
   got a heap of its own rather than committed storage and that its last texel draws.
+  `atlas-pages` fills three atlas pages, deletes the textures of two, and checks through a test-only page count
+  that one empty page is kept and the other released, that the released page is created again once the
+  others are full, and that textures in both draw.
   None of this runs during normal rendering or retains diagnostic metadata. The CPU mip generator is checked
   against a scalar oracle for odd sizes and 1×N textures. The 3D texture
 repack used for the palette lookup table is checked for row pitch, slice order and

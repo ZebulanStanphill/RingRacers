@@ -24,7 +24,7 @@ Game logic results are unchanged. Optimizations do the same work in less time, p
 
 ## VibeRant D3D renderer
 
-- **Small-texture atlas** *(untested on Xbox)*. Less slowdown when many color-changing sprites appear, such as multiplayer invincibility: VibeRant shares texture pages instead of creating a resource for every sprite translation. `gr_textureatlas` (On by default) flushes textures when toggled for comparison. See [the atlas notes](docs/d3d12-texture-atlas.md).
+- **Small-texture atlas** *(untested on Xbox)*. Less slowdown when many color-changing sprites appear, such as multiplayer invincibility: VibeRant shares texture pages instead of creating a resource for every sprite translation. Pages left empty, as after a level change, give their memory back, except one kept ready *(untested on Xbox)*; before, a session's pages only ever grew, to 35 (560 MB) in a two-hour one. `gr_textureatlas` (On by default) flushes textures when toggled for comparison. See [the atlas notes](docs/d3d12-texture-atlas.md).
 
 ### Direct3D 12 driver
 

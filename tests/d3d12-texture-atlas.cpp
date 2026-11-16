@@ -8,8 +8,8 @@ int main()
 	auto tiny = a.Allocate(1, 1);
 	assert(tiny.w == 4 && tiny.h == 16);
 	a.Free(tiny, 4); a.Collect(3);
-	assert(a.UsedArea() == 64);
-	a.Collect(4); assert(!a.UsedArea());
+	assert(a.UsedArea() == 64 && !a.Empty()); // still waiting for its fence
+	a.Collect(4); assert(!a.UsedArea() && a.Empty());
 	std::vector<TextureAtlas::Rect> rects;
 	for (int i = 0; i < 64; ++i) { auto r = a.Allocate(256, 256); assert(r); rects.push_back(r); }
 	assert(!a.Allocate(1, 1));

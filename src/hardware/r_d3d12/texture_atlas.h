@@ -48,6 +48,8 @@ public:
 		if (!live) shelves.clear();
 	}
 	unsigned UsedArea() const { return area; }
+	// No rectangle is allocated or waiting for its fence.
+	bool Empty() const { return !live; }
 private:
 	struct Shelf { unsigned y, h; std::vector<Rect> free; };
 	struct Pending { Rect rect; uint64_t fence; };

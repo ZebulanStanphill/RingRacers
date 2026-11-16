@@ -486,7 +486,7 @@ void RetireTexture(GpuTexture &texture);
 struct AtlasPage { GpuTexture texture; TextureAtlas allocator; };
 std::vector<AtlasPage> g_atlasPages;
 bool g_textureAtlas = true;
-UINT64 g_atlasPlaced = 0, g_atlasFreed = 0;
+UINT64 g_atlasPlaced = 0, g_atlasFreed = 0, g_atlasPagesReleased = 0;
 UINT64 g_atlasReasons[7] = {}; // off, custom, mip, wrap, size, anisotropy, allocation
 bool AtlasCustomShaders();
 
@@ -1140,9 +1140,10 @@ bool UploadAtlas(Texture &texture, UINT w, UINT h, const void *data)
 	if (texture.atlasPage < 0)
 	{
 		TextureAtlas::Rect rect;
-		size_t page = 0;
+		size_t page = 0, released = g_atlasPages.size();
 		for (; page < g_atlasPages.size(); ++page)
 		{
+			if (!g_atlasPages[page].texture.res) { released = std::min(released, page); continue; }
 			auto &allocator = g_atlasPages[page].allocator;
 			allocator.Collect(Core_CompletedFence());
 			rect = allocator.Allocate(w, h);
@@ -1150,11 +1151,14 @@ bool UploadAtlas(Texture &texture, UINT w, UINT h, const void *data)
 		}
 		if (!rect)
 		{
+			// Views name their page by index, so a released page's slot is filled again before the list grows.
 			AtlasPage fresh;
 			if (!CreateTextureStorage(&fresh.texture, 0, TextureAtlas::Size, TextureAtlas::Size,
 				DXGI_FORMAT_R8G8B8A8_UNORM, false, nullptr)) return false;
 			rect = fresh.allocator.Allocate(w, h);
-			g_atlasPages.push_back(std::move(fresh));
+			page = released;
+			if (page == g_atlasPages.size()) g_atlasPages.push_back(std::move(fresh));
+			else g_atlasPages[page] = std::move(fresh);
 		}
 		RetireTexture(texture);
 		texture.atlasPage = (int)page; texture.atlasRect = rect;
@@ -1165,6 +1169,24 @@ bool UploadAtlas(Texture &texture, UINT w, UINT h, const void *data)
 		++g_atlasPlaced;
 	}
 	return UploadTexture(g_atlasPages[texture.atlasPage].texture, data, w, h, texture.atlasRect.x, texture.atlasRect.y);
+}
+
+// A long level can fill dozens of pages with sprite translations, which a level change then empties.
+// Gives the memory of empty pages back, except one kept for the next upload.
+void TrimAtlasPages()
+{
+	bool spare = false;
+	for (auto &page : g_atlasPages)
+	{
+		if (!page.texture.res) continue;
+		page.allocator.Collect(Core_CompletedFence());
+		if (!page.allocator.Empty()) continue;
+		if (!spare) { spare = true; continue; }
+		RetireTexture(page.texture);
+		page = {};
+		++g_atlasPagesReleased;
+	}
+	while (!g_atlasPages.empty() && !g_atlasPages.back().texture.res) g_atlasPages.pop_back();
 }
 
 // A polygon can temporarily force wrapping even on an upload marked CLAMP.
@@ -2099,6 +2121,7 @@ void BindRenderTarget()
 	memset(g_boundPaletteTables, 0, sizeof g_boundPaletteTables);
 	g_srvIndices.Collect(Core_CompletedFence());
 	g_staticArena.Collect(Core_CompletedFence());
+	TrimAtlasPages();
 	CollectTextureBlocks();
 	ID3D12GraphicsCommandList *list = Core_List();
 	if (!list || !g_rt)
@@ -3475,15 +3498,19 @@ void D3D12_LogPerf(double seconds)
 		vertex.peakBytes / 1048576.0, index.peakBytes / 1048576.0, constants.peakBytes / 1048576.0,
 		vertex.wraps, index.wraps, constants.wraps, vertex.stalls + index.stalls + constants.stalls,
 		vertex.stallMs + index.stallMs + constants.stallMs, vertex.grows + index.grows + constants.grows);
-	unsigned atlasAlive = 0; UINT64 used = 0;
+	unsigned atlasAlive = 0, pages = 0; UINT64 used = 0;
 	for (const auto &entry : g_textures) atlasAlive += entry.second.atlasPage >= 0;
-	for (auto &page : g_atlasPages) { page.allocator.Collect(Core_CompletedFence()); used += page.allocator.UsedArea(); }
-	I_OutputMsg("UWP perf:   D3D12: atlas: %u textures in %u pages (%.1f%% used), %llu placed and %llu freed this period; standalone: off %llu, custom %llu, mip %llu, wrap %llu, size %llu, anisotropy %llu, allocation %llu\n",
-		atlasAlive, (unsigned)g_atlasPages.size(), g_atlasPages.empty() ? 0.0 : used * 100.0 / (g_atlasPages.size() * TextureAtlas::Size * TextureAtlas::Size),
-		(unsigned long long)g_atlasPlaced, (unsigned long long)g_atlasFreed,
+	for (auto &page : g_atlasPages)
+	{
+		if (!page.texture.res) continue;
+		page.allocator.Collect(Core_CompletedFence()); used += page.allocator.UsedArea(); ++pages;
+	}
+	I_OutputMsg("UWP perf:   D3D12: atlas: %u textures in %u pages (%.1f%% used), %llu placed and %llu freed, %llu pages released this period; standalone: off %llu, custom %llu, mip %llu, wrap %llu, size %llu, anisotropy %llu, allocation %llu\n",
+		atlasAlive, pages, pages ? used * 100.0 / ((UINT64)pages * TextureAtlas::Size * TextureAtlas::Size) : 0.0,
+		(unsigned long long)g_atlasPlaced, (unsigned long long)g_atlasFreed, (unsigned long long)g_atlasPagesReleased,
 		(unsigned long long)g_atlasReasons[0], (unsigned long long)g_atlasReasons[1], (unsigned long long)g_atlasReasons[2],
 		(unsigned long long)g_atlasReasons[3], (unsigned long long)g_atlasReasons[4], (unsigned long long)g_atlasReasons[5], (unsigned long long)g_atlasReasons[6]);
-	g_atlasPlaced = g_atlasFreed = 0; for (auto &reason : g_atlasReasons) reason = 0;
+	g_atlasPlaced = g_atlasFreed = g_atlasPagesReleased = 0; for (auto &reason : g_atlasReasons) reason = 0;
 	const RingStats staging = g_textureRing.TakeStats();
 	I_OutputMsg("UWP perf:   D3D12: textures: %llu created, %llu uploads (%.2f MB), %llu deleted, %d flushes, %u alive; SRVs used %u/65536, samplers %u/2048; allocated %.2f MB vs requested %.2f MB; staging ring peak %.2f MB, %u wraps, %u stalls (%.2f ms), %u grows\n",
 		(unsigned long long)s.texturesCreated, (unsigned long long)s.textureUploads, s.textureUploadBytes / 1048576.0,
@@ -3562,6 +3589,13 @@ boolean D3D12_GetTexturePlacementForTest(UINT32 id, UINT32 *heap, UINT64 *offset
 	*heap = texture->heapBlock.chunk; *offset = texture->heapBlock.offset;
 	*blockBytes = texture->heapBlock.size; *reportedBytes = info.SizeInBytes; *alignment = info.Alignment;
 	return true;
+}
+
+UINT32 D3D12_GetAtlasPagesForTest(void)
+{
+	UINT32 pages = 0;
+	for (const auto &page : g_atlasPages) pages += !!page.texture.res;
+	return pages;
 }
 
 void D3D12_ReadPaletteRectForTest(INT32 x, INT32 y, INT32 width, INT32 height, INT32 dst_stride, UINT16 *dst_data)

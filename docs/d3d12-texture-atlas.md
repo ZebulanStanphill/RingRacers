@@ -20,7 +20,10 @@ Allocation failure also falls back to standalone storage.
 Each page has 16-pixel shelf height classes and four-pixel width granularity.
 Freed intervals coalesce after the pending GPU fence completes. Once all its
 rectangles retire, a page discards its shelves, allowing different height classes.
-Pages survive level flushes and toggle changes, and are released at driver shutdown.
+A page whose rectangles have all retired is released, except one kept for the
+next upload: a long level can fill dozens of pages with sprite translations,
+which the level change then empties. Views name their page by index, so a
+released page's slot is filled again before the list grows.
 A same-size eligible reupload keeps its rectangle. Uploads use the staging ring,
 region copies, and page-wide transitions; page resource state is tracked centrally.
 
@@ -33,8 +36,8 @@ and HLSL float4 arrays match, retaining the old constants' offsets and fitting t
 existing 512-byte draw allocation. Vulkan already honors region copy offsets.
 
 The `D3D12: atlas:` perf line reports live views, retained pages, occupied shelf
-area (including fence-pending frees), period placements/frees, and standalone
-admission reasons. `textures: ... created` still counts actual GPU resources,
+area (including fence-pending frees), period placements, frees, and released
+pages, and standalone admission reasons. `textures: ... created` still counts actual GPU resources,
 including pages, rather than atlas views. Page memory is counted once. Desktop
 backends call this logger every five seconds; UWP retains its engine-loop cadence.
 
