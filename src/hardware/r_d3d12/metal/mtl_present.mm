@@ -433,9 +433,9 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 	}
 	if (!g_mtl.owned && !CreateWindowAndLayer())
 	{
-		char message[320];
+		char message[360];
 		snprintf(message, sizeof message,
-			"Metal couldn't make its window to present on (%s).\nSet Renderer to Software in Video Options > Advanced.", g_mtl.failure);
+			"Metal couldn't make its window to present on (%s).\nStart the game with -software, or set Renderer to Software in Video Options > Advanced.", g_mtl.failure);
 		rr_mtl_present::Fatal(message);
 	}
 
