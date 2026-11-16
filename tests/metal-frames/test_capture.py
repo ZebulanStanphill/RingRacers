@@ -21,7 +21,7 @@ COLORS = ('VibeRant Metal: presenter: colors are matched to the display as the O
 def done(presented, unseen=0, no_drawable=0, probes=(0, 0, 0), how="closed the Metal window as the game quits; the game's OpenGL window is hidden"):
     return ("VibeRant Metal: presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; "
             "%d of those presented went to a window the system called out of sight (%d shown, %d dropped); "
-            "the layer took 0.41 ms to give a drawable on average, 8.3 ms at worst; Metal reported 5 drawables with a time shown and 7 without\n"
+            "the layer took 0.41 ms to give a drawable on average, 8.3 ms at worst; Metal reported 5 drawables with a time shown and 7 without, 12 of its reports within 250 ms and 0 later\n"
             % ((how, presented, unseen, no_drawable) + probes))
 
 

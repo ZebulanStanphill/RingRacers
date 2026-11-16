@@ -3,6 +3,7 @@
 #include "hardware/r_d3d12/metal/mtl_present_seen.h"
 #include <cassert>
 #include <cstdio>
+#include <deque>
 
 using namespace rr_mtl_present;
 
@@ -18,19 +19,22 @@ struct Model
 	bool shows = true;       // and puts them on screen
 	bool reported = true;    // the system says the window is on screen
 	bool usable = true, force = false;
-	// When Metal reports on a drawable: as the display takes it (a Mac's own GPU), or only when the next one takes
-	// its place (a virtual machine's display)
-	bool reportsLate = false;
+	// How long after the display took a drawable Metal reports on it: at once (a Mac's own GPU), or a second later (a
+	// virtual machine's display)
+	double reportLagMs = 0;
 	double refreshMs = 16, frameMs = 4;
 	double handBackMs = 0;   // the layer gives a drawable no sooner than this after the last one
 
 	Seen seen;
 	double ms = 0, nextRefreshMs = 16;
 	int queued = 0;          // presented and not yet taken by the display
-	bool held = false;       // the display holds one (the one on screen), and with reportsLate it is unreported
+	bool held = false;       // the display holds one (the one on screen)
+	std::deque<double> presentedAt; // of the queued ones
+	std::deque<std::pair<double, double>> reports; // due at, for a drawable presented at
+	int unreported = 0, lateReports = 0, promptReports = 0;
 	int presented = 0, probes = 0, unseen = 0, waits = 0, noDrawable = 0, shown = 0;
 	double stalledMs = 0;    // time spent waiting for a drawable that didn't come
-	double lastGivenMs = -1e9, waitedForProbesMs = 0;
+	double lastGivenMs = -1e9, waitedForProbesMs = 0, longestProbeWaitMs = 0;
 	double longestGapMs = 0, lastShownMs = 0;
 
 	// The display's refreshes up to now
@@ -42,6 +46,8 @@ struct Model
 				continue;
 			--queued;
 			held = true;
+			reports.push_back({nextRefreshMs + reportLagMs, presentedAt.front()});
+			presentedAt.pop_front();
 			if (!shows)
 				continue;
 			++shown;
@@ -50,15 +56,21 @@ struct Model
 		}
 	}
 
-	int Out() const
+	// What the presenter knows: the drawables not yet reported on, and whether most reports so far took long
+	void Reports()
 	{
-		return queued + (reportsLate && held ? 1 : 0);
+		for (; !reports.empty() && reports.front().first <= ms; reports.pop_front())
+		{
+			--unreported;
+			(reports.front().first - reports.front().second > kLateReportMs ? lateReports : promptReports)++;
+		}
 	}
 
 	void Frame()
 	{
 		Refresh();
-		const Now now = {ms, usable, reported, force, Out()};
+		Reports();
+		const Now now = {ms, usable, reported, force, unreported, lateReports > promptReports};
 		const rr_mtl_present::Frame frame = Decide(seen, now);
 		if (frame == Frame::Present || frame == Frame::Probe)
 		{
@@ -74,7 +86,10 @@ struct Model
 			if (handBackMs && lastGivenMs + handBackMs > ms)
 				ms = std::min(lastGivenMs + handBackMs, asked + 1000);
 			if (frame == Frame::Probe)
+			{
 				waitedForProbesMs += ms - asked;
+				longestProbeWaitMs = std::max(longestProbeWaitMs, ms - asked);
+			}
 			if (kDrawables - (held ? 1 : 0) - queued <= 0 || ms - asked >= 1000)
 			{
 				ms = asked + 1000;
@@ -87,6 +102,8 @@ struct Model
 				GotDrawable(seen, frame, ms, ms - asked);
 				lastGivenMs = ms;
 				++queued;
+				++unreported;
+				presentedAt.push_back(ms);
 				++presented;
 				probes += frame == Frame::Probe;
 			}
@@ -113,34 +130,51 @@ int main()
 	for (bool late : {false, true})
 	{
 		Model m;
-		m.reportsLate = late;
+		m.reportLagMs = late ? 1000 : 0;
 		m.Run(10000);
 		assert(m.presented >= 620 && m.presented <= 628 && m.unseen == 0 && m.probes == 0 && m.stalledMs == 0);
 		assert(m.shown >= 620 && m.longestGapMs <= 16);
 	}
 
-	// A window that really is out of sight (the system says so, and the display doesn't take its drawables): the
-	// game is never held up, which is the point of asking the system at all, and nothing is presented but two probes
-	// at most
-	for (bool late : {false, true})
-		for (double frameMs : {1.0, 4.0, 16.0, 40.0})
-		{
-			Model m;
-			m.reportsLate = late;
-			m.frameMs = frameMs;
-			m.Run(1000);
-			m.composited = m.reported = false;
-			const int before = m.presented;
-			m.Run(60000);
-			assert(m.presented - before <= 2 && m.probes == m.presented - before);
-			assert(m.stalledMs == 0 && m.noDrawable == 0 && m.waitedForProbesMs == 0);
-			assert(m.unseen >= 60000 / frameMs - 3);
-			// Back in sight: frames are presented again at once
-			m.composited = m.reported = true;
-			const int hidden = m.presented;
-			m.Run(1000);
-			assert(m.presented - hidden >= std::min(1000 / frameMs, 60.0) - 3 && m.stalledMs == 0);
-		}
+	// A window that really is out of sight (the system says so, and the display doesn't take its drawables), where
+	// reports are prompt: the game is never held up, which is the point of asking the system at all, and nothing is
+	// presented but two probes at most
+	for (double frameMs : {1.0, 4.0, 16.0, 40.0})
+	{
+		Model m;
+		m.frameMs = frameMs;
+		m.Run(1000);
+		m.composited = m.reported = false;
+		const int before = m.presented;
+		m.Run(60000);
+		assert(m.presented - before <= 2 && m.probes == m.presented - before);
+		assert(m.stalledMs == 0 && m.noDrawable == 0 && m.waitedForProbesMs == 0);
+		assert(m.unseen >= 60000 / frameMs - 3);
+		// Back in sight: frames are presented again at once
+		m.composited = m.reported = true;
+		const int hidden = m.presented;
+		m.Run(1000);
+		assert(m.presented - hidden >= std::min(1000 / frameMs, 60.0) - 3 && m.stalledMs == 0);
+	}
+	// The same where reports have been late (a virtual machine's display): the count can't be used, so the layer's
+	// last drawables go out and the game waits, but less and less often: ten times in the first ten minutes, a
+	// second each, and once in five minutes after that
+	{
+		Model m;
+		m.reportLagMs = 1000;
+		m.Run(5000);
+		assert(m.lateReports > m.promptReports);
+		m.composited = m.reported = false;
+		m.Run(600000);
+		assert(m.stalledMs <= 10000 && m.noDrawable <= 10);
+		const double first = m.stalledMs;
+		m.Run(3600000);
+		assert(m.stalledMs - first <= 13000);
+		m.composited = m.reported = true;
+		const int hidden = m.presented;
+		m.Run(1000);
+		assert(m.presented - hidden >= 55);
+	}
 
 	// The case this is for: the system says the window is out of sight, and it is wrong. The picture must keep moving:
 	// a frame at every refresh of the display (or every frame, if the game draws fewer), with no wait. Whichever way
@@ -149,7 +183,7 @@ int main()
 		for (double frameMs : {1.0, 4.0, 16.0, 40.0})
 		{
 			Model m;
-			m.reportsLate = late;
+			m.reportLagMs = late ? 1000 : 0;
 			m.frameMs = frameMs;
 			m.Run(1000);
 			m.reported = false;
@@ -160,7 +194,9 @@ int main()
 			const double period = std::max(frameMs, m.refreshMs);
 			assert(m.shown - before >= 10000 / period - 3);
 			assert(m.longestGapMs <= period + m.refreshMs + frameMs);
-			assert(m.stalledMs == 0 && m.noDrawable == 0 && m.waitedForProbesMs <= 10000 * 0.02);
+			// Where the count isn't used, a probe waits as a frame for a window in sight does: for the display, a
+			// refresh at most
+			assert(m.stalledMs == 0 && m.noDrawable == 0 && m.longestProbeWaitMs <= (late ? m.refreshMs : 0));
 			assert(m.probes >= m.shown - before - 3);
 		}
 
@@ -179,7 +215,7 @@ int main()
 
 	// A window the system serves slowly while it calls it out of sight: it takes the drawables, reports on them, and
 	// gives the next one only after a while. Probes pause after a slow one, for longer each time, so the game waits
-	// for a small and shrinking share of the time: at most six waits in the first minute, and one per half minute after.
+	// for a small and shrinking share of the time: at most six waits in the first minute, and four in the ten after.
 	for (double handBackMs : {300.0, 500.0, 2000.0})
 	{
 		Model m;
@@ -190,7 +226,7 @@ int main()
 		const double first = m.waitedForProbesMs; // the waits that got no drawable are in it
 		assert(first <= 6000);
 		m.Run(600000);
-		assert(m.waitedForProbesMs - first <= 21000);
+		assert(m.waitedForProbesMs - first <= 4000);
 		// Back in sight: every frame again
 		m.reported = m.shows = true;
 		m.handBackMs = 0;
@@ -210,44 +246,44 @@ int main()
 		assert(m.shown - before >= 80);
 	}
 
-	// The pause: a second after a slow probe or one without a drawable, then two, doubling to thirty; over once a probe
+	// The pause: a second after a slow probe or one without a drawable, then two, doubling to five minutes; over once a probe
 	// is quick, or the window is in sight
 	{
 		Seen seen;
 		double ms = 0, pause = 1000;
-		for (int i = 0; i < 8; i++)
+		for (int i = 0; i < 12; i++)
 		{
-			assert(Decide(seen, {ms, true, false, false, 0}) == Frame::Probe);
+			assert(Decide(seen, {ms, true, false, false, 0, false}) == Frame::Probe);
 			if (i & 1)
 				NoDrawable(seen, ms, Frame::Probe);
 			else
 				assert(!GotDrawable(seen, Frame::Probe, ms, 251));
-			assert(Decide(seen, {ms + pause - 1, true, false, false, 0}) == Frame::Unseen);
+			assert(Decide(seen, {ms + pause - 1, true, false, false, 0, false}) == Frame::Unseen);
 			ms += pause;
-			pause = std::min(30000.0, pause * 2);
+			pause = std::min(300000.0, pause * 2);
 		}
-		assert(pause == 30000);
-		// One quick probe doesn't end it: the next slow one pauses for thirty seconds again
-		assert(Decide(seen, {ms, true, false, false, 0}) == Frame::Probe);
+		assert(pause == 300000);
+		// One quick probe doesn't end it: the next slow one pauses for five minutes again
+		assert(Decide(seen, {ms, true, false, false, 0, false}) == Frame::Probe);
 		assert(GotDrawable(seen, Frame::Probe, ms, 250));
-		assert(Decide(seen, {ms + 1, true, false, false, 0}) == Frame::Probe);
+		assert(Decide(seen, {ms + 1, true, false, false, 0, false}) == Frame::Probe);
 		assert(!GotDrawable(seen, Frame::Probe, ms + 1, 900));
-		assert(Decide(seen, {ms + 30000, true, false, false, 0}) == Frame::Unseen);
-		ms += 30001;
+		assert(Decide(seen, {ms + 300000, true, false, false, 0, false}) == Frame::Unseen);
+		ms += 300001;
 		// Thirty in a row do
 		for (int i = 0; i < 30; i++, ms++)
 		{
-			assert(Decide(seen, {ms, true, false, false, 0}) == Frame::Probe);
+			assert(Decide(seen, {ms, true, false, false, 0, false}) == Frame::Probe);
 			assert(GotDrawable(seen, Frame::Probe, ms, 5));
 		}
 		assert(!GotDrawable(seen, Frame::Probe, ms, 900));
-		assert(Decide(seen, {ms + 999, true, false, false, 0}) == Frame::Unseen);
-		assert(Decide(seen, {ms + 1000, true, false, false, 0}) == Frame::Probe);
+		assert(Decide(seen, {ms + 999, true, false, false, 0, false}) == Frame::Unseen);
+		assert(Decide(seen, {ms + 1000, true, false, false, 0, false}) == Frame::Probe);
 		assert(!GotDrawable(seen, Frame::Probe, ms + 1000, 900));
 		ms += 1000;
 		// In sight: no pause, and the next time out of sight starts afresh
-		assert(Decide(seen, {ms + 2, true, true, false, 0}) == Frame::Present);
-		assert(Decide(seen, {ms + 3, true, false, false, 0}) == Frame::Probe);
+		assert(Decide(seen, {ms + 2, true, true, false, 0, false}) == Frame::Present);
+		assert(Decide(seen, {ms + 3, true, false, false, 0, false}) == Frame::Probe);
 		// A window in sight may wait for its drawables as long as the display takes
 		assert(GotDrawable(seen, Frame::Present, ms, 900));
 	}
@@ -255,11 +291,16 @@ int main()
 	// No probe while two drawables are unaccounted for: with the one on screen, the layer's three would be out
 	{
 		Seen seen;
-		assert(Decide(seen, {0, true, false, false, 3}) == Frame::Unseen);
-		assert(Decide(seen, {0, true, false, false, 2}) == Frame::Unseen);
-		assert(Decide(seen, {0, true, false, false, 1}) == Frame::Probe);
-		assert(Decide(seen, {0, true, false, false, 0}) == Frame::Probe);
+		assert(Decide(seen, {0, true, false, false, 3, false}) == Frame::Unseen);
+		assert(Decide(seen, {0, true, false, false, 2, false}) == Frame::Unseen);
+		assert(Decide(seen, {0, true, false, false, 1, false}) == Frame::Probe);
+		assert(Decide(seen, {0, true, false, false, 0, false}) == Frame::Probe);
 		assert(kDrawables - 1 - kProbeOut >= 1);
+		// Where reports are late the count isn't asked, only the pause
+		assert(Decide(seen, {0, true, false, false, 40, true}) == Frame::Probe);
+		NoDrawable(seen, 1000, Frame::Probe);
+		assert(Decide(seen, {1999, true, false, false, 40, true}) == Frame::Unseen);
+		assert(Decide(seen, {2000, true, false, false, 40, true}) == Frame::Probe);
 	}
 
 	// Without the probes (as the presenter was: only the first frame of a window went out regardless), a wrong report
@@ -273,24 +314,19 @@ int main()
 		m.Run(10000);
 		assert(m.shown - before <= 2);
 	}
-	// And waiting for every report before the next probe, as an earlier version did, gives a frame a second where the
-	// reports come late: the model can tell that too
+	// And going by the count where reports are a second late, as an earlier version did, leaves the picture standing
+	// for most of every second: the model can tell that too
 	{
 		Model m;
-		m.reportsLate = true;
-		m.Run(1000);
+		m.reportLagMs = 1000;
+		m.Run(3000);
 		m.reported = false;
-		int probes = 0;
-		for (const double end = m.ms + 10000; m.ms < end; m.ms += m.frameMs)
-		{
-			m.Refresh();
-			if (m.Out() == 0)
-			{
-				++m.queued;
-				++probes;
-			}
-		}
-		assert(probes <= 1);
+		m.lateReports = -1000000; // as if the reports weren't known to be late
+		const int before = m.shown;
+		m.longestGapMs = 0;
+		m.lastShownMs = m.ms;
+		m.Run(10000);
+		assert(m.shown - before <= 30 && m.longestGapMs >= 900);
 	}
 
 	// A new window: its first frames go out although the system doesn't call it visible yet
@@ -311,15 +347,15 @@ int main()
 	// presents to any other
 	{
 		Seen seen;
-		assert(Decide(seen, {0, false, true, true, 0}) == Frame::Unseen);
-		assert(Decide(seen, {0, true, false, true, 5}) == Frame::Present);
+		assert(Decide(seen, {0, false, true, true, 0, false}) == Frame::Unseen);
+		assert(Decide(seen, {0, true, false, true, 5, false}) == Frame::Present);
 	}
 
 	// A window in sight whose layer gives no drawable: the frame isn't shown, and the layer is left alone for a quarter
 	// of a second, then half, up to four seconds, and from the start again once it gives one
 	{
 		Seen seen;
-		Now now = {0, true, true, false, 0};
+		Now now = {0, true, true, false, 0, false};
 		double expected = 250;
 		for (int i = 0; i < 7; ++i)
 		{

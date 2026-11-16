@@ -104,6 +104,9 @@ std::atomic<uint64_t> g_presentedSerial{0}, g_reportedSerial{0};
 // What the reports said, since the window was taken: the drawable has a time at which it was shown, or it has none
 // (dropped, or a system that gives no times). Of all presented drawables, and of the probes among them.
 std::atomic<int> g_timed{0}, g_untimed{0}, g_probesTimed{0}, g_probesUntimed{0};
+// And how long the reports took to come, from the moment the drawable was presented: within kLateReportMs, or later.
+// Where most come late, the count of drawables out says nothing about what the layer has free (mtl_present_seen.h).
+std::atomic<int> g_promptReports{0}, g_lateReports{0};
 
 void Reported(uint64_t serial)
 {
@@ -380,6 +383,7 @@ bool CreateWindowAndLayer()
 		// No drawable of this layer is out, whatever became of another window's
 		Reported(g_presentedSerial.load());
 		g_timed = g_untimed = g_probesTimed = g_probesUntimed = 0;
+		g_promptReports = g_lateReports = 0;
 		g_mtl.failure[0] = '\0';
 		g_totals = PresentStats();
 		Log("presenter: presenting on a Metal window in place of the game's OpenGL window (%s)",
@@ -439,9 +443,10 @@ void GiveBackWindow(bool idle, bool quitting)
 	if (g_check.on)
 		Log("presenter: %d drawables were read back and compared with the frames placed in them (-mtlcheck): %d differed, %d unread",
 			g_check.made + g_check.missed, g_check.differed, g_check.missed);
-	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped); the layer took %.2f ms to give a drawable on average, %.1f ms at worst; Metal reported %d drawables with a time shown and %d without",
+	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped); the layer took %.2f ms to give a drawable on average, %.1f ms at worst; Metal reported %d drawables with a time shown and %d without, %d of its reports within %.0f ms and %d later",
 		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesTimed.load(), g_probesUntimed.load(),
-		g_totals.acquireMs / std::max(1, g_totals.presented + g_totals.noDrawable), g_totals.worstAcquireMs, g_timed.load(), g_untimed.load());
+		g_totals.acquireMs / std::max(1, g_totals.presented + g_totals.noDrawable), g_totals.worstAcquireMs, g_timed.load(), g_untimed.load(),
+		g_promptReports.load(), rr_mtl_present::kLateReportMs, g_lateReports.load());
 }
 
 } // namespace
@@ -499,6 +504,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		now.force = force;
 		// Without reports, only a window's first frame goes out regardless
 		now.out = reports ? (int)std::min<uint64_t>(g_presentedSerial.load() - g_reportedSerial.load(), 1000) : g_totals.presented ? 1 : 0;
+		now.late = g_lateReports.load() > g_promptReports.load();
 		const rr_mtl_present::Frame decided = rr_mtl_present::Decide(g_mtl.decide, now);
 		const bool seen = now.usable && (now.visible || now.force);
 		if (seen != g_mtl.seen)
@@ -625,7 +631,9 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		const uint64_t serial = ++g_presentedSerial;
 		if (@available(macOS 10.15.4, *))
 		{
+			const Clock::time_point presentedAt = Clock::now();
 			[drawable addPresentedHandler:^(id<MTLDrawable> done) {
+				(MsSince(presentedAt) > rr_mtl_present::kLateReportMs ? g_lateReports : g_promptReports)++;
 				const bool timed = done.presentedTime > 0;
 				(timed ? g_timed : g_untimed)++;
 				if (probe)

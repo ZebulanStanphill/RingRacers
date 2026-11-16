@@ -63,24 +63,25 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three
   drawables and a display that, per refresh, takes a drawable from a window it serves
   (to show it, or to let it go) and none from one it doesn't, with Metal's reports
-  coming either as the display takes a drawable (a Mac's own GPU) or only when the next
-  one takes its place (a runner's virtual display). A window in sight gets every
-  frame. A window that really is out of sight gets two probes at most and never makes
-  the game wait for a drawable, at four frame rates. A window the system wrongly calls
-  out of sight is shown a frame per refresh, with no gap longer than two, with either
-  kind of report. A window whose drawables the system takes without showing them (a
-  locked screen) gets frames at that pace, and nothing waits. A window the system
-  hands drawables back to slowly makes the game wait six times in the first minute and
-  once per half minute after. Also: no probe goes out while two drawables are
-  unaccounted for, the pause after a slow probe doubles from one second to thirty and
-  ends after thirty quick ones or when the window is in sight, a minimized or hidden
-  window gets nothing, `-mtlunseen` presents regardless, and a layer in sight without
-  a drawable is left alone for a quarter of a second doubling to four. The model's own
-  negative controls pass (no probes: the picture freezes under a wrong report; a probe
-  only after every report: a frame a second where reports come late), and eight
-  defects put into the header one at a time (not kept) each failed an assertion. What a
-  real layer and display do is not covered here: `capture.py`'s `blind` scenes are for
-  that ("Metal frames" and "On a Mac", below).
+  coming at once (a Mac's own GPU) or a second late (a runner's virtual display). A
+  window in sight gets every frame. A window the system wrongly calls out of sight is
+  shown a frame per refresh, with no gap longer than two, with either kind of report.
+  A window that really is out of sight gets two probes at most and never makes the
+  game wait, where reports are prompt; where they are late, the game waits a second
+  ten times in the first ten minutes and once per five minutes after. A window whose
+  drawables the system takes without showing them (a locked screen) gets frames at
+  that pace, and nothing waits. A window the system hands drawables back to slowly
+  makes the game wait six times in the first minute and four in the ten after. Also:
+  no probe goes out while two drawables are unaccounted for unless reports are late,
+  the pause after a slow probe doubles from one second to five minutes and ends after
+  thirty quick ones or when the window is in sight, a minimized or hidden window gets
+  nothing, `-mtlunseen` presents regardless, and a layer in sight without a drawable
+  is left alone for a quarter of a second doubling to four. The model's own negative
+  controls pass (no probes: the picture freezes under a wrong report; going by the
+  count with late reports: gaps of most of a second), and ten defects put into the
+  header one at a time (not kept) each failed an assertion. What a real layer and
+  display do is not covered here: `capture.py`'s `blind` scenes are for that ("Metal
+  frames" and "On a Mac", below).
 
 - **Metal presenter, what a drawable holds:** `metal_present_check` runs the production
   comparison behind `-mtlcheck` (`metal/mtl_present_check.h`, plain C++) on drawables
@@ -1294,8 +1295,8 @@ workflow is on the default branch), or by pushing a commit to a branch named
   `-mtldebug`; and `blind`, where `-mtlblind` has the presenter take its window for
   out of sight although it is on the runner's screen: at least ten frames must be
   presented for every second of the replay all the same (the log counts them), the
-  layer must never be without a drawable, and two pictures of the screen taken two
-  seconds apart must not be the same file.
+  layer must never be without a drawable, and two pictures of the middle of the
+  screen taken two seconds apart must not be the same file.
 
 `tests/metal-frames/capture.py` (Python's standard library only) does the running, on
 a Mac as well ("On a Mac", below): `capture.py sweep --game <the binary in the .app>

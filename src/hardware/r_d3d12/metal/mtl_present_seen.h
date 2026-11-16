@@ -21,9 +21,12 @@
 /// so a window that is in fact on screen keeps its picture moving, at up to one frame per refresh of the display.
 /// When the system takes nothing, as from a window it has stopped serving, two probes go out and no more.
 ///
-/// "At most one" and not "none", because of when the reports come. On a Mac's own GPU, behind a locked screen, each
-/// came at once. On a virtual machine's display (GitHub's runners), the report of a drawable only came when the next
-/// one took its place, a second later if there was none: waiting for it would have meant a frame a second.
+/// "At most one" and not "none", so that a report that is a frame late doesn't halve the pace. But reports can be
+/// much later than that. On a Mac's own GPU, behind a locked screen, each came at once. On a virtual machine's display
+/// (GitHub's runners) each came about a second after its drawable was presented, for a window in plain sight too,
+/// while the layer went on giving drawables without a wait: there the count of drawables out says nothing, and
+/// waiting for it left a picture that stood still for seconds. So the presenter tells this the time each report took,
+/// and where most reports have come late, a probe goes out without asking the count.
 ///
 /// A report also doesn't say reliably whether the drawable was shown: its time is zero for a frame the system
 /// dropped, and was zero for every frame of a window in plain sight on that virtual machine. So the time is only
@@ -32,9 +35,11 @@
 ///
 /// The system might also hand drawables back slowly to a window nobody sees, as it slows other work of such
 /// windows. Then every probe would wait, and the game with it. So after a probe whose drawable took longer than a
-/// quarter of a second to come, or didn't come, no probe goes out for a second, then two, doubling to thirty, until
-/// thirty in a row have come quickly or the window is in sight: the game waits less and less often, and a hiccup
-/// doesn't stop the picture for good.
+/// quarter of a second to come, or didn't come, no probe goes out for a second, then two, doubling to five minutes,
+/// until thirty in a row have come quickly or the window is in sight: the game waits less and less often, and a
+/// hiccup doesn't stop the picture for good. Where reports are prompt this hardly comes up, since the count keeps
+/// probes from asking a layer whose drawables are all out. Where they are late it is the only guard, and a window
+/// that really is out of sight there costs the game a second's wait, at most, at ever longer intervals.
 ///
 /// Plain C++, with no header of Apple's or the game's, so that tests/metal-present-seen.cpp can run it anywhere.
 
@@ -72,6 +77,7 @@ struct Now
 	bool visible;   // the system says some of the window is on screen
 	bool force;     // -mtlunseen: present whatever the system says
 	int out;        // presented drawables that Metal hasn't yet reported on
+	bool late;      // most of Metal's reports have taken longer than kLateReportMs to come, so out says nothing
 };
 
 // The layer's drawables (CAMetalLayer's maximumDrawableCount, which the presenter sets): one on screen, and with at
@@ -80,7 +86,9 @@ constexpr int kDrawables = 3, kProbeOut = 1;
 constexpr double kFirstRetryMs = 250, kLastRetryMs = 4000;
 // A drawable that takes longer than this to come is one the system is in no hurry to give
 constexpr double kSlowProbeMs = 250;
-constexpr double kFirstPauseMs = 1000, kLastPauseMs = 30000;
+constexpr double kFirstPauseMs = 1000, kLastPauseMs = 300000;
+// A report that takes longer than this is no use for telling what the layer has free
+constexpr double kLateReportMs = 250;
 // After this many quick probes in a row the next slow one pauses for a second again. One quick probe says little: a
 // layer that gives a drawable every so often gives the first one after a pause at once.
 constexpr int kQuickProbes = 30;
@@ -96,7 +104,7 @@ inline Frame Decide(Seen &seen, const Now &now)
 		seen.quick = 0;
 		return now.ms < seen.retryAtMs ? Frame::Wait : Frame::Present;
 	}
-	if (now.out > kProbeOut || now.ms < seen.probeAtMs)
+	if (now.ms < seen.probeAtMs || (!now.late && now.out > kProbeOut))
 		return Frame::Unseen;
 	return Frame::Probe;
 }

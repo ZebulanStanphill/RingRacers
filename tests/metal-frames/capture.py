@@ -336,9 +336,10 @@ def sweep(options):
     return results
 
 
-def screencapture(path):
+def screencapture(path, region=None):
+    """A picture of the screen, or of a rectangle of it ("x,y,w,h")"""
     try:
-        subprocess.run(["screencapture", "-x", path], timeout=20, check=False)
+        subprocess.run(["screencapture", "-x"] + (["-R", region] if region else []) + [path], timeout=20, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         print("screencapture failed: %s" % error, flush=True)
 
@@ -355,6 +356,10 @@ def keys(codes, pause=0.6):
 
 
 KEY_RETURN, KEY_A, KEY_D = 36, 0, 2
+
+
+# A rectangle in the middle of a runner's 1024x768 screen, where the game's window is and the menu bar's clock isn't
+MIDDLE = "212,234,600,300"
 
 
 def scene_list():
@@ -379,7 +384,7 @@ def scene_list():
         """Takes a picture of the screen some seconds after the log's nth line that matches a pattern: (pattern, n,
         seconds, name of the picture)"""
         def during(process, scene_dir, log_path):
-            for pattern, nth, seconds, name in marks:
+            for pattern, nth, seconds, name, *region in marks:
                 while True:
                     with open(log_path, errors="replace") as written:
                         if len(re.findall(pattern, written.read())) >= nth:
@@ -389,7 +394,7 @@ def scene_list():
                     time.sleep(0.3)
                 time.sleep(seconds)
                 if process.poll() is None:
-                    screencapture(os.path.join(scene_dir, "screen-%s.png" % name))
+                    screencapture(os.path.join(scene_dir, "screen-%s.png" % name), *region)
         return during
 
     def menu(process, scene_dir, log_path):
@@ -410,7 +415,12 @@ def scene_list():
         for index, (key, name) in enumerate([(KEY_RETURN, "warning"), (KEY_A, "menu"), (KEY_A, "question")]):
             keys([key], pause=3)
             screencapture(os.path.join(scene_dir, "screen-%d-%s.png" % (index + 1, name)))
-        keys([KEY_A], pause=0)
+        # On a slow runner a key can come before the game takes keys and be lost. A is the only way forward from each
+        # of these screens, and yes at the last, so it is pressed until the game has gone.
+        for _ in range(8):
+            if process.poll() is not None:
+                break
+            keys([KEY_A], pause=3)
 
     def scaling(mode):
         # A 320x200 frame on the whole screen, so that Fit, Integer, and 1:1 put it in three different rectangles. The
@@ -454,8 +464,8 @@ def scene_list():
                   "during": pictures((playing, 1, 8, "race")), "shots": 1},
         # The system calls the window out of sight and is wrong (-mtlblind acts it out): the picture must keep going
         "blind": {"args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
-                  "during": pictures((playing, 1, 5, "race-1"), (playing, 1, 2, "race-2")), "shots": 1, "blind": True,
-                  "moving": ("race-1", "race-2")},
+                  "during": pictures((playing, 1, 5, "race-1", MIDDLE), (playing, 1, 2, "race-2", MIDDLE), (playing, 1, 1, "race")),
+                  "shots": 1, "blind": True, "moving": ("race-1", "race-2")},
         # -mtldebug has Metal end every pass with an encoder of its own, which is what the paravirtual GPU's driver
         # couldn't take before mtl12 kept its encoders small
         "mtldebug": {"args": race + ["-mtldebug"], "shots": 2},
@@ -497,8 +507,8 @@ def scenes(options):
             problems.append(("capture", "%d screenshots of the game's own, expected %d" % (len(shots), scene["shots"])))
         blind = check_blind(text, problems) if scene.get("blind") else ""
         if scene.get("moving"):
-            # Two pictures of the screen, seconds apart while the replay plays: a picture that stands still is the same
-            # file twice
+            # Two pictures of the middle of the screen, seconds apart while the replay plays: a picture that stands
+            # still is the same file twice
             first, second = (os.path.join(scene_dir, "screen-%s.png" % name) for name in scene["moving"])
             try:
                 with open(first, "rb") as one, open(second, "rb") as other:
