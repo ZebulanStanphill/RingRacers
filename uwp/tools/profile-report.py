@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turns E:\\ringracers\\uwp-profile.txt into the functions the main thread spent its time in.
 
-usage: profile-report.py uwp-profile.txt ringracers-uwp.map|- [top N] [--dll name.dll=path ...]
+usage: profile-report.py uwp-profile.txt ring-racers-ze.map|- [top N] [--dll name.dll=path ...]
 
 Profiles from builds with the renderer split name phases "Software: 3D view" and "Legacy GL: 3D view"; older ones just
 "3D view". Each phase and each renderer shows how much of it is inside ANGLE (libGLESv2.dll or libEGL.dll, anywhere in the
@@ -13,7 +13,7 @@ outside levels ("title and menus", "intermission", "voting", "podium", "cutscene
 With call stacks in the profile (builds after 9aa8798), also shows each function's time including what it called
 ("inclusive"), and which game functions the hottest code was called from. --dll maps addresses in other modules to
 their exports (like memset in VCRUNTIME140_APP.dll), given a copy of that DLL (the VCLibs .appx in the
-ringracers-uwp artifact is a zip that has one). Needs objdump (llvm-objdump) for that.
+ring-racers-ze artifact is a zip that has one). Needs objdump (llvm-objdump) for that.
 """
 import bisect, collections, re, subprocess, sys
 
@@ -28,6 +28,8 @@ def undecorate(name):
     return "::".join(reversed([p for p in parts if p]))
 
 ANGLE_MODULES = ("libglesv2.dll", "libegl.dll")
+# The game's module name, which builds before ring-racers-ze called ringracers-uwp
+GAME_MODULES = ("ring-racers-ze.exe", "ringracers-uwp.exe")
 
 # The phases of samples taken while playing a level; every other phase (startup, menus...) is reported on its own
 LEVEL_PHASES = ("other", "game logic", "3D view", "2D", "display")
@@ -83,7 +85,7 @@ class Symbols:
 
     def name(self, modpath, offset, withobj=True):
         modname = modpath.replace("\\", "/").split("/")[-1]
-        if modname.lower() == "ringracers-uwp.exe":
+        if modname.lower() in GAME_MODULES:
             i = bisect.bisect_right(self.starts, offset) - 1
             if i < 0:
                 return "?"
@@ -216,7 +218,7 @@ def main():
 
     def is_game(fid):
         mod, _ = frames[fid]
-        return modules.get(mod, "").lower().endswith("ringracers-uwp.exe")
+        return modules.get(mod, "").lower().endswith(GAME_MODULES)
 
     for name, entries in stacks.items():
         n = sum(c for c, _ in entries)

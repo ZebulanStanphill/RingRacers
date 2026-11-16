@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Shows the crashes logged in latest-log.txt (the "UWP: crash:" lines) with the game's functions named.
 
-usage: crash-report.py latest-log.txt ringracers-uwp.map
+usage: crash-report.py latest-log.txt ring-racers-ze.map
 
-The map must come from the same build as the log (the ringracers-uwp-symbols artifact).
+The map must come from the same build as the log (the ring-racers-ze-symbols artifact).
 """
 import bisect, re, sys
 
@@ -30,7 +30,7 @@ def main():
         if not line.startswith(("UWP: crash", "UWP:   called from")):
             continue
         line = line.rstrip("\n")
-        m = re.search(r"ringracers-uwp\.exe\+([0-9a-f]+)", line)
+        m = re.search(r"(?:ring-racers-ze|ringracers-uwp)\.exe\+([0-9a-f]+)", line)
         if m:
             off = int(m[1], 16)
             i = bisect.bisect_right(starts, off) - 1

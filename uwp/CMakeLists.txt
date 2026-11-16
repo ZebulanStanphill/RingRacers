@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
 endif()
 
-project(ringracers-uwp LANGUAGES CXX)
+project(ring-racers-ze LANGUAGES CXX)
 set_directory_properties(PROPERTIES VS_STARTUP_PROJECT ${PROJECT_NAME})
 
 # Build directory of the patched Ring Racers static lib (ninja-x64_windows_uwp_vcpkg-release preset)
@@ -193,6 +193,6 @@ endif()
 target_link_libraries(${PROJECT_NAME} PRIVATE ${BinLibs})
 set_target_properties(${PROJECT_NAME} PROPERTIES VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION 10.0.19041.0)
 
-# Write ringracers-uwp.map next to the exe, which maps the addresses in the profile the game writes while playing
+# Write ring-racers-ze.map next to the exe, which maps the addresses in the profile the game writes while playing
 # (E:\ringracers\uwp-profile.txt) to functions
 target_link_options(${PROJECT_NAME} PRIVATE /MAP)

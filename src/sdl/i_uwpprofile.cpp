@@ -16,7 +16,7 @@
 /// any other time (menus, the title screen, a paused or loading level, intermission, voting, the podium, cutscenes)
 /// are recorded the same way, under a phase named for the game state (uwpprofphase_t) and the current renderer.
 /// Addresses are written as
-/// offsets into their module, which for the game itself (ringracers-uwp.exe) ringracers-uwp.map from the same build
+/// offsets into their module, which for the game itself (ring-racers-ze.exe) ring-racers-ze.map from the same build
 /// maps to functions. Each sample pauses the main thread for about 0.25 ms on Xbox, so sampling more often slows the
 /// game noticeably.
 
@@ -900,7 +900,7 @@ bool IsCrash(DWORD code)
 	}
 }
 
-// Writes where an address is as module+offset, which for the game itself ringracers-uwp.map maps to a function
+// Writes where an address is as module+offset, which for the game itself ring-racers-ze.map maps to a function
 void DescribeAddress(uintptr_t address, char* buffer, size_t size)
 {
 	MEMORY_BASIC_INFORMATION info = {};

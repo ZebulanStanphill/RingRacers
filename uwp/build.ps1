@@ -171,4 +171,4 @@ Exec { cmake -S $Root -B $UwpBuild -G "Visual Studio 17 2022" -A x64 @AppPgo "-D
 Exec { cmake --build $UwpBuild --config Release }
 
 Write-Host ""
-Write-Host "Built. Open uwp\build\ringracers-uwp.sln in Visual Studio 2022 to deploy to your Xbox or create an app package."
+Write-Host "Built. Open uwp\build\ring-racers-ze.sln in Visual Studio 2022 to deploy to your Xbox or create an app package."

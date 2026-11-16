@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Shows a function's disassembly with how many profile samples landed on each instruction, to see what in it is slow.
 
-usage: annotate-function.py uwp-profile.txt ringracers-uwp.map ringracers-uwp.exe FUNCTION [min_samples]
+usage: annotate-function.py uwp-profile.txt ring-racers-ze.map ring-racers-ze.exe FUNCTION [min_samples]
 
-ringracers-uwp.exe is in the .msix of the same build's ringracers-uwp artifact (a zip). FUNCTION is a symbol name
+ring-racers-ze.exe is in the .msix of the same build's ring-racers-ze artifact (a zip). FUNCTION is a symbol name
 from the map, or a regular expression. Needs objdump (llvm-objdump).
 """
 import bisect, collections, re, subprocess, sys
+
+# The game's module name, which builds before ring-racers-ze called ringracers-uwp
+GAME_MODULES = ("ring-racers-ze.exe", "ringracers-uwp.exe")
 
 profile, mapfile, exe, func = sys.argv[1:5]
 minsamples = int(sys.argv[5]) if len(sys.argv) > 5 else 1
@@ -53,7 +56,7 @@ for line in open(profile, errors="replace"):
         phase = m[1]
         continue
     m = re.match(r"(\d+) ([0-9a-f]+) (\d+)$", line.strip())
-    if m and modules.get(int(m[1]), "").lower().endswith("ringracers-uwp.exe"):
+    if m and modules.get(int(m[1]), "").lower().endswith(GAME_MODULES):
         off = int(m[2], 16)
         if start <= off < end:
             counts[off] += int(m[3])
