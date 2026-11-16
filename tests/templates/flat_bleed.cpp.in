@@ -47,8 +47,9 @@ static fixed_t lightHeight;
 static pslope_t *litSlope;
 static const sector_t *litSector;
 static boolean litCeiling;
-static FUINT HWR_CalcSlopeLight(FUINT level, pslope_t *slope, const sector_t *sector, boolean fof)
-{ assert(!fof); litSlope = slope; litSector = sector; return level; }
+static int litFacesDown = -1; // -1 until the light of a slope is asked for
+static FUINT HWR_CalcSlopeLight(FUINT level, pslope_t *slope, const sector_t *sector, boolean facesdown)
+{ litFacesDown = facesdown ? 1 : 0; litSlope = slope; litSector = sector; return level; }
 INT32 R_AdjustLightLevel(INT32 level) { return level; }
 void HWR_Lighting(FSurfaceInfo *, INT32 level, extracolormap_t *map, boolean directional)
 { assert(directional); submittedLevel = level; submittedMap = map; }
@@ -144,7 +145,10 @@ int main()
     gl_backsector = &back;
     FOutVector wall[4] = {};
     wall[0].x = wall[3].x = 0; wall[1].x = wall[2].x = 1;
+    // A floor's flat faces up and a ceiling's faces down, for the light of a slope (Software's reverseLight)
+    litFacesDown = -1;
     HWR_DrawFlatBleed(false, F(464), F(487.998), F(464.003), F(488.001), wall);
+    assert(litFacesDown == 0);
     assert(submitted[0].y == FIXED_TO_FLOAT(F(464)) && submitted[1].y == FIXED_TO_FLOAT(F(487.998)));
     assert(submitted[3].y == FIXED_TO_FLOAT(F(464.003)) && submitted[2].y == FIXED_TO_FLOAT(F(488.001)));
     assert(boundFlat == &flats[2] && !litCeiling && probeLine == 3);
@@ -155,7 +159,9 @@ int main()
     HWR_DrawFlatBleed(false, F(464), F(488), F(463), F(489), wall);
     assert(submitted[0].y == submitted[3].y && submitted[2].y == 489);
     useShader = false;
+    litFacesDown = -1;
     HWR_DrawFlatBleed(true, F(488), F(464), F(489), F(463), wall);
+    assert(litFacesDown == 1);
     assert(submitted[0].y == submitted[3].y && submitted[1].y == 463 && submitted[2].y == 464);
     assert(litCeiling && submittedLevel == 87 && litSlope == back.c_slope);
     assert(submittedFlags == (PF_Occlude|PF_Masked|PF_Modulated) && submittedShader == SHADER_DEFAULT);
@@ -166,9 +172,13 @@ int main()
     lightlist_t list[1] = {}; INT16 level = 230; extracolormap_t *map = &lightmap;
     list[0].lightlevel = &level; list[0].extra_colormap = &map;
     back.numlights = 1; back.lightlist = list; back.floorlightsec = -1; back.floorlightabsolute = false;
+    litFacesDown = -1;
     HWR_DrawFlatBleed(false, 0, 0, FRACUNIT, FRACUNIT, wall);
+    assert(litFacesDown == 0);
     assert(submittedLevel == 255 && submittedMap == &lightmap && lightHeight == back.floorheight);
+    litFacesDown = -1;
     HWR_DrawFlatBleed(true, 0, 0, -FRACUNIT, -FRACUNIT, wall);
+    assert(litFacesDown == 1);
     assert(submittedLevel == 217 && submittedMap == &lightmap);
     assert(lightHeight == P_GetSectorCeilingZAt(&back, FRACUNIT/2, 0));
     std::printf("flat_bleed: decision, draw submission and %d UV cases passed\n", cases);

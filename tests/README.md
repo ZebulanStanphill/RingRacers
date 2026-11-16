@@ -1129,6 +1129,20 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   model camera height. These tests check geometry submission, not rendered pixels;
   D3D12 compilation belongs to Windows CI and Xbox visuals remain untested.
 
+- **Slope shading:** `slope_light` runs the production `HWR_CalcSlopeLight` and
+  the statement in `HWR_RenderPlane` that calls it (cut out of the source by
+  `generate.py`, so the test breaks if its expression changes), and `flat_bleed`
+  checks the call in `HWR_DrawFlatBleed`. It checks Software's rule: a slope's
+  offset is added for a surface that faces up, subtracted for one that faces down
+  under directional lighting (and added for it without), left alone where the
+  sector gives no offset or there is no slope or sector, and clamped to 0 and 255
+  in both directions. A sector's floor must face up, its ceiling down, a 3D floor's
+  top (its control sector's ceiling) up, and its bottom down, and a flat bleeding
+  across a step passes whether it is a floor or a ceiling. Prevents the far side of
+  Balloon Park's funnel, made of 3D floor tops under a light contrast of 48, being
+  navy instead of light blue. These tests check the light level asked for, not
+  rendered pixels.
+
 - **Camera-underground walls:** `void_wall` runs the production `HWR_WallFillsView` (`hw_main.c`) against an independent
   model of Software's columns: the seg sampled, its visible run's ends bisected, and clipped to the screen's columns by angle, and
   `R_StoreWallRange`'s `pixlow`/`pixhigh` at its first and last visible column from `R_SetupFreelook`'s shifted

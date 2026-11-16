@@ -1,0 +1,125 @@
+// Light of a sloped plane (src/hardware/hw_main.c), as Software gives it (R_FindPlane's reverseLight): a slope's light
+// offset is worked out for a surface that faces up, and a surface that faces down, which is a sector's ceiling or a 3D
+// floor's underside, has it subtracted under directional lighting. Balloon Park's funnel, made of 3D floor tops under a
+// light contrast of 48, was navy on its far side where Software has it light blue.
+#include <cassert>
+#include <cstdio>
+#include "doomdef.h"
+#include "r_defs.h"
+#include "doomstat.h"
+#include "p_setup.h"
+#include "hardware/hw_defs.h"
+
+struct maplighting maplighting;
+
+static bool offsetApplies;
+static UINT8 offsetBase;
+static const sector_t *offsetSector;
+boolean P_ApplyLightOffsetFine(UINT8 baselightlevel, const sector_t *sector)
+{ offsetBase = baselightlevel; offsetSector = sector; return offsetApplies; }
+
+@@CALC@@
+
+// HWR_RenderPlane's call, with HWR_CalcSlopeLight replaced by a note of what it was asked
+static int recorded;
+static FUINT recordedLight;
+static const pslope_t *recordedSlope;
+static const sector_t *recordedSector;
+static bool recordedFacesDown;
+static FUINT NoteSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t *sector, const boolean facesdown)
+{
+    recorded++; recordedLight = lightnum; recordedSlope = slope; recordedSector = sector; recordedFacesDown = facesdown;
+    return lightnum;
+}
+#define HWR_CalcSlopeLight NoteSlopeLight
+static INT32 RenderPlaneCall(INT32 lightlevel, pslope_t *slope, sector_t *gl_frontsector, sector_t *FOFsector, boolean isceiling)
+{
+    (void)isceiling; // used by the statement below, unless it changes
+    @@PLANE_CALL@@
+    return lightlevel;
+}
+#undef HWR_CalcSlopeLight
+
+static void Light(int expected, FUINT lightnum, pslope_t *slope, const sector_t *sector, bool facesdown, bool directional)
+{
+    maplighting.directional = directional;
+    const FUINT got = HWR_CalcSlopeLight(lightnum, slope, sector, facesdown);
+    if (got != static_cast<FUINT>(expected))
+        std::fprintf(stderr, "light %lu offset %d facesdown %d directional %d: got %lu expected %d\n",
+            lightnum, slope ? slope->hwLightOffset : 0, facesdown, directional, got, expected);
+    assert(got == static_cast<FUINT>(expected));
+}
+
+int main()
+{
+    sector_t sector = {};
+    pslope_t slope = {};
+    offsetApplies = true;
+
+    // Offset worked out for a surface that faces up: added, whether or not the lighting is directional
+    slope.hwLightOffset = 30;
+    Light(130, 100, &slope, &sector, false, true);
+    Light(130, 100, &slope, &sector, false, false);
+    slope.hwLightOffset = -30;
+    Light(70, 100, &slope, &sector, false, true);
+    Light(70, 100, &slope, &sector, false, false);
+    // Facing down: subtracted under directional lighting and only then
+    slope.hwLightOffset = 30;
+    Light(70, 100, &slope, &sector, true, true);
+    Light(130, 100, &slope, &sector, true, false);
+    slope.hwLightOffset = -30;
+    Light(130, 100, &slope, &sector, true, true);
+    Light(70, 100, &slope, &sector, true, false);
+    assert(offsetSector == &sector && offsetBase == 100);
+
+    // Clamped to 0 to 255 in both directions, whichever way the surface faces
+    slope.hwLightOffset = 60;
+    Light(255, 220, &slope, &sector, false, true);
+    Light(255, 220, &slope, &sector, true, false);
+    Light(160, 220, &slope, &sector, true, true);
+    Light(0, 40, &slope, &sector, true, true);
+    slope.hwLightOffset = -60;
+    Light(0, 40, &slope, &sector, false, true);
+    Light(0, 40, &slope, &sector, true, false);
+    Light(100, 40, &slope, &sector, true, true);
+    Light(255, 220, &slope, &sector, true, true);
+    slope.hwLightOffset = 255;
+    Light(255, 255, &slope, &sector, false, false);
+    Light(0, 0, &slope, &sector, true, true);
+    Light(0, 100, &slope, &sector, true, true);
+
+    // No offset where the sector gives none, there is no slope, or there is no sector
+    slope.hwLightOffset = 30;
+    offsetApplies = false;
+    Light(100, 100, &slope, &sector, false, true);
+    Light(100, 100, &slope, &sector, true, true);
+    Light(100, 100, &slope, &sector, true, false);
+    offsetApplies = true;
+    Light(100, 100, nullptr, &sector, false, true);
+    Light(100, 100, nullptr, &sector, true, true);
+    Light(100, 100, &slope, nullptr, false, true);
+    Light(100, 100, &slope, nullptr, true, true);
+
+    // The surface a plane is: a sector's floor faces up, its ceiling down, a 3D floor's top (its control sector's ceiling)
+    // up, and its bottom (its control sector's floor) down
+    sector_t front = {}, control = {};
+    struct { const char *name; sector_t *fof; bool isceiling; bool facesdown; } planes[] = {
+        {"sector floor", nullptr, false, false},
+        {"sector ceiling", nullptr, true, true},
+        {"3D floor top", &control, true, false},
+        {"3D floor bottom", &control, false, true},
+    };
+    for (const auto &plane : planes)
+    {
+        recorded = 0;
+        RenderPlaneCall(150, &slope, &front, plane.fof, plane.isceiling);
+        if (recorded != 1 || recordedFacesDown != plane.facesdown)
+            std::fprintf(stderr, "%s: faces down %d, expected %d\n", plane.name, recordedFacesDown, plane.facesdown);
+        assert(recorded == 1 && recordedFacesDown == plane.facesdown);
+        assert(recordedLight == 150 && recordedSlope == &slope && recordedSector == &front);
+        // With the real function, under directional lighting: the funnel's far side, light on top and dark below
+        slope.hwLightOffset = 48;
+        Light(plane.facesdown ? 102 : 198, 150, &slope, &front, recordedFacesDown, true);
+    }
+    std::puts("slope_light: offset by facing, clamps and the surface of each plane");
+}

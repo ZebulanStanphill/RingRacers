@@ -783,6 +783,12 @@ def generate(engine, output):
         "FLAT_DIMENSIONS": Source(engine / "src/r_textures.cpp").function("R_FlatDimensionsFromLumpSize"),
     }, output / "flat_bleed.cpp")
 
+    render(templates / "slope_light.cpp.in", {
+        "CALC": hardware.function("HWR_CalcSlopeLight"),
+        # The statement itself, so that the test breaks if the expression in it changes
+        "PLANE_CALL": hardware.section("lightlevel = HWR_CalcSlopeLight(", "\n"),
+    }, output / "slope_light.cpp")
+
     render(templates / "void_wall.cpp.in", {
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
         "SLOPE_HEIGHT": slopes.function("P_GetSlopeZAt"),

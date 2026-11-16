@@ -1551,13 +1551,17 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, seg_t *seg)
 	return (FUINT)finallight;
 }
 
-static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t *sector, const boolean fof)
+// [UWP]: facesdown is Software's reverseLight (R_FindPlane): a slope's offset is worked out for a surface that faces
+// up, and a ceiling or a 3D floor's underside on the same slope faces the other way from the light. This took
+// "is a 3D floor plane" instead, which shaded a 3D floor's top the wrong way round and never turned a ceiling: the
+// far side of Balloon Park's funnel, all 3D floor tops under a contrast of 48, was navy where Software has it light.
+static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t *sector, const boolean facesdown)
 {
 	INT16 finallight = lightnum;
 
 	if (slope != NULL && sector != NULL && P_ApplyLightOffsetFine(lightnum, sector))
 	{
-		finallight += (fof ? -slope->hwLightOffset : slope->hwLightOffset);
+		finallight += (facesdown && maplighting.directional ? -slope->hwLightOffset : slope->hwLightOffset);
 
 		if (finallight > 255) finallight = 255;
 		if (finallight < 0) finallight = 0;
@@ -1931,7 +1935,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		SETUP3DVERT(v3d, pv->x, pv->y);
 
 	if (!(PolyFlags & PF_Fog))
-		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL));
+		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL) != isceiling); // [UWP]: a 3D floor's top is its control sector's ceiling
 	HWR_Lighting(&Surf, HWR_AdjustLevelLight(lightlevel), planecolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
 
 	if (PolyFlags & PF_EnvironmentTrans)
@@ -2694,7 +2698,7 @@ static void HWR_DrawFlatBleed(boolean ceiling, fixed_t front1, fixed_t front2,
 			level = max(0, min(255, *sector->lightlist[light].lightlevel + offset));
 		colormap = *sector->lightlist[light].extra_colormap;
 	}
-	level = HWR_CalcSlopeLight(level, slope, sector, false);
+	level = HWR_CalcSlopeLight(level, slope, sector, ceiling);
 	HWR_Lighting(&Surf, HWR_AdjustLevelLight(level), colormap, P_SectorUsesDirectionalLighting(sector));
 	HWR_GetLevelFlat(flat, R_NoEncore(sector, flat, ceiling));
 	memcpy(verts, wall, sizeof verts);
