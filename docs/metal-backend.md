@@ -161,14 +161,33 @@ window is hidden".
 - **A window nobody sees.** A layer's drawables only come back from the display, so asking the layer of a window
   that is minimized, hidden, on another Space, or covered for its next drawable waits a second and gives nothing.
   The presenter asks AppKit whether any of the window is on screen (`NSWindow`'s occlusion state) and doesn't present
-  while none is; the frame is still drawn and submitted, so the game runs on. The first frame after the window is
-  made is presented regardless, since a new window doesn't count as visible until the system has put it on screen.
-  If the layer gives no drawable anyway, that frame isn't shown and the layer isn't asked again for a quarter of a
-  second, doubling up to four seconds while it keeps giving none. The log says when presenting stops and starts
-  again, and, when the window is given back, how many frames were presented, skipped, and left without a drawable.
-  A locked screen and a sleeping display count as out of sight too, so a Mac nobody sits at presents nothing.
-  `-mtlunseen` presents regardless of what AppKit says, for tests on such a Mac: on both Macs this was tried on,
-  the layer went on giving drawables with the screen locked (and, on the MacBook, the display asleep).
+  every frame while none is; the frame is still drawn and submitted, so the game runs on. A locked screen and a
+  sleeping display count as out of sight too.
+- **In case the system is wrong about that.** If AppKit ever called a window out of sight that a player is looking
+  at, presenting nothing would freeze the picture while the race goes on. So a window the system calls out of sight
+  still gets frames, one at a time (`mtl_present_seen.h`, plain C++ so that a test can run it): a frame is presented,
+  a probe, only when no drawable presented before it is still out. Metal reports for each presented drawable when it
+  reached the display, or that it never did (`addPresentedHandler`, macOS 10.15.4). A probe that was shown is
+  followed by the next frame at once, so a window that is in fact on screen keeps its picture, at up to one frame
+  per refresh of the display. A probe that is never heard of again is followed by nothing, and since no drawable but
+  the one on screen is out when a probe asks for one, the layer has one to give and asking doesn't wait. A probe
+  the system drops is followed by another a second later. A window the game itself minimized or hid, or one without
+  a size, gets nothing. A new window's first frame goes out the same way, since a window doesn't count as visible
+  until the system has put it on screen. (On a system older than 10.15.4, which has no reports, only that first
+  frame goes out regardless, as before.) Behind the Mac mini's locked screen this is what the log shows: a replay of
+  1,487 frames presented five of them, one a second, the system dropped each, and the time per frame was what it is
+  without presenting (2.6 ms). What it does when the report is wrong can't be seen behind a locked screen, and no
+  wrong report has been observed: `-mtlblind` acts one out (the presenter takes the window for out of sight whatever
+  AppKit says), for `capture.py`'s `blind` scene on a screen that can be seen, and the test `metal_present_seen` runs
+  the decision against a model of the layer and the display (`tests/README.md`).
+- **A layer without a drawable.** If the layer of a window in sight gives no drawable, that frame isn't shown and
+  the layer isn't asked again for a quarter of a second, doubling up to four seconds while it keeps giving none; if
+  it has none for a probe, no more probes go out until the window is in sight. The log says when presenting stops
+  and starts again, and, when the window is given back or closed, how many frames were presented, skipped, and left
+  without a drawable, and how many of those presented were probes, shown or dropped.
+- **`-mtlunseen`** presents every frame regardless of what AppKit says, for tests on a Mac nobody sits at: on both
+  Macs this was tried on, the layer went on giving drawables with the screen locked (and, on the MacBook, the
+  display asleep).
 - **The game's headers.** `mtl_present.mm` is Objective-C++, and the game's headers don't go into one file with
   Apple's, so what the presenter needs of the game (the window, the icon, the Screen Scaling setting, the log, and
   `I_Error`) comes through `mtl_present_game.h`, which a C++ file implements.
@@ -423,8 +442,8 @@ pass on the MacBook with its screen unlocked. On the Mac mini, whose screen was 
 which can't: the system makes no fullscreen Space behind a locked screen.
 
 - **Presenting.** Every frame of a replay is presented, none without a drawable, with the screen unlocked, locked,
-  or locked with the display asleep (the latter two with `-mtlunseen`). Without it, behind a locked screen, the
-  first frame is presented and the rest are drawn and not presented, as intended.
+  or locked with the display asleep (the latter two with `-mtlunseen`). Without it, behind a locked screen, a
+  frame a second is presented, which the system drops, and the rest are drawn and not presented, as intended.
 - **`vid_wait`** on the MacBook's visible 60 Hz display: 16.76 ms per frame on, 7.47 ms off.
 - **Fullscreen and back** through the game's `fullscreen` setting: drawables of 1440x900, 1280x720, and 1440x900 on
   the MacBook (in a Space of its own, and with SDL's hint against Spaces); 1920x1080, 1280x720, and 1920x1080 on the

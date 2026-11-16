@@ -259,6 +259,21 @@ add_test(NAME d3d12_texture_atlas COMMAND d3d12_texture_atlas)
 set_tests_properties(d3d12_texture_atlas PROPERTIES TIMEOUT 60
     ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
+# What VibeRant Metal's presenter does with a frame when its window may be out of sight: a header with no dependencies,
+# since the presenter itself is Objective-C++ and only builds on macOS.
+add_executable(metal_present_seen metal-present-seen.cpp)
+target_compile_features(metal_present_seen PRIVATE cxx_std_17)
+target_include_directories(metal_present_seen PRIVATE "${RR_SOURCE_DIR}/src")
+target_compile_options(metal_present_seen PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+if(RR_SANITIZERS)
+    target_compile_options(metal_present_seen PRIVATE -fsanitize=address,undefined
+        -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    target_link_options(metal_present_seen PRIVATE -fsanitize=address,undefined)
+endif()
+add_test(NAME metal_present_seen COMMAND metal_present_seen)
+set_tests_properties(metal_present_seen PROPERTIES TIMEOUT 60
+    ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+
 # The placement Screen Scaling's renderers share is a header of its own, with no dependencies.
 add_executable(screen_scaling screen-scaling.cpp)
 target_compile_features(screen_scaling PRIVATE cxx_std_17)

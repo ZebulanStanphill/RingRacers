@@ -33,6 +33,10 @@ int ScreenScalingMode();
 // frames onto the display of a Mac whose screen is locked or asleep
 bool PresentUnseen();
 
+// -mtlblind: act as if the system said that none of the window is on screen, whatever it says. For tests of what the
+// presenter does about a wrong report of that kind, on a Mac whose screen can be seen.
+bool PresentBlind();
+
 // A line of the log as it is (I_OutputMsg)
 void Output(const char *line);
 

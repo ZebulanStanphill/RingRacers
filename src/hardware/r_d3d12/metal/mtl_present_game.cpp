@@ -45,6 +45,11 @@ bool PresentUnseen()
 	return M_CheckParm("-mtlunseen") != 0;
 }
 
+bool PresentBlind()
+{
+	return M_CheckParm("-mtlblind") != 0;
+}
+
 void Output(const char *line)
 {
 	I_OutputMsg("%s", line);

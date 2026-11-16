@@ -92,6 +92,48 @@ def idle_seconds():
         return 0
 
 
+def screen_locked():
+    """Whether the Mac's screen is locked (None if the system doesn't say): windows aren't shown then, the system
+    takes no frames from them, and it makes no fullscreen Space"""
+    try:
+        text = subprocess.run(["ioreg", "-n", "Root", "-d1"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    found = re.search(r'"CGSSessionScreenIsLocked"\s*=\s*(\w+)', text)
+    if found:
+        return found.group(1) == "Yes"
+    # The session's record is there and has no such entry while the screen is unlocked
+    return False if "IOConsoleUsers" in text else None
+
+
+def probes(text):
+    """Of the frames presented to a window the system called out of sight: how many, how many of them the display
+    showed, and how many the system dropped"""
+    found = re.findall(r"(\d+) of those presented went to a window the system called out of sight \((\d+) shown, (\d+) dropped\)", text)
+    return tuple(sum(int(n[i]) for n in found) for i in range(3))
+
+
+BLIND_TICS = 350  # ten seconds of game
+
+
+def check_blind(text, problems):
+    """A run with -mtlblind, where the presenter acts as if the system called its window out of sight: on a screen
+    that can be seen the picture must keep going all the same, each frame presented once the display has taken the
+    one before. Behind a locked screen the system drops such frames, so there the run can only show that the game
+    isn't held up. Returns what to say of it."""
+    count, shown, dropped = probes(text)
+    waited = sum(int(n) for n in re.findall(r"(\d+) without a drawable", text))
+    if waited:
+        problems.append(("blind", "the layer had no drawable for %d frames" % waited))
+    if screen_locked():
+        return "the screen is locked: %d frames presented blind, %d shown, %d dropped by the system" % (count, shown, dropped)
+    wanted = 10 * BLIND_TICS // 35
+    if shown < wanted:
+        problems.append(("blind", "%d frames presented to a window called out of sight, and the display showed %d of them (%d dropped): "
+                         "at least %d should have been shown in %d s" % (count, shown, dropped, wanted, BLIND_TICS // 35)))
+    return "%d frames presented blind, %d shown, %d dropped" % (count, shown, dropped)
+
+
 def wait_until_idle():
     said = False
     while IDLE_SECONDS and idle_seconds() < IDLE_SECONDS:
@@ -322,6 +364,9 @@ def scene_list():
         "scaling-1to1": scaling("1:1"),
         "vsync": {"args": ["+vid_wait", "on"] + replay + wait(700) + shot + ["+quit"],
                   "during": pictures((playing, 1, 8, "race")), "shots": 1},
+        # The system calls the window out of sight and is wrong (-mtlblind acts it out): the picture must keep going
+        "blind": {"args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
+                  "during": pictures((playing, 1, 6, "race")), "shots": 1, "blind": True},
         # -mtldebug has Metal end every pass with an encoder of its own, which is what the paravirtual GPU's driver
         # couldn't take before mtl12 kept its encoders small
         "mtldebug": {"args": race + ["-mtldebug"], "shots": 2},
@@ -358,9 +403,14 @@ def scenes(options):
             problems.append(("capture", "%d screenshots of the game's own, expected %d" % (len(shots), scene["shots"])))
         if presented == 0:
             problems.append(("present", "the log doesn't say that any frame was presented"))
+        blind = ""
+        if scene.get("blind"):
+            with open(log_path, errors="replace") as handle:
+                blind = check_blind(handle.read(), problems)
         results.append({"scene": name, "exit": code, "seconds": round(seconds, 1), "screenshots": len(shots), "presented": presented,
-                        "device": device, "problems": problems})
-        print("%s: exit %s, %.0f s, %d screenshots, %d frames presented%s" % (name, code, seconds, len(shots), presented,
+                        "blind": blind, "device": device, "problems": problems})
+        print("%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s" % (name, code, seconds, len(shots), presented,
+              ", " + blind if blind else "",
               "" if not problems else "  PROBLEMS: " + "; ".join("%s: %s" % p for p in problems[:5])), flush=True)
     shutil.rmtree(home, ignore_errors=True)
     return results
@@ -423,6 +473,11 @@ def hardware_list():
         # frame, which is the system's business: the game's memory doesn't grow by it.)
         "autorelease": [{"renderer": "-metal", "args": timed + ["+vid_wait", "off"], "validation": False, "shots": 2,
                          "env": {"OBJC_DEBUG_MISSING_POOLS": "YES"}, "pools": True, "needs": [took]}],
+        # The system calls the window out of sight and is wrong, which -mtlblind acts out: on a screen that can be seen,
+        # every frame is presented once the display has taken the one before, so the picture keeps going. (Behind a
+        # locked screen the system drops what it is given, and the run shows only that nothing waits.)
+        "blind": [{"renderer": "-metal", "args": ["-mtlblind", "+vid_wait", "on"] + replay + wait(BLIND_TICS) + shot + ["+quit"],
+                   "shots": 1, "unseen": False, "blind": True, "needs": [took]}],
         "fullscreen": fullscreen({}),
         "fullscreen-no-space": fullscreen({"SDL_VIDEO_MAC_FULLSCREEN_SPACES": "0"}),
         # vid_mode 14 is 800x600 and 10 is 1280x720 in a window (windowedModes in i_video.cpp)
@@ -522,10 +577,14 @@ def hardware(options):
                             len(mine), ", ".join("%d %s" % (mine.count(name), name) for name in sorted(set(mine))[:6]))))
             if metal:
                 result["unseen_frames"] = sum(int(n) for n in re.findall(r"(\d+) skipped while the window was out of sight", text))
+                result["probes"] = dict(zip(("presented", "shown", "dropped"), probes(text)))
+            if run.get("blind"):
+                result["blind"] = check_blind(text, problems)
             results.append(result)
-            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s" % (
+            print("%s%s: exit %s, %.0f s, %d screenshots, %d frames presented%s%s%s%s%s%s" % (
                 name, " (run %d)" % (index + 1) if len(runs) > 1 else "", code, seconds, len(shots), presented,
                 ", %d not (the window was out of sight)" % result["unseen_frames"] if result.get("unseen_frames") else "",
+                ", " + result["blind"] if result.get("blind") else "",
                 ", %.2f ms per frame" % result["ms_per_frame"] if "ms_per_frame" in result else "",
                 ", autoreleased without a pool: %(driver_thread)d on the driver's thread, %(other_threads)d on others"
                 % result["autoreleased_without_pool"] if "autoreleased_without_pool" in result else "",

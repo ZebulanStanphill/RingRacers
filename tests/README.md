@@ -58,6 +58,22 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
 
+- **Metal presenter, a window out of sight:** `metal_present_seen` runs the production
+  decision of VibeRant Metal's presenter (`metal/mtl_present_seen.h`, plain C++; the
+  presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three
+  drawables and a display that takes a drawable per refresh from a window it shows and
+  none from one it doesn't. A window in sight gets every frame. A window that really is
+  out of sight gets at most one probe and never makes the game wait for a drawable, at
+  four frame rates. A window the system wrongly calls out of sight is shown a frame
+  per refresh, with no gap longer than two. Also: a probe the layer has no drawable
+  for ends the probes until the window is in sight, a dropped probe is tried again a
+  second later, a minimized or hidden window gets nothing, `-mtlunseen` presents
+  regardless, and a layer in sight without a drawable is left alone for a quarter of a
+  second doubling to four. The model's own negative control (no probes: the picture
+  freezes under a wrong report) passes, and four defects put into the header one at a
+  time (not kept) each failed an assertion. What a real layer and display do is not
+  covered here: `capture.py`'s `blind` scene is for that ("On a Mac", below).
+
 - **Texture atlas:** `d3d12_texture_atlas` tests the production shelf allocator
   with rounded dimensions, full pages, fence-deferred frees, coalescing, and
   empty-page reset. GPU sampling and Xbox resource creation timing require
@@ -1248,8 +1264,10 @@ workflow is on the default branch), or by pushing a commit to a branch named
   sent through the system (CoreGraphics events from `osascript`, which reach whatever
   window has the keyboard); 3D models on and off; changing the renderer while a
   replay plays, starting in VibeRant Metal and starting in Software; the three
-  Screen Scaling modes in fullscreen with a 320x200 frame; `vid_wait`; and
-  `-mtldebug`.
+  Screen Scaling modes in fullscreen with a 320x200 frame; `vid_wait`;
+  `-mtldebug`; and `blind`, where `-mtlblind` has the presenter take its window for
+  out of sight although it is on the runner's screen, and the display must still show
+  at least ten frames for every second of the replay (the log counts them).
 
 `tests/metal-frames/capture.py` (Python's standard library only) does the running, on
 a Mac as well ("On a Mac", below): `capture.py sweep --game <the binary in the .app>
@@ -1323,6 +1341,10 @@ screen. Each scene is a run of the game (or two), judged like the sweep's, and b
 - `vsync-on`, `vsync-off`: the same with `-mtlunseen` and `vid_wait` on and off. On a screen that can be seen, on
   should take a refresh of the display per frame. To a window behind a locked screen the system hands drawables
   back at a pace of its own either way, so there the two only show that presenting works.
+- `blind`: the replay with `-mtlblind`, which has the presenter act as if the system had called its window out of
+  sight. On a screen that can be seen, the display must show at least ten frames for every second all the same (each
+  presented once the display has taken the one before), and the layer must never be without a drawable. Behind a
+  locked screen the system drops such frames, one a second, and the scene says so instead of judging.
 - `autorelease`: the replay with `OBJC_DEBUG_MISSING_POOLS=YES`; the driver's thread, which mtl12 names in the log
   when that variable is set, must have no report of an object autoreleased without a pool
   (`docs/metal-backend.md`, "Autorelease pools").

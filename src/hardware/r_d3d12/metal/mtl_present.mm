@@ -19,9 +19,10 @@
 /// or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the frame's aspect ratio. A drawable
 /// is BGRA8 and only a render target, which a draw suits and a copy wouldn't.
 ///
-/// A window that can't be seen (minimized, hidden, on another Space, or covered) isn't presented to: a layer's
-/// drawables only come back from the display, so asking a layer nobody sees for the next one waits a second and
-/// gives nothing.
+/// A window that can't be seen (minimized, hidden, on another Space, or covered) isn't presented to as one in sight
+/// is: a layer's drawables only come back from the display, so asking a layer nobody sees for the next one waits a
+/// second and gives nothing. In case the system calls a window out of sight that isn't, such a window still gets a
+/// frame whenever the display has taken the one before (mtl_present_seen.h).
 ///
 /// Objective-C++, compiled with ARC. The game's headers can't be included here (mtl_present_game.h).
 
@@ -33,6 +34,7 @@
 #include "SDL_metal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -41,6 +43,7 @@
 #include "mtl12_internal.h"
 #include "../d3d12_present.h"
 #include "mtl_present_game.h"
+#include "mtl_present_seen.h"
 
 namespace rr_d3d12
 {
@@ -67,6 +70,7 @@ struct PresentStats
 	int presented = 0;
 	int unseen = 0; // frames not presented because the window was out of sight
 	int noDrawable = 0; // frames the layer gave no drawable for
+	int probes = 0; // of those presented: to a window the system called out of sight
 };
 PresentStats g_stats;
 // Since the window was taken, for the log when it is given back
@@ -87,13 +91,28 @@ struct Presenter
 	bool vsync = true;
 	UINT width = 0, height = 0; // of the last drawable
 	bool hideGameWindow = false; // once the first frame is on the Metal window, so that there is always a window to see
-	bool seen = true; // whether the last frame found the window visible
-	// After the layer gave no drawable: when to ask again, and how long to wait the next time it gives none
-	Clock::time_point retryAt = Clock::time_point::min();
-	double retryMs = 0;
+	bool seen = true; // whether the last frame found the window in sight
+	rr_mtl_present::Seen decide; // what to do with a frame for a window that may be out of sight (mtl_present_seen.h)
 	char failure[160] = "";
 };
 Presenter g_mtl;
+
+// What Metal says became of the drawables presented, which it says on a thread of its own. Every presented drawable
+// has a number, and a drawable Metal has reported on (shown, or let go) settles the ones before it too.
+std::atomic<uint64_t> g_presentedSerial{0}, g_reportedSerial{0};
+// Of the frames presented to a window the system called out of sight
+std::atomic<int> g_probesShown{0}, g_probesDropped{0};
+std::atomic<bool> g_probeDropped{false}; // since the last frame
+
+void Reported(uint64_t serial)
+{
+	uint64_t known = g_reportedSerial.load();
+	while (known < serial && !g_reportedSerial.compare_exchange_weak(known, serial))
+	{
+	}
+}
+
+const Clock::time_point g_start = Clock::now();
 
 void SubmitWithoutPresenting()
 {
@@ -109,9 +128,6 @@ void Fail(const char *what)
 // Whether anything of the window is on screen. AppKit says so for the window the layer's view is in.
 bool WindowSeen()
 {
-	static const bool unseen = rr_mtl_present::PresentUnseen();
-	if (unseen)
-		return true;
 	NSView *view = (__bridge NSView *)g_mtl.view;
 	NSWindow *cocoa = view.window;
 	if (!cocoa)
@@ -223,8 +239,11 @@ bool CreateWindowAndLayer()
 		SDL_RaiseWindow(made);
 		g_mtl.owned = true;
 		g_mtl.seen = true;
-		g_mtl.retryAt = Clock::time_point::min();
-		g_mtl.retryMs = 0;
+		g_mtl.decide = rr_mtl_present::Seen();
+		// No drawable of this layer is out, whatever became of another window's
+		Reported(g_presentedSerial.load());
+		g_probesShown = g_probesDropped = 0;
+		g_probeDropped = false;
 		g_mtl.failure[0] = '\0';
 		g_totals = PresentStats();
 		Log("presenter: presenting on a Metal window in place of the game's OpenGL window (%s)",
@@ -279,8 +298,8 @@ void GiveBackWindow(bool idle, bool quitting)
 			snprintf(what, sizeof what, "closed the Metal window as the game quits; the game's OpenGL window is %s",
 				!game ? "gone" : (SDL_GetWindowFlags(game) & SDL_WINDOW_SHOWN) ? "shown" : "hidden");
 	}
-	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable",
-		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable);
+	Log("presenter: %s; %d frames presented, %d skipped while the window was out of sight, %d without a drawable; %d of those presented went to a window the system called out of sight (%d shown, %d dropped)",
+		what, g_totals.presented, g_totals.unseen, g_totals.noDrawable, g_totals.probes, g_probesShown.load(), g_probesDropped.load());
 }
 
 } // namespace
@@ -323,17 +342,32 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		int drawableWidth = 0, drawableHeight = 0;
 		SDL_Metal_GetDrawableSize(g_mtl.metalWindow, &drawableWidth, &drawableHeight);
 		const Uint32 flags = SDL_GetWindowFlags(g_mtl.metalWindow);
-		// A window that was only just shown doesn't count as visible until the system has put it on screen, and its
-		// first frame shouldn't wait for that: the layer has every drawable free then, so asking can't take long
-		const bool seen = drawableWidth > 0 && drawableHeight > 0 && !(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN))
-			&& (WindowSeen() || g_totals.presented == 0);
+		// Whether to present this frame (mtl_present_seen.h). A window the system doesn't call visible still gets a
+		// frame when no drawable is out: the system may be wrong, and a window that was only just shown doesn't count as
+		// visible until the system has put it on screen.
+		static const bool force = rr_mtl_present::PresentUnseen();
+		static const bool blind = rr_mtl_present::PresentBlind();
+		bool reports = false; // Metal says what becomes of presented drawables (macOS 10.15.4)
+		if (@available(macOS 10.15.4, *))
+			reports = true;
+		rr_mtl_present::Now now;
+		now.ms = MsSince(g_start);
+		now.usable = drawableWidth > 0 && drawableHeight > 0 && !(flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN));
+		now.visible = WindowSeen() && !blind;
+		now.force = force;
+		// Without reports, only a window's first frame goes out regardless
+		now.out = reports ? (int)std::min<uint64_t>(g_presentedSerial.load() - g_reportedSerial.load(), 1000) : g_totals.presented ? 1 : 0;
+		now.dropped = g_probeDropped.exchange(false);
+		const rr_mtl_present::Frame decided = rr_mtl_present::Decide(g_mtl.decide, now);
+		const bool seen = now.usable && (now.visible || now.force);
 		if (seen != g_mtl.seen)
 		{
 			g_mtl.seen = seen;
 			Log(seen ? "presenter: the game window shows again, so frames are presented"
-				: "presenter: the game window is out of sight (minimized, hidden, or covered), so nothing is presented until it shows");
+				: !now.usable ? "presenter: the game window is out of sight (minimized, hidden, or without a size), so nothing is presented until it shows"
+				: "presenter: the system says none of the game window is on screen (covered, on another Space, or behind a locked screen), so a frame is only presented once the display has taken the one before");
 		}
-		if (!seen)
+		if (decided == rr_mtl_present::Frame::Unseen)
 		{
 			g_stats.unseen++;
 			g_totals.unseen++;
@@ -341,13 +375,14 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			return;
 		}
 		// The layer gave nothing a moment ago, after a wait: don't hold every frame up for another
-		if (Clock::now() < g_mtl.retryAt)
+		if (decided == rr_mtl_present::Frame::Wait)
 		{
 			g_stats.noDrawable++;
 			g_totals.noDrawable++;
 			SubmitWithoutPresenting();
 			return;
 		}
+		const bool probe = decided == rr_mtl_present::Frame::Probe;
 
 		CAMetalLayer *layer = g_mtl.layer;
 		if (g_mtl.vsync != vsync || layer.displaySyncEnabled != vsync)
@@ -366,16 +401,16 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		if (!texture || FAILED(rr_mtl12::WrapTexture((__bridge void *)texture, &back)))
 		{
 			// No drawable came free in the layer's one-second wait (or its texture is of no format the driver draws
-			// to): the frame isn't shown, and the layer is asked again after a pause that doubles up to four seconds
+			// to): the frame isn't shown, and the layer is asked again after a pause that doubles up to four seconds,
+			// or, if the window is out of sight, not until it is back
 			g_stats.noDrawable++;
 			g_totals.noDrawable++;
-			g_mtl.retryMs = std::min(4000.0, std::max(250.0, g_mtl.retryMs * 2));
-			g_mtl.retryAt = Clock::now() + std::chrono::milliseconds((int)g_mtl.retryMs);
+			rr_mtl_present::NoDrawable(g_mtl.decide, MsSince(g_start), decided);
 			LOG_ONCE("presenter: the layer gave no drawable after %.0f ms, so the frame isn't shown", acquireMs);
 			SubmitWithoutPresenting();
 			return;
 		}
-		g_mtl.retryMs = 0;
+		rr_mtl_present::GotDrawable(g_mtl.decide);
 		if (g_mtl.width != (UINT)texture.width || g_mtl.height != (UINT)texture.height)
 		{
 			g_mtl.width = (UINT)texture.width;
@@ -425,6 +460,24 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			// The submission shows the drawable when its commands are done
 			rr_mtl12::PresentWithNextSubmit((__bridge void *)drawable);
 		}
+		// Metal says, on a thread of its own, when the display took the drawable (or that it never did)
+		const uint64_t serial = ++g_presentedSerial;
+		if (@available(macOS 10.15.4, *))
+		{
+			[drawable addPresentedHandler:^(id<MTLDrawable> done) {
+				if (probe)
+				{
+					if (done.presentedTime > 0)
+						g_probesShown++;
+					else
+					{
+						g_probesDropped++;
+						g_probeDropped = true;
+					}
+				}
+				Reported(serial);
+			}];
+		}
 		const UINT64 fence = list ? Core_Submit("present") : 0;
 		if (!list)
 			SubmitWithoutPresenting(); // reopens the list
@@ -433,10 +486,13 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		{
 			// Nothing was submitted, so the drawable goes back to the layer unshown
 			rr_mtl12::PresentWithNextSubmit(nullptr);
+			Reported(serial);
 			return;
 		}
 		g_stats.presented++;
 		g_totals.presented++;
+		g_stats.probes += probe;
+		g_totals.probes += probe;
 		g_traceSlot = 0;
 		if (g_mtl.hideGameWindow)
 		{
