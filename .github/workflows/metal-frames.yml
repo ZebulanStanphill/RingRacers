@@ -24,7 +24,11 @@ on:
 
 env:
   RR_ASSETS_URL: https://github.com/KartKrewDev/RingRacers/releases/download/v2.4/Dr.Robotnik.s-Ring-Racers-v2.4-Assets.zip
-  RR_ASSETS_KEY: ringracers-assets-v2.4
+  # The SHA-256 of that file (752,021,749 bytes), which is also the digest GitHub's release page gives for it. The
+  # download is checked against it before anything is unpacked. The cache's key carries its first digits, so that a
+  # cache made of another file is never taken for this one: change both together.
+  RR_ASSETS_SHA256: eebad71b872c20f3323425bc4f4321b9b6256472bc485010d0a73c43fe0af120
+  RR_ASSETS_KEY: ringracers-assets-v2.4-eebad71b872c20f3
 
 jobs:
   build:
@@ -37,12 +41,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # What was typed into the Run workflow form reaches the scripts as environment variables, never as part of
+      # their text
       - name: List the shards
         id: shards
+        env:
+          SHARDS: ${{ inputs.shards || '5' }}
         run: |
-          count=${{ inputs.shards || '5' }}
+          case "$SHARDS" in
+            ''|*[!0-9]*) echo "shards must be a number from 1 to 20, not '$SHARDS'"; exit 1;;
+          esac
+          count=$((10#$SHARDS))
+          if [ "$count" -lt 1 ] || [ "$count" -gt 20 ]; then
+            echo "shards must be a number from 1 to 20, not '$SHARDS'"; exit 1
+          fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "list=[$(seq -s, 0 $((count - 1)))]" >> "$GITHUB_OUTPUT"
+          echo "list=[$(seq 0 $((count - 1)) | paste -sd, -)]" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: brew install ninja sdl2 libpng opus pkgconf ccache
@@ -90,6 +104,7 @@ jobs:
         if: steps.assets.outputs.cache-hit != 'true'
         run: |
           curl --fail --location --retry 3 -o assets.zip "$RR_ASSETS_URL"
+          echo "$RR_ASSETS_SHA256  assets.zip" | shasum -a 256 -c -
           mkdir -p game-data
           unzip -q assets.zip -d game-data
           rm assets.zip
@@ -128,10 +143,14 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Play the staff ghosts
+        env:
+          SHARD: ${{ matrix.shard }}
+          COUNT: ${{ needs.build.outputs.count }}
+          TICS: ${{ inputs.tics || '70,350,700,1400,2100' }}
+          ONLY: ${{ inputs.only }}
         run: |
           python3 tests/metal-frames/capture.py sweep --game "$RR_GAME" --data game-data \
-            --out results --shard ${{ matrix.shard }}/${{ needs.build.outputs.count }} \
-            --tics "${{ inputs.tics || '70,350,700,1400,2100' }}" --only "${{ inputs.only }}"
+            --out results --shard "$SHARD/$COUNT" --tics "$TICS" --only "$ONLY"
 
       - name: Upload frames and logs
         if: always()

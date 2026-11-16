@@ -1230,7 +1230,12 @@ workflow is on the default branch), or by pushing a commit to a branch named
 
 - The `build` job builds the game as the `macos` job of `tests.yml` does (with
   ccache between runs), uploads the app, and fetches the official assets of Ring
-  Racers v2.4 (750 MB, from the release's page) into a cache.
+  Racers v2.4 (750 MB, from the release's page) into a cache. The download is
+  checked against a SHA-256 the workflow pins (`RR_ASSETS_SHA256`) before it is
+  unpacked, and the cache's key carries that hash's first digits, so another file
+  under the same name fails the job instead of being kept for every later run.
+  What is typed into the Run workflow form (shards, ghosts, level times) reaches
+  the scripts as environment variables, not as part of their text.
 - The `sweep` jobs (five side by side by default, about 35 minutes each) play the
   staff ghosts of `tests/metal-frames/ghosts.txt`, the first one of each of the 213
   maps, in the frame capture mode (`-shotghost`, `-shottics 70,350,700,1400,2100`;
