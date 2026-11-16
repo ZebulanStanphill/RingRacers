@@ -116,6 +116,8 @@ OpenGL window is made hidden and only shown once a renderer that presents on it 
   game's window isn't a high-resolution one (it is made without `SDL_WINDOW_ALLOW_HIGHDPI`), so on a Retina display
   the system scales the frame up, as it does Software's and Legacy GL's. SDL's view keeps the drawable size at the
   window's as the window changes, and the presenter takes each drawable's own size as the size to place the frame in.
+  The log says so with each new size: "1280x720 drawables for a window of 1280x720 points on a display with 2 pixels
+  per point (the system scales the frame up) and 60 frames per second".
 - **Placement.** The driver's placement draws each frame into the drawable, as on the other desktop presenters: at
   Screen Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the
   frame's aspect ratio. A drawable is BGRA8 and only a render target (`framebufferOnly`), which a draw suits and a

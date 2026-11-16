@@ -335,7 +335,18 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		{
 			g_mtl.width = (UINT)texture.width;
 			g_mtl.height = (UINT)texture.height;
-			Log("presenter: %ux%u drawables", g_mtl.width, g_mtl.height);
+			// What the system then does with them, which a log can say and only a look at the screen can show: on a
+			// display with more pixels than points (a Retina display), it scales the layer up
+			NSWindow *cocoa = ((__bridge NSView *)g_mtl.view).window;
+			const double scale = cocoa ? cocoa.backingScaleFactor : 1.0;
+			long refresh = 0;
+			if (@available(macOS 12.0, *))
+				refresh = cocoa.screen ? (long)cocoa.screen.maximumFramesPerSecond : 0;
+			int points = 0, pointsHigh = 0;
+			SDL_GetWindowSize(g_mtl.metalWindow, &points, &pointsHigh);
+			Log("presenter: %ux%u drawables for a window of %dx%d points on a display with %.4g pixels per point (%s) and %ld frames per second",
+				g_mtl.width, g_mtl.height, points, pointsHigh, scale,
+				scale * points > g_mtl.width + 0.5 ? "the system scales the frame up" : "shown pixel for pixel", refresh);
 		}
 
 		// Integer and 1:1, where the frame fits the window; otherwise (and for Fit) the largest rectangle of its aspect ratio
