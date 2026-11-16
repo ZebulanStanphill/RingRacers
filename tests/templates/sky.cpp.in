@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 using INT32=int32_t;
 using fixed_t=int32_t;
@@ -57,5 +58,16 @@ int main() {
         gl_skyvertex_t v={};HWR_SkyDomeVertex(&sky,&v,4,0,(signed char)flip,0,false);
         assert(fabsf((v.v-floorf(v.v))*224-128)<.00003f);
     }
-    printf("%d sky vertices honor Software patch offsets; Water Palace horizon row 128 passed\n",cases);
+    // The caps' vertices: the middle of the texture's first texel, whatever the memory held, and the colors left to the caller
+    int caps=0;
+    for(int width : {256,512,1024}) for(int height : {128,224}) for(int flip=0;flip<2;++flip) for(int c=0;c<64;++c) {
+        sky.width=width;sky.height=height;
+        gl_skyvertex_t v;memset(&v,0xff,sizeof v); // every float not a number
+        HWR_SkyDomeVertex(&sky,&v,1,c,(signed char)flip,0,true);
+        assert(v.u==.5f/width && v.v==.5f/height);
+        assert(std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z));
+        assert(v.r==0xff && v.g==0xff && v.b==0xff && v.a==0xff);
+        ++caps;
+    }
+    printf("%d sky vertices honor Software patch offsets; Water Palace horizon row 128 passed; %d cap vertices have texture coordinates\n",cases,caps);
 }

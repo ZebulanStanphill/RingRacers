@@ -8250,6 +8250,16 @@ static void HWR_SkyDomeVertex(gl_sky_t *sky, gl_skyvertex_t *vbo, int r, int c, 
 			vbo->v = 1.0f + ((sky->rows - r) / (float)sky->rows) + 0.5f;
 		HWR_ApplySkyTextureOffsets(&vbo->u, &vbo->v, sky->width, sky->height);
 	}
+	else
+	{
+		// The caps: the two fans that close the dome above and below, which HWR_BuildSkyDome colors itself. They are
+		// drawn with the sky texture like the rest of the dome, and their texture coordinates were never written.
+		// The vertex array comes from malloc, so a cap showed the texture at whatever the memory held: a color that
+		// could change from one run of the game to the next, and nothing defined where that was infinite or not a
+		// number. The middle of the texture's first texel is what memory fresh from the system (zero) gave.
+		vbo->u = 0.5f / sky->width;
+		vbo->v = 0.5f / sky->height;
+	}
 
 	if (r != 4)
 		y += 300.0f;
