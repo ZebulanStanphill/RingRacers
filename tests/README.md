@@ -1509,12 +1509,16 @@ three renderers. Hosted CPUs vary (a probe of six jobs landed on an AMD EPYC 776
 and two Xeon 6975P-C with AVX-512) and each capture records its CPU model; the frames did not depend on it, as far as these
 runs show. A reproducible renderer is what makes the comparison with a baseline worth reading.
 
-Legacy GL is not reproducible on 21 of the 213 maps (Water Palace, Whirl Waters, Aqua Tunnel, and Hydro Plant among them): 55 of the 1,065 frames differed between
+Legacy GL is not reproducible on 23 of the 213 maps (Water Palace, Whirl Waters, Aqua Tunnel, and Hydro Plant among them). On 21 of them, 55 of the 1,065 frames differed between
 those two sweeps outside the deliberate change, in 4 to 52% of their pixels, and `RR_WHIRLWATERS` differed twice on one
 machine, with and without llvmpipe's `LP_NATIVE_VECTOR_WIDTH=128`. The cause is not known; those pictures look the same at
 a glance. `tests/map-sweep/unstable.json` lists the maps: their differences are shown in the report, marked
-`(unstable)`, and never make a sweep red, while their health checks still count. Add a map to it only with evidence that
-two runs of one commit on one stack differ, and take it out when the renderer is fixed. Another Legacy GL map that
+`(unstable)`, and never make a sweep red, while their health checks still count. Mega Lava Reef and Wood were
+added after three sweeps, of `master` and of two commits that changed only what VibeRant draws: Mega Lava Reef's frames at
+tics 1400 and 2100 differed in all three (scattered pixels over the whole picture, up to 17% of it), and one of Wood's (441
+pixels) in one of them. Add a map to it only with evidence that
+two runs of one commit on one stack differ, or of commits that can't differ in that renderer, and take it out when the
+renderer is fixed. Another Legacy GL map that
 flickers turns one sweep red and belongs in the list.
 
 **Vulkan against D3D**: the report also compares VibeRant Vulkan's frames with VibeRant D3D's of the same commit (two
