@@ -17,6 +17,7 @@
 #define __D_FRAMECAPTURE_H__
 
 #include "doomtype.h"
+#include "m_fixed.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +46,10 @@ UINT32 FrameCapture_Random(void);
 /// I_GetTime() for the cosmetic animations the clock of the machine drives (a dancing string, a blinking button
 /// prompt): in capture mode the level time, so that they are the same on every run; otherwise I_GetTime().
 tic_t FrameCapture_AnimTime(void);
+
+/// The time between two frames (renderdeltatics) for the animations that go by it, such as Legacy GL's water and heat
+/// waves and the HUD's scrolling: in capture mode one tic, however long the frame before took; otherwise `measured`.
+fixed_t FrameCapture_DeltaTics(fixed_t measured);
 
 /// For M_DoScreenShot: the name of the requested screenshot, in capture mode (and `path` becomes its directory, with a
 /// trailing separator); NULL otherwise, for the ordinary numbered name.

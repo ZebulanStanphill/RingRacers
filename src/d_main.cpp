@@ -1348,6 +1348,10 @@ void D_SRB2Loop(void)
 			rendertimefrac_unpaused = FRACUNIT;
 		}
 
+		// [UWP]: Frame capture mode draws one frame per tic. What animates by the time between frames (Legacy GL's water
+		// and heat waves, the HUD's scrolling) would otherwise go by how long the machine took over the last one.
+		renderdeltatics = FrameCapture_DeltaTics(renderdeltatics);
+
 		if ((interp || doDisplay) && !frameskip && g_fast_forward == 0)
 		{
 			if (!renderisnewtic)

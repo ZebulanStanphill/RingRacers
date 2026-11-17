@@ -257,6 +257,11 @@ tic_t FrameCapture_AnimTime(void)
 	return g_framecapture ? (tic_t)leveltime : I_GetTime();
 }
 
+fixed_t FrameCapture_DeltaTics(fixed_t measured)
+{
+	return frame_capture::frame_delta(g_framecapture, measured, FRACUNIT);
+}
+
 const char *FrameCapture_ShotName(char *path, size_t pathsize)
 {
 	if (!g_framecapture || !g_pending)

@@ -86,6 +86,8 @@ and turns frame interpolation off. It also pins what would make two runs of the 
   depends on the level time alone;
 - the animations the machine's clock drives (a dancing string such as the EXP counter, a blinking button
   prompt) read the level time instead of `I_GetTime()`;
+- the time between two frames, which some animations go by instead of the level time (Legacy GL's underwater and
+  heat waves, scrolling parts of the HUD), is one tic, whatever the clock measured;
 - the "Screen shot saved" message and the capture's own messages stay out of the console (they would be
   in the next frame).
 

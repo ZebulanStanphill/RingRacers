@@ -1,4 +1,5 @@
-// The frame capture mode's tic list and screenshot names (src/frame_capture.hpp); runs without the engine.
+// The frame capture mode's tic list, screenshot names, and time between frames (src/frame_capture.hpp); runs without the
+// engine.
 #include "frame_capture.hpp"
 #include <cassert>
 #include <cstdint>
@@ -93,6 +94,16 @@ int main()
 	CHECK(shot_name("", 1) == "MAP_00001.png");
 	CHECK(shot_name(nullptr, 1) == "MAP_00001.png");
 	CHECK(shot_name("A", 9) < shot_name("A", 10)); // sorts in time order
+
+	// The time between frames: one tic while capturing, however long the clock says the frame took (none, or several
+	// tics); what was measured otherwise
+	const std::int32_t tic = 65536;
+	CHECK(frame_capture::frame_delta(true, 0, tic) == tic);
+	CHECK(frame_capture::frame_delta(true, 3 * tic, tic) == tic);
+	CHECK(frame_capture::frame_delta(true, tic / 7, tic) == tic);
+	CHECK(frame_capture::frame_delta(false, 0, tic) == 0);
+	CHECK(frame_capture::frame_delta(false, 3 * tic, tic) == 3 * tic);
+	CHECK(frame_capture::frame_delta(false, tic / 7, tic) == tic / 7);
 
 	std::puts("frame_capture: ok");
 	return 0;

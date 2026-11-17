@@ -6,7 +6,7 @@
 //-----------------------------------------------------------------------------
 /// \file  frame_capture.hpp
 /// \brief The parts of the frame capture mode (-shottics, d_framecapture.cpp) that need no engine types:
-///        reading the tic list and naming the screenshot files.
+///        reading the tic list, naming the screenshot files, and the time between two frames.
 ///
 /// Header-only, so that the native tests run the same code the engine does.
 
@@ -90,6 +90,14 @@ inline bool parse_tics(const char* text, std::vector<std::uint32_t>& out, std::s
 	std::sort(out.begin(), out.end());
 	out.erase(std::unique(out.begin(), out.end()), out.end());
 	return true;
+}
+
+// The time between two frames, for the animations that go by it (the game's renderdeltatics): what the clock measured,
+// or in capture mode one tic, whatever the clock says. A captured frame is one tic after the last, and how long the
+// machine took to draw it must not show in the next one.
+constexpr std::int32_t frame_delta(bool capturing, std::int32_t measured, std::int32_t one_tic)
+{
+	return capturing ? one_tic : measured;
 }
 
 // "<MAP>_<tic>.png": the map's name (anything but letters, digits, '_' and '-' becomes '_') and the level time with at
