@@ -175,15 +175,24 @@ window is hidden".
 - **Changing the renderer in fullscreen** trades two windows, each of which wants a Space of its own, and a review
   feared two animations at once, a Space left over, or a game that ends up in a window. The presenter now writes each
   window's way into and out of a Space to the log (`WatchSpaces`, from AppKit's notifications), and on a runner
-  (macOS 15, where the screen isn't locked) the order is this. Software to VibeRant Metal: the Metal window goes into
+  (macOS 15, where the screen isn't locked) the order was this. Software to VibeRant Metal: the Metal window goes into
   a Space, in 0.55 to 0.67 s, and hiding the OpenGL window afterwards, which is then on a Space that isn't showing,
   is no transition at all. VibeRant Metal to Software: the OpenGL window goes into a Space (0.6 s), and then the
   Metal window leaves its own as it is destroyed (0.7 to 1.1 s). So two transitions that way, but one after the
   other, because SDL waits for each to end. After every change the pictures of the runner's screen show the game
   on the whole screen with the renderer that was asked for, no frame was withheld from a window out of sight, and
-  the game went on. Nothing was changed for it. What the transitions look like to a person, and whether Mission
-  Control is left with an empty Space, a picture of the screen doesn't show; and both Macs' screens were locked,
-  where there are no Spaces to try it with.
+  the game went on.
+
+  A person at a MacBook Pro (macOS 15.8, SDL 2.30.9) then saw what the runner hadn't shown. VibeRant Metal to
+  Software was fine. Software to VibeRant Metal left fullscreen, went back and forth, and ended with the game on a
+  Space other than the one on the display. The log had the reason: hiding the OpenGL window (`SDL_HideWindow`) while
+  it is fullscreen makes SDL take it out of its Space (0.7 s), show it again as that ends, put it back into a Space
+  for being fullscreen and shown (0.6 s), and only then hide it, which takes it out once more (1.7 s). Each of those
+  takes the display along, away from the Metal window's Space. So the presenter now takes a fullscreen OpenGL window
+  out of its Space and hides it before it makes the Metal window: the OpenGL window leaves its Space (0.56 s), then
+  the Metal window goes into one (0.6 s), and the Metal window is on the Space that shows. Two transitions, one
+  after the other, as in the other direction. `capture.py` fails a run in whose log the OpenGL window leaves a Space
+  while the Metal window is in one. On a Mac whose screen is locked there are no Spaces to try any of this with.
 - **A window nobody sees.** A layer's drawables only come back from the display, so asking the layer of a window
   that is minimized, hidden, on another Space, or covered for its next drawable waits a second and gives nothing.
   The presenter asks AppKit whether any of the window is on screen (`NSWindow`'s occlusion state) and doesn't present

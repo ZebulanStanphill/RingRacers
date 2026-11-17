@@ -56,6 +56,24 @@ def main():
     good = DEVICE + TOOK + COLORS + done(2049, 3)
     assert judge(good) == []
 
+    # A change of renderer in fullscreen: the OpenGL window is out of its Space before the Metal window goes into one
+    def space(ms, window, what, shows="on"):
+        return "VibeRant Metal: presenter: at %d ms the %s window %s (the Metal window is %s the Space that shows)\n" % (ms, window, what, shows)
+    enters = space(4880, "Metal", "begins to enter a fullscreen Space") + space(5504, "Metal", "is in a fullscreen Space")
+    to_software = (space(62054, "OpenGL", "begins to enter a fullscreen Space") + space(62632, "OpenGL", "is in a fullscreen Space", "not on")
+                   + space(62669, "Metal", "begins to leave its fullscreen Space", "not on") + done(3228, how=GAVE_BACK)
+                   + space(62788, "Metal", "has left its fullscreen Space"))
+    gl_leaves = ("VibeRant Metal: presenter: at 67000 ms the OpenGL window begins to leave its fullscreen Space\n"
+                 "VibeRant Metal: presenter: at 67600 ms the OpenGL window has left its fullscreen Space\n")
+    assert judge(DEVICE + enters + TOOK + COLORS + to_software + gl_leaves + enters + TOOK + COLORS + done(700)) == []
+    # Software in fullscreen to the end: its window leaves its Space as the game quits
+    assert judge(DEVICE + enters + TOOK + COLORS + to_software + gl_leaves, quits_with_metal=False) == []
+    # What SDL made of hiding the fullscreen OpenGL window after the Metal window had come
+    hidden_late = (space(68496, "OpenGL", "begins to leave its fullscreen Space") + space(69175, "OpenGL", "has left its fullscreen Space", "not on")
+                   + space(69191, "OpenGL", "begins to enter a fullscreen Space", "not on") + space(69792, "OpenGL", "is in a fullscreen Space", "not on")
+                   + space(69860, "OpenGL", "begins to leave its fullscreen Space", "not on") + space(71532, "OpenGL", "has left its fullscreen Space", "not on"))
+    assert judge(DEVICE + enters + TOOK + COLORS + to_software + enters + TOOK + COLORS + hidden_late + done(700)) == ["spaces"]
+
     # The log itself
     assert judge(TOOK + COLORS + done(2049)) == ["no Metal"]
     assert judge(good.replace("API validation on", "API validation off")) == ["no validation"]

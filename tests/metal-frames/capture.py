@@ -168,6 +168,22 @@ def spaces(text):
     return re.findall(r"presenter: (at \d+ ms the (?:Metal|OpenGL) window [^(\n]*?)(?: \(.*)?$", text, re.M)
 
 
+def check_spaces(text, problems):
+    """A change to VibeRant Metal in fullscreen takes the OpenGL window out of its Space before the Metal window goes
+    into one. An OpenGL window that leaves a Space while the Metal window is in one takes the display with it, to a
+    Space the game isn't on (which is what hiding a fullscreen window through SDL came to on a MacBook Pro)."""
+    metal_in_space = False
+    for line in re.findall(r"presenter: (?:at \d+ ms )?(the (?:Metal|OpenGL) window [^(\n]*|gave the game's OpenGL window back)", text):
+        line = line.strip()
+        if line == "the Metal window is in a fullscreen Space":
+            metal_in_space = True
+        elif line.startswith("the Metal window begins to leave") or line.startswith("gave the game's"):
+            metal_in_space = False
+        elif metal_in_space and line.startswith("the OpenGL window begins to leave"):
+            problems.append(("spaces", "the OpenGL window left its fullscreen Space while the Metal window was in one"))
+            return
+
+
 def probes(text):
     """Of the frames presented to a window the system called out of sight: how many, how many of them Metal reported
     with a time at which they were shown, and how many without (dropped, or a system that gives no times)"""
@@ -267,6 +283,7 @@ def check_log(log_path, need_metal=True, validation=True, quits_with_metal=True)
         # colors differ on a display that isn't sRGB
         if "presenter: " in text and "presenter: colors are matched to the display" not in text:
             problems.append(("colors", "the log doesn't say that the Metal layer has its window's color space"))
+        check_spaces(text, problems)
         # A game that ends with VibeRant Metal closes the Metal window and leaves its OpenGL window, which nothing ever
         # drew into, hidden: the log says what SDL says of that window at the end
         quit_with = re.findall(r"presenter: closed the Metal window as the game quits; the game's OpenGL window is (\w+)", text)

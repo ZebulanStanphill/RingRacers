@@ -11,7 +11,8 @@
 /// game's window is made for OpenGL, which the Software renderer's frames are shown with. So when the driver starts,
 /// the presenter makes a second window like the first for Metal, hides the first, and makes the second the game's
 /// window (sdlmain.h's `window`), which is what the video code sizes, makes fullscreen, and takes input from. When
-/// Software takes over, the first window comes back as the second one was and the second goes.
+/// Software takes over, the first window comes back as the second one was and the second goes. In fullscreen each
+/// window has a Space of its own, and the first leaves its Space before the second is made (CreateWindowAndLayer).
 ///
 /// The layer's drawables are always the size of the window: in points, as the game's window isn't a high-resolution
 /// one, so on a Retina display the system scales the frame up as it does the other renderers' frames. The driver's
@@ -331,6 +332,24 @@ bool CreateWindowAndLayer()
 	{
 		WatchSpaces();
 		const Uint32 flags = SDL_GetWindowFlags(game);
+		// A window that shows in a fullscreen Space leaves it and goes before the Metal window comes. Hidden as it is
+		// (SDL_HideWindow), SDL takes it out of its Space, shows it again as that ends, puts it back into a Space for
+		// being fullscreen and shown, and only then hides it: three transitions, and the display is left on another
+		// Space than the Metal window's (seen on a MacBook Pro, macOS 15.8, SDL 2.30.9). SDL waits for the Space to end.
+		const bool leftSpace = (flags & SDL_WINDOW_SHOWN) && (flags & SDL_WINDOW_FULLSCREEN_DESKTOP);
+		if (leftSpace)
+		{
+			SDL_SetWindowFullscreen(game, 0);
+			SDL_HideWindow(game);
+		}
+		const auto failed = [&]
+		{
+			if (!leftSpace)
+				return;
+			SDL_SetWindowFullscreen(game, SDL_WINDOW_FULLSCREEN_DESKTOP);
+			SDL_ShowWindow(game);
+		};
+		// The place and size of the game's window as a window, which is what it is now either way
 		int x, y, w, h;
 		SDL_GetWindowPosition(game, &x, &y);
 		SDL_GetWindowSize(game, &w, &h);
@@ -340,6 +359,7 @@ bool CreateWindowAndLayer()
 		if (!made)
 		{
 			Fail(SDL_GetError());
+			failed();
 			return false;
 		}
 		SDL_MetalView view = SDL_Metal_CreateView(made);
@@ -350,6 +370,7 @@ bool CreateWindowAndLayer()
 			if (view)
 				SDL_Metal_DestroyView(view);
 			SDL_DestroyWindow(made);
+			failed();
 			return false;
 		}
 		// The frame's values as they are, BGRA8 without an sRGB conversion; what the display makes of them is the color
@@ -374,7 +395,7 @@ bool CreateWindowAndLayer()
 		MatchWindowColors(true);
 
 		g_mtl.gameWindow = game;
-		g_mtl.hideGameWindow = true;
+		g_mtl.hideGameWindow = !leftSpace;
 		rr_mtl_present::SetGameWindow(made);
 		SDL_RaiseWindow(made);
 		g_mtl.owned = true;
