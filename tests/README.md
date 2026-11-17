@@ -1894,17 +1894,31 @@ three renderers. Hosted CPUs vary (a probe of six jobs landed on an AMD EPYC 776
 and two Xeon 6975P-C with AVX-512) and each capture records its CPU model; the frames did not depend on it, as far as these
 runs show. A reproducible renderer is what makes the comparison with a baseline worth reading.
 
-Legacy GL is not reproducible on 23 of the 213 maps (Water Palace, Whirl Waters, Aqua Tunnel, and Hydro Plant among them). On 21 of them, 55 of the 1,065 frames differed between
-those two sweeps outside the deliberate change, in 4 to 52% of their pixels, and `RR_WHIRLWATERS` differed twice on one
-machine, with and without llvmpipe's `LP_NATIVE_VECTOR_WIDTH=128`. The cause is not known; those pictures look the same at
-a glance. `tests/map-sweep/unstable.json` lists the maps: their differences are shown in the report, marked
-`(unstable)`, and never make a sweep red, while their health checks still count. Mega Lava Reef and Wood were
-added after three sweeps, of `master` and of two commits that changed only what VibeRant draws: Mega Lava Reef's frames at
-tics 1400 and 2100 differed in all three (scattered pixels over the whole picture, up to 17% of it), and one of Wood's (441
-pixels) in one of them. Add a map to it only with evidence that
-two runs of one commit on one stack differ, or of commits that can't differ in that renderer, and take it out when the
-renderer is fixed. Another Legacy GL map that
-flickers turns one sweep red and belongs in the list.
+Legacy GL was not reproducible on 23 of the 213 maps (Water Palace, Whirl Waters, Aqua Tunnel, and Hydro Plant among
+them): 55 of the 1,065 frames differed between two sweeps in 4 to 52% of their pixels, and `RR_WHIRLWATERS` differed
+twice on one machine. Two causes were found. Its underwater and heat waves went by the time the machine took over each
+frame, which capture mode now makes one tic (see "Capture mode" in
+[tests/frame-compare/README.md](frame-compare/README.md)); and the sky dome's caps were drawn with texture coordinates
+nothing had set, in every hardware renderer, which shows where a frame looks steeply up. With both fixed, two complete
+Legacy GL sweeps of one commit (runs 44111499586 and 44142962756, on runners with an EPYC 9V45, an EPYC 9V74, and a
+Xeon 6975P-C) gave the same 1,065 frames to the pixel, and the 23 maps were taken off the list.
+
+The caps showed in VibeRant as well, in one frame: Wood at level time 2100, which looks up into the sky, had a strip
+of speckles that differed in 299 to 446 pixels between sweeps of commits from before that fix (and was first taken for
+a difference between the runners' CPUs, which it is not). Since the fix the frame is the same to the pixel in every
+run: two sweeps, and 21 runs on seven more hosted runners (four with a Xeon 6975P-C, two with an EPYC 9V74, and one with
+an EPYC 9V45). Those two sweeps, of code that draws alike, gave the same 1,065 frames with VibeRant Vulkan and with
+VibeRant D3D.
+
+Software has one frame that is not the same every time: Blizzard Peaks at level time 350, where three pixels in a row
+take one of two colors from run to run (two of four sweeps had each). That is 0.001% of the frame, far under the red
+line, and its cause has not been looked for.
+
+`tests/map-sweep/unstable.json` lists the maps known to differ from run to run, per renderer: their differences are
+shown in the report, marked `(unstable)`, and never make a sweep red, while their health checks still count. It is
+empty now. Add a map to it only with evidence that two runs of one commit on one stack differ, or of commits that
+can't differ in that renderer, and take it out when the cause is fixed. Before adding one, check that the two runs
+played commits that draw alike: a frame that differs between a branch and `master` is first of all the branch's change.
 
 **Vulkan against D3D**: the report also compares VibeRant Vulkan's frames with VibeRant D3D's of the same commit (two
 renderers, two operating systems, always information only, never red).
