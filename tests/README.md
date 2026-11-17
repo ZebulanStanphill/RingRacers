@@ -37,10 +37,12 @@ executable, expecting the `_uwp` results and then the `_desktop` ones.
 The native tests have no desktop variant of the Direct3D 12 driver: engine CMake
 enables it by default with `SRB2_CONFIG_UWP`, which defines `_UWP`, and in Windows
 desktop builds made with MSVC or clang-cl (the `windows` job's, which builds the desktop
-presenter). All built-in shader compilation commands define `_UWP` and
-`RR_D3D12`, in desktop builds too; the HLSL therefore keeps only those active branches.
-The Windows WARP harness uses the same definitions, except that its second
-executable, which runs the desktop presenter, is compiled without `_UWP` (below).
+presenter). The shader compilation commands define no `_UWP` or Direct3D macro,
+since the HLSL reads none; its one conditional, `RR_VULKAN`, is defined only by the
+commands that compile it to SPIR-V for the Vulkan and Metal backends (it leaves out the
+root signature attribute). The Windows WARP harness compiles the driver's C++ with
+`_UWP`, except that its second executable, which runs the desktop presenter, is
+compiled without it (below).
 
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop

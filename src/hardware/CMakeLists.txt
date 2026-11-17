@@ -50,7 +50,7 @@ if(SRB2_CONFIG_VIBERANT_D3D)
 		set(header "${viberant_shader_dir}/${entry}.h")
 		add_custom_command(
 			OUTPUT "${header}"
-			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /DRR_D3D12 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${viberant_shader_source}"
+			COMMAND "${SRB2_FXC}" /nologo /O3 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${viberant_shader_source}"
 			DEPENDS "${viberant_shader_source}"
 			COMMENT "Compiling the ${entry} D3D12 shader"
 			VERBATIM
@@ -61,7 +61,7 @@ if(SRB2_CONFIG_VIBERANT_D3D)
 	set(root_header "${viberant_shader_dir}/RootSignature.h")
 	add_custom_command(
 		OUTPUT "${root_header}"
-		COMMAND "${SRB2_FXC}" /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "${root_header}" "${viberant_shader_source}"
+		COMMAND "${SRB2_FXC}" /nologo /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "${root_header}" "${viberant_shader_source}"
 		DEPENDS "${viberant_shader_source}"
 		COMMENT "Compiling the D3D12 root signature"
 		VERBATIM
@@ -114,7 +114,7 @@ if(SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_METAL)
 			OUTPUT "${header}"
 			COMMAND glslang-standalone -D -V -S ${stage} -e ${entry} --hlsl-dx-position-w -fhlsl_functionality1
 				--shift-ubo-binding 0 --shift-texture-binding 16 --shift-sampler-binding 32
-				-D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
+				-DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
 			DEPENDS "${viberant_shader_source}" glslang-standalone
 			COMMENT "Compiling the ${entry} shader to SPIR-V"
 			VERBATIM

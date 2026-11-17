@@ -65,7 +65,7 @@ foreach(entry ${viberant_shader_entries})
         OUTPUT "${header}"
         COMMAND glslang-standalone -D -V -S ${stage} -e ${entry} --hlsl-dx-position-w -fhlsl_functionality1
             --shift-ubo-binding 0 --shift-texture-binding 16 --shift-sampler-binding 32
-            -D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
+            -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
         DEPENDS "${viberant_shader_source}" glslang-standalone
         COMMENT "Compiling the ${entry} shader to SPIR-V"
         VERBATIM

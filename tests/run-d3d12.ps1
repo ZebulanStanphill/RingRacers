@@ -10,10 +10,10 @@ $Entries = @('VSPoly','VSPolyClip','VSSky','VSModel','VSModelLight','VSWipe','VS
     'PSFixed','PSDefault','PSSoftware','PSSoftwareModelLight','PSWater','PSWaterRefraction','PSFog','PSFogRemap','PSSky','PSWipe','PSWipeFull','PSPalettePostprocess','PSFadeMap','PSPostImage')
 foreach ($Entry in $Entries) {
     $Stage = $Entry.Substring(0,2).ToLower() + '_5_1'
-    & fxc.exe /nologo /O3 /D_UWP /DRR_D3D12 /T $Stage /E $Entry /Vn "g_$Entry" /Fh "$Shaders\$Entry.h" $Source
+    & fxc.exe /nologo /O3 /T $Stage /E $Entry /Vn "g_$Entry" /Fh "$Shaders\$Entry.h" $Source
     if ($LASTEXITCODE -ne 0) { throw "Production SM5.1 $Entry compilation failed" }
 }
-& fxc.exe /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "$Shaders\RootSignature.h" $Source
+& fxc.exe /nologo /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "$Shaders\RootSignature.h" $Source
 if ($LASTEXITCODE -ne 0) { throw "Production root signature compilation failed" }
 $Driver = Join-Path $Engine "src\hardware\r_viberant"
 $Files = @((Join-Path $PSScriptRoot 'viberant-driver.cpp'), "$Driver\r_viberant.cpp", "$Driver\viberant_core.cpp", "$Driver\viberant_upload.cpp", "$Driver\viberant_pipeline.cpp", "$Driver\viberant_prewarm.cpp")
@@ -116,7 +116,7 @@ foreach ($Control in $Controls) {
     $ControlSource = Join-Path $ControlDir 'shaders.hlsl'
     $ProductionSource.Replace($Control.Good, $Control.Bad) | Set-Content $ControlSource
     $Entry = $Control.Entry
-    & fxc.exe /nologo /O3 /D_UWP /DRR_D3D12 /T ps_5_1 /E $Entry /Vn "g_$Entry" /Fh "$ControlShaders\$Entry.h" $ControlSource
+    & fxc.exe /nologo /O3 /T ps_5_1 /E $Entry /Vn "g_$Entry" /Fh "$ControlShaders\$Entry.h" $ControlSource
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) SM5.1 compilation failed" }
     $PipelineObject = Join-Path $ControlDir 'viberant_pipeline.obj'
     $ControlIncludes = @("/I$ControlDir") + $Includes
