@@ -42,18 +42,19 @@ The driver takes its samples as follows:
 
 ## Presenting: the swap chain
 
-The driver presents with a swap chain of its own on the window, with no ANGLE in between. A CoreWindow takes
+This section is about UWP (`d3d12_present.cpp`); Windows desktop builds present with `d3d12_present_win32.cpp`,
+and VibeRant Vulkan with `vulkan/vk_present.cpp`. On UWP the driver presents with a swap chain of its own on the window, with no ANGLE in between. A CoreWindow takes
 one swap chain at a time, so the driver takes the window from ANGLE: ANGLE draws to a 1x1 pbuffer, so that it
 lets go of the window's back buffer, and its window surface is destroyed (SDL's `SDL_WinRTReleaseGLSurface`,
 from `uwp/patches/sdl-egl-surface-handoff.patch`). Then each frame is copied into the next of three
 back buffers and presented, with `vid_wait` as the sync interval, and the swap chain's frame latency (2)
 enforced by waiting on its waitable object before the copy. Frames whose aspect ratio isn't the window's are
-letterboxed with black bars. There is nothing to configure; the driver is built only for UWP.
+letterboxed with black bars. There is nothing to configure.
 
 ### When the window is taken
 
-- **When Legacy GL starts.** `D3D_Init` takes the window every time the driver starts or the player switches
-  to Legacy GL, with ANGLE's context current. The swap chain starts at the video mode's size, and is resized
+- **When VibeRant D3D starts.** `D3D_Init` takes the window every time the driver starts or the player switches
+  to VibeRant D3D, with ANGLE's context current. The swap chain starts at the video mode's size, and is resized
   when a frame's size differs.
 - **With the first frame, if no ANGLE context was current at start** (an `-opengl` launch starts the
   driver before the window exists). The log says `no ANGLE context is current, so the window can't be taken from
@@ -99,7 +100,7 @@ UWP D3D12: couldn't take the window from ANGLE (<step> failed: 0x...); Legacy GL
 
 ANGLE gets the window and its context back, and the driver fails to start (`D3D_Init` returns false), so
 the engine's existing handling of a Legacy GL library error switches to the Software renderer. Switching to
-Legacy GL again tries to take the window again. If the take only happens with the first frame (the `-opengl`
+VibeRant D3D again tries to take the window again. If the take only happens with the first frame (the `-opengl`
 launch above), there is nothing to fall back from, and the game stops with `Direct3D 12 couldn't take the game
 window from ANGLE (<step>)`, naming the same step, and a suggestion to set Renderer to Software.
 

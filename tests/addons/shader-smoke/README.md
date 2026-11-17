@@ -73,6 +73,7 @@ the production `HWR_LoadCustomShadersFromFile` parser with archive I/O stubs, an
 verifies all five stage assignments. It checks that water uses a built-in default
 vertex stage, that other shader targets stay untouched, and that a missing archive
 path is rejected. The actual GLSL adapter translates all nine target/layout pairs
-to HLSL. Windows CI's `fxc` step compiles those 18 stages along with the existing
-72 stages. The existing WARP rendering checks exercise the driver, but do not yet
+to HLSL. Windows CI's `fxc` step compiles those 18 stages and the driver's refraction
+variant of the water pair along with the other translated stages (98 in all,
+which the step checks). The existing WARP rendering checks exercise the driver, but do not yet
 render this pack's checker/band patterns; Xbox visuals and load cost remain untested.

@@ -84,9 +84,9 @@ the unmodified game.
 
 `tests/README.md` describes the native regression tests (Linux or macOS, with
 sanitizers) and the Direct3D 12 WARP harness (Windows).
-`.github/workflows/tests.yml` runs both, and checks that Linux and macOS still build
-without the Direct3D 12 driver, and that Windows desktop (not UWP) builds with it
-by default (beside OpenGL, using the desktop presenter).
+`.github/workflows/tests.yml` runs both, and checks that Linux builds the driver
+with only its Vulkan backend, that macOS still builds without the driver, and that
+Windows desktop (not UWP) builds with it by default (beside OpenGL, using the desktop presenter).
 `.github/workflows/build.yml` builds the UWP app with `uwp/build.ps1` and uploads
 the package that is tested on Xbox; there is no local UWP build outside Windows.
 

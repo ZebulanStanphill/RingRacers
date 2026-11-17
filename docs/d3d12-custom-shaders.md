@@ -101,8 +101,10 @@ Options > Video > Screen Scaling (`cv_scr_scaling`, placement in `src/screen_sca
 size `uwp_GetScreenSize` reports). It is the last step, after palette rendering's step and the screen effect, which
 always run at the frame's size: the effect's output is what gets placed.
 
-- **Fit** is the behavior described above: the swap chain is the frame's size, `Present_Frame` copies the frame into
-  it, and the system's `DXGI_SCALING_ASPECT_RATIO_STRETCH` fits it to the window, keeping the aspect ratio.
+- **Fit** keeps the aspect ratio. On UWP the swap chain is the frame's size, `Present_Frame` copies the frame into
+  it, and the system's `DXGI_SCALING_ASPECT_RATIO_STRETCH` fits it to the window. On Windows desktop and with
+  VibeRant Vulkan the swap chain is the window's size, and the driver draws the frame into its `FitRect` with
+  linear filtering and black bars.
 - **Integer** scales the frame by the largest whole number k with k times its width and height inside the screen,
   centered with floor division (the extra pixel of an odd remainder is at the right and the bottom), with black around it.
 - **1:1** is the same with k fixed at 1.

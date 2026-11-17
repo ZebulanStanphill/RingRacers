@@ -4,7 +4,8 @@
 usage: annotate-function.py uwp-profile.txt ring-racers-ze.map ring-racers-ze.exe FUNCTION [min_samples]
 
 ring-racers-ze.exe is in the .msix of the same build's ring-racers-ze artifact (a zip). FUNCTION is a symbol name
-from the map, or a regular expression. Needs objdump (llvm-objdump).
+from the map, or a regular expression. Needs a program named objdump on PATH
+that reads Windows executables (GNU objdump with PE support, or llvm-objdump linked or copied as objdump).
 """
 import bisect, collections, re, subprocess, sys
 

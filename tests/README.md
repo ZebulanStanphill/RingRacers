@@ -709,7 +709,8 @@ untouched padding.
   reports an error. It guards that the engine code under `HAVE_D3D12` (portals, wall light slices,
   post-processing, palette rendering) does not depend on `_UWP`, so the driver can be built into
   Windows desktop builds; Xbox-only code inside it has its own `_UWP` guard. That code is only
-  compiled in by `#ifdef HAVE_D3D12`; whether it runs is decided by `HWR_D3D12()`. The `linux` job runs it.
+  compiled in by `#ifdef HAVE_D3D12`; whether it runs is decided by `HWR_D3D12()`. CI no longer runs it: the `linux` job builds the
+  driver with its Vulkan backend, which compiles this code without `_UWP`.
   The driver itself is not checked here: the `windows` job builds it into the desktop game, and the
   `warp` job runs the desktop presenter.
 
@@ -1085,8 +1086,9 @@ The Windows `warp` job, which compiles the translated add-on shader fixtures and
 the Direct3D 12 WARP regressions, depends on it passing. CTest's JUnit report and
 detailed run log are uploaded as `regression-results`, including when a test fails.
 The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
-that `compile_commands.json` has no `HAVE_D3D12`, so those builds cannot gain the
-Direct3D 12 driver. The `windows` job builds the ordinary (not UWP) Windows desktop game
+`compile_commands.json`: the Linux build must have the driver with only its Vulkan backend
+(`HAVE_D3D12` and `HAVE_VULKAN`, no `HAVE_D3D12_NATIVE`), and the macOS build must have no
+`HAVE_D3D12`, so it cannot gain the driver. The `windows` job builds the ordinary (not UWP) Windows desktop game
 in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_D3D12` is on by
 default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_D3D12` and compiles
 `d3d12_present_win32.cpp`, the desktop presenter, and not `d3d12_present.cpp`, UWP's. It builds with
