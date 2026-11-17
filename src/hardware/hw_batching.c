@@ -220,7 +220,7 @@ static void buildPolygonSortKeys(boolean shaders)
 
 		if (shaders)
 			key->shader = poly->shader;
-		// [UWP]: Ahead of the sky occluders, which are drawn first and whose depth would hide these
+		// [ZE]: Ahead of the sky occluders, which are drawn first and whose depth would hide these
 		if (poly->polyFlags & PF_BeforeSky)
 			key->shader = -2;
 		if (poly->texture)
@@ -238,11 +238,11 @@ static void buildPolygonSortKeys(boolean shaders)
 		key->fadeStart = poly->surf.LightInfo.fade_start;
 		key->fadeEnd = poly->surf.LightInfo.fade_end;
 		key->directional = poly->surf.LightInfo.directional;
-		key->lightTableId = poly->surf.LightTableId; // [UWP]: palette rendering
+		key->lightTableId = poly->surf.LightTableId; // [ZE]: palette rendering
 	}
 }
 
-// [UWP]: Binds a batch's texture and brightmap. The driver picks the texture unit from TF_BRIGHTMAP, and by now
+// [ZE]: Binds a batch's texture and brightmap. The driver picks the texture unit from TF_BRIGHTMAP, and by now
 // the flag says how the texture was last collected, which can be the other use (see HWR_GetTexture).
 static void HWR_SetBatchTextures(GLMipmap_t *texture, GLMipmap_t *brightmap)
 {

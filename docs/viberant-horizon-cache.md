@@ -1,4 +1,4 @@
-# UWP horizon cache
+# VibeRant horizon cache
 
 VibeRant caches one byte per subsector, built lazily from its static BSP segs.
 Only `!seg->glseg && seg->linedef && seg->linedef->special == HORIZONSPECIAL`

@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  p_mapcache.h
-/// \brief [UWP]: P_InitMapData's use of the map preview cache (map_preview_cache.hpp)
+/// \brief [ZE]: P_InitMapData's use of the map preview cache (map_preview_cache.hpp)
 
 #ifndef __P_MAPCACHE__
 #define __P_MAPCACHE__

@@ -1725,8 +1725,8 @@ int main(int argc,char **argv) {
         VibeRant_FinishUpdate(0); VibeRant_LogPerf(1);
         if(logs.find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
         // Every light table the palette scenes made is gone by now
-        { unsigned alive=9; int parsed=0; auto pp=logs.find("UWP perf:   VibeRant: palette: rendering ");
-          if(pp==std::string::npos || sscanf(logs.c_str()+pp,"UWP perf:   VibeRant: palette: rendering %*s %u light tables alive%n",&alive,&parsed)!=1 || !parsed) throw std::runtime_error("missing palette perf line");
+        { unsigned alive=9; int parsed=0; auto pp=logs.find("VibeRant perf: palette: rendering ");
+          if(pp==std::string::npos || sscanf(logs.c_str()+pp,"VibeRant perf: palette: rendering %*s %u light tables alive%n",&alive,&parsed)!=1 || !parsed) throw std::runtime_error("missing palette perf line");
           if(alive!=0) throw std::runtime_error("light tables outlived the palette scenes"); }
         unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=logs.find("; wraps "); if(pos==std::string::npos || sscanf(logs.c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=logs.find("; grows ",pos); if(gp==std::string::npos || sscanf(logs.c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
         unsigned ringSubmissions=0; auto rp=logs.find("mid-frame: ring "); if(rp==std::string::npos || sscanf(logs.c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");

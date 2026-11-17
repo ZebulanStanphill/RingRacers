@@ -257,7 +257,7 @@ static bool CaptureFogScene(FSurfaceInfo *surface, FBITFIELD flags,
 	if (!EnsureCaptureTexture(g_fogScene, g_rtWidth, g_rtHeight, kScreenFormat)) return false;
 	struct FogConstants { INT32 plane, lightnum; float viewRatio; INT32 pad; };
 	const FogConstants constants = {(flags & PF_FogPlane) ? 1 : 0,
-		// [UWP]: Wall/plane lighting already includes level darkness.
+		// [ZE]: Wall/plane lighting already includes level darkness.
 		std::clamp((INT32)surface->LightInfo.light_level >> LIGHTSEGSHIFT, 0, LIGHTLEVELS - 1),
 		(float)g_gl.viewport[2] / g_screenWidth, 0};
 	if (!SetPixelConstants(16, &constants, sizeof constants)) return false;

@@ -3,7 +3,7 @@
 #define D_FRAME_SCHEDULE_H
 #include "doomtype.h"
 
-// [UWP]: Render pacing only; no simulation clock or tic state is changed.
+// [ZE]: Render pacing only; no simulation clock or tic state is changed.
 // Callers supply intervals below INT64_MAX/4; signed differences allow clock wrap.
 static inline precise_t D_FrameSchedule(precise_t enter, precise_t finish,
 	precise_t budget, bool enabled, bool skipped, precise_t &deadline, bool &scheduled)

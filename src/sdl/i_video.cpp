@@ -112,7 +112,7 @@ extern "C" __declspec(dllimport) SDL_WinRT_DeviceFamily SDLCALL SDL_WinRTGetDevi
 #endif
 #endif
 #ifdef __APPLE__
-#include "../screen_scaling.hpp" // [UWP]: FitWindowToScreen
+#include "../screen_scaling.hpp" // [ZE]: FitWindowToScreen
 #endif
 
 #ifdef HAVE_DISCORDRPC
@@ -221,7 +221,7 @@ static void CenterWindow(void)
 }
 
 #ifdef __APPLE__
-// [UWP]: macOS gives no window that is taller than the screen has room for. It cuts the height and leaves the width,
+// [ZE]: macOS gives no window that is taller than the screen has room for. It cuts the height and leaves the width,
 // so a video mode larger than the screen got a window wider than its picture, with bars at the picture's sides. Such a
 // window takes the largest size of the mode's shape that the screen has room for.
 static void FitWindowToScreen(int width, int height)
@@ -1486,7 +1486,7 @@ static void UWPUseSurfaceSize(void)
 
 static SDL_bool Impl_CreateContext(void)
 {
-	// [UWP]: VibeRant D3D draws and presents, and takes the window from the RHI's OpenGL ES context
+	// [ZE]: VibeRant D3D draws and presents, and takes the window from the RHI's OpenGL ES context
 	// when it starts, so it needs no context of its own
 #ifdef HWRENDER
 	if (rendermode == render_opengl && !HWR_VibeRant())
@@ -1926,7 +1926,7 @@ void VID_StartupOpenGL(void)
 #ifdef HAVE_VIBERANT
 		if (HWR_VibeRant())
 		{
-			// [UWP]: Palette rendering, which the VibeRant driver supports
+			// [ZE]: Palette rendering, which the VibeRant driver supports
 			*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
 			*(void**)&HWD.pfnSetPaletteLookup = hwSym("SetPaletteLookup",NULL);
 			*(void**)&HWD.pfnCreateLightTable = hwSym("CreateLightTable",NULL);

@@ -29,7 +29,7 @@
 #include "../i_video.h"
 #include "../w_wad.h"
 #include "../p_setup.h" // levelfadecol
-#include "../p_polyobj.h" // [UWP]: HWR_PolyobjectsHome
+#include "../p_polyobj.h" // [ZE]: HWR_PolyobjectsHome
 
 // --------------------------------------------------------------------------
 // This is global data for planes rendering
@@ -573,7 +573,7 @@ static poly_t *CutOutSubsecPoly(seg_t *lseg, INT32 count, poly_t *poly)
 	return poly;
 }
 
-// [UWP]: Each subsector's first seg, GL segs included, while the polygons are built. The extended node loaders store
+// [ZE]: Each subsector's first seg, GL segs included, while the polygons are built. The extended node loaders store
 // the subsectors' segs in turn, and move firstline past the leading GL segs without changing numlines.
 static size_t *subsecfirstseg;
 
@@ -581,7 +581,7 @@ static size_t *subsecfirstseg;
 // neighbours: node builders round every vertex to a 65536th of a unit
 #define LOOPDENT (1.0/1024)
 
-// [UWP]: The subsector's shape from its closed loop of GL segs, or NULL when it has none. The BSP walk cuts its
+// [ZE]: The subsector's shape from its closed loop of GL segs, or NULL when it has none. The BSP walk cuts its
 // polygons out of partition lines in float and merges points SameVertice calls equal, so where partitions cross
 // within that tolerance, neighbouring polygons get different corners and the void shows between them: dark lines
 // to the centre of Test Run's bowl. The loops of one node build share their vertices, so they can't come apart.
@@ -646,7 +646,7 @@ static inline void HWR_SubsecPoly(INT32 num, poly_t *poly)
 
 	if (poly)
 	{
-		poly_t *loop = HWR_SegLoopPoly(num, true); // [UWP]
+		poly_t *loop = HWR_SegLoopPoly(num, true); // [ZE]
 
 		if (loop)
 		{
@@ -897,7 +897,7 @@ static void SearchSegInBSP(INT32 bspnum,polyvertex_t *p,poly_t *poly)
 		{
 			bspnum &= ~NF_SUBSECTOR;
 			q = extrasubsectors[bspnum].planepoly;
-			// [UWP]: A seg loop has a corner wherever its neighbours do, and a point put into it would bend its edge
+			// [ZE]: A seg loop has a corner wherever its neighbours do, and a point put into it would bend its edge
 			if (poly == q || !q || extrasubsectors[bspnum].segloop)
 				return;
 			for (j = 0; j < q->numpts; j++)
@@ -1072,7 +1072,7 @@ static void AdjustSegs(void)
 }
 
 
-// [UWP]: Puts every polyobject's vertices where the map has them, keeping where they are now in saved (one entry per
+// [ZE]: Puts every polyobject's vertices where the map has them, keeping where they are now in saved (one entry per
 // polyobject vertex), or puts them back from it. The node builder saw the map before any polyobject went to its spawn
 // spot, so a subsector with a polyobject line on its edge stays where the polyobject was drawn. With the vertices as
 // they are now, its seg loop reaches from there to wherever the polyobject is: Balloon Park's sliding blocks stretched
@@ -1123,7 +1123,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	polyvertex_t *rootpv;
 	size_t i;
 	fixed_t rootbbox[4];
-	vertex_t *polyobjverts = NULL; // [UWP]
+	vertex_t *polyobjverts = NULL; // [ZE]
 	size_t numpolyobjverts = 0;
 
 	CONS_Debug(DBG_RENDER, "Creating polygons, please wait...\n");
@@ -1135,7 +1135,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 
 	HWR_ClearPolys();
 
-	// [UWP]
+	// [ZE]
 	for (i = 0; i < (size_t)numPolyObjects; i++)
 		numpolyobjverts += PolyObjects[i].numVertices;
 	if (numpolyobjverts)
@@ -1201,7 +1201,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	//CONS_Debug(DBG_RENDER, "%d point divides a polygon line\n",i);
 	AdjustSegs();
 
-	if (polyobjverts) // [UWP]
+	if (polyobjverts) // [ZE]
 	{
 		HWR_PolyobjectsHome(polyobjverts, false);
 		free(polyobjverts);

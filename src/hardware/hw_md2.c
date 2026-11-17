@@ -29,7 +29,7 @@
 #include "hw_drv.h"
 #include "hw_light.h"
 #include "hw_md2.h"
-#include "hw_glob.h" // [UWP]: HWR_GetColor
+#include "hw_glob.h" // [ZE]: HWR_GetColor
 #include "../d_main.h"
 #include "../r_bsp.h"
 #include "../r_fps.h"
@@ -1312,7 +1312,7 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
 	int i;
 	GLPatch_t *gpatch;
 
-	// [UWP]: The patch's hardware data, which has its max_s and max_t, only exists once it has been prepared, and
+	// [ZE]: The patch's hardware data, which has its max_s and max_t, only exists once it has been prepared, and
 	// changing video settings frees it, so a model that borrows its sprite's graphics could read through a null
 	// pointer when it was first drawn afterwards.
 	if (!patch)
@@ -1720,7 +1720,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			// Comparing floats with the != operator here should be okay because they
 			// are just copies of glpatches' max_s and max_t values.
 			// Instead of the != operator, memcmp is used to avoid a compiler warning.
-			// [UWP]: Compare the sprite's dimensions, as described above, rather than the model texture's, which a
+			// [ZE]: Compare the sprite's dimensions, as described above, rather than the model texture's, which a
 			// model drawn with its sprite may not have (hwrPatch was NULL then), and prepare the sprite first so its
 			// dimensions exist.
 			GLPatch_t *spritePatch;

@@ -2,7 +2,7 @@
 #ifndef HW_HORIZON_H
 #define HW_HORIZON_H
 
-// [UWP]: Runtime special changes invalidate the render-only subsector cache.
+// [ZE]: Runtime special changes invalidate the render-only subsector cache.
 // Keep callers valid in software-only and non-VibeRant builds.
 #if defined(HWRENDER) && defined(HAVE_VIBERANT)
 #ifdef __cplusplus

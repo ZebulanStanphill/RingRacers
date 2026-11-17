@@ -454,7 +454,7 @@ struct mobj_t
 
 	INT32 po_movecount; // Polyobject carrying (NOT savegame, NOT Lua)
 
-	// [UWP]: 1 + where this is in r_fps.cpp's list of interpolated mobjs, or 0 (NOT savegame, NOT Lua)
+	// [ZE]: 1 + where this is in r_fps.cpp's list of interpolated mobjs, or 0 (NOT savegame, NOT Lua)
 	size_t interpolatorslot;
 
 	// WARNING: New fields must be added separately to savegame and Lua.

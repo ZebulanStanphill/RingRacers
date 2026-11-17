@@ -274,7 +274,7 @@ static float gl_fovlud;
 static angle_t gl_aimingangle;
 static void HWR_SetTransformAiming(FTransform *trans, player_t *player, boolean skybox);
 
-// [UWP]: Software hides a spring that sits inside a wall. R_ClipVisSprite clips a sprite by the silhouette of every
+// [ZE]: Software hides a spring that sits inside a wall. R_ClipVisSprite clips a sprite by the silhouette of every
 // solid seg that isn't behind its origin (a one-sided wall, or a two-sided seg's upper or lower wall), and
 // R_CreateDrawNodes draws a 3D floor's side over the sprite when the side's scale at the sprite's middle column is
 // nearer. Legacy GL instead depth-tests the camera-facing quad, so the parts of a spring that stick out through the
@@ -882,7 +882,7 @@ static void HWR_SpringProbeEntry(size_t w, const hwr_springwall_t *entry, boolea
 	size_t length;
 	int written;
 	INT32 i;
-	written = snprintf(message, sizeof message, "UWP spring entry: w=%u kind=%s applies=%d subtracted=%d cut=%d corners=%d",
+	written = snprintf(message, sizeof message, "Spring entry: w=%u kind=%s applies=%d subtracted=%d cut=%d corners=%d",
 		(unsigned)w, entry->plane ? "plane" : entry->thick ? "fofside" : "side", (int)applies, (int)subtracted, (int)cut, (int)entry->numverts);
 	if (written < 0)
 		return;
@@ -946,7 +946,7 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 		|| !HWR_SpringSetView(&view, quad, spr->gx, spr->gy, spr->gz, spr->gzt))
 	{
 		if (probe && (spr->mobj->flags & MF_SPRING))
-			I_OutputMsg("UWP spring probe: type=%d at (%.1f,%.1f,%.1f) left alone: entries=%u flags=0x%lx\n", (int)spr->mobj->type,
+			I_OutputMsg("Spring probe: type=%d at (%.1f,%.1f,%.1f) left alone: entries=%u flags=0x%lx\n", (int)spr->mobj->type,
 				FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z),
 				(unsigned)hwr_numspringwalls, (unsigned long)flags);
 		return false;
@@ -959,7 +959,7 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 		if (hwr_springwalls[w].thick && HWR_SpringWallApplies(&hwr_springwalls[w], &view))
 			farthestthick = w;
 	if (probe)
-		I_OutputMsg("UWP spring probe: type=%d at (%.1f,%.1f,%.1f) gz=%.1f gzt=%.1f quad=(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) depth=%.2f entries=%u farthestthick=%ld\n",
+		I_OutputMsg("Spring probe: type=%d at (%.1f,%.1f,%.1f) gz=%.1f gzt=%.1f quad=(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) depth=%.2f entries=%u farthestthick=%ld\n",
 			(int)spr->mobj->type, FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z), spr->gz, spr->gzt,
 			quad[0].x, quad[0].z, quad[0].y, quad[1].x, quad[1].z, quad[1].y, quad[2].x, quad[2].z, quad[2].y, quad[3].x, quad[3].z, quad[3].y,
 			view.depth, (unsigned)hwr_numspringwalls, farthestthick == SIZE_MAX ? -1L : (long)farthestthick);
@@ -1040,7 +1040,7 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 		else
 			for (i = 0; i < count; i++)
 				left += HWR_SpringScreenArea(hwr_springpieces[buffer][i].v, 3);
-		I_OutputMsg("UWP spring result: pieces=%u changed=%d stopped=%d area=%.6f of %.6f\n", (unsigned)(changed ? count : 1),
+		I_OutputMsg("Spring result: pieces=%u changed=%d stopped=%d area=%.6f of %.6f\n", (unsigned)(changed ? count : 1),
 			(int)changed, (int)(count >= HWR_SPRINGMAXPIECES), left, HWR_SpringScreenArea(quad, 4));
 	}
 	*piecebuffer = buffer;
@@ -1067,7 +1067,7 @@ static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
 			HWR_ProcessPolygon(surf, hwr_springpieces[buffer][i].v, 3, flags, shader, false);
 }
 
-// End [UWP] spring silhouette geometry.
+// End [ZE] spring silhouette geometry.
 #ifdef _UWP
 static boolean hwr_springprobearmed; // gr_springprobe was requested; the next main view logs its springs
 #endif
@@ -1229,7 +1229,7 @@ static boolean HWR_UseShader(void)
 	return (cv_glshaders.value && gl_shadersavailable);
 }
 
-// [UWP]: Palette rendering, from SRB2: whether it's on
+// [ZE]: Palette rendering, from SRB2: whether it's on
 static boolean gl_palette_rendering_state = false;
 
 boolean HWR_ShouldUsePaletteRendering(void)
@@ -1237,7 +1237,7 @@ boolean HWR_ShouldUsePaletteRendering(void)
 	return gl_palette_rendering_state;
 }
 
-// [UWP]: Turns palette rendering on or off to follow its setting, which needs shaders and a driver that has it.
+// [ZE]: Turns palette rendering on or off to follow its setting, which needs shaders and a driver that has it.
 // Textures are made again in the palette for the new state.
 void HWR_UpdatePaletteRendering(void)
 {
@@ -1247,7 +1247,7 @@ void HWR_UpdatePaletteRendering(void)
 	if (wanted == gl_palette_rendering_state)
 		return;
 
-	I_OutputMsg("UWP: palette rendering %s\n", wanted ? "on" : "off");
+	I_OutputMsg("VibeRant: palette rendering %s\n", wanted ? "on" : "off");
 	gl_palette_rendering_state = wanted;
 	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, wanted);
 
@@ -1322,7 +1322,7 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 		}
 	}
 
-	// [UWP]: Only an approximation of Software, which keeps the sector's light and moves a semibright sprite's distance
+	// [ZE]: Only an approximation of Software, which keeps the sector's light and moves a semibright sprite's distance
 	// into the nearer half of the table: in a dim sector this is far brighter. VibeRant's shaders follow Software
 	// (HWR_SemiBrightLight); without shaders nothing is lit by distance, and the approximation stays.
 	if (semibright && (!HWR_VibeRant() || !HWR_UseShader()))
@@ -1331,7 +1331,7 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 	}
 }
 
-// [UWP]: Marks a surface that HWR_Lighting has just lit as a semibright sprite's, for the driver
+// [ZE]: Marks a surface that HWR_Lighting has just lit as a semibright sprite's, for the driver
 void HWR_SemiBrightLight(FSurfaceInfo *surface, mobj_t *thing)
 {
 	if (HWR_VibeRant() && HWR_UseShader() && R_ThingIsSemiBright(thing))
@@ -1390,14 +1390,14 @@ static float HWR_ViewFogGain(void)
 	return colormap ? max(0.0f, 1.0f - R_GetRgbaA(colormap->rgba) / 24.0f) : 1.0f;
 }
 
-// [UWP]: Match Software's level darkness after contrast, retaining fine light steps.
+// [ZE]: Match Software's level darkness after contrast, retaining fine light steps.
 static INT32 HWR_AdjustLevelLight(INT32 level)
 {
 	const INT32 coarse = min(max(level, 0), 255) >> LIGHTSEGSHIFT;
 	return level - (coarse - R_AdjustLightLevel(coarse)) * (1 << LIGHTSEGSHIFT);
 }
 
-// [UWP]: Software leaves masked midtextures unclipped between matching skies.
+// [ZE]: Software leaves masked midtextures unclipped between matching skies.
 static void HWR_MidtextureSkyCuts(boolean polyobject, const sector_t *front,
 	const sector_t *back, fixed_t polytop, fixed_t polybottom,
 	fixed_t *highcut, fixed_t *lowcut)
@@ -1410,7 +1410,7 @@ static void HWR_MidtextureSkyCuts(boolean polyobject, const sector_t *front,
 		*lowcut = polybottom;
 }
 
-// [UWP]: Software has no ceiling or floor edge to clip a masked middle texture between two skies, so the texture
+// [ZE]: Software has no ceiling or floor edge to clip a masked middle texture between two skies, so the texture
 // shows over the sky wherever it rises past them. Here the sky planes' depth hid that part. Drawn ahead of them
 // it stays: they write depth but no color, and nearer walls still cover it. This needs Batching on, which is what
 // orders the draws; translucent middle textures are sorted with the other translucent walls and stay cut.
@@ -1444,7 +1444,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 	if (viewfog && !palette)
 		tint_color.rgba = 0; // the neutral tint is applied once through modulation below
 
-	// [UWP]: Clamp adjusted light before the shaderless square root too.
+	// [ZE]: Clamp adjusted light before the shaderless square root too.
 	light_level = min(max(light_level, 0), 255);
 
 	// Crappy backup coloring if you can't do shaders
@@ -1502,7 +1502,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 
 	Surface->LightInfo.directional = (maplighting.directional == true && directional == true);
 
-	// [UWP]: palette rendering
+	// [ZE]: palette rendering
 	Surface->LightTableId = palette ? HWR_GetLightTableID(colormap) : 0;
 }
 
@@ -1536,7 +1536,7 @@ UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if 
 	return surfcolor.s.alpha;
 }
 
-// [UWP]: Whether a wall's or a slope's light offset goes in Software's steps. Upstream gives hardware a fine offset
+// [ZE]: Whether a wall's or a slope's light offset goes in Software's steps. Upstream gives hardware a fine offset
 // (hwLightOffset, in light levels) where Software has a coarse one (lightOffset, in light numbers: eight levels), for
 // smoothness. VibeRant's shaders light a surface by Software's 32 light numbers (R_DoomColormap in shaders.hlsl), so
 // there the fine offset was no smoother, only rounded another way: the light number was (level + fine) / 8 where
@@ -1549,7 +1549,7 @@ static boolean HWR_SoftwareLightSteps(void)
 	return HWR_VibeRant() && HWR_UseShader();
 }
 
-// [UWP]: A wall's light with Software's offset. The sector is the one whose lighting model says whether there is one:
+// [ZE]: A wall's light with Software's offset. The sector is the one whose lighting model says whether there is one:
 // the seg's front sector, except for the side of a 3D floor (see HWR_SliceWallLight).
 static FUINT HWR_StepWallLight(FUINT lightnum, const seg_t *seg, const sector_t *sector)
 {
@@ -1570,7 +1570,7 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, seg_t *seg)
 {
 	INT16 finallight = lightnum;
 
-	if (seg != NULL && HWR_SoftwareLightSteps()) // [UWP]
+	if (seg != NULL && HWR_SoftwareLightSteps()) // [ZE]
 		return HWR_StepWallLight(lightnum, seg, seg->frontsector);
 
 	if (seg != NULL && P_ApplyLightOffsetFine(lightnum, seg->frontsector))
@@ -1585,7 +1585,7 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, seg_t *seg)
 }
 
 #ifdef HAVE_VIBERANT
-// [UWP]: Software gives some walls no light offset at all, and with its steps (HWR_SoftwareLightSteps) those must have
+// [ZE]: Software gives some walls no light offset at all, and with its steps (HWR_SoftwareLightSteps) those must have
 // none here either: an offset of half a step or more is now always a whole step, where the fine one was often lost
 // in the rounding. Under a light of a sector's light list, a solid wall (an upper, lower, or one-sided wall:
 // R_RenderSegLoop) has no offset if the light has any colormap; a two-sided line's middle texture
@@ -1601,7 +1601,7 @@ static boolean HWR_SoftwareSkipsWallOffset(const ffloor_t *pfloor, boolean solid
 	return solidwall ? (colormap != NULL) : fogmap;
 }
 
-// [UWP]: The light of a piece of a wall under a light list (HWR_SplitWall). With Software's steps, offsetsector is
+// [ZE]: The light of a piece of a wall under a light list (HWR_SplitWall). With Software's steps, offsetsector is
 // the sector whose lighting model gives the offset, or NULL where Software gives none (HWR_SoftwareSkipsWallOffset).
 // It is the sector the light list is of: for the side of a 3D floor that is the sector the side is seen from, which
 // isn't the seg's front sector where the 3D floor is in it (R_RenderThickSideRange's frontsector).
@@ -1614,7 +1614,7 @@ static FUINT HWR_SliceWallLight(FUINT lightnum, const sector_t *offsetsector)
 }
 #endif
 
-// [UWP]: Without a light list, Software gives a two-sided line's middle texture, and a 3D floor's side, no offset
+// [ZE]: Without a light list, Software gives a two-sided line's middle texture, and a 3D floor's side, no offset
 // where the sector's colormap is fog (a solid wall keeps its offset there). lightnum is the sector's light with the
 // seg's offset, unless a fog 3D floor's has taken its place along with the colormap.
 static FUINT HWR_FogColormapWallLight(FUINT lightnum, const extracolormap_t *colormap, const sector_t *sector)
@@ -1625,7 +1625,7 @@ static FUINT HWR_FogColormapWallLight(FUINT lightnum, const extracolormap_t *col
 	return lightnum;
 }
 
-// [UWP]: facesdown is Software's reverseLight (R_FindPlane): a slope's offset is worked out for a surface that faces
+// [ZE]: facesdown is Software's reverseLight (R_FindPlane): a slope's offset is worked out for a surface that faces
 // up, and a ceiling or a 3D floor's underside on the same slope faces the other way from the light. This took
 // "is a 3D floor plane" instead, which shaded a 3D floor's top the wrong way round and never turned a ceiling: the
 // far side of Balloon Park's funnel, all 3D floor tops under a contrast of 48, was navy where Software has it light.
@@ -1633,7 +1633,7 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t 
 {
 	INT16 finallight = lightnum;
 
-	if (slope != NULL && sector != NULL && HWR_SoftwareLightSteps()) // [UWP]
+	if (slope != NULL && sector != NULL && HWR_SoftwareLightSteps()) // [ZE]
 	{
 		if (P_ApplyLightOffset(lightnum >> LIGHTSEGSHIFT, sector))
 		{
@@ -1661,7 +1661,7 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t 
 // ==========================================================================
 
 #ifdef HAVE_VIBERANT
-// [UWP]: Almost all subsectors have no horizons; avoid scanning their linedefs
+// [ZE]: Almost all subsectors have no horizons; avoid scanning their linedefs
 // for every floor, ceiling and sky claim. PU_LEVEL clears the owner on teardown.
 static UINT8 *hwr_horizonflags;
 static boolean hwr_horizondirty = true;
@@ -1730,7 +1730,7 @@ static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
 
 
 #ifdef HAVE_VIBERANT
-// [UWP]: Software shows the sky only through sky surfaces and draws everything the level doesn't cover black, while
+// [ZE]: Software shows the sky only through sky surfaces and draws everything the level doesn't cover black, while
 // Legacy GL draws the sky over the whole view first. A sky plane therefore writes depth without color (like
 // HWR_DrawSkyWall) at its real position, claiming its pixels for the sky; VibeRant_FillVoid then blackens the pixels
 // that no surface claimed. The height is per vertex for a slope.
@@ -1889,7 +1889,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		return;
 
 #ifdef HAVE_VIBERANT
-	// [UWP]: A 3D floor plane with the sky flat is sky in Software. Only the opaque draws made while walking the BSP
+	// [ZE]: A 3D floor plane with the sky flat is sky in Software. Only the opaque draws made while walking the BSP
 	// get here with a subsector; queued translucent ones draw after the void is filled.
 	if (HWR_VibeRant() && subsector && levelflat == &levelflats[skyflatnum])
 	{
@@ -2021,7 +2021,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		SETUP3DVERT(v3d, pv->x, pv->y);
 
 	if (!(PolyFlags & PF_Fog))
-		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL) != isceiling); // [UWP]: a 3D floor's top is its control sector's ceiling
+		lightlevel = HWR_CalcSlopeLight(lightlevel, slope, gl_frontsector, (FOFsector != NULL) != isceiling); // [ZE]: a 3D floor's top is its control sector's ceiling
 	HWR_Lighting(&Surf, HWR_AdjustLevelLight(lightlevel), planecolormap, P_SectorUsesDirectionalLighting(gl_frontsector));
 
 	if (PolyFlags & PF_EnvironmentTrans)
@@ -2212,7 +2212,7 @@ FBITFIELD HWR_GetBlendModeFlag(INT32 ast)
 	return 0;
 }
 
-// [UWP]: Software falls back to normal translucency for overlay with alpha.
+// [ZE]: Software falls back to normal translucency for overlay with alpha.
 FBITFIELD HWR_GetBlendModeFlagWithAlpha(INT32 style, INT32 alpha)
 {
 	if (style == AST_OVERLAY && alpha < 255)
@@ -2269,7 +2269,7 @@ FBITFIELD HWR_TranstableToAlpha(INT32 transtablenum, FSurfaceInfo *pSurf)
 
 static void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, INT32 basetexnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap);
 
-// [UWP]: Fog lines tint scenery instead of drawing their midtexture.
+// [ZE]: Fog lines tint scenery instead of drawing their midtexture.
 // Software follows opaque texture columns; this fills the whole rectangle.
 static boolean HWR_MidtextureFog(boolean polyobject, boolean tripwire,
 	const line_t *line, const sector_t *front, FOutVector *verts,
@@ -2328,7 +2328,7 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 // HWR_SplitWall
 //
 #ifdef HAVE_VIBERANT
-// [UWP]: Set by HWR_ProcessSeg around the light splits of the walls Software treats as solid: upper and lower walls
+// [ZE]: Set by HWR_ProcessSeg around the light splits of the walls Software treats as solid: upper and lower walls
 // and one-sided walls. Software's column drawer leaves the part of such a wall inside a solid 3D floor's thickness
 // (FOF_CUTSOLIDS) undrawn, expecting the 3D floor to cover it, but the column is closed all the same: nothing
 // farther is drawn there. Where the 3D floor has holes, as Green Hills Zone's see-through grates do, that leaves
@@ -2435,7 +2435,7 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 #endif
 
 
-// [UWP]: Software draws a translucent middle texture, and a translucent 3D floor's side seen from a sector with no
+// [ZE]: Software draws a translucent middle texture, and a translucent 3D floor's side seen from a sector with no
 // light list, at full brightness wherever the colormap isn't fog (R_RenderMaskedSegLoop, R_RenderThickSideRange).
 // Legacy GL lit them like any wall, so glass and water sides in dim sectors darkened with distance.
 static FUINT HWR_TranslucentWallLight(FUINT lightnum, const extracolormap_t *colormap)
@@ -2473,7 +2473,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	const UINT8 alpha = Surf->PolyColor.s.alpha;
 #ifdef HAVE_VIBERANT
 	FOutVector original[4];
-	const sector_t *offsetsector = sector; // [UWP]: see HWR_SliceWallLight
+	const sector_t *offsetsector = sector; // [ZE]: see HWR_SliceWallLight
 	if (HWR_VibeRant())
 		M_Memcpy(original, wallVerts, sizeof original);
 #endif
@@ -2510,12 +2510,12 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 			{
 				lightnum = *list[i].lightlevel;
 				colormap = *list[i].extra_colormap;
-				// [UWP]: The translucent middle texture, whose pieces Software lights the same way
+				// [ZE]: The translucent middle texture, whose pieces Software lights the same way
 				if (!pfloor && cutflag == FOF_TRANSLUCENT && !(list[i].flags & FOF_FOG))
 					lightnum = HWR_TranslucentWallLight(lightnum, colormap);
 			}
 #ifdef HAVE_VIBERANT
-			// [UWP]: hwr_splitvoid is set around the walls Software treats as solid
+			// [ZE]: hwr_splitvoid is set around the walls Software treats as solid
 			offsetsector = HWR_SoftwareSkipsWallOffset(pfloor, hwr_splitvoid, list[i].flags, colormap) ? NULL : sector;
 #endif
 		}
@@ -2552,7 +2552,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		if (endheight >= endtop && height >= top)
 		{
 #ifdef HAVE_VIBERANT
-			// [UWP]: Fill the cut black, from the 3D floor's bottom up to the wall that remains, within the wall
+			// [ZE]: Fill the cut black, from the 3D floor's bottom up to the wall that remains, within the wall
 			if (HWR_VibeRant() && hwr_splitvoid && solid && (top > bheight || endtop > endbheight))
 			{
 				hwr_voidslice = true;
@@ -2678,7 +2678,7 @@ static void HWR_DrawSkyWall(FOutVector *wallVerts, FSurfaceInfo *Surf)
 }
 
 #ifdef HAVE_VIBERANT
-// [UWP]: R_StoreWallRange leaves floorclip/ceilingclip at the front plane when a step has no
+// [ZE]: R_StoreWallRange leaves floorclip/ceilingclip at the front plane when a step has no
 // wall texture. Software's visible back visplane bleeds across it, including slope-rounding slivers.
 static UINT8 HWR_FlatBleeds(const sector_t *front, const sector_t *back,
 	fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2, boolean lowertexture, boolean uppertexture,
@@ -2700,7 +2700,7 @@ static UINT8 HWR_FlatBleeds(const sector_t *front, const sector_t *back,
 	return result;
 }
 
-// [UWP]: Duplicate HWR_RenderPlane's reference/scroll/rotation and SETUP3DVERT UV math.
+// [ZE]: Duplicate HWR_RenderPlane's reference/scroll/rotation and SETUP3DVERT UV math.
 // The first seg vertex substitutes for the polygon's first vertex (whole flat repeats only).
 static void HWR_FlatBleedUV(FOutVector *vert, float refx, float refy,
 	const levelflat_t *flat, const sector_t *sector, boolean ceiling)
@@ -2762,7 +2762,7 @@ static void HWR_FlatBleedUV(FOutVector *vert, float refx, float refy,
 	}
 }
 
-// [UWP]: A wall-plane continuation of the back flat, with its plane lighting and texel at each end.
+// [ZE]: A wall-plane continuation of the back flat, with its plane lighting and texel at each end.
 static void HWR_DrawFlatBleed(boolean ceiling, fixed_t front1, fixed_t front2,
 	fixed_t back1, fixed_t back2, const FOutVector *wall)
 {
@@ -2932,7 +2932,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 		}
 
 #ifdef HAVE_VIBERANT
-		// [UWP]: Continue visible back flats across untextured steps, as Software does.
+		// [ZE]: Continue visible back flats across untextured steps, as Software does.
 		if (HWR_VibeRant())
 		{
 			UINT8 bleed = HWR_FlatBleeds(gl_frontsector, gl_backsector, v1x, v1y, v2x, v2y,
@@ -3000,7 +3000,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			wallVerts[0].y = FIXED_TO_FLOAT(worldhigh);
 			wallVerts[2].y = FIXED_TO_FLOAT(worldtopslope);
 			wallVerts[1].y = FIXED_TO_FLOAT(worldhighslope);
-			// [UWP]: Software clips springs to this upper wall's silhouette (SIL_TOP), as to a solid seg's:
+			// [ZE]: Software clips springs to this upper wall's silhouette (SIL_TOP), as to a solid seg's:
 			// Metropolis's yellow bumper walls are upper walls above low back sectors, with springs behind them.
 			HWR_AddSpringWall(wallVerts, NULL);
 
@@ -3084,7 +3084,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			wallVerts[0].y = FIXED_TO_FLOAT(worldbottom);
 			wallVerts[2].y = FIXED_TO_FLOAT(worldlowslope);
 			wallVerts[1].y = FIXED_TO_FLOAT(worldbottomslope);
-			// [UWP]: Software clips springs to this lower wall's silhouette (SIL_BOTTOM) too.
+			// [ZE]: Software clips springs to this lower wall's silhouette (SIL_BOTTOM) too.
 			HWR_AddSpringWall(wallVerts, NULL);
 
 			{
@@ -3382,7 +3382,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 	}
 	else
 	{
-		// [UWP]: Software clips springs to this solid seg's silhouette.
+		// [ZE]: Software clips springs to this solid seg's silhouette.
 		if (gl_linedef->special != 41)
 		{
 			wallVerts[3].y = FIXED_TO_FLOAT(worldtop);
@@ -3395,7 +3395,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 		gl_midtexture = R_GetTextureNum(gl_sidedef->midtexture);
 		if (gl_midtexture && gl_linedef->special != 41) // (Ignore horizon line for OGL)
 		{
-			FOutVector uprightwall[4]; // [UWP]: the wall before HWR_ClipWallToUpright
+			FOutVector uprightwall[4]; // [ZE]: the wall before HWR_ClipWallToUpright
 			{
 				fixed_t     texturevpeg;
 				// PEGGING
@@ -3451,7 +3451,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			wallVerts[2].y = FIXED_TO_FLOAT(worldtopslope);
 			wallVerts[1].y = FIXED_TO_FLOAT(worldbottomslope);
 
-			// [UWP]: Only the part of the wall whose top is above its bottom, as Software draws it. The sky walls
+			// [ZE]: Only the part of the wall whose top is above its bottom, as Software draws it. The sky walls
 			// below go by the whole line, so the cut is undone after the wall is drawn.
 			memcpy(uprightwall, wallVerts, sizeof uprightwall);
 			if (HWR_VibeRant() && !HWR_ClipWallToUpright(wallVerts))
@@ -3679,7 +3679,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 						}
 					}
 
-					// [UWP]: Opaque solid FOF silhouette before lighting splits.
+					// [ZE]: Opaque solid FOF silhouette before lighting splits.
 					// Masked holes retain ordinary depth-tested behavior.
 					if (!(grTex->mipmap.flags & TF_TRANSPARENT))
 						HWR_AddSpringWall(wallVerts, rover);
@@ -3690,7 +3690,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					{
 						if (blendmode != PF_Masked)
 							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false,
-								// [UWP]: Translucent where Software's blend table is, from alpha 242 down
+								// [ZE]: Translucent where Software's blend table is, from alpha 242 down
 								(rover->blend || (10*((256+12) - rover->alpha))/255 > 0)
 									? HWR_TranslucentWallLight(HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap)
 									: HWR_FogColormapWallLight(lightnum, colormap, gl_frontsector), colormap);
@@ -3819,7 +3819,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 						}
 					}
 
-					// [UWP]: Opaque solid FOF silhouette before lighting splits.
+					// [ZE]: Opaque solid FOF silhouette before lighting splits.
 					// Masked holes retain ordinary depth-tested behavior.
 					if (!(grTex->mipmap.flags & TF_TRANSPARENT))
 						HWR_AddSpringWall(wallVerts, rover);
@@ -3830,7 +3830,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 					{
 						if (blendmode != PF_Masked)
 							HWR_AddTransparentWall(wallVerts, &Surf, texnum, basetexnum, blendmode, false,
-								// [UWP]: Translucent where Software's blend table is, from alpha 242 down
+								// [ZE]: Translucent where Software's blend table is, from alpha 242 down
 								(rover->blend || (10*((256+12) - rover->alpha))/255 > 0)
 									? HWR_TranslucentWallLight(lightnum, gl_backsector->extra_colormap) : lightnum, colormap);
 						else
@@ -3957,7 +3957,7 @@ static fixed_t HWR_SoftwareRollZoom(void)
 	return temp < FRACUNIT ? FRACUNIT : temp | 0x3FFF;
 }
 
-// [UWP]: Software's R_StoreWallRange marks a two-sided seg solid (R_AddLine's kSolidDontRender) when its lower wall's
+// [ZE]: Software's R_StoreWallRange marks a two-sided seg solid (R_AddLine's kSolidDontRender) when its lower wall's
 // top is above the top of the view at both ends of the seg's columns, or its upper wall's bottom is below the bottom,
 // assuming the wall and the floor (or ceiling) in front of it fill those columns. From above the front floor they
 // do. From below it, as when the chase camera is pushed underground in Green Hills Zone, the floor isn't drawn, and
@@ -4754,7 +4754,7 @@ static void HWR_Subsector(size_t num)
 	}
 
 #ifdef HAVE_VIBERANT
-	// [UWP]: Claim sky planes only from the side they face. From the far side, Software fills only beyond
+	// [ZE]: Claim sky planes only from the side they face. From the far side, Software fills only beyond
 	// the marking segs' edges, which our sky walls reproduce; a claimed plane would occlude what is behind it.
 	if (HWR_VibeRant() && sub->validcount != validcount)
 	{
@@ -4829,7 +4829,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, false); // [UWP]
+					HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, false); // [ZE]
 					HWR_GetLevelFlat(&levelflats[*rover->bottompic], R_NoEncore(gl_frontsector, &levelflats[*rover->bottompic], false));
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, dup_viewz < cullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], false, *rover->bottomheight, HWR_RippleBlend(gl_frontsector, rover, false) | PF_Occlude, *gl_frontsector->lightlist[light].lightlevel, &levelflats[*rover->bottompic],
@@ -4879,7 +4879,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, true); // [UWP]
+					HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, true); // [ZE]
 					HWR_GetLevelFlat(&levelflats[*rover->toppic], R_NoEncore(gl_frontsector, &levelflats[*rover->toppic], true));
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, dup_viewz < cullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], true, *rover->topheight, HWR_RippleBlend(gl_frontsector, rover, true) | PF_Occlude, *gl_frontsector->lightlist[light].lightlevel, &levelflats[*rover->toppic],
@@ -5040,7 +5040,7 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 
 	// Recursively divide front space.
 #ifdef HAVE_VIBERANT
-	// [UWP]: Software clips all segs of a hidden front subsector and draws nothing.
+	// [ZE]: Software clips all segs of a hidden front subsector and draws nothing.
 	// Hardware draws its planes whole; a horizon line has no wall to cover them.
 	if (!HWR_VibeRant() || (HWR_CheckBBox(bsp->bbox[side]) && HWR_PortalBBox(bsp->bbox[side])))
 #endif
@@ -5236,7 +5236,7 @@ static boolean HWR_DoCulling(line_t *cullheight, line_t *viewcullheight, float v
 	return false;
 }
 
-// [UWP]: A translation that turns every pixel of the shadow patch into one palette color. Software subtracts (or, for a
+// [ZE]: A translation that turns every pixel of the shadow patch into one palette color. Software subtracts (or, for a
 // white shadow, adds) the object's shadow color, index 15 by default, wherever the patch has a pixel, and takes no
 // color from the patch itself or from the sector's colormap (R_DrawDropShadowColumn). The patch's own pixels are a
 // much darker gray, so Legacy GL's shadows were less than half as strong.
@@ -5470,7 +5470,7 @@ static float HWR_SpriteUV(gl_vissprite_t *spr, boolean vertical)
 		: ((GLPatch_t *)spr->gpatch->hardware)->max_s;
 }
 
-// [UWP]: Software only fades newly split fullbright pieces, without tint or object lighting.
+// [ZE]: Software only fades newly split fullbright pieces, without tint or object lighting.
 static void HWR_FadeSplitSprite(gl_vissprite_t *spr, const lightlist_t *light,
 	boolean belowboundary, INT32 *lightlevel)
 {
@@ -5707,7 +5707,7 @@ static void HWR_SplitSprite(gl_vissprite_t *spr)
 		if (endbot < endrealbot)
 			endbot = endrealbot;
 
-		// [UWP]: A sloped light boundary can cross the sprite diagonally: above its top at one end, inside it at
+		// [ZE]: A sloped light boundary can cross the sprite diagonally: above its top at one end, inside it at
 		// the other. That end's slice would otherwise have its bottom over its top, a bow-tie whose inverted
 		// half pokes out, with texture coordinates past the patch (one-pixel dashes of its edge color on
 		// Metropolis's bumpers, over the 3D floor planes that hide the springs). The slice ends there instead.
@@ -5838,7 +5838,7 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
 //                  : (monsters, bonuses, weapons, lights, ...)
 // Returns          :
 // -----------------+
-// [UWP]: Carry Software's per-screen-column shadow shear onto the quad.
+// [ZE]: Carry Software's per-screen-column shadow shear onto the quad.
 static void HWR_ShadowDrawShear(FOutVector *vertices, float skew, boolean billboard)
 {
 	float width, offset;
@@ -6002,7 +6002,7 @@ static void HWR_SpriteVertices(gl_vissprite_t *spr, FOutVector *wallVerts)
 
 }
 
-// [UWP]: How far the floor under a floor sprite rises over the sprite, whose corners are v. A floor sprite lies on one
+// [ZE]: How far the floor under a floor sprite rises over the sprite, whose corners are v. A floor sprite lies on one
 // plane, its own height or the slope its object stands on, and the floor under it can be made of several.
 #define HWR_SPLATSAMPLES 5 // along each side
 static float HWR_FloorOverFloorSprite(const mobj_t *mobj, const FOutVector *v)
@@ -6035,7 +6035,7 @@ static float HWR_FloorOverFloorSprite(const mobj_t *mobj, const FOutVector *v)
 	return over;
 }
 
-// [UWP]: Software never hides a floor sprite behind a floor. It draws the sprite after every floor, cut only by the
+// [ZE]: Software never hides a floor sprite behind a floor. It draws the sprite after every floor, cut only by the
 // walls it sorts behind. Here each of the sprite's pixels is tested against the depth of the level, so wherever the
 // floor rises over the sprite's plane the sprite was hidden: all of a sneaker panel on Robotnik Coaster's track,
 // whose floor is a different slope every few units. This gives the sprite the depth it would have on its plane
@@ -6123,7 +6123,7 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 	HWR_SpriteVertices(spr, wallVerts);
 	if (splat)
-		HWR_ClearFloorUnderSprite(spr, wallVerts); // [UWP]
+		HWR_ClearFloorUnderSprite(spr, wallVerts); // [ZE]
 
 	// cache the patch in the graphics card memory
 	//12/12/99: Hurdler: same comment as above (for md2)
@@ -7393,7 +7393,7 @@ static void HWR_AddPrecipitationSprites(void)
 //  Generates a vissprite for a thing if it might be visible.
 // --------------------------------------------------------------------------
 // BP why not use xtoviexangle/viewangletox like in bsp ?....
-// [UWP]: Use Software's radius, view-height flattening and slope components. The width stays the sprite's own:
+// [ZE]: Use Software's radius, view-height flattening and slope components. The width stays the sprite's own:
 // Software works out a radius-based width too, but then stretches the patch over the columns the sprite had.
 static boolean HWR_ShadowDrawScale(mobj_t *thing, const interpmobjstate_t *interp,
 	float depth, INT32 height, float *yscale, float *skew)
@@ -7428,7 +7428,7 @@ static boolean HWR_ShadowDrawScale(mobj_t *thing, const interpmobjstate_t *inter
 	return true;
 }
 
-// [UWP]: Software centres a sloped shadow on the object's gravity-side origin.
+// [ZE]: Software centres a sloped shadow on the object's gravity-side origin.
 static void HWR_ShadowDrawPosition(mobj_t *thing, const interpmobjstate_t *interp,
 	INT32 height, float yscale, float scale, float *bottom, float *top)
 {
@@ -8396,7 +8396,7 @@ static void HWR_DrawSkyBackground(player_t *player)
 		else
 			dometransform.flip = false;
 
-		if (postimgmirror[R_GetViewNumber()]) // [UWP]: Mirror independently of distortion/flip.
+		if (postimgmirror[R_GetViewNumber()]) // [ZE]: Mirror independently of distortion/flip.
 			dometransform.mirror = true;
 		else
 			dometransform.mirror = false;
@@ -8608,7 +8608,7 @@ static void HWR_SetTransformAiming(FTransform *trans, player_t *player, boolean 
 	{
 		fixed_t fixedaiming = AIMINGTODY(aimingangle);
 		trans->viewaiming = FIXED_TO_FLOAT(fixedaiming);
-		// [UWP]: The drivers move the picture by viewaiming 100ths of the view's height, which is Software's shear
+		// [ZE]: The drivers move the picture by viewaiming 100ths of the view's height, which is Software's shear
 		// only in a view shaped like 320x200. Software moves it by AIMINGTODY 320ths of the view's width
 		// (R_SetupFreelook), so at 16:9 the picture sat a tenth of the shear too low, and over half in two-player.
 		if (gl_viewwidth > 0 && gl_viewheight > 0)
@@ -8711,7 +8711,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	else
 		atransform.flip = false;
 
-	if (postimgmirror[viewssnum]) // [UWP]: Mirror independently of distortion/flip.
+	if (postimgmirror[viewssnum]) // [ZE]: Mirror independently of distortion/flip.
 		atransform.mirror = true;
 	else
 		atransform.mirror = false;
@@ -8780,7 +8780,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	{
 		hwr_springprobearmed = false;
 		hwr_springpeakpieces = 0;
-		I_OutputMsg("UWP spring probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f billboarding=%d\n",
+		I_OutputMsg("Spring probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f billboarding=%d\n",
 			gamemap, (unsigned)leveltime, FIXED_TO_FLOAT(viewx), FIXED_TO_FLOAT(viewy), FIXED_TO_FLOAT(viewz),
 			(double)viewangle*(360.0/4294967296.0), (double)(INT32)aimingangle*(360.0/4294967296.0),
 			(double)(INT32)viewroll*(360.0/4294967296.0), FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd),
@@ -8837,7 +8837,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 		HWR_RenderBatches();
 
 #ifdef HAVE_VIBERANT
-	// [UWP]: The level's opaque geometry and the sky claims (depth-only sky surfaces) are done. Software draws what
+	// [ZE]: The level's opaque geometry and the sky claims (depth-only sky surfaces) are done. Software draws what
 	// nothing covers black, but the sky was drawn over the whole view first, so blacken the pixels with no depth. This
 	// comes before the sprites and the sorted translucent draws, which Software draws over the void.
 	if (HWR_VibeRant() && hwr_skydrawn)
@@ -8875,7 +8875,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 #ifdef _UWP
 	if (hwr_springprobe)
 	{
-		I_OutputMsg("UWP spring probe end: map=%d lt=%u entries=%u peak pieces=%u of %d\n", gamemap, (unsigned)leveltime,
+		I_OutputMsg("Spring probe end: map=%d lt=%u entries=%u peak pieces=%u of %d\n", gamemap, (unsigned)leveltime,
 			(unsigned)hwr_numspringwalls, (unsigned)hwr_springpeakpieces, HWR_SPRINGMAXPIECES);
 		hwr_springprobe = false;
 	}
@@ -9142,7 +9142,7 @@ void HWR_RenderPlayerView(void)
 	R_SetupFrame(viewssnum);
 #ifdef HAVE_VIBERANT
 	if (surfaceprobe)
-		I_OutputMsg("UWP surface probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f batching=%d shaders=%d\n",
+		I_OutputMsg("Surface probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f batching=%d shaders=%d\n",
 			gamemap, (unsigned)leveltime, FIXED_TO_FLOAT(viewx), FIXED_TO_FLOAT(viewy), FIXED_TO_FLOAT(viewz),
 			(double)viewangle*(360.0/4294967296.0), (double)(INT32)aimingangle*(360.0/4294967296.0),
 			(double)(INT32)viewroll*(360.0/4294967296.0), FIXED_TO_FLOAT(R_FOV(viewssnum)+player->fovadd),
@@ -9164,7 +9164,7 @@ void HWR_RenderPlayerView(void)
 void HWR_LoadLevel(void)
 {
 #ifdef HAVE_VIBERANT
-	// [UWP]: Specials and BSP may have changed even when level sizes match.
+	// [ZE]: Specials and BSP may have changed even when level sizes match.
 	HWR_InvalidateHorizonCache();
 #endif
 #ifdef HAVE_VIBERANT
@@ -9305,7 +9305,7 @@ static void HWR_SpringProbe_f(void)
 		return;
 	}
 	hwr_springprobearmed = true;
-	CONS_Printf("Spring probe armed. Close the console to log the next world frame's springs as 'UWP spring' lines.\n");
+	CONS_Printf("Spring probe armed. Close the console to log the next world frame's springs as 'Spring' lines.\n");
 }
 #endif
 
@@ -9376,8 +9376,8 @@ void HWR_Switch(void)
 	if (HWR_VibeRant()) HWD.pfnSetSpecialState(HWD_SET_TEXTUREATLAS, cv_grtextureatlas.value);
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
-	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, gl_palette_rendering_state); // [UWP]
-	HWR_UpdatePaletteRendering(); // [UWP]
+	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, gl_palette_rendering_state); // [ZE]
+	HWR_UpdatePaletteRendering(); // [ZE]
 
 	// Load textures
 	if (!gl_maptexturesloaded)
@@ -9501,7 +9501,7 @@ void HWR_DoPostProcessor(player_t *player)
 
 	// Armageddon Blast Flash!
 	// Could this even be considered postprocessor?
-	// [UWP]: Palette rendering shows the flash's palette instead
+	// [ZE]: Palette rendering shows the flash's palette instead
 	if (player->flashcount && !HWR_ShouldUsePaletteRendering())
 	{
 		FOutVector      v[4];

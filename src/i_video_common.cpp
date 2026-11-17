@@ -180,7 +180,7 @@ static void finish_legacy_ogl_update()
 {
 	temp_legacy_finishupdate_draws();
 #ifdef HAVE_VIBERANT
-	// [UWP]: Follows the palette rendering setting, which the driver applies as it presents
+	// [ZE]: Follows the palette rendering setting, which the driver applies as it presents
 	if (HWR_VibeRant())
 	{
 		HWR_UpdatePaletteRendering();

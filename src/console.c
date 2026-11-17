@@ -601,7 +601,7 @@ static void CON_ChangeHeight(void)
 
 // Handles Console moves in/out of screen (per frame)
 //
-// [UWP]: When the console last moved, for sliding it by real time; the drawer clears this while it's still.
+// [ZE]: When the console last moved, for sliding it by real time; the drawer clears this while it's still.
 static precise_t con_movetime;
 
 static void CON_MoveConsole(void)
@@ -621,7 +621,7 @@ static void CON_MoveConsole(void)
 	}
 
 	// Not instant - Increment fracmovement fractionally
-	// [UWP]: by the time since the console last moved. renderdeltatics is one game loop's time, but a loop
+	// [ZE]: by the time since the console last moved. renderdeltatics is one game loop's time, but a loop
 	// that took over a tic skips drawing the next frame, and that frame's time was lost here, so at low
 	// frame rates the console slid slower than its speed. The first frame of a move still uses the loop's time.
 	now = I_GetPreciseTime();
@@ -1929,7 +1929,7 @@ void CON_Drawer(void)
 	if (con_curlines != con_destlines)
 		CON_MoveConsole();
 	else
-		con_movetime = 0; // [UWP]: Still: the next move starts from the loop's time, not from now.
+		con_movetime = 0; // [ZE]: Still: the next move starts from the loop's time, not from now.
 
 	if (con_curlines > 0)
 		CON_DrawConsole();

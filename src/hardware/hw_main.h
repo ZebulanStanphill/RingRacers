@@ -108,9 +108,9 @@ extern consvar_t cv_glcoronasize;
 #endif
 
 extern consvar_t cv_glshaders, cv_glallowshaders;
-extern consvar_t cv_glpaletterendering; // [UWP]
+extern consvar_t cv_glpaletterendering; // [ZE]
 
-// [UWP]: Palette rendering, from SRB2
+// [ZE]: Palette rendering, from SRB2
 boolean HWR_ShouldUsePaletteRendering(void);
 void HWR_UpdatePaletteRendering(void);
 extern consvar_t cv_glmodels;

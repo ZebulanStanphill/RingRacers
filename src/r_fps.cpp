@@ -635,7 +635,7 @@ void R_AddMobjInterpolator(mobj_t *mobj)
 
 void R_RemoveMobjInterpolator(mobj_t *mobj)
 {
-	// [UWP]: Find the mobj where it recorded it is, instead of searching the whole list for every mobj removed, which
+	// [ZE]: Find the mobj where it recorded it is, instead of searching the whole list for every mobj removed, which
 	// was 1.5% of game logic on Xbox. Searches as before if that's out of date.
 	size_t i = mobj->interpolatorslot - 1;
 

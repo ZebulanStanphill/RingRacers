@@ -6,7 +6,7 @@
 //-----------------------------------------------------------------------------
 #include "viberant_pipeline.h"
 #include <climits>
-// [UWP]: Keep these separate from the SM4 headers with the same array names.
+// [ZE]: Keep these separate from the SM4 headers with the same array names.
 #ifdef HAVE_VIBERANT_D3D
 #include "r_viberant_shaders/VSPoly.h"
 #include "r_viberant_shaders/VSPolyClip.h"
@@ -62,7 +62,7 @@ namespace rr_viberant
 {
 namespace
 {
-// [UWP]: Match the former Direct3D 11 driver and hw_defs.h's packed float vertices.
+// [ZE]: Match the former Direct3D 11 driver and hw_defs.h's packed float vertices.
 const D3D12_INPUT_ELEMENT_DESC kPoly[] = {
 	{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 	{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},

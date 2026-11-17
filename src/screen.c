@@ -475,7 +475,7 @@ void SCR_ChangeRenderer(void)
 		return;
 	}
 #endif
-	// [UWP]: The setting is back at the running renderer, so a queued switch is stale. Startup queues
+	// [ZE]: The setting is back at the running renderer, so a queued switch is stale. Startup queues
 	// one for the default, VibeRant D3D, before the config's Software is read
 	if (chosenrendermode == RENDERER_UNCHOSEN && SCR_RendererSetting(rendermode) == cv_renderer.value)
 		setrenderneeded = 0;

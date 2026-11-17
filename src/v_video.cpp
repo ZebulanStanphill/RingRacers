@@ -3853,7 +3853,7 @@ void VID_DisplaySoftwareScreen()
 					postimgtype[i] == postimg_water && !cv_reducevfx.value,
 					postimgtype[i] == postimg_heat && !cv_reducevfx.value,
 					postimgtype[i] == postimg_flip,
-					postimgmirror[i] != false // [UWP]: Mirror can accompany distortion or gravity flip.
+					postimgmirror[i] != false // [ZE]: Mirror can accompany distortion or gravity flip.
 				}
 			}
 		);

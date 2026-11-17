@@ -23,7 +23,7 @@ extern "C" {
 #define ZCLIP_PLANE 4.0f // Used for the actual game drawing
 #define NZCLIP_PLANE 0.9f // Seems to be only used for the HUD and screen textures
 
-// [UWP]: Palette rendering's RGB -> palette index lookup table is this many entries on each side (from SRB2)
+// [ZE]: Palette rendering's RGB -> palette index lookup table is this many entries on each side (from SRB2)
 #define HWR_PALETTE_LUT_SIZE 64
 
 // ==========================================================================
@@ -249,7 +249,7 @@ enum EPolyFlags
 #ifdef HAVE_VIBERANT
 	PF_RollSprite = 0x00800000,
 #endif
-	PF_BeforeSky        = 0x00080000,   // [UWP]: Batched ahead of the sky occluders (a masked middle texture between two skies)
+	PF_BeforeSky        = 0x00080000,   // [ZE]: Batched ahead of the sky occluders (a masked middle texture between two skies)
 	PF_Ripple           = 0x00100000,   // Water ripple effect (SHADER_WATER).
 	PF_FogPlane         = 0x00400000,   // Fog uses Software plane-distance lighting
 	PF_WireFrame        = 0x00200000,   // Draws vertices as lines instead of triangles
@@ -282,7 +282,7 @@ struct FTextureInfo
 };
 typedef struct FTextureInfo FTextureInfo;
 
-// [UWP]: Set in FLightInfo.light_level, above its 0 to 255 range, for a semibright sprite that the shaders light. The
+// [ZE]: Set in FLightInfo.light_level, above its 0 to 255 range, for a semibright sprite that the shaders light. The
 // VibeRant driver then takes the sprite's colormap row from Software's rule for it, not from a raised light level.
 #define HWR_LIGHT_SEMIBRIGHT 0x100
 
@@ -306,7 +306,7 @@ struct FSurfaceInfo
 #ifdef HAVE_VIBERANT
 	INT32 roll[16]; // inverse transform, canvas/crop, source size/flip, UV texel scale
 #endif
-	UINT32			LightTableId; // [UWP]: the surface's light table for palette rendering (from SRB2), or 0
+	UINT32			LightTableId; // [ZE]: the surface's light table for palette rendering (from SRB2), or 0
 };
 typedef struct FSurfaceInfo FSurfaceInfo;
 
@@ -320,8 +320,8 @@ enum hwdsetspecialstate
 	HWD_SET_SHADERS,
 	HWD_SET_TEXTUREFILTERMODE,
 	HWD_SET_TEXTUREANISOTROPICMODE,
-	HWD_SET_PALETTE_RENDERING, // [UWP]
-	HWD_SET_WATER_SURFACE, // [UWP] 0: standalone, 1: new coplanar run, 2: continue
+	HWD_SET_PALETTE_RENDERING, // [ZE]
+	HWD_SET_WATER_SURFACE, // [ZE] 0: standalone, 1: new coplanar run, 2: continue
 
 #ifdef HAVE_VIBERANT
 	HWD_SET_TEXTUREATLAS,

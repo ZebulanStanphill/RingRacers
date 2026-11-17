@@ -176,7 +176,7 @@ tic_t g_fast_forward = 0;
 tic_t g_fast_forward_clock_stop = INFTICS;
 
 postimg_t postimgtype[MAXSPLITSCREENPLAYERS];
-boolean postimgmirror[MAXSPLITSCREENPLAYERS]; // [UWP]: Mirror independently of water, heat and gravity flip.
+boolean postimgmirror[MAXSPLITSCREENPLAYERS]; // [ZE]: Mirror independently of water, heat and gravity flip.
 INT32 postimgparam[MAXSPLITSCREENPLAYERS];
 
 // These variables are in effect
@@ -223,7 +223,7 @@ boolean dedicated = false;
 //
 void D_PostEvent(const event_t *ev)
 {
-	// [UWP]: A full queue used to wrap around, which lost everything in it. Startup opens pads early and polls them
+	// [ZE]: A full queue used to wrap around, which lost everything in it. Startup opens pads early and polls them
 	// all through the loading screen while nothing reads the queue, so stick movement there could push out the pad's
 	// own added event, and its input was then ignored for the whole session. Drop the oldest event instead, after
 	// the device bookkeeping it may carry. That can post events itself, hence the loop.

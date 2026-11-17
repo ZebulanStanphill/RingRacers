@@ -80,7 +80,7 @@ VibeRant D3D: gave the window back to ANGLE (X ms)
 and the perf line:
 
 ```
-UWP perf:   VibeRant: present: direct swap chain (3 buffers, latency 2); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures
+VibeRant perf: present: direct swap chain (3 buffers, latency 2); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures
 ```
 
 `copy` is recording and submitting the frame's copy; `latency wait` is the time blocked on the waitable

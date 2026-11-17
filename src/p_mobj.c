@@ -216,7 +216,7 @@ static void P_CyclePlayerMobjState(mobj_t *mobj)
 	}
 }
 
-// [UWP]: P_SetMobjState and P_SetPlayerMobjState remember the states each call goes through, to detect cycles of
+// [ZE]: P_SetMobjState and P_SetPlayerMobjState remember the states each call goes through, to detect cycles of
 // states that last no time, in a table for each depth of nested calls. Before returning, each call erases what it
 // wrote by following the chain of states it recorded, so a table never needs clearing in full.
 //
@@ -3899,7 +3899,7 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
 	if (thiscam->subsector == NULL || thiscam->subsector->sector == NULL)
 		return;
 
-	// [UWP]: Encore mirrors the view without replacing underwater/heat distortion.
+	// [ZE]: Encore mirrors the view without replacing underwater/heat distortion.
 	if (player->awayview.tics && player->awayview.mobj && !P_MobjWasRemoved(player->awayview.mobj)) // Camera must obviously exist
 	{
 		camera_t dummycam;
@@ -3925,7 +3925,7 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
 			postimg = postimg_heat;
 	}
 
-	// [UWP]: Store the mirror even when there is no distortion.
+	// [ZE]: Store the mirror even when there is no distortion.
 	for (i = 0; i <= r_splitscreen; i++)
 	{
 		if (player == &players[displayplayers[i]])

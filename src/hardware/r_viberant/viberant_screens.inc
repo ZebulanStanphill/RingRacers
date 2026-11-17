@@ -305,7 +305,7 @@ void VibeRant_DrawIntermissionBG(void)
 	g_stats.screens++;
 }
 
-// [UWP]: Read the RHI's raw mask bytes separately, leaving r_opengl.c's palette-red mask for the fallback.
+// [ZE]: Read the RHI's raw mask bytes separately, leaving r_opengl.c's palette-red mask for the fallback.
 bool UploadWipeMask()
 {
 	if (g_wipetype >= 100 || g_wipeframe >= 100)
@@ -352,7 +352,7 @@ bool UploadWipeMask()
 	return true;
 }
 
-// [UWP]: Match hwr2/postprocess_wipe.cpp and its shader instead of r_opengl.c's simple crossfade.
+// [ZE]: Match hwr2/postprocess_wipe.cpp and its shader instead of r_opengl.c's simple crossfade.
 bool DrawWipeFull()
 {
 	Texture *start = FindTexture(g_wipereverse ? g_endScreenWipe : g_startScreenWipe);

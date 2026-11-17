@@ -30,6 +30,10 @@ those commits stay as they are and the merge is made again.
 
 - Prefer new files and small, contained hooks over edits spread through upstream
   code. Don't reformat, rename or reorder upstream code you aren't changing.
+- Mark a change inside upstream code with a comment that starts `[ZE]:` (for
+  Zebulan Edition, this fork), or `[UWP]:` when the code is only compiled for or
+  only applies to the Xbox (UWP) build. Names and log lines follow the same rule:
+  `UWP` and `uwp_` are for what only the Xbox build has.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
   UWP build, and `HAVE_VIBERANT` for builds that contain the VibeRant driver
   (`src/hardware/r_viberant`). The driver has three backends. `HAVE_VIBERANT_D3D`

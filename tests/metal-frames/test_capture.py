@@ -10,7 +10,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import capture  # noqa: E402
 
-DEVICE = ("UWP: VibeRant backend: Metal\n"
+DEVICE = ("VibeRant backend: Metal\n"
           "Metal: device: Apple M4 Pro, Metal (MTLDebugDevice > MTLGPUDebugDevice > AGXG16SDevice), unified memory, depth-stencil D32FS8, "
           "working set 18186 MB, API validation on, shader validation on\n")
 TOOK = "VibeRant Metal: presenter: presenting on a Metal window in place of the game's OpenGL window (waits for the display)\n"

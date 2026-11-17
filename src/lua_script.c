@@ -42,7 +42,7 @@
 
 lua_State *gL = NULL;
 
-// [UWP]: The pointers that have userdata in LREG_VALID, kept beside it so LUA_InvalidateUserdata can skip asking Lua
+// [ZE]: The pointers that have userdata in LREG_VALID, kept beside it so LUA_InvalidateUserdata can skip asking Lua
 // about the many pointers that never had any, like each block freed from the level pools whenever a mobj moves.
 // Asking was about 4% of game logic on Xbox. A hash set with open addressing; if it ever can't grow, it's abandoned,
 // and every pointer is asked about again.
@@ -907,7 +907,7 @@ void LUA_InvalidateUserdata(void *data)
 	if (!gL)
 		return;
 
-	// [UWP]: Most pointers never had userdata (see validuserdata)
+	// [ZE]: Most pointers never had userdata (see validuserdata)
 	if (!ValidUserdata_Has(data))
 		return;
 	ValidUserdata_Remove(data);

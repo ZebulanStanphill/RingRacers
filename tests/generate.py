@@ -277,7 +277,7 @@ def generate(engine, output):
         "USE_SHADER": semibright_hw.function("HWR_UseShader"),
         "SEMIBRIGHT_LIGHT": semibright_hw.function("HWR_SemiBrightLight"),
         "POST_HEAD": function_section(semibright_hw, "HWR_ObjectLightLevelPost", "\tconst boolean semibright =", "\tconst boolean papersprite"),
-        "POST_TAIL": function_section(semibright_hw, "HWR_ObjectLightLevelPost", "\t// [UWP]: Only an approximation of Software", "\n}"),
+        "POST_TAIL": function_section(semibright_hw, "HWR_ObjectLightLevelPost", "\t// [ZE]: Only an approximation of Software", "\n}"),
         "SPLIT_SPRITE": semibright_hw.function("HWR_SplitSprite"),
         "DRAW_SPRITE": semibright_hw.function("HWR_DrawSprite"),
         "DRAW_MODEL": Source(engine / "src/hardware/hw_md2.c").function("HWR_DrawModel"),
@@ -605,7 +605,7 @@ def generate(engine, output):
         "FSurfaceInfo &Surf = *surface;\nif (final) {\n" + split_calls[1] +
         "} else {\n" + split_calls[0] + "}\n}\n")
     solid = function_section(hardware, "HWR_ProcessSeg",
-        "\t\t// [UWP]: Software clips springs to this solid seg's silhouette.",
+        "\t\t// [ZE]: Software clips springs to this solid seg's silhouette.",
         "\t\t// Single sided line")
     routes += ("static void SpringRecordSolid(FOutVector *wallVerts, fixed_t worldtop, "
         "fixed_t worldtopslope, fixed_t worldbottom, fixed_t worldbottomslope) {\n"
@@ -620,7 +620,7 @@ def generate(engine, output):
             f"fixed_t {top}slope, fixed_t {bottom}, fixed_t {bottom}slope) {{\n" + section + "}\n")
     process_seg = hardware.function("HWR_ProcessSeg").split("\n", 1)[1].rstrip("\n")
     seg_offset = hardware.text.index(process_seg)
-    record_start = "\t\t\t\t\t// [UWP]: Opaque solid FOF silhouette before lighting splits."
+    record_start = "\t\t\t\t\t// [ZE]: Opaque solid FOF silhouette before lighting splits."
     record_end = "\t\t\t\t\t\tHWR_AddSpringWall(wallVerts, rover);\n"
     starts = [m.start() for m in re.finditer(re.escape(record_start), process_seg)]
     if len(starts) != 2:
@@ -639,13 +639,13 @@ def generate(engine, output):
     # opaque planes HWR_Subsector actually draws: the bottom and the top one.
     subsector = hardware.function("HWR_Subsector")
     for isceiling, pic in (("false", "bottompic"), ("true", "toppic")):
-        if (f"HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, {isceiling}); // [UWP]\n"
+        if (f"HWR_AddSpringFOFPlane(&extrasubsectors[num], rover, {isceiling}); // [ZE]\n"
             f"\t\t\t\t\tHWR_GetLevelFlat(&levelflats[*rover->{pic}]") not in subsector:
             raise ValueError(f"the opaque 3D floor {pic} plane must be recorded for spring clipping")
     routes += hardware.function("HWR_AddSpringFOFPlane")
     render(templates / "spring_clip.cpp.in", {
-        "HELPERS": hardware.section("// [UWP]: Software hides a spring that sits inside a wall.",
-            "// End [UWP] spring silhouette geometry."),
+        "HELPERS": hardware.section("// [ZE]: Software hides a spring that sits inside a wall.",
+            "// End [ZE] spring silhouette geometry."),
         "DRAW_SPRITE": hardware.function("HWR_SpriteUV") + draw_sprite,
         "ROUTES": routes,
         "MODEL": hardware.section("// How a spring's 3D model is to be drawn, from what Software leaves of the spring's sprite.",
@@ -653,7 +653,7 @@ def generate(engine, output):
     }, output / "spring_clip.cpp")
 
     render(templates / "splat_clear.cpp.in", {
-        "SPLAT": hardware.section("// [UWP]: How far the floor under a floor sprite rises over the sprite",
+        "SPLAT": hardware.section("// [ZE]: How far the floor under a floor sprite rises over the sprite",
             "static void HWR_DrawSprite(gl_vissprite_t *spr)"),
         "CALL": function_section(hardware, "HWR_DrawSprite", "\tHWR_SpriteVertices(spr, wallVerts);",
             "\n\n\t// cache the patch in the graphics card memory"),

@@ -1685,7 +1685,7 @@ EXPORT void HWRAPI(UpdateTexture) (GLMipmap_t *pTexInfo)
 
 	pglActiveTexture(pTexInfo->flags & TF_BRIGHTMAP ? GL_TEXTURE1 : GL_TEXTURE0);
 	pglBindTexture(GL_TEXTURE_2D, num);
-	tex_downloaded = (pTexInfo->flags & TF_BRIGHTMAP) ? 0 : num; // [UWP]: see SetTexture
+	tex_downloaded = (pTexInfo->flags & TF_BRIGHTMAP) ? 0 : num; // [ZE]: see SetTexture
 
 	// disable texture filtering on any texture that has holes so there's no dumb borders or blending issues
 	if (pTexInfo->flags & TF_TRANSPARENT)
@@ -1790,7 +1790,7 @@ EXPORT void HWRAPI(SetTexture) (GLMipmap_t *pTexInfo)
 	}
 	else if (pTexInfo->downloaded)
 	{
-		// [UWP]: tex_downloaded is the texture on unit 0. A brightmap goes on unit 1, so it always binds and is
+		// [ZE]: tex_downloaded is the texture on unit 0. A brightmap goes on unit 1, so it always binds and is
 		// not remembered: the same texture may be the next surface's own, which must then bind on unit 0
 		if ((pTexInfo->flags & TF_BRIGHTMAP) || pTexInfo->downloaded != tex_downloaded)
 		{

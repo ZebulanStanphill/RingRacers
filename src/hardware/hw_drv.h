@@ -78,7 +78,7 @@ EXPORT void HWRAPI(UnSetShader) (void);
 EXPORT void HWRAPI(SetShaderInfo) (hwdshaderinfo_t info, INT32 value);
 EXPORT void HWRAPI(LoadCustomShader) (int number, char *code, size_t size, boolean isfragment);
 
-// [UWP]: Palette rendering, from SRB2
+// [ZE]: Palette rendering, from SRB2
 EXPORT void HWRAPI(SetScreenPalette) (RGBA_t *palette);
 EXPORT void HWRAPI(SetPaletteLookup) (UINT8 *lut);
 EXPORT UINT32 HWRAPI(CreateLightTable) (RGBA_t *hw_lighttable);

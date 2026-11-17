@@ -952,10 +952,10 @@ void Present_LogPerf(double frames)
 {
 	const PresentStats &s = g_stats;
 	const double n = frames > 0 ? frames : 1;
-	I_OutputMsg("UWP perf:   VibeRant: present: direct swap chain (%u buffers, latency %u); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures\n",
+	I_OutputMsg("VibeRant perf: present: direct swap chain (%u buffers, latency %u); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures\n",
 		kBuffers, kLatency, PreciseToMs(s.copyTime) / n, s.latencyWaitMs / n, s.worstLatencyWaitMs,
 		s.latencyTimeouts, PreciseToMs(s.presentTime) / n, s.worstPresentMs, s.presentFailures);
-	I_OutputMsg("UWP perf:   VibeRant: GPU %.2f ms per frame (worst %.2f, %d timed)\n",
+	I_OutputMsg("VibeRant perf: GPU %.2f ms per frame (worst %.2f, %d timed)\n",
 		s.gpuFrames ? s.gpuMs / s.gpuFrames : 0.0, s.worstGpuMs, s.gpuFrames);
 	g_stats = PresentStats();
 }

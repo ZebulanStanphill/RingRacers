@@ -104,7 +104,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
 
 #ifdef HAVE_VIBERANT
-	// [UWP]: Texture Quality only picks Legacy GL's OpenGL texture format;
+	// [ZE]: Texture Quality only picks Legacy GL's OpenGL texture format;
 	// VibeRant always uses 32-bit textures, so its row offers the filter.
 	{IT_STRING | IT_CVAR, "Texture Filter", "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures.",
 		NULL, {.cvar = &cv_glfiltermode}, 0, 0},

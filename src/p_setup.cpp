@@ -8572,7 +8572,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	}
 
 	for (i = 0; i <= r_splitscreen; i++)
-	{ // [UWP]: Reset the independent mirror along with the distortion.
+	{ // [ZE]: Reset the independent mirror along with the distortion.
 		postimgtype[i] = postimg_none;
 		postimgmirror[i] = false;
 	}
@@ -8856,7 +8856,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	}
 #ifdef HWRENDER
 	if (HWR_VibeRant() && rendermode == render_opengl)
-		HWR_UWPSetEncoreMap(encoremap);
+		HWR_SetEncoreMap(encoremap);
 #endif
 	CON_SetupBackColormap();
 
@@ -9021,7 +9021,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		for (i = 0; i <= r_splitscreen; i++)
 		{
 			postimgtype[i] = postimg_none;
-			postimgmirror[i] = false; // [UWP]: Reset the independent mirror on level load.
+			postimgmirror[i] = false; // [ZE]: Reset the independent mirror on level load.
 		}
 
 		if (marathonmode & MA_INGAME)

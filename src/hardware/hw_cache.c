@@ -29,7 +29,7 @@
 #include "../r_textures.h"
 #include "../w_wad.h"
 #include "../z_zone.h"
-#include "../i_system.h" // [UWP]: I_GetPreciseTime
+#include "../i_system.h" // [ZE]: I_GetPreciseTime
 #include "../v_video.h"
 #include "../r_draw.h"
 #include "../r_patch.h"
@@ -714,7 +714,7 @@ void HWR_ClearAllTextures(void)
 {
 	HWD.pfnClearMipMapCache(); // free references to the textures
 	HWR_FreePatchCache(true);
-	HWR_ClearLightTables(); // [UWP]: their colormaps may be freed next
+	HWR_ClearLightTables(); // [ZE]: their colormaps may be freed next
 }
 
 void HWR_FreeColormapCache(void)
@@ -778,7 +778,7 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 //             PALETTE HANDLING
 // =================================================
 
-// [UWP]: The palette textures are made with in palette rendering: the current palette lump's
+// [ZE]: The palette textures are made with in palette rendering: the current palette lump's
 static RGBA_t mapPalette[256];
 
 RGBA_t *HWR_GetTexturePalette(void)
@@ -790,14 +790,14 @@ void HWR_SetPalette(RGBA_t *palette)
 {
 	if (HWR_ShouldUsePaletteRendering())
 	{
-		// [UWP]: The palette the frame is turned into, which can change without changing the textures
+		// [ZE]: The palette the frame is turned into, which can change without changing the textures
 		HWD.pfnSetScreenPalette(palette);
 		HWR_SetMapPalette();
 		return;
 	}
 
 	HWD.pfnSetPalette(palette);
-	// [UWP]: so the next HWR_SetMapPalette updates everything
+	// [ZE]: so the next HWR_SetMapPalette updates everything
 	memset(mapPalette, 0, sizeof(mapPalette));
 
 	// hardware driver will flush there own cache if cache is non paletized
@@ -809,7 +809,7 @@ void HWR_SetPalette(RGBA_t *palette)
 	}
 }
 
-// [UWP]: Makes the RGB -> palette index lookup table palette rendering's shaders use, from SRB2
+// [ZE]: Makes the RGB -> palette index lookup table palette rendering's shaders use, from SRB2
 static void HWR_SetPaletteLookup(RGBA_t *palette)
 {
 	const precise_t start = I_GetPreciseTime();
@@ -832,11 +832,11 @@ static void HWR_SetPaletteLookup(RGBA_t *palette)
 
 	HWD.pfnSetPaletteLookup(lut);
 	Z_Free(lut);
-	I_OutputMsg("UWP: made the palette rendering lookup table in %.1f ms\n",
+	I_OutputMsg("VibeRant: made the palette rendering lookup table in %.1f ms\n",
 		(I_GetPreciseTime() - start) * 1000.0 / I_GetPrecisePrecision());
 }
 
-// [UWP]: Updates the palette textures are made with to the current palette lump's, remaking the textures and
+// [ZE]: Updates the palette textures are made with to the current palette lump's, remaking the textures and
 // light tables if it changed. Only for palette rendering.
 void HWR_SetMapPalette(void)
 {
@@ -855,10 +855,10 @@ void HWR_SetMapPalette(void)
 	}
 }
 
-// [UWP]: Encore's remap is baked into the cached textures. Outside palette rendering, V_SetPalette frees them at
+// [ZE]: Encore's remap is baked into the cached textures. Outside palette rendering, V_SetPalette frees them at
 // every level start, but palette rendering keeps them unless the palette changes, so the same map played again
 // with Encore toggled (or another map's Encore remap) would reuse the old colors. Call after R_ReInitColormaps.
-void HWR_UWPSetEncoreMap(const UINT8 *map)
+void HWR_SetEncoreMap(const UINT8 *map)
 {
 	static UINT8 lastMap[256];
 	static boolean lastEncore = false;
@@ -879,7 +879,7 @@ void HWR_UWPSetEncoreMap(const UINT8 *map)
 	Z_FreeTag(PU_HWRCACHE_UNLOCKED);
 }
 
-// [UWP]: Palette rendering's light tables: each colormap's 32 light levels of 256 palette indices, as the colors
+// [ZE]: Palette rendering's light tables: each colormap's 32 light levels of 256 palette indices, as the colors
 // they stand for. Encore's remap is already in the textures, so only the first, unremapped levels are used. A 33rd
 // row holds the base colormap's full-bright level, which brightmapped texels use like Software's dc->fullbright.
 typedef struct
@@ -982,7 +982,7 @@ UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 	return table->id;
 }
 
-// [UWP]: Forgets the light tables, whose ids become invalid. Call when colormaps are freed or the palette changes.
+// [ZE]: Forgets the light tables, whose ids become invalid. Call when colormaps are freed or the palette changes.
 void HWR_ClearLightTables(void)
 {
 	gl_numlighttables = 0;
@@ -1011,7 +1011,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 	if (!grtex->mipmap.data && !grtex->mipmap.downloaded)
 		HWR_GenerateTexture(grtex, tex, !R_TextureCanRemap(basetex));
 
-	// [UWP]: A texture can also be another's brightmap, which left TF_BRIGHTMAP set for good: the fullbright
+	// [ZE]: A texture can also be another's brightmap, which left TF_BRIGHTMAP set for good: the fullbright
 	// palette textures (~B000 to ~B255) all use ~000. HWR_SetCurrentTexture and the driver go by the flag, so
 	// as a surface's own texture it then bound as a brightmap and the surface kept whatever texture came before
 	grtex->mipmap.flags &= ~TF_BRIGHTMAP;
@@ -1203,7 +1203,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 			HWR_CacheTextureAsFlat(&grtex->mipmap, texturenum, noencoremap);
 		}
 
-		grtex->mipmap.flags &= ~TF_BRIGHTMAP; // [UWP]: as in HWR_GetTexture
+		grtex->mipmap.flags &= ~TF_BRIGHTMAP; // [ZE]: as in HWR_GetTexture
 
 		// If hardware does not have the texture, then call pfnSetTexture to upload it
 		if (!grtex->mipmap.downloaded)
@@ -1305,7 +1305,7 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	if (!grMipmap->downloaded && !grMipmap->data)
 		HWR_MakePatch(patch, grPatch, grMipmap, true);
 
-	grMipmap->flags &= ~TF_BRIGHTMAP; // [UWP]: as in HWR_GetTexture, for a patch HWR_GetSpriteBrightmap used
+	grMipmap->flags &= ~TF_BRIGHTMAP; // [ZE]: as in HWR_GetTexture, for a patch HWR_GetSpriteBrightmap used
 
 	// If hardware does not have the texture, then call pfnSetTexture to upload it
 	if (!grMipmap->downloaded)

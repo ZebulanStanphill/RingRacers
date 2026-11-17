@@ -589,7 +589,7 @@ static void Polyobj_moveToSpawnSpot(mapthing_t *anchor)
 	dist.x = (anchor->x << FRACBITS) - sspot.x;
 	dist.y = (anchor->y << FRACBITS) - sspot.y;
 
-	// [UWP]: The hardware renderer builds its floor polygons from the map as the node builder saw it.
+	// [ZE]: The hardware renderer builds its floor polygons from the map as the node builder saw it.
 	po->anchorPt.x = anchor->x << FRACBITS;
 	po->anchorPt.y = anchor->y << FRACBITS;
 

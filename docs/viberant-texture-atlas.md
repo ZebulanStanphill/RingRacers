@@ -35,7 +35,7 @@ zeroed b0 while sampling screen textures. Screen-only integer Load operations st
 and HLSL float4 arrays match, retaining the old constants' offsets and fitting the
 existing 512-byte draw allocation. Vulkan already honors region copy offsets.
 
-The `VibeRant: atlas:` perf line reports live views, retained pages, occupied shelf
+The `VibeRant perf: atlas:` line reports live views, retained pages, occupied shelf
 area (including fence-pending frees), period placements, frees, and released
 pages, and standalone admission reasons. `textures: ... created` still counts actual GPU resources,
 including pages, rather than atlas views. Page memory is counted once. Only the

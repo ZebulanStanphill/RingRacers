@@ -621,7 +621,7 @@ static struct viewmorph {
 
 	boolean use;
 
-	// [UWP]: Store the start of each source row and step along it when drawing, instead of rebuilding and reading
+	// [ZE]: Store the start of each source row and step along it when drawing, instead of rebuilding and reading
 	// a full-screen pixel map. Row starts use the original float additions so parallel rows sample the same pixels.
 	boolean straight;
 	float mapx[MAXVIDHEIGHT / 2 + 1], mapy[MAXVIDHEIGHT / 2 + 1];

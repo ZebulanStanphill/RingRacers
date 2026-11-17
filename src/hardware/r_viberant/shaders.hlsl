@@ -15,7 +15,7 @@
 /// point is compiled by fxc at build time for Direct3D 12, and by glslang to SPIR-V for
 /// the Vulkan and Metal backends (see ../CMakeLists.txt).
 
-// [UWP]: Shared 25-DWORD root signature; b4 reserves the custom view constants.
+// [ZE]: Shared 25-DWORD root signature; b4 reserves the custom view constants.
 #define RR_ROOT_SIGNATURE "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_HULL_SHADER_ROOT_ACCESS | DENY_DOMAIN_SHADER_ROOT_ACCESS | DENY_GEOMETRY_SHADER_ROOT_ACCESS), " \
 	"CBV(b0), " \
 	"DescriptorTable(SRV(t0), visibility=SHADER_VISIBILITY_PIXEL), " \
@@ -598,7 +598,7 @@ float4 PSWipe(VSOut i) : SV_Target
 	return AlphaTest(t_tex.Sample(s_tex, TexUV(i.uv)) * t_brightmap.Sample(s_brightmap, BrightUV(i.uv1)));
 }
 
-// [UWP]: The RHI's rhi_glsl_fragment_postprocesswipe, with D3D's top-first screen textures.
+// [ZE]: The RHI's rhi_glsl_fragment_postprocesswipe, with D3D's top-first screen textures.
 RR_RS
 float4 PSWipeFull(VSOut i) : SV_Target
 {

@@ -63,7 +63,7 @@ typedef struct
 typedef struct
 {
 	poly_t *planepoly;  // the generated convex polygon
-	boolean segloop;    // [UWP]: planepoly is the subsector's own GL seg loop, whose corners are exact
+	boolean segloop;    // [ZE]: planepoly is the subsector's own GL seg loop, whose corners are exact
 } extrasubsector_t;
 
 // needed for sprite rendering
@@ -73,14 +73,14 @@ typedef struct gl_vissprite_s
 	float x1, x2;
 	float z1, z2;
 	float gz, gzt;
-	float gx, gy; // [UWP]: Interpolated origin for spring wall clipping.
+	float gx, gy; // [ZE]: Interpolated origin for spring wall clipping.
 
 	float tz;
 	float tracertz; // for MF2_LINKDRAW sprites, this contains tracer's tz for use in sorting
 
 	float scale;
 	float shadowheight, shadowscale;
-	float shadowskew; // [UWP]: RF_SHADOWDRAW shear; zero for ordinary sprites.
+	float shadowskew; // [ZE]: RF_SHADOWDRAW shear; zero for ordinary sprites.
 
 	float spritexscale, spriteyscale;
 	float spritexoffset, spriteyoffset;
@@ -146,13 +146,13 @@ void HWR_FreeTexture(patch_t *patch);
 void HWR_FreeTextureData(patch_t *patch);
 void HWR_FreeTextureColormaps(patch_t *patch);
 void HWR_ClearAllTextures(void);
-void HWR_UWPSetEncoreMap(const UINT8 *map); // [UWP]: remakes cached textures when Encore's remap changes
+void HWR_SetEncoreMap(const UINT8 *map); // [ZE]: remakes cached textures when Encore's remap changes
 void HWR_FreeColormapCache(void);
 void HWR_UnlockCachedPatch(GLPatch_t *gpatch);
 
 void HWR_SetPalette(RGBA_t *palette);
 
-// [UWP]: Palette rendering, from SRB2. Textures are made with the current palette lump's colors
+// [ZE]: Palette rendering, from SRB2. Textures are made with the current palette lump's colors
 // (pMasterPalette), which shaders turn back into palette indices to light through the colormaps, as the
 // software renderer does; the frame is then turned into the screen's palette (gamma, flashes).
 RGBA_t *HWR_GetTexturePalette(void);

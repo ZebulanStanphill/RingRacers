@@ -272,7 +272,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   title-card function, client-state enum, packet structs, and server `PingUpdate`.
   Check all eligibility/missed-packet combinations, low-byte wraparound across
   the client receive window, packet contents/length, per-clock-tic rate limiting,
-  and preservation of simulation tics. Check that only online UWP Legacy GL
+  and preservation of simulation tics. Check that only online UWP VibeRant D3D
   clients defer the blocking title, while hosts, Software, desktop and demos keep
   it; also check clock refresh after an offline load. A delayed-loading simulation
   tests the server's delay-limit decision with production keepalives and
@@ -300,7 +300,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   race window are decided by the clocks alone), load resets, tics across the unlogged gap, camera/presentation snapshots, missing
   player objects, unpresented frames, and that tracing
   leaves the player's object unchanged. One executable runs every case with
-  Software and with Legacy GL, which differ only in the present slot the trace
+  Software and with the hardware renderer, which differ only in the present slot the trace
   reports.
 - **Add-on shader translation:** compile the production GLSL adapter, glslang
   parser/linker and SPIRV-Cross emitter from `r_viberant/`. Translate 36 shader/layout
@@ -350,7 +350,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   files are installed beside the game, not in the PK3). CI builds ZDBSP,
   rebuilds the map from `build.py`, compares every entry and validates the
   nodes, and uploads it as `renderer-test-map`.
-- **Wall light slices:** execute production UWP wall splitting and clipping with
+- **Wall light slices:** execute production wall splitting and clipping with
   real slope/FOF height evaluation. Reproduce a Water Palace pixel capture
   (line 1, `WTPTU1`): an 18-unit sloped tier crosses the
   water light plane at -52. The pre-fix splitter draws outside the original
@@ -1639,7 +1639,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   horizon lines, cache reuse, runtime changes, zone teardown and replacement
   levels. `horizon_cache_both` also checks that with OpenGL as the driver every
   subsector's lines are scanned, as upstream does, and the cache is never built.
-  See [the invalidation notes](../docs/uwp-horizon-cache.md). These checks use
+  See [the invalidation notes](../docs/viberant-horizon-cache.md). These checks use
   ASan/UBSan and verify scan admission rather than GPU pixels or Xbox timings.
 
 - **UWP PGO capture lifecycle:** not part of ctest; run `python3 tests/check-pgo.py`

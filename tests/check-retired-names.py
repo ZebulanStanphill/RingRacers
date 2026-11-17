@@ -20,6 +20,7 @@ The names, old to new:
   d3d12_core.cpp, ...   viberant_core.cpp, ... (d3d12_present*.cpp: d3d_present_uwp.cpp, d3d_present_win32.cpp)
   D3D_Init, D3D12_...   VibeRant_Init, VibeRant_...
   D3D12_LOG_ONCE        VIBERANT_LOG_ONCE
+  HWR_UWPSetEncoreMap   HWR_SetEncoreMap (it never was only for UWP)
 """
 import os
 import re
@@ -30,7 +31,7 @@ SKIP = ('thirdparty/', 'libs/', 'uwp/pgo/', 'uwp/patches/', 'tests/check-retired
 B, E = r'(?<![A-Za-z0-9_])', r'(?![A-Za-z0-9_])'
 RETIRED = re.compile(B + r'(?:(?:-D|/D)?(?:HAVE_D3D12(?:_NATIVE)?|HAVE_VULKAN|HAVE_METAL)'
                      r'|(?:-D)?SRB2_CONFIG_(?:D3D12|VULKAN|METAL)(?:_DEFAULT)?'
-                     r'|HWR_D3D12|hwr_d3d12|SCR_RendererD3D12|rr_d3d12\w*|r_d3d12\w*|D3D12_LOG_ONCE'
+                     r'|HWR_D3D12|hwr_d3d12|SCR_RendererD3D12|HWR_UWPSetEncoreMap|rr_d3d12\w*|r_d3d12\w*|D3D12_LOG_ONCE'
                      r'|d3d12_(?:core|pipeline|prewarm|upload|present|arenas|captures|models|palette|placement'
                      r'|screeneffect|screens)(?:_win32)?\.(?:cpp|h|inc)'
                      r'|D3D(?:12)?_(?:[A-Z][a-z][A-Za-z0-9]*|GClipRect|##))' + E)

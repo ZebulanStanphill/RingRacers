@@ -3077,7 +3077,7 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link);
 
 static drawnode_t nodebankhead;
 
-// [UWP]: When R_CreateDrawNodes may skip a node that doesn't share a column with the sprite it's sorting, without
+// [ZE]: When R_CreateDrawNodes may skip a node that doesn't share a column with the sprite it's sorting, without
 // reading what the node points to. Walking every node and reading that was most of R_DrawMasked's own time on Xbox.
 enum
 {
@@ -3253,7 +3253,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 
 		for (r2 = head->next; r2 != head; r2 = r2->next)
 		{
-			// [UWP]: Skip a node that shares no column with this sprite without reading what it points to, as
+			// [ZE]: Skip a node that shares no column with this sprite without reading what it points to, as
 			// the checks below would after reading it (see R_SetDrawNodeColumns)
 			if ((r2->x1 > rover->x2 || r2->x2 < rover->x1)
 				&& (r2->columncheck == DRAWNODE_SKIPOUTSIDE

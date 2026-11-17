@@ -341,7 +341,7 @@ static visplane_t *new_visplane(unsigned hash)
 	return check;
 }
 
-// [UWP]: Clears only the columns of a new visplane that can be on screen, plus the one after the last, which
+// [ZE]: Clears only the columns of a new visplane that can be on screen, plus the one after the last, which
 // R_DrawSinglePlane marks, instead of all MAXVIDWIDTH of them. Clearing them all was most of the 7% of 3D rendering
 // spent clearing memory at 640x400 on Xbox.
 static void R_ClearVisplaneColumns(visplane_t *pl)
