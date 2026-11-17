@@ -107,7 +107,7 @@ def summarize(group):
         text += f"; {avg('mobjs'):.0f} thinking mobjs, {avg('checkpos'):.0f} P_CheckPosition/tic, profiler pauses {avg('paused'):.1f} ms/s"
     if any('pointcached' in r for r in group):
         text += f"; R_PointInSubsector {avg('pointlookups'):.0f}/s, {avg('pointcached'):.0f}% cached"
-    # Only the blocks that timed frames have the line; the others (Legacy GL, or no ANGLE device) would pull it down.
+    # Only the blocks that timed frames have the line; the others (VibeRant D3D, or no ANGLE device) would pull it down.
     angle = [r for r in group if g(r, 'angtimed') > 0]
     if angle:
         a = lambda k: sum(g(r, k) for r in angle) / len(angle)

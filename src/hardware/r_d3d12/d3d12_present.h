@@ -20,11 +20,11 @@
 namespace rr_d3d12
 {
 
-// Gets the window to present on, when Legacy GL starts.
+// Gets the window to present on, when VibeRant D3D starts.
 // UWP: takes the window from ANGLE, whose window surface goes, as a CoreWindow takes one swap chain at a time. Call with
 // ANGLE's context current. Returns true once the swap chain has the window, or if no context is current yet, in which
 // case Present_Frame takes it with the first frame. Returns false if taking it failed: ANGLE has the window and its
-// context back, and Legacy GL can't present, so the caller falls back to Software.
+// context back, and VibeRant D3D can't present, so the caller falls back to Software.
 // Desktop: makes the child window of the SDL window and the swap chain on it, which needs no OpenGL context and never
 // waits for one; the SDL window's pixel format and contexts are left alone. Returns false, with nothing left behind, if it
 // can't, and the caller falls back to Software. Returns true without doing anything if the SDL window doesn't exist yet,
@@ -52,7 +52,7 @@ typedef bool (*PlaceFrameFn)(ID3D12Resource *source, D3D12_RESOURCE_STATES sourc
 // system stretches to the window, from then on, until the window is taken again. A window with no client area (minimized) is not presented to.
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place);
 
-// Gives the window back, for the Software renderer to use. Does nothing without the swap chain. Starting Legacy GL again
+// Gives the window back, for the Software renderer to use. Does nothing without the swap chain. Starting VibeRant D3D again
 // takes the window again.
 // UWP: releases the swap chain and makes ANGLE's window surface again, and makes no context current: the caller does.
 // Desktop: releases the swap chain and destroys the child window.

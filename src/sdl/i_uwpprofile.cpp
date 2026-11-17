@@ -11,7 +11,7 @@
 /// A thread pauses the main thread about 50 times a second and records the address it was running, the calls
 /// that led there (found with the unwind data of each module), and what it was doing (uwpprofphase_t). Every 20
 /// seconds, it writes how many samples it took at each address and with each call stack while a level was being
-/// played, for each renderer (Software, Legacy GL), to E:\ringracers\uwp-profile.txt. It starts at the beginning of
+/// played, for each renderer (Software, VibeRant D3D), to E:\ringracers\uwp-profile.txt. It starts at the beginning of
 /// startup and also samples that, under the phase "startup" and no renderer, until the main loop begins. Samples at
 /// any other time (menus, the title screen, a paused or loading level, intermission, voting, the podium, cutscenes)
 /// are recorded the same way, under a phase named for the game state (uwpprofphase_t) and the current renderer.
@@ -64,7 +64,7 @@ enum Renderer
 	RENDERER_NONE,
 	NUMRENDERERS
 };
-constexpr const char* kRendererNames[NUMRENDERERS] = {"Software", "Legacy GL", "No renderer"};
+constexpr const char* kRendererNames[NUMRENDERERS] = {"Software", "VibeRant D3D", "No renderer"};
 constexpr int kMaxFrames = 12; // of each call stack, innermost first
 constexpr size_t kMaxModules = 64; // to unwind through
 constexpr int kMaxProcessors = 64;

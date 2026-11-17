@@ -76,6 +76,12 @@ namespace
 
 using namespace rr_d3d12;
 
+// The renderer's name as the player knows it, for messages
+const char *RendererName()
+{
+	return Core_Vulkan() ? "VibeRant Vulkan" : "VibeRant D3D";
+}
+
 void Log(const char *format, ...)
 {
 	char message[2048];
@@ -1075,7 +1081,7 @@ UINT AllocateSrv()
 	const UINT index = g_srvIndices.Allocate();
 	if (index == UINT32_MAX)
 	{
-		D3D12_LOG_ONCE("persistent SRV heap exhausted; requesting Legacy GL texture flush");
+		D3D12_LOG_ONCE("persistent SRV heap exhausted; requesting a flush of the hardware renderer's textures");
 		g_textureFlushRequested = true;
 		return index;
 	}
@@ -1494,7 +1500,7 @@ void Flush()
 	g_stats.flushes++;
 	if (g_budgetTextureFlush)
 	{
-		Log("over the video memory budget (usage %.1f MB, budget %.1f MB); flushed Legacy GL's textures",
+		Log("over the video memory budget (usage %.1f MB, budget %.1f MB); flushed the hardware renderer's textures",
 			g_localMemory.CurrentUsage / 1048576.0, g_localMemory.Budget / 1048576.0);
 		g_budgetTextureFlush = false;
 	}
@@ -2292,7 +2298,7 @@ boolean D3D_Init(void)
 {
 	if (!Core_Device())
 	{
-		Log("starting Legacy GL's Direct3D 12 driver (drawing with textures)");
+		Log("starting %s (drawing with textures)", RendererName());
 		Core_SetListBegin(BindRenderTarget);
 		if (!Core_Init())
 		{
@@ -2305,8 +2311,8 @@ boolean D3D_Init(void)
 		}
 		Prewarm_Start(Core_Device(), g_root.Get());
 	}
-	// Every time Legacy GL starts, since switching to Software gave the window back to ANGLE. If it can't be taken,
-	// Legacy GL can't present: failing here makes the game fall back to Software.
+	// Every time VibeRant D3D starts, since switching to Software gave the window back to ANGLE. If it can't be taken,
+	// VibeRant D3D can't present: failing here makes the game fall back to Software.
 	return Present_TakeWindow();
 }
 
@@ -3200,8 +3206,8 @@ void D3D12_FinishUpdate(INT32 waitvbl)
 		g_deviceLost = true;
 		const HRESULT removed = Core_RemovedReason();
 		Core_LogDeviceRemoved();
-		I_Error("Legacy GL's Direct3D 12 device stopped working (0x%08X).\nSet Renderer to Software in Video Options > Advanced if it keeps happening.",
-			(unsigned)removed);
+		I_Error("%s's graphics device stopped working (0x%08X).\nSet Renderer to Software in Video Options > Advanced if it keeps happening.",
+			RendererName(), (unsigned)removed);
 	}
 }
 

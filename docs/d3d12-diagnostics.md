@@ -95,7 +95,7 @@ waited X ms for the frame latency object; presented with sync interval S (0x...,
 If a step of taking the window fails, the log names it:
 
 ```
-UWP D3D12: couldn't take the window from ANGLE (<step> failed: 0x...); Legacy GL can't present, so the game falls back to Software
+UWP D3D12: couldn't take the window from ANGLE (<step> failed: 0x...); VibeRant D3D can't present, so the game falls back to Software
 ```
 
 ANGLE gets the window and its context back, and the driver fails to start (`D3D_Init` returns false), so

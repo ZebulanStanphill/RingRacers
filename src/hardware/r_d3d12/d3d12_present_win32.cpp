@@ -10,7 +10,7 @@
 /// A flip-model swap chain can't be made on a window that has an OpenGL pixel format, and the Software renderer's RHI keeps
 /// its OpenGL context on the SDL window, so the driver makes a child window of it, as large as the parent's client area, and
 /// the swap chain goes on that. The child takes no input and no focus: hit testing passes through it to the SDL window.
-/// Presenting is taken when Legacy GL starts and given back (the child destroyed) when the Software renderer is chosen; the
+/// Presenting is taken when VibeRant D3D starts and given back (the child destroyed) when the Software renderer is chosen; the
 /// parent's pixel format and contexts are never touched.
 ///
 /// The swap chain is always the size of the parent's client area, in pixels, and each frame is drawn into its back buffer
@@ -401,7 +401,7 @@ bool Present_TakeWindow()
 		Log("the game's window doesn't exist yet, so it's taken with the first frame");
 		return true;
 	}
-	return CreateWindowAndSwapChain("Legacy GL can't present, so the game falls back to Software");
+	return CreateWindowAndSwapChain("VibeRant D3D can't present, so the game falls back to Software");
 }
 
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
@@ -423,7 +423,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 	}
 
 	// Only if the driver started before the window was made, or the window was given back and the driver is still drawing
-	if (!g_direct.owned && !CreateWindowAndSwapChain("Legacy GL can't present"))
+	if (!g_direct.owned && !CreateWindowAndSwapChain("VibeRant D3D can't present"))
 		I_Error("Direct3D 12 couldn't create its window to present on (%s).\nSet Renderer to Software in Video Options > Advanced.",
 			g_direct.failure);
 

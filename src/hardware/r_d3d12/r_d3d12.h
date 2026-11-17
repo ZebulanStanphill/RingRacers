@@ -81,7 +81,7 @@ void D3D12_LogPerf(double seconds);
 boolean D3D_CanRollSprite(void);
 
 // Gives the window back to ANGLE if the driver's swap chain has it, for the Software renderer; no context is made
-// current. The driver takes the window again when Legacy GL starts.
+// current. The driver takes the window again when VibeRant D3D starts.
 void D3D12_ReleaseWindow(void);
 
 // Waits for the GPU, then releases the swap chain and the device

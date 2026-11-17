@@ -880,14 +880,14 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 	{
 		const int n = uwp_perf.hwframes;
 
-		I_OutputMsg("UWP perf:   Legacy GL: portals %.2f rendered, portal views %.2f CPU ms per frame\n",
+		I_OutputMsg("UWP perf:   VibeRant D3D: portals %.2f rendered, portal views %.2f CPU ms per frame\n",
 			(double)uwp_perf.hwportals/n, uwp_perf.hwportaltime*ms/n);
 		// The batch timings and counts are of the last batch each frame drew, which is the main view's after the skybox's
-		I_OutputMsg("UWP perf:   Legacy GL: skybox %.1f, node sort %.1f, node draw %.1f, sprite sort %.1f, sprite draw %.1f, batch sort %.1f, batch draw %.1f ms per frame\n",
+		I_OutputMsg("UWP perf:   VibeRant D3D: skybox %.1f, node sort %.1f, node draw %.1f, sprite sort %.1f, sprite draw %.1f, batch sort %.1f, batch draw %.1f ms per frame\n",
 			uwp_perf.hwskybox * ms / n, uwp_perf.hwnodesort * ms / n, uwp_perf.hwnodedraw * ms / n,
 			uwp_perf.hwspritesort * ms / n, uwp_perf.hwspritedraw * ms / n, uwp_perf.hwbatchsort * ms / n,
 			uwp_perf.hwbatchdraw * ms / n);
-		I_OutputMsg("UWP perf:   Legacy GL: %.0f polygons, %.0f vertices, %.0f draw calls, %.0f shader and %.0f texture changes per batch\n",
+		I_OutputMsg("UWP perf:   VibeRant D3D: %.0f polygons, %.0f vertices, %.0f draw calls, %.0f shader and %.0f texture changes per batch\n",
 			(double)uwp_perf.hwpolys / n, (double)uwp_perf.hwverts / n, (double)uwp_perf.hwcalls / n,
 			(double)uwp_perf.hwshaders / n, (double)uwp_perf.hwtextures / n);
 	}

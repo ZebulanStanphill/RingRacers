@@ -12,7 +12,7 @@
 /// The driver takes the window from ANGLE when it starts (or with the first frame, if no ANGLE context is current
 /// by then): ANGLE's window surface goes, as a CoreWindow takes one swap chain at a time. Each frame is then copied
 /// into the next buffer of a swap chain of Direct3D 12's own, on the driver's queue, and presented from there. The
-/// window goes back to ANGLE when the Software renderer is chosen, and the next time Legacy GL starts it's taken
+/// window goes back to ANGLE when the Software renderer is chosen, and the next time VibeRant D3D starts it's taken
 /// again.
 ///
 /// Only taking and giving back the window touch ANGLE: its EGL display and Direct3D 11 device, and a few
@@ -786,7 +786,7 @@ bool Present_TakeWindow()
 	// The size Present_Frame will want, so that the first frame doesn't resize it
 	const Layout layout = ChooseLayout(width, height);
 	// TAKE_LATER: Present_Frame tries again once an ANGLE context is current
-	return TakeWindow(layout.width, layout.height, "Legacy GL can't present, so the game falls back to Software") != TAKE_FAILED;
+	return TakeWindow(layout.width, layout.height, "VibeRant D3D can't present, so the game falls back to Software") != TAKE_FAILED;
 }
 
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
@@ -807,7 +807,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 	if (!g_direct.owned)
 	{
 		// Only if no ANGLE context was current when the driver started
-		const TakeResult taken = TakeWindow(layout.width, layout.height, "Legacy GL can't present");
+		const TakeResult taken = TakeWindow(layout.width, layout.height, "VibeRant D3D can't present");
 		if (taken == TAKE_LATER)
 		{
 			SubmitWithoutPresenting();

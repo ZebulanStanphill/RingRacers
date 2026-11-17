@@ -3,7 +3,8 @@
 
 usage: profile-report.py uwp-profile.txt ring-racers-ze.map|- [top N] [--dll name.dll=path ...]
 
-Profiles from builds with the renderer split name phases "Software: 3D view" and "Legacy GL: 3D view"; older ones just
+Profiles from builds with the renderer split name phases "Software: 3D view" and "VibeRant D3D: 3D view" (earlier builds said "Legacy GL: 3D
+view"); older ones just
 "3D view". Each phase and each renderer shows how much of it is inside ANGLE (libGLESv2.dll or libEGL.dll, anywhere in the
 call stack), which needs stacks. A map file of "-" skips symbols, for a report that only needs that.
 Profiles that also sample startup have a "No renderer: startup" phase, and later ones phases named for the game state
