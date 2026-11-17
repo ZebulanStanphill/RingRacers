@@ -77,8 +77,8 @@ jobs:
           RR_PGO: ${{ inputs.pgo_generate && 'generate' || 'auto' }}
         run: ./uwp/build.ps1
 
-      # Sign with a throwaway certificate matching the manifest's Publisher.
-      # Install the .cer from the artifact before the package (Device Portal accepts both).
+      # Sign with a throwaway certificate matching the manifest's Publisher. An Xbox in Developer Mode installs the
+      # package without it; a Windows PC needs the .cer from the artifact trusted first.
       - name: Package
         shell: pwsh
         run: |

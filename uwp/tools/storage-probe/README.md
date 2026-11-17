@@ -8,9 +8,9 @@ Like the game it targets `Windows.Universal` (including Xbox).
 ## Install and run
 
 1. Download the **storage-probe** artifact from the **Storage probe** Actions
-   workflow on branch `storage-probe`. Extract the signed `.msix` and `.cer`.
-2. Install them together through Xbox Device Portal / Dev Home, as with the game.
-   Signing uses a new self-signed certificate per CI run; uninstall a previous
+   workflow on branch `storage-probe`. Extract the signed `.msix`.
+2. Install the `.msix` through Xbox Device Portal / Dev Home, as with the game.
+   Every run's package has the same version, 1.0.0.0, so uninstall a previous
    probe build before installing a different run. Uninstalling deletes its local
    logs, counter and ballast. Do not uninstall Ring Racers for this experiment.
 3. Connect the USB media drive as `E:` with an existing writable `E:\ringracers`
