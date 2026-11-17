@@ -21,23 +21,23 @@
 // Vulkan, and 5 is VibeRant Metal. All are the hardware renderer (2), which is Legacy GL on OpenGL when the setting is 2.
 static inline INT32 SCR_RendererMode(INT32 setting)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	return setting == 3 || setting == 4 || setting == 5 ? 2 : setting;
 #else
 	return setting;
 #endif
 }
-static inline boolean SCR_RendererD3D12(INT32 setting)
+static inline boolean SCR_RendererVibeRant(INT32 setting)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	return setting == 3 || setting == 4 || setting == 5;
 #else
-	return setting == 2 && HWR_D3D12();
+	return setting == 2 && HWR_VibeRant();
 #endif
 }
 static inline boolean SCR_RendererVulkan(INT32 setting)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	return setting == 4;
 #else
 	(void)setting;
@@ -46,7 +46,7 @@ static inline boolean SCR_RendererVulkan(INT32 setting)
 }
 static inline boolean SCR_RendererMetal(INT32 setting)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	return setting == 5;
 #else
 	(void)setting;
@@ -55,17 +55,17 @@ static inline boolean SCR_RendererMetal(INT32 setting)
 }
 static inline INT32 SCR_RendererSetting(INT32 mode)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
-	return mode == 2 && HWR_D3D12() ? (HWR_Metal() ? 5 : HWR_Vulkan() ? 4 : 3) : mode;
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+	return mode == 2 && HWR_VibeRant() ? (HWR_Metal() ? 5 : HWR_Vulkan() ? 4 : 3) : mode;
 #else
 	return mode;
 #endif
 }
 static inline boolean SCR_RendererNeedsRestart(INT32 setting)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	return SCR_RendererMode(setting) == 2 && HWR_DriverStarted()
-		&& (SCR_RendererD3D12(setting) != HWR_D3D12() || SCR_RendererVulkan(setting) != HWR_Vulkan());
+		&& (SCR_RendererVibeRant(setting) != HWR_VibeRant() || SCR_RendererVulkan(setting) != HWR_Vulkan());
 #else
 	(void)setting;
 	return false;

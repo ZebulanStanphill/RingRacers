@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Check that the hardware renderer's engine code compiles with HAVE_D3D12 but without _UWP.
+"""Check that the hardware renderer's engine code compiles with HAVE_VIBERANT but without _UWP.
 
-Usage: check-d3d12-desktop.py PATH/TO/compile_commands.json
+Usage: check-viberant-desktop.py PATH/TO/compile_commands.json
 
 For each C file under src/hardware/ (the Direct3D 12 driver in src/hardware/r_d3d12/
 is C++ and is not included) in a normal game build's compile database, re-runs its
-recorded compile command with -DHAVE_D3D12 and -fsyntax-only added and the output
+recorded compile command with -DHAVE_VIBERANT and -fsyntax-only added and the output
 options removed. Exits 1 if any of them reports an error, or if the database has no
 such files.
 """
@@ -24,7 +24,7 @@ def command_words(entry):
 
 
 def syntax_check_words(words):
-    """The compile command without its output options, plus -DHAVE_D3D12 -fsyntax-only."""
+    """The compile command without its output options, plus -DHAVE_VIBERANT -fsyntax-only."""
     out = []
     skip = False
     for word in words:
@@ -43,7 +43,7 @@ def syntax_check_words(words):
         else:
             out.append(word)
     # Insert before the source file, which is conventionally last.
-    return out[:-1] + ["-DHAVE_D3D12", "-fsyntax-only"] + out[-1:] if out else out
+    return out[:-1] + ["-DHAVE_VIBERANT", "-fsyntax-only"] + out[-1:] if out else out
 
 
 def main(argv):
@@ -73,7 +73,7 @@ def main(argv):
         checked += 1
         if result.returncode != 0:
             failures += 1
-            print("FAILED: %s with -DHAVE_D3D12" % "/".join(parts[index:]))
+            print("FAILED: %s with -DHAVE_VIBERANT" % "/".join(parts[index:]))
             print(result.stdout)
         else:
             print("ok: %s" % "/".join(parts[index:]))

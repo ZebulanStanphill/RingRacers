@@ -20,7 +20,7 @@
 #include "../d3d12_present.h"
 #include "vk12.h"
 
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 // Beside the Direct3D 12 presenter, which forwards to these (d3d12_present.h)
 #define Present_TakeWindow VkPresent_TakeWindow
 #define Present_Frame VkPresent_Frame

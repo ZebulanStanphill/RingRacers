@@ -42,7 +42,7 @@
 #ifdef HWRENDER
 #include "../hardware/hw_drv.h"
 #include "ogl_sdl.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "../hardware/r_d3d12/r_d3d12.h"
 #endif
 #ifdef STATIC_OPENGL
@@ -72,12 +72,12 @@
 void *hwSym(const char *funcName,void *handle)
 {
 	void *funcPointer = NULL;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: Legacy GL draws with Direct3D 12, since ANGLE has no desktop OpenGL
 #if defined(_UWP)
 	return D3D12_GetDriverFunction(funcName);
 #else
-	if (HWR_D3D12() && !handle)
+	if (HWR_VibeRant() && !handle)
 		return D3D12_GetDriverFunction(funcName);
 #endif
 #endif

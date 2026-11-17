@@ -2,18 +2,18 @@ cmake_minimum_required(VERSION 3.24)
 project(RRVulkanDriverTests LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 get_filename_component(RR_ENGINE "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-set(SRB2_CONFIG_VULKAN ON)
+set(SRB2_CONFIG_VIBERANT_VULKAN ON)
 include("${RR_ENGINE}/src/hardware/r_d3d12/custom_shaders.cmake")
 add_executable(vulkan-driver
-    ../d3d12-driver.cpp
+    ../viberant-driver.cpp
     "${RR_ENGINE}/src/hardware/r_d3d12/r_d3d12.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_core.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_upload.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_pipeline.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_prewarm.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/custom_shader.cpp")
-target_compile_definitions(vulkan-driver PRIVATE HAVE_D3D12 HWRENDER HAVE_SDL HAVE_THREADS NONX86 NORUSEASM)
-target_include_directories(vulkan-driver PRIVATE "${RR_ENGINE}/src" "${CMAKE_CURRENT_BINARY_DIR}" ../d3d12-stubs)
+target_compile_definitions(vulkan-driver PRIVATE HAVE_VIBERANT HWRENDER HAVE_SDL HAVE_THREADS NONX86 NORUSEASM)
+target_include_directories(vulkan-driver PRIVATE "${RR_ENGINE}/src" "${CMAKE_CURRENT_BINARY_DIR}" ../viberant-stubs)
 file(GLOB thirdparty_includes "${RR_ENGINE}/thirdparty/*/include")
 target_include_directories(vulkan-driver PRIVATE ${thirdparty_includes})
 target_link_libraries(vulkan-driver PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl ${CMAKE_DL_LIBS})
@@ -21,12 +21,12 @@ set(viberant_shader_entries VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe 
 	PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
 set(RR_VULKAN_SHADER_SOURCE "${RR_ENGINE}/src/hardware/r_d3d12/shaders.hlsl" CACHE FILEPATH "HLSL source (negative controls only override this)")
 set(d3d12_shader_source "${RR_VULKAN_SHADER_SOURCE}")
-if(SRB2_CONFIG_VULKAN)
+if(SRB2_CONFIG_VIBERANT_VULKAN)
 	# The Vulkan backend. Its shaders are the same shaders.hlsl, compiled to SPIR-V headers by glslang's HLSL front end:
 	# registers become bindings of one descriptor set (b0.. at 0, t0.. at 16, s0.. at 32), SV_Position.w stays
 	# Direct3D's, and the semantics are kept so that the backend can give every stage the same locations.
 	# ENABLE_HLSL: glslang's header only declares its HLSL switches with it
-	target_compile_definitions(vulkan-driver PRIVATE HAVE_VULKAN VK_NO_PROTOTYPES ENABLE_HLSL)
+	target_compile_definitions(vulkan-driver PRIVATE HAVE_VIBERANT_VULKAN VK_NO_PROTOTYPES ENABLE_HLSL)
 	include(FetchContent)
 	FetchContent_Declare(rr_vulkan_headers
 		GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git

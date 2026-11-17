@@ -31,11 +31,11 @@ static void HWR_Subsector(INT32 leaf)
 @@BSP_WALK@@
 
 // The drivers a build can draw with: only Direct3D 12 for UWP (front_bbox_uwp), only OpenGL without the Direct3D 12
-// driver (front_bbox_desktop), and both, one after the other through hwr_d3d12, with the driver but not _UWP
+// driver (front_bbox_desktop), and both, one after the other through hwr_viberant, with the driver but not _UWP
 // (front_bbox_both).
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 static const std::initializer_list<bool> kDrivers = {true, false};
-#elif defined(HAVE_D3D12)
+#elif defined(HAVE_VIBERANT)
 static const std::initializer_list<bool> kDrivers = {true};
 #else
 static const std::initializer_list<bool> kDrivers = {false};
@@ -45,10 +45,10 @@ int main()
 {
     for (bool d3d12 : kDrivers)
     {
-#if defined(HAVE_D3D12) && !defined(_UWP)
-    hwr_d3d12 = d3d12;
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+    hwr_viberant = d3d12;
 #endif
-    assert(HWR_D3D12() == d3d12);
+    assert(HWR_VibeRant() == d3d12);
     // Root front is an internal node with two leaves; root back is leaf 2.
     // Repeat with the viewer on either side to exercise both box slots.
     for (frontSide = 0; frontSide < 2; ++frontSide)

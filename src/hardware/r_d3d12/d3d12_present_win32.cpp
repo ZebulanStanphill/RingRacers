@@ -389,7 +389,7 @@ void LogLayout(UINT frameWidth, UINT frameHeight, const Layout &layout)
 
 bool Present_TakeWindow()
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 		return VkPresent_TakeWindow();
 #endif
@@ -406,7 +406,7 @@ bool Present_TakeWindow()
 
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 	{
 		VkPresent_Frame(source, sourceState, width, height, vsync, place);
@@ -540,7 +540,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 
 void Present_ReleaseWindow()
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 	{
 		VkPresent_ReleaseWindow();
@@ -553,7 +553,7 @@ void Present_ReleaseWindow()
 
 void Present_Shutdown(bool idle)
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 	{
 		VkPresent_Shutdown(idle);
@@ -574,7 +574,7 @@ void Present_Shutdown(bool idle)
 
 void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *showframe)
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 	{
 		VkPresent_GetTrace(copied, shown, copyframe, showframe);
@@ -589,7 +589,7 @@ void Present_GetTrace(INT32 *copied, INT32 *shown, UINT32 *copyframe, UINT32 *sh
 
 void Present_LogPerf(double frames)
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 	{
 		VkPresent_LogPerf(frames);
@@ -607,7 +607,7 @@ void Present_LogPerf(double frames)
 
 bool Present_Tracing()
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 		return VkPresent_Tracing();
 #endif
@@ -616,7 +616,7 @@ bool Present_Tracing()
 
 void Present_FrameDone()
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 	{
 		VkPresent_FrameDone();
@@ -629,7 +629,7 @@ void Present_FrameDone()
 
 UINT64 Present_SwapChainBytes()
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 		return VkPresent_SwapChainBytes();
 #endif

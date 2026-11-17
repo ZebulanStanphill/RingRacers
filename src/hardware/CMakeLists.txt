@@ -18,11 +18,11 @@ target_sources(SRB2SDL2 PRIVATE
 set(viberant_shader_entries VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
 	PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
 
-if(SRB2_CONFIG_D3D12 OR SRB2_CONFIG_VULKAN OR SRB2_CONFIG_METAL)
+if(SRB2_CONFIG_VIBERANT_D3D OR SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_METAL)
 	# The VibeRant driver: Legacy GL's driver for Direct3D 12 (VibeRant D3D), which the Vulkan backend (VibeRant Vulkan)
 	# runs on Vulkan, and the Metal backend (VibeRant Metal) on Metal, by implementing the Direct3D 12 interfaces it
-	# uses. HAVE_D3D12 means the driver is built, with any of the backends.
-	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_D3D12)
+	# uses. HAVE_VIBERANT means the driver is built, with any of the backends.
+	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT)
 	set(d3d12_shader_source "${CMAKE_CURRENT_SOURCE_DIR}/r_d3d12/shaders.hlsl")
 	include(r_d3d12/custom_shaders.cmake)
 	target_sources(SRB2SDL2 PRIVATE r_d3d12/custom_shader.cpp r_d3d12/d3d12_pipeline.cpp r_d3d12/d3d12_prewarm.cpp
@@ -31,9 +31,9 @@ if(SRB2_CONFIG_D3D12 OR SRB2_CONFIG_VULKAN OR SRB2_CONFIG_METAL)
 	target_include_directories(SRB2SDL2 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
 
-if(SRB2_CONFIG_D3D12)
+if(SRB2_CONFIG_VIBERANT_D3D)
 	# The Direct3D 12 backend (Windows only; beside OpenGL in desktop builds), whose shaders fxc compiles to headers
-	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_D3D12_NATIVE)
+	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT_D3D)
 	find_program(SRB2_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
 	if(NOT SRB2_FXC)
 		message(FATAL_ERROR "fxc (from the Windows SDK) wasn't found; it compiles Legacy GL's Direct3D 12 shaders")
@@ -80,7 +80,7 @@ if(SRB2_CONFIG_D3D12)
 	endif()
 endif()
 
-if(SRB2_CONFIG_VULKAN OR SRB2_CONFIG_METAL)
+if(SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_METAL)
 	# What the Vulkan and the Metal backend share. Their shaders are the same shaders.hlsl, compiled to SPIR-V headers
 	# by glslang's HLSL front end: registers become bindings of one descriptor set (b0.. at 0, t0.. at 16, s0.. at 32),
 	# SV_Position.w stays Direct3D's, and the semantics are kept so that the backend can give every stage the same
@@ -127,9 +127,9 @@ if(SRB2_CONFIG_VULKAN OR SRB2_CONFIG_METAL)
 	target_sources(SRB2SDL2 PRIVATE r_d3d12/spirv_shader.cpp)
 endif()
 
-if(SRB2_CONFIG_VULKAN)
+if(SRB2_CONFIG_VIBERANT_VULKAN)
 	# The Vulkan backend
-	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VULKAN VK_NO_PROTOTYPES)
+	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT_VULKAN VK_NO_PROTOTYPES)
 	FetchContent_Declare(rr_vulkan_headers
 		GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
 		GIT_TAG 29f979ee5aa58b7b005f805ea8df7a855c39ff37 # v1.3.296
@@ -146,10 +146,10 @@ if(SRB2_CONFIG_VULKAN)
 		r_d3d12/vulkan/vk12_pipeline.cpp r_d3d12/vulkan/vk_present.cpp)
 endif()
 
-if(SRB2_CONFIG_METAL)
+if(SRB2_CONFIG_VIBERANT_METAL)
 	# The Metal backend (macOS), "mtl12", and its presenter: Objective-C++, except the SPIR-V to Metal Shading Language
 	# step (SPIRV-Cross) and the presenter's way to the game's own headers, which Apple's can't share a file with
-	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_METAL)
+	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT_METAL)
 	set(metal_objcxx_sources r_d3d12/metal/mtl12_device.mm r_d3d12/metal/mtl12_commands.mm
 		r_d3d12/metal/mtl12_resources.mm r_d3d12/metal/mtl12_pipeline.mm r_d3d12/metal/mtl_present.mm)
 	target_sources(SRB2SDL2 PRIVATE ${metal_objcxx_sources} r_d3d12/metal/mtl12_msl.cpp r_d3d12/metal/mtl_present_game.cpp)

@@ -16,8 +16,8 @@ foreach ($Entry in $Entries) {
 & fxc.exe /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "$Shaders\RootSignature.h" $Source
 if ($LASTEXITCODE -ne 0) { throw "Production root signature compilation failed" }
 $Driver = Join-Path $Engine "src\hardware\r_d3d12"
-$Files = @((Join-Path $PSScriptRoot 'd3d12-driver.cpp'), "$Driver\r_d3d12.cpp", "$Driver\d3d12_core.cpp", "$Driver\d3d12_upload.cpp", "$Driver\d3d12_pipeline.cpp", "$Driver\d3d12_prewarm.cpp")
-$Includes = @("/I$Engine\src", "/I$Output", "/I$PSScriptRoot\d3d12-stubs")
+$Files = @((Join-Path $PSScriptRoot 'viberant-driver.cpp'), "$Driver\r_d3d12.cpp", "$Driver\d3d12_core.cpp", "$Driver\d3d12_upload.cpp", "$Driver\d3d12_pipeline.cpp", "$Driver\d3d12_prewarm.cpp")
+$Includes = @("/I$Engine\src", "/I$Output", "/I$PSScriptRoot\viberant-stubs")
 # The real engine headers use third-party headers even though the harness calls no engine services.
 Get-ChildItem "$Engine\thirdparty" -Directory | ForEach-Object {
     $Include = Join-Path $_.FullName 'include'
@@ -30,14 +30,14 @@ $EngineCMake = $Engine.Replace('\', '/')
 # CI restores this build from its cache, pinned sources included. Fetching or updating them again would touch every
 # source file and rebuild all of it, so a restored build stays disconnected; any other build fetches as usual.
 $Disconnected = if ($env:RR_TRANSLATOR_CACHE_HIT -eq 'true') { 'ON' } else { 'OFF' }
-& cmake -S (Join-Path $PSScriptRoot 'd3d12-translator') -B $LegacyBuild -G Ninja -DCMAKE_BUILD_TYPE=Release "-DRR_ENGINE=$EngineCMake" "-DFETCHCONTENT_FULLY_DISCONNECTED=$Disconnected"
+& cmake -S (Join-Path $PSScriptRoot 'viberant-translator') -B $LegacyBuild -G Ninja -DCMAKE_BUILD_TYPE=Release "-DRR_ENGINE=$EngineCMake" "-DFETCHCONTENT_FULLY_DISCONNECTED=$Disconnected"
 if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator configuration failed' }
-& cmake --build $LegacyBuild --target rr_d3d12_legacy
+& cmake --build $LegacyBuild --target rr_viberant_legacy
 if ($LASTEXITCODE -ne 0) { throw 'D3D12 runtime translator compilation failed' }
-$LegacyLibraries = @((Join-Path $LegacyBuild 'rr_d3d12_legacy.lib'))
+$LegacyLibraries = @((Join-Path $LegacyBuild 'rr_viberant_legacy.lib'))
 $LegacyLibraries += @(Get-ChildItem (Join-Path $LegacyBuild 'legacy-shader-libs') -Filter '*.lib' | ForEach-Object { $_.FullName })
-$Exe = Join-Path $Output 'd3d12-driver.exe'
-& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_D3D12 /DHAVE_D3D12_NATIVE /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @Includes "/Fe:$Exe" "/Fo:$Output\" @Files /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
+$Exe = Join-Path $Output 'viberant-driver.exe'
+& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_VIBERANT /DHAVE_VIBERANT_D3D /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @Includes "/Fe:$Exe" "/Fo:$Output\" @Files /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 driver compilation failed" }
 & $Exe
 if ($LASTEXITCODE -eq 77) {
@@ -55,7 +55,7 @@ New-Item -ItemType Directory -Force $PresentOutput | Out-Null
 $PresentFiles = @((Join-Path $PSScriptRoot 'd3d12-present.cpp'), "$Driver\d3d12_core.cpp", "$Driver\d3d12_present_win32.cpp")
 $PresentIncludes = @("/I$PSScriptRoot\d3d12-present-stubs") + $Includes
 $PresentExe = Join-Path $PresentOutput 'd3d12-present.exe'
-& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /DHAVE_D3D12 /DHAVE_D3D12_NATIVE /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @PresentIncludes "/Fe:$PresentExe" "/Fo:$PresentOutput\" @PresentFiles /link d3d12.lib dxgi.lib dxguid.lib user32.lib
+& cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /DHAVE_VIBERANT /DHAVE_VIBERANT_D3D /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @PresentIncludes "/Fe:$PresentExe" "/Fo:$PresentOutput\" @PresentFiles /link d3d12.lib dxgi.lib dxguid.lib user32.lib
 if ($LASTEXITCODE -ne 0) { throw "Desktop D3D12 presenter compilation failed" }
 & $PresentExe
 if ($LASTEXITCODE -ne 0) { throw "Desktop D3D12 presenter regression failed (exit $LASTEXITCODE)" }
@@ -120,10 +120,10 @@ foreach ($Control in $Controls) {
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) SM5.1 compilation failed" }
     $PipelineObject = Join-Path $ControlDir 'd3d12_pipeline.obj'
     $ControlIncludes = @("/I$ControlDir") + $Includes
-    & cl.exe /nologo /c /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_D3D12 /DHAVE_D3D12_NATIVE /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @ControlIncludes "/Fo:$PipelineObject" "$Driver\d3d12_pipeline.cpp"
+    & cl.exe /nologo /c /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_VIBERANT /DHAVE_VIBERANT_D3D /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @ControlIncludes "/Fo:$PipelineObject" "$Driver\d3d12_pipeline.cpp"
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) pipeline compilation failed" }
     $Objects = @($Files | Where-Object { [IO.Path]::GetFileName($_) -ne 'd3d12_pipeline.cpp' } | ForEach-Object { Join-Path $Output ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj') })
-    $ControlExe = Join-Path $ControlDir 'd3d12-driver.exe'
+    $ControlExe = Join-Path $ControlDir 'viberant-driver.exe'
     & cl.exe /nologo "/Fe:$ControlExe" @Objects $PipelineObject /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) harness link failed" }
     Run-Control $ControlExe $Control.Scene

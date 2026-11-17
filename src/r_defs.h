@@ -872,7 +872,7 @@ struct rotsprite_t
 {
 	INT32 angles;
 	void **patches;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	void *geometry; // PU_ROLL_GEOMETRY, zone clears this owner on level teardown
 #endif
 };

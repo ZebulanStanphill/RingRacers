@@ -4,7 +4,7 @@
 // terms of the GNU General Public License, version 2.
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
-/// \file capture_d3d12.cpp.in
+/// \file capture_viberant.cpp.in
 /// \brief Native extraction checks for bounded D3D12 fog and water snapshots.
 #include <algorithm>
 #include <cassert>

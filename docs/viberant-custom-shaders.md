@@ -131,7 +131,7 @@ clear around it (`i_video_common.cpp`), and Scale and Screen X/Y then act within
 - `tests/custom-shaders.cpp` (native) emits 79 general Shader Model 5.1 stages and checks their register
   slots and std140 member offsets, with every register in space 0. Windows CI compiles these and the
   smoke-test add-on's 19 stages with `fxc` (`vs_5_1` and `ps_5_1`), for 98 total.
-- `tests/d3d12-driver.cpp` (WARP) covers the driver path:
+- `tests/viberant-driver.cpp` (WARP) covers the driver path:
   - `custom-shader` draws a fixed color from a custom fragment shader.
   - `custom-shader-clean` checks that cleaning the shaders returns to the built-in color.
   - `custom-shader-invalid` checks that invalid GLSL falls back to the built-in shader.

@@ -420,7 +420,7 @@ typedef enum
 	vaopt_spacer7,
 	vaopt_spacer8,
 	vaopt_spacer9,
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// VibeRant D3D's description has one more line
 	vaopt_spacer9a,
 #endif
@@ -430,7 +430,7 @@ typedef enum
 	vaopt_3dmodels,
 	vaopt_shaders,
 	vaopt_paletterendering, // [UWP]
-	vaopt_texturequal, // Texture Filter under HAVE_D3D12
+	vaopt_texturequal, // Texture Filter under HAVE_VIBERANT
 	vaopt_anisotropic,
 	vaopt_billboarding,
 	vaopt_perspective,

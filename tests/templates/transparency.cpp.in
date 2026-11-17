@@ -225,11 +225,11 @@ static hwr_transbounds_t bounds(const std::vector<FOutVector> &v) {
     HWR_TransparencyBoundsFinish(&result); return result;
 }
 // The drivers a build can draw with: only Direct3D 12 for UWP (transparency_uwp), only OpenGL without the Direct3D 12
-// driver (transparency_desktop), and both, one after the other through hwr_d3d12, with the driver but not _UWP
+// driver (transparency_desktop), and both, one after the other through hwr_viberant, with the driver but not _UWP
 // (transparency_both).
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 static const std::initializer_list<bool> kDrivers = {true, false};
-#elif defined(HAVE_D3D12)
+#elif defined(HAVE_VIBERANT)
 static const std::initializer_list<bool> kDrivers = {true};
 #else
 static const std::initializer_list<bool> kDrivers = {false};
@@ -507,10 +507,10 @@ static void Run(bool d3d12) {
 }
 int main() {
     for (bool d3d12 : kDrivers) {
-#if defined(HAVE_D3D12) && !defined(_UWP)
-        hwr_d3d12 = d3d12;
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+        hwr_viberant = d3d12;
 #endif
-        assert(HWR_D3D12() == d3d12);
+        assert(HWR_VibeRant() == d3d12);
         Run(d3d12);
     }
 }

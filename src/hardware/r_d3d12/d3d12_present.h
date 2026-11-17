@@ -76,7 +76,7 @@ void Present_FrameDone();
 // The swap chain's buffers
 UINT64 Present_SwapChainBytes();
 
-#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_VULKAN) && defined(HAVE_VIBERANT_D3D)
 // A build with both backends has two presenters. The Direct3D 12 one has the names above and hands each call to the
 // Vulkan one (vulkan/vk_present.cpp), under these names, while the device is vk12's.
 bool VkPresent_TakeWindow();

@@ -31,8 +31,8 @@ What differs per backend, and where the driver asks (`Core_Vulkan()`):
   DirectX-Headers (the same declarations) and `vulkan/vk12_win.h`, which stands in for the few Win32 calls the driver
   makes and for `D3DCompile`.
 
-Engine code keeps asking `HWR_D3D12()`: it means "the VibeRant driver is drawing", on either backend. `HAVE_D3D12`
-is defined whenever the driver is built; `HAVE_D3D12_NATIVE` and `HAVE_VULKAN` say which backends are. A Windows
+Engine code keeps asking `HWR_VibeRant()`: it means "the VibeRant driver is drawing", on either backend. `HAVE_VIBERANT`
+is defined whenever the driver is built; `HAVE_VIBERANT_D3D` and `HAVE_VIBERANT_VULKAN` say which backends are. A Windows
 desktop build has both in one program, and the Renderer setting (or `-d3d12` and `-vulkan`) picks one per run.
 
 ## Mapping

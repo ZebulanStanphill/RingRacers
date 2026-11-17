@@ -7,7 +7,7 @@
 #include "d3d12_pipeline.h"
 #include <climits>
 // [UWP]: Keep these separate from the SM4 headers with the same array names.
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 #include "r_d3d12_shaders/VSPoly.h"
 #include "r_d3d12_shaders/VSPolyClip.h"
 #include "r_d3d12_shaders/VSSky.h"
@@ -31,7 +31,7 @@
 #include "r_d3d12_shaders/PSFadeMap.h"
 #include "r_d3d12_shaders/PSPostImage.h"
 #endif
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 // The same entry points as SPIR-V (g_<entry>_spv), for the backends that take it: Vulkan's, and Metal's, which
 // translates it further
 #include "r_vulkan_shaders/VSPoly.h"
@@ -83,7 +83,7 @@ const D3D12_INPUT_LAYOUT_DESC kLayouts[] = {
 	{kModel, ARRAYSIZE(kModel)},
 	{nullptr, 0},
 };
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 const D3D12_SHADER_BYTECODE kVs[] = {
 	{g_VSPoly, sizeof g_VSPoly},
 	{g_VSPolyClip, sizeof g_VSPolyClip},
@@ -95,7 +95,7 @@ const D3D12_SHADER_BYTECODE kVs[] = {
 	{g_VSPostImage, sizeof g_VSPostImage},
 };
 #endif
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 const D3D12_SHADER_BYTECODE kVsSpv[] = {
 	{g_VSPoly_spv, sizeof g_VSPoly_spv},
 	{g_VSPolyClip_spv, sizeof g_VSPolyClip_spv},
@@ -109,7 +109,7 @@ const D3D12_SHADER_BYTECODE kVsSpv[] = {
 #endif
 const char *kVsNames[] = {"VSPoly",		  "VSPolyClip", "VSSky",		"VSModel",
 						  "VSModelLight", "VSWipe",		"VSFullscreen", "VSPostImage"};
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 const D3D12_SHADER_BYTECODE kPs[] = {
 	{g_PSFixed, sizeof g_PSFixed},		 {g_PSDefault, sizeof g_PSDefault},
 	{g_PSSoftware, sizeof g_PSSoftware}, {g_PSSoftwareModelLight, sizeof g_PSSoftwareModelLight},
@@ -120,7 +120,7 @@ const D3D12_SHADER_BYTECODE kPs[] = {
 	{g_PSFadeMap, sizeof g_PSFadeMap},	 {g_PSPostImage, sizeof g_PSPostImage},
 };
 #endif
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 const D3D12_SHADER_BYTECODE kPsSpv[] = {
 	{g_PSFixed_spv, sizeof g_PSFixed_spv},
 	{g_PSDefault_spv, sizeof g_PSDefault_spv},
@@ -145,11 +145,11 @@ const char *kPsNames[] = {"PSFixed",	"PSDefault",
 						  "PSSky",		"PSWipe",
 						  "PSWipeFull", "PSPalettePostprocess",
 						  "PSFadeMap",	"PSPostImage"};
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 static_assert(ARRAYSIZE(kVs) == NUMVS, "Every built-in vertex shader needs bytecode");
 static_assert(ARRAYSIZE(kPs) == NUMPS, "Every built-in pixel shader needs bytecode");
 #endif
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 static_assert(ARRAYSIZE(kVsSpv) == NUMVS, "Every built-in vertex shader needs SPIR-V");
 static_assert(ARRAYSIZE(kPsSpv) == NUMPS, "Every built-in pixel shader needs SPIR-V");
 #endif
@@ -157,11 +157,11 @@ static_assert(ARRAYSIZE(kPsSpv) == NUMPS, "Every built-in pixel shader needs SPI
 // The built-in shaders for the backend the device was made with
 const D3D12_SHADER_BYTECODE &BuiltInVs(unsigned kind)
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 		return kVsSpv[kind];
 #endif
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 	return kVs[kind];
 #else
 	return kVsSpv[kind];
@@ -170,11 +170,11 @@ const D3D12_SHADER_BYTECODE &BuiltInVs(unsigned kind)
 
 const D3D12_SHADER_BYTECODE &BuiltInPs(unsigned kind)
 {
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
 		return kPsSpv[kind];
 #endif
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 	return kPs[kind];
 #else
 	return kPsSpv[kind];

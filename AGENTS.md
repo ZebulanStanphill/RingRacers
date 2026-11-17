@@ -31,31 +31,31 @@ those commits stay as they are and the merge is made again.
 - Prefer new files and small, contained hooks over edits spread through upstream
   code. Don't reformat, rename or reorder upstream code you aren't changing.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
-  UWP build, and `HAVE_D3D12` for builds that contain the VibeRant driver
-  (`src/hardware/r_d3d12`). The driver has three backends. `HAVE_D3D12_NATIVE`
-  (`SRB2_CONFIG_D3D12`) is Direct3D 12 itself, VibeRant D3D, which UWP builds and
+  UWP build, and `HAVE_VIBERANT` for builds that contain the VibeRant driver
+  (`src/hardware/r_d3d12`). The driver has three backends. `HAVE_VIBERANT_D3D`
+  (`SRB2_CONFIG_VIBERANT_D3D`) is Direct3D 12 itself, VibeRant D3D, which UWP builds and
   Windows desktop builds made with MSVC or clang-cl have by default.
-  `HAVE_VULKAN` (`SRB2_CONFIG_VULKAN`) is the Vulkan backend, VibeRant Vulkan,
+  `HAVE_VIBERANT_VULKAN` (`SRB2_CONFIG_VIBERANT_VULKAN`) is the Vulkan backend, VibeRant Vulkan,
   which Linux builds and those Windows desktop builds have by default:
   `src/hardware/r_d3d12/vulkan` implements the Direct3D 12 interfaces the driver
   uses, so the driver's own code is the same for both
   (`docs/vulkan-backend.md`). Only code that makes the device, compiles shaders
   or presents asks which backend it is on (`Core_Vulkan()`); engine code doesn't,
   except to name the renderer (`HWR_Vulkan()`). A UWP build has the driver as its
-  only hardware driver; a build with `HAVE_D3D12` but not `_UWP` has both it and
+  only hardware driver; a build with `HAVE_VIBERANT` but not `_UWP` has both it and
   OpenGL, and the video code picks one per run of the game. Behaviour that depends on the driver (what the hardware renderer
   draws or how it walks the level, calls into the driver) therefore checks
-  `HWR_D3D12()` (`src/hardware/hw_driver.h`) at run time: it is the constant 1 with
-  `_UWP`, the constant 0 without `HAVE_D3D12`, and `hwr_d3d12` between them.
-  `#ifdef HAVE_D3D12` is only for what has to be compiled out without the driver:
+  `HWR_VibeRant()` (`src/hardware/hw_driver.h`) at run time: it is the constant 1 with
+  `_UWP`, the constant 0 without `HAVE_VIBERANT`, and `hwr_viberant` between them.
+  `#ifdef HAVE_VIBERANT` is only for what has to be compiled out without the driver:
   includes, types, struct fields, enum values, prototypes, function definitions, a
-  call of a Direct3D 12 function (with the `HWR_D3D12()` check around it), and
-  bookkeeping that doesn't depend on the driver. Code under `HAVE_D3D12` must
+  call of a Direct3D 12 function (with the `HWR_VibeRant()` check around it), and
+  bookkeeping that doesn't depend on the driver. Code under `HAVE_VIBERANT` must
   compile without `_UWP` (Xbox-only things inside it get their own `_UWP`
-  guard) and without Windows (Linux builds have `HAVE_D3D12` with only the
+  guard) and without Windows (Linux builds have `HAVE_VIBERANT` with only the
   Vulkan backend; `vulkan/vk12_win.h` stands in for the few Win32 calls the
   driver makes). MinGW builds must build without any of them.
-  `HAVE_METAL` (`SRB2_CONFIG_METAL`) is a third backend, VibeRant Metal, which
+  `HAVE_VIBERANT_METAL` (`SRB2_CONFIG_VIBERANT_METAL`) is a third backend, VibeRant Metal, which
   macOS builds have by default, and as their only one: `src/hardware/r_d3d12/metal`
   implements the same interfaces on Metal (`docs/metal-backend.md`),
   `Core_Metal()` is where the driver asks, and `HWR_Metal()` names the renderer.

@@ -53,7 +53,7 @@ extern rendermode_t rendermode;
 
 /**	\brief render mode set by command line arguments
 */
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 typedef INT32 rendererchoice_t;
 #define RENDERER_UNCHOSEN 0
 #else
@@ -141,7 +141,7 @@ void I_UpdateNoBlit(void);
 /** \brief Start a display update.
 */
 void I_StartDisplayUpdate(void);
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 // Shows the game's own (OpenGL) window once a renderer that presents on it is the one the game runs with. It starts
 // hidden where VibeRant Vulkan or Metal, which presents on a window of its own, may be that renderer.
 void I_ShowDeferredWindow(void);

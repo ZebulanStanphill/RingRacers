@@ -107,7 +107,7 @@ extern "C" __declspec(dllimport) SDL_WinRT_DeviceFamily SDLCALL SDL_WinRTGetDevi
 // For dynamic referencing of HW rendering functions
 #include "hwsym_sdl.h"
 #include "ogl_sdl.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "../hardware/r_d3d12/r_d3d12.h"
 #endif
 #endif
@@ -197,7 +197,7 @@ static INT32 windowedModes[MAXWINMODES][2] =
 
 static void Impl_VideoSetupBuffer(void);
 static SDL_bool Impl_CreateWindow(SDL_bool fullscreen);
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 static SDL_bool g_window_deferred = SDL_FALSE; // the game's window was made hidden and hasn't been shown yet
 #endif
 //static void Impl_SetWindowName(const char *title);
@@ -306,8 +306,8 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
-#ifdef HAVE_D3D12
-		if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant())
 			D3D12_Surface(vid.width, vid.height);
 		else
 #endif
@@ -440,7 +440,7 @@ static boolean IgnoreMouse(void)
 	return false;
 }
 
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 void I_ShowDeferredWindow(void)
 {
 	if (!g_window_deferred || !window)
@@ -1214,8 +1214,8 @@ void I_UpdateNoBlit(void)
 #ifdef HWRENDER
 		if (rendermode == render_opengl)
 		{
-#ifdef HAVE_D3D12
-			if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+			if (HWR_VibeRant())
 			{
 				D3D12_FinishUpdate(cv_vidwait.value);
 			}
@@ -1489,7 +1489,7 @@ static SDL_bool Impl_CreateContext(void)
 	// [UWP]: Legacy GL draws and presents with Direct3D 12, which takes the window from the RHI's OpenGL ES context
 	// when it starts, so it needs no context of its own
 #ifdef HWRENDER
-	if (rendermode == render_opengl && !HWR_D3D12())
+	if (rendermode == render_opengl && !HWR_VibeRant())
 	{
 		if (!g_legacy_gl_context)
 		{
@@ -1561,18 +1561,18 @@ boolean VID_CheckRenderer(void)
 
 	if (setrenderneeded)
 	{
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (SCR_RendererMode(setrenderneeded) == render_opengl)
-			HWR_StartDriver(SCR_RendererD3D12(setrenderneeded), SCR_RendererVulkan(setrenderneeded));
+			HWR_StartDriver(SCR_RendererVibeRant(setrenderneeded), SCR_RendererVulkan(setrenderneeded));
 #endif
 		rendermode = static_cast<rendermode_t>(SCR_RendererMode(setrenderneeded));
 		rendererchanged = true;
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 		// Legacy GL presents with a swap chain of Direct3D 12's own: on UWP on the window, which ANGLE needs back to draw
 		// Software's frames; on the desktop on a child window, which has to go for Software's frames to show. Starting Legacy
 		// GL again takes it again
-		if (HWR_D3D12() && rendermode != render_opengl)
+		if (HWR_VibeRant() && rendermode != render_opengl)
 			D3D12_ReleaseWindow();
 #endif
 
@@ -1688,7 +1688,7 @@ static SDL_bool Impl_CreateWindow(SDL_bool fullscreen)
 	// RHI: always create window as OPENGL
 	flags |= SDL_WINDOW_OPENGL;
 
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 	// VibeRant Vulkan or Metal presents on a window of its own in this one's place (the presenter), so this one stays hidden until
 	// a renderer that presents on it is the one the game runs with (I_ShowDeferredWindow): starting the game then shows
 	// one window, not two in turn
@@ -1796,7 +1796,7 @@ void I_StartupGraphics(void)
 	else if (M_CheckParm("-opengl"))
 		chosenrendermode = render_opengl;
 
-#if defined(HAVE_D3D12) && (defined(_UWP) || defined(HAVE_D3D12_NATIVE))
+#if defined(HAVE_VIBERANT) && (defined(_UWP) || defined(HAVE_VIBERANT_D3D))
 	else if (M_CheckParm("-d3d12"))
 		chosenrendermode = static_cast<rendererchoice_t>(
 #ifdef _UWP
@@ -1806,11 +1806,11 @@ void I_StartupGraphics(void)
 #endif
 		);
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	else if (M_CheckParm("-vulkan"))
 		chosenrendermode = static_cast<rendererchoice_t>(4);
 #endif
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 	else if (M_CheckParm("-metal"))
 		chosenrendermode = static_cast<rendererchoice_t>(5);
 #endif
@@ -1826,9 +1826,9 @@ void I_StartupGraphics(void)
 
 	if (chosenrendermode != RENDERER_UNCHOSEN)
 	{
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (SCR_RendererMode(chosenrendermode) == render_opengl)
-			HWR_StartDriver(SCR_RendererD3D12(chosenrendermode), SCR_RendererVulkan(chosenrendermode));
+			HWR_StartDriver(SCR_RendererVibeRant(chosenrendermode), SCR_RendererVulkan(chosenrendermode));
 #endif
 		rendermode = static_cast<rendermode_t>(SCR_RendererMode(chosenrendermode));
 	}
@@ -1877,11 +1877,11 @@ void VID_StartupOpenGL(void)
 	if (!glstartup)
 	{
 		CONS_Printf("VID_StartupOpenGL()...\n");
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 		// -vkdebug or -d3ddebug: the backend's validation or debug layer, whose messages go to the log; -warp: a software device.
 		// -mtldebug: what Metal reports of a failed command buffer, in detail (Metal's own validation is turned on with
 		// its environment variables)
-		if (HWR_D3D12())
+		if (HWR_VibeRant())
 			D3D12_SelectBackend(HWR_Vulkan(), HWR_Metal() ? M_CheckParm("-mtldebug") != 0
 				: (M_CheckParm("-vkdebug") || M_CheckParm("-d3ddebug")) != 0, M_CheckParm("-warp") != 0);
 #endif
@@ -1923,8 +1923,8 @@ void VID_StartupOpenGL(void)
 		*(void**)&HWD.pfnSetShaderInfo    = hwSym("SetShaderInfo",NULL);
 		*(void**)&HWD.pfnLoadCustomShader = hwSym("LoadCustomShader",NULL);
 
-#ifdef HAVE_D3D12
-		if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant())
 		{
 			// [UWP]: Palette rendering, which the Direct3D 12 driver supports
 			*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
@@ -1942,8 +1942,8 @@ void VID_StartupOpenGL(void)
 
 	if (vid.glstate == VID_GL_LIBRARY_ERROR)
 	{
-#if defined(HAVE_D3D12) && !defined(_UWP)
-		if (HWR_D3D12())
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+		if (HWR_VibeRant())
 			CONS_Alert(CONS_WARNING, "%s couldn't start (the log says why), so the game is using the Software renderer.\n",
 				HWR_VIBERANT_NAME(HWR_Vulkan()));
 #endif
@@ -1969,7 +1969,7 @@ void I_ShutdownGraphics(void)
 	graphics_started = false;
 
 #ifdef HWRENDER
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: The Direct3D 12 driver releases its swap chain and ANGLE's device while ANGLE's context exists
 	D3D12_Shutdown();
 #endif

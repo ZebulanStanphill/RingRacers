@@ -4,8 +4,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OBJCXX_STANDARD 17)
 get_filename_component(RR_ENGINE "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 # The Metal backend of the VibeRant driver (src/hardware/r_d3d12/metal, "mtl12"), with the driver test in front of it:
-# the counterpart of ../vulkan-driver. HAVE_METAL is the only backend of a macOS build.
-set(SRB2_CONFIG_METAL ON)
+# the counterpart of ../vulkan-driver. HAVE_VIBERANT_METAL is the only backend of a macOS build.
+set(SRB2_CONFIG_VIBERANT_METAL ON)
 include("${RR_ENGINE}/src/hardware/r_d3d12/custom_shaders.cmake")
 set(metal_backend_sources
     "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_device.mm"
@@ -13,7 +13,7 @@ set(metal_backend_sources
     "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_resources.mm"
     "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_pipeline.mm")
 add_executable(metal-driver
-    ../d3d12-driver.cpp
+    ../viberant-driver.cpp
     "${RR_ENGINE}/src/hardware/r_d3d12/r_d3d12.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_core.cpp"
     "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_upload.cpp"
@@ -27,8 +27,8 @@ add_executable(metal-driver
 # mtl12 keeps Metal's objects in C++ classes, which automatic reference counting makes safe
 set_source_files_properties(${metal_backend_sources} metal-objects.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
 # ENABLE_HLSL: glslang's header only declares its HLSL switches with it
-target_compile_definitions(metal-driver PRIVATE HAVE_D3D12 HAVE_METAL HWRENDER HAVE_SDL HAVE_THREADS NONX86 NORUSEASM ENABLE_HLSL)
-target_include_directories(metal-driver PRIVATE "${RR_ENGINE}/src" "${CMAKE_CURRENT_BINARY_DIR}" ../d3d12-stubs)
+target_compile_definitions(metal-driver PRIVATE HAVE_VIBERANT HAVE_VIBERANT_METAL HWRENDER HAVE_SDL HAVE_THREADS NONX86 NORUSEASM ENABLE_HLSL)
+target_include_directories(metal-driver PRIVATE "${RR_ENGINE}/src" "${CMAKE_CURRENT_BINARY_DIR}" ../viberant-stubs)
 file(GLOB thirdparty_includes "${RR_ENGINE}/thirdparty/*/include")
 target_include_directories(metal-driver PRIVATE ${thirdparty_includes})
 target_link_libraries(metal-driver PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl spirv-cross-msl

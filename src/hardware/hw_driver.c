@@ -4,8 +4,8 @@
 
 #include "hw_driver.h"
 
-#if defined(HAVE_D3D12) && !defined(_UWP)
-boolean hwr_d3d12 = false;
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+boolean hwr_viberant = false;
 boolean hwr_vulkan = false;
 static boolean driver_started = false;
 
@@ -14,7 +14,7 @@ void HWR_StartDriver(boolean d3d12, boolean vulkan)
 {
 	if (driver_started)
 		return;
-	hwr_d3d12 = d3d12;
+	hwr_viberant = d3d12;
 	hwr_vulkan = d3d12 && vulkan;
 	driver_started = true;
 }

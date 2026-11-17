@@ -323,7 +323,7 @@ static void *RotatedPatch_Sample(patch_t *patch, INT32 dx, INT32 dy,
 	return Picture_GetPatchPixel(patch, PICFMT_PATCH, sx, sy, flip);
 }
 
-#if defined(HAVE_D3D12) && defined(HWRENDER)
+#if defined(HAVE_VIBERANT) && defined(HWRENDER)
 UINT32 hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry;
 
 void RotatedPatch_Geometry(rollgeometry_t *out, patch_t *patch,

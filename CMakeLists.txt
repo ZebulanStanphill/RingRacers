@@ -97,36 +97,36 @@ option(SRB2_CONFIG_UWP "Compile in UWP compatibility mode (static lib for extern
 # A UWP build has it as its only hardware driver; a desktop build has it beside OpenGL, and the Renderer setting picks
 # one. On by default where its shaders can be compiled: fxc comes with the Windows SDK, which MSVC and clang-cl builds
 # have and MinGW builds don't.
-set(SRB2_CONFIG_D3D12_DEFAULT OFF)
+set(SRB2_CONFIG_VIBERANT_D3D_DEFAULT OFF)
 if(SRB2_CONFIG_UWP OR MSVC)
-	set(SRB2_CONFIG_D3D12_DEFAULT ON)
+	set(SRB2_CONFIG_VIBERANT_D3D_DEFAULT ON)
 endif()
-cmake_dependent_option(SRB2_CONFIG_D3D12 "Build the Direct3D 12 hardware driver (VibeRant D3D). Windows only; needs fxc from the Windows SDK." "${SRB2_CONFIG_D3D12_DEFAULT}"
+cmake_dependent_option(SRB2_CONFIG_VIBERANT_D3D "Build the Direct3D 12 hardware driver (VibeRant D3D). Windows only; needs fxc from the Windows SDK." "${SRB2_CONFIG_VIBERANT_D3D_DEFAULT}"
 	"WIN32;SRB2_CONFIG_HWRENDER" OFF)
 # VibeRant Vulkan: the same driver on Vulkan (src/hardware/r_d3d12/vulkan implements the Direct3D 12 interfaces the
 # driver uses), for platforms without Direct3D 12. Its shaders are shaders.hlsl compiled to SPIR-V by glslang.
-set(SRB2_CONFIG_VULKAN_DEFAULT OFF)
+set(SRB2_CONFIG_VIBERANT_VULKAN_DEFAULT OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR (MSVC AND NOT SRB2_CONFIG_UWP))
 	# Windows desktop builds have both backends, and the Renderer setting offers VibeRant D3D and VibeRant Vulkan
-	set(SRB2_CONFIG_VULKAN_DEFAULT ON)
+	set(SRB2_CONFIG_VIBERANT_VULKAN_DEFAULT ON)
 endif()
-cmake_dependent_option(SRB2_CONFIG_VULKAN "Build the Vulkan backend of the hardware driver (VibeRant Vulkan)." "${SRB2_CONFIG_VULKAN_DEFAULT}"
+cmake_dependent_option(SRB2_CONFIG_VIBERANT_VULKAN "Build the Vulkan backend of the hardware driver (VibeRant Vulkan)." "${SRB2_CONFIG_VIBERANT_VULKAN_DEFAULT}"
 	"SRB2_CONFIG_HWRENDER;NOT SRB2_CONFIG_UWP" OFF)
 # VibeRant Metal: the same driver on Apple's Metal (src/hardware/r_d3d12/metal), for macOS, which then has no other
 # backend. Its shaders are the SPIR-V the Vulkan backend is built with, turned into Metal Shading Language at run time.
-set(SRB2_CONFIG_METAL_DEFAULT OFF)
+set(SRB2_CONFIG_VIBERANT_METAL_DEFAULT OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-	set(SRB2_CONFIG_METAL_DEFAULT ON)
+	set(SRB2_CONFIG_VIBERANT_METAL_DEFAULT ON)
 endif()
-cmake_dependent_option(SRB2_CONFIG_METAL "Build the Metal backend of the hardware driver (VibeRant Metal). macOS only." "${SRB2_CONFIG_METAL_DEFAULT}"
+cmake_dependent_option(SRB2_CONFIG_VIBERANT_METAL "Build the Metal backend of the hardware driver (VibeRant Metal). macOS only." "${SRB2_CONFIG_VIBERANT_METAL_DEFAULT}"
 	"APPLE;SRB2_CONFIG_HWRENDER" OFF)
-if(SRB2_CONFIG_METAL)
-	if(SRB2_CONFIG_VULKAN OR SRB2_CONFIG_D3D12)
-		message(FATAL_ERROR "SRB2_CONFIG_METAL can't be combined with SRB2_CONFIG_VULKAN or SRB2_CONFIG_D3D12: a build with the Metal backend has no other")
+if(SRB2_CONFIG_VIBERANT_METAL)
+	if(SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_D3D)
+		message(FATAL_ERROR "SRB2_CONFIG_VIBERANT_METAL can't be combined with SRB2_CONFIG_VIBERANT_VULKAN or SRB2_CONFIG_VIBERANT_D3D: a build with the Metal backend has no other")
 	endif()
 	# The backend is Objective-C++, which CMake knows as a language from 3.16 on
 	if(CMAKE_VERSION VERSION_LESS 3.16)
-		message(FATAL_ERROR "SRB2_CONFIG_METAL needs CMake 3.16 or later, for Objective-C++. An older CMake can build without VibeRant Metal: -DSRB2_CONFIG_METAL=OFF")
+		message(FATAL_ERROR "SRB2_CONFIG_VIBERANT_METAL needs CMake 3.16 or later, for Objective-C++. An older CMake can build without VibeRant Metal: -DSRB2_CONFIG_VIBERANT_METAL=OFF")
 	endif()
 	enable_language(OBJCXX)
 endif()

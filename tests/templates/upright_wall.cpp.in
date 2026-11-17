@@ -10,8 +10,8 @@
 
 // Which kind of hardware renderer is drawing: this test runs the call as both
 static bool viberant;
-#undef HWR_D3D12
-#define HWR_D3D12() viberant
+#undef HWR_VibeRant
+#define HWR_VibeRant() viberant
 
 @@CLIP@@
 

@@ -28,7 +28,7 @@
 #ifdef _UWP
 #include "r_fps.h"
 #include "screen.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "hardware/hw_driver.h"
 #include "hardware/r_d3d12/r_d3d12.h"
 #endif
@@ -892,8 +892,8 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 			(double)uwp_perf.hwshaders / n, (double)uwp_perf.hwtextures / n);
 	}
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12() && rendermode == render_opengl)
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant() && rendermode == render_opengl)
 		D3D12_LogPerf(seconds);
 #endif
 

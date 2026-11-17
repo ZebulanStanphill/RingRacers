@@ -41,7 +41,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_HEADER, "Rendering Backend...", "Watch people get confused anyway!!",
 		NULL, {NULL}, 0, 0},
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	{IT_STRING | IT_SPACE, "VibeRant D3D is an enhanced port of", "",
 		NULL, {NULL}, 0, 0},
 
@@ -67,7 +67,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_SPACE | IT_NOTHING, NULL, NULL,
 		NULL, {NULL}, 0, 0},
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	{IT_STRING | IT_SPACE, "\x85Report visual bugs to GitHub.com/", "",
 		NULL, {NULL}, 0, 0},
 
@@ -87,7 +87,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Renderer", "If you don't know why you're changing this, leave it on Software!",
 		NULL, {.cvar = &cv_renderer}, 0, 0},
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	{IT_HEADER, "VibeRant D3D Options...", "Watch people get confused anyway!!",
 #else
 	{IT_HEADER, "Legacy GL Options...", "Watch people get confused anyway!!",
@@ -103,7 +103,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
 		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: Texture Quality only picks Legacy GL's OpenGL texture format;
 	// Direct3D 12 always uses 32-bit textures, so its row offers the filter.
 	{IT_STRING | IT_CVAR, "Texture Filter", "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures.",
@@ -154,15 +154,15 @@ menu_t OPTIONS_VideoAdvancedDef = {
 
 void M_RefreshAdvancedVideoOptions(void)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	// The description is of the VibeRant renderer the setting names. Software names none, so with it the description
 	// is of the first one this build lists (cv_renderer_t), which is the one a new config uses.
 	INT32 described = cv_renderer.value;
 	if (described == 1)
 	{
-#if defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_D3D)
 		described = 3;
-#elif defined(HAVE_VULKAN)
+#elif defined(HAVE_VIBERANT_VULKAN)
 		described = 4;
 #else
 		described = 5;
@@ -170,7 +170,7 @@ void M_RefreshAdvancedVideoOptions(void)
 	}
 	boolean shown_d3d = described != 2;
 	boolean shown_vulkan = described == 4;
-	boolean running_d3d = HWR_D3D12();
+	boolean running_d3d = HWR_VibeRant();
 	OPTIONS_VideoAdvanced[vaopt_spacer3].text = shown_vulkan ? "VibeRant Vulkan is an enhanced port" : shown_d3d ? "VibeRant D3D is an enhanced port of" : "Legacy GL supports 3D models and true";
 	OPTIONS_VideoAdvanced[vaopt_spacer4].text = shown_vulkan ? "of the Legacy GL renderer to Vulkan," : shown_d3d ? "the Legacy GL renderer to Direct3D 12," : "perspective, but many visual features";
 	OPTIONS_VideoAdvanced[vaopt_spacer5].text = shown_d3d ? "featuring 3D models, true perspective," : "are missing/broken.";
@@ -178,7 +178,7 @@ void M_RefreshAdvancedVideoOptions(void)
 	OPTIONS_VideoAdvanced[vaopt_renderer - 3].text = shown_d3d ? "\x85Report visual bugs to GitHub.com/" : "\x85Legacy GL will eventually be replaced.";
 	OPTIONS_VideoAdvanced[vaopt_renderer - 2].text = shown_d3d ? "\x85ZebulanStanphill/RingRacers" : "\x85Please don't report visual bugs!";
 	OPTIONS_VideoAdvanced[vaopt_legacygl_begin].text = running_d3d ? (HWR_Vulkan() ? "VibeRant Vulkan Options..." : "VibeRant D3D Options...") : "Legacy GL Options...";
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 	if (described == 5)
 	{
 		OPTIONS_VideoAdvanced[vaopt_spacer3].text = "VibeRant Metal is an enhanced port";

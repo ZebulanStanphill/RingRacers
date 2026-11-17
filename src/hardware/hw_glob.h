@@ -100,7 +100,7 @@ typedef struct gl_vissprite_s
 	UINT8 *colormap;
 	INT32 dispoffset; // copy of info->dispoffset, affects ordering but not drawing
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	const void *rollgeometry;
 #endif
 	patch_t *gpatch;

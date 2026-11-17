@@ -5,7 +5,7 @@ macOS that draws what VibeRant D3D and VibeRant Vulkan draw, because it is the s
 VibeRant Vulkan ([vulkan-backend.md](vulkan-backend.md)): the driver keeps calling Direct3D 12, and a backend
 underneath implements the part of Direct3D 12 it calls.
 
-**State.** A macOS build of the game has it and starts with it: `SRB2_CONFIG_METAL` is on by default there, the
+**State.** A macOS build of the game has it and starts with it: `SRB2_CONFIG_VIBERANT_METAL` is on by default there, the
 Renderer setting lists **VibeRant Metal**, and a new config uses it. It has run on three GPUs: the virtual one of
 GitHub's macOS runners ("Apple Paravirtual device"), an Apple M4 Pro, and an Intel Iris Plus Graphics 645. On each
 the driver test passes (`tests/README.md`, "Metal driver harness") and the game plays a replay on every map, or on
@@ -22,11 +22,11 @@ and about 70 methods as vk12) in Objective-C++ on Metal. `mtl12_bases.h`, genera
 --backend mtl12`, defines every method of those interfaces as "not implemented", and mtl12's classes override the
 ones the driver calls; a method the driver starts to use and mtl12 lacks says so in the log.
 
-The build define is `HAVE_METAL`, beside `HAVE_D3D12` ("the driver is built"), and the CMake option is
-`SRB2_CONFIG_METAL`: on by default on macOS, and `-DSRB2_CONFIG_METAL=OFF` builds without the driver, as the game was
+The build define is `HAVE_VIBERANT_METAL`, beside `HAVE_VIBERANT` ("the driver is built"), and the CMake option is
+`SRB2_CONFIG_VIBERANT_METAL`: on by default on macOS, and `-DSRB2_CONFIG_VIBERANT_METAL=OFF` builds without the driver, as the game was
 before. A macOS build has this backend and no other: not Direct3D 12, and not Vulkan through MoltenVK (asking for
 either beside it stops the configuration). `Core_Metal()` is therefore a constant, true with
-`HAVE_METAL`. The backend needs CMake 3.16, the first that knows Objective-C++ as a language (the rest of the
+`HAVE_VIBERANT_METAL`. The backend needs CMake 3.16, the first that knows Objective-C++ as a language (the rest of the
 project states 3.14, and the configuration says so when it stops), and its files are compiled with automatic
 reference counting, which the game's target sets for its Objective-C++ files. What differs per backend, and where
 the driver asks:

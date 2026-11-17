@@ -41,7 +41,7 @@ pages, and standalone admission reasons. `textures: ... created` still counts ac
 including pages, rather than atlas views. Page memory is counted once. Only the
 UWP build logs these lines.
 
-`d3d12_texture_atlas` tests allocation, rounding, full pages, deferred reuse,
+`viberant_texture_atlas` tests allocation, rounding, full pages, deferred reuse,
 coalescing, and empty-page reset under the native harness's sanitizers. GPU frame
 comparisons and Vulkan validation exercise the shared driver, and the Tests
 workflow runs the driver test on native Direct3D 12 (WARP).

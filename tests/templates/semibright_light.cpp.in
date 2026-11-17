@@ -10,21 +10,21 @@
 #include "hardware/hw_main.h"
 // With OpenGL as the driver HWR_SemiBrightLight does nothing and the raised light level stays. The drivers a build can draw
 // with: only Direct3D 12 for UWP (semibright_light_uwp), only OpenGL without the Direct3D 12 driver
-// (semibright_light_desktop), and both, one after the other through hwr_d3d12, with the driver but not _UWP
+// (semibright_light_desktop), and both, one after the other through hwr_viberant, with the driver but not _UWP
 // (semibright_light_both).
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 static const std::initializer_list<bool> kDrivers = {true, false};
-#elif defined(HAVE_D3D12)
+#elif defined(HAVE_VIBERANT)
 static const std::initializer_list<bool> kDrivers = {true};
 #else
 static const std::initializer_list<bool> kDrivers = {false};
 #endif
 static void UseDriver(bool d3d12)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
-    hwr_d3d12 = d3d12;
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+    hwr_viberant = d3d12;
 #endif
-    assert(HWR_D3D12() == d3d12);
+    assert(HWR_VibeRant() == d3d12);
 }
 // Dependencies of the extracted code: the shader setting that HWR_UseShader reads, and the globals r_things.h's inline
 // helpers name

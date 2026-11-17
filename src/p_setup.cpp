@@ -8855,7 +8855,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette, NULL, 0);
 	}
 #ifdef HWRENDER
-	if (HWR_D3D12() && rendermode == render_opengl)
+	if (HWR_VibeRant() && rendermode == render_opengl)
 		HWR_UWPSetEncoreMap(encoremap);
 #endif
 	CON_SetupBackColormap();

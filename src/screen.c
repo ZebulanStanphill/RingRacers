@@ -14,7 +14,7 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "screen.h"
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 #include "k_menu.h"
 #endif
 #include "console.h"
@@ -61,18 +61,18 @@ UINT8 setrenderneeded = 0;
 
 CV_PossibleValue_t cv_renderer_t[] = {
 	{1, "Software"},
-#if defined(HAVE_D3D12) && !defined(_UWP)
-#ifdef HAVE_D3D12_NATIVE
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+#ifdef HAVE_VIBERANT_D3D
 	{3, "VibeRant D3D"},
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	{4, "VibeRant Vulkan"},
 #endif
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 	{5, "VibeRant Metal"},
 #endif
 	{2, "Legacy GL"},
-#elif defined(HAVE_D3D12)
+#elif defined(HAVE_VIBERANT)
 	{2, "VibeRant D3D"},
 #elif defined(HWRENDER)
 	{2, "Legacy GL"},
@@ -426,7 +426,7 @@ void SCR_CheckDefaultMode(void)
 		if (chosenrendermode == RENDERER_UNCHOSEN) // nothing set at command line
 			SCR_ChangeRenderer();
 		else
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (!SCR_RendererNeedsRestart(cv_renderer.value))
 #endif
 		{
@@ -465,7 +465,7 @@ void SCR_ChangeFullscreen(void)
 
 void SCR_ChangeRenderer(void)
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	M_RefreshAdvancedVideoOptions();
 	if (SCR_RendererNeedsRestart(cv_renderer.value))
 	{
@@ -489,11 +489,11 @@ void SCR_ChangeRenderer(void)
 	if ((vid.glstate == VID_GL_LIBRARY_ERROR)
 	&& (SCR_RendererMode(cv_renderer.value) == render_opengl))
 	{
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (M_CheckParm("-nogl"))
-			CONS_Alert(CONS_ERROR, "%s rendering was disabled!\n", SCR_RendererD3D12(cv_renderer.value) ? SCR_RendererName(cv_renderer.value) : "OpenGL");
+			CONS_Alert(CONS_ERROR, "%s rendering was disabled!\n", SCR_RendererVibeRant(cv_renderer.value) ? SCR_RendererName(cv_renderer.value) : "OpenGL");
 		else
-			CONS_Alert(CONS_ERROR, "%s never loaded\n", HWR_D3D12() ? HWR_VIBERANT_NAME(HWR_Vulkan()) : "OpenGL");
+			CONS_Alert(CONS_ERROR, "%s never loaded\n", HWR_VibeRant() ? HWR_VIBERANT_NAME(HWR_Vulkan()) : "OpenGL");
 #else
 		if (M_CheckParm("-nogl"))
 			CONS_Alert(CONS_ERROR, "OpenGL rendering was disabled!\n");

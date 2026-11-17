@@ -26,13 +26,13 @@
 #include <d3dcompiler.h>
 #endif
 #include "texture_repack.h"
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 #include "r_d3d12_shaders/RootSignature.h"
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 #include "vulkan/vk12.h"
 #endif
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 #include "metal/mtl12.h"
 #endif
 
@@ -1516,14 +1516,14 @@ bool InitDrawing()
 	// vk12 has shaders.hlsl's root signature built in, and takes a token in place of Direct3D's serialized one
 	const void *rootBlob = nullptr;
 	size_t rootBytes = 0;
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 	// As has mtl12
 	if (Core_Metal()) { rootBlob = rr_mtl12::kRootSignature; rootBytes = sizeof rr_mtl12::kRootSignature; }
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan()) { rootBlob = rr_vk12::kRootSignature; rootBytes = sizeof rr_vk12::kRootSignature; }
 #endif
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 	if (!rootBlob) { rootBlob = g_RootSignature; rootBytes = sizeof g_RootSignature; }
 #endif
 	if (Core_Failed(device->CreateRootSignature(0, rootBlob, rootBytes,
@@ -2852,7 +2852,7 @@ static void AdvanceCustomGeneration()
 static bool CompileCustomStage(const std::string &hlsl, const char *profile, ComPtr<ID3DBlob> &code)
 {
 	ComPtr<ID3DBlob> errors;
-#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_VULKAN) && defined(HAVE_VIBERANT_D3D)
 	// With both backends built, D3DCompile is Direct3D's; vk12 wants SPIR-V
 	const HRESULT result = Core_Vulkan() ? rr_vk12::CompileHlsl(hlsl.data(), hlsl.size(), "main", profile, &code, &errors)
 		: D3DCompile(hlsl.data(), hlsl.size(), "Legacy GL add-on", nullptr, nullptr,

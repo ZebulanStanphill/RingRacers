@@ -23,9 +23,9 @@
 struct maplighting maplighting;
 
 // Which hardware driver draws, and whether it has shaders (what HWR_UseShader reads): this test runs the function as each
-#undef HWR_D3D12
+#undef HWR_VibeRant
 static bool viberant;
-#define HWR_D3D12() viberant
+#define HWR_VibeRant() viberant
 consvar_t cv_glshaders;
 boolean gl_shadersavailable = true;
 @@USE_SHADER@@

@@ -18,7 +18,7 @@
 #ifdef _UWP
 #include "../sdl/i_uwptrace.h"
 #endif
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "../console.h"
 #endif
 
@@ -37,7 +37,7 @@
 #include "../r_fps.h"
 #include "../r_local.h"
 #include "../r_patch.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "../r_patchrotation.h"
 #endif
 #include "../r_picformats.h"
@@ -67,7 +67,7 @@
 /// \note	SRB2CB port.
 ///      	SRB2CB itself ported this from PrBoom+
 #include "hw_clip.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "r_d3d12/r_d3d12.h"
 #endif
 #ifdef _UWP
@@ -907,7 +907,7 @@ static void HWR_SpringProbeEntry(size_t w, const hwr_springwall_t *entry, boolea
 	I_OutputMsg("%s", message);
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 static void HWR_RollSurface(FSurfaceInfo *surf, gl_vissprite_t *spr)
 {
 	const rollgeometry_t *g = (const rollgeometry_t *)spr->rollgeometry;
@@ -924,7 +924,7 @@ static void HWR_RollSurface(FSurfaceInfo *surf, gl_vissprite_t *spr)
 
 // A spring's 3D model is hidden where Software hides the spring's sprite: the sides that cut the sprite are marked in
 // the stencil buffer while the model is drawn (see HWR_DrawSpringModel). These are the sides marked for this model.
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #define HWR_SPRINGMAXMASKS 64
 static size_t hwr_springmasks[HWR_SPRINGMAXMASKS];
 static size_t hwr_numspringmasks;
@@ -1023,7 +1023,7 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 		count = nextcount;
 		if (count > hwr_springpeakpieces)
 			hwr_springpeakpieces = count;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 		if (mask && cut && hwr_numspringmasks < HWR_SPRINGMAXMASKS
 			&& D3D12_DrawSpringMask(hwr_springwalls[w].v, hwr_springwalls[w].numverts, true))
 			hwr_springmasks[hwr_numspringmasks++] = w;
@@ -1053,8 +1053,8 @@ static void HWR_DrawSpringPolygon(FSurfaceInfo *surf, FOutVector *quad,
 {
 	size_t i, count;
 	INT32 buffer;
-#ifdef HAVE_D3D12
-	if (HWR_D3D12() && spr->rollgeometry)
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant() && spr->rollgeometry)
 	{
 		HWR_RollSurface(surf, spr);
 		flags |= PF_RollSprite;
@@ -1114,7 +1114,7 @@ int ps_hw_numcolors = 0;
 precise_t ps_hw_batchsorttime = 0;
 precise_t ps_hw_batchdrawtime = 0;
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #ifdef _UWP
 precise_t ps_hw_portaltime = 0;
 INT32 ps_hw_portals = 0;
@@ -1133,7 +1133,7 @@ typedef struct hwr_portal_s
 static INT32 *hwr_portalpartners; // PU_LEVEL; nulled by the zone allocator
 static boolean hwr_maphasportals, hwr_portalsearch;
 static INT32 hwr_portallevel;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // Whether any sky (a skybox's view or a sky texture) has been drawn into the color buffer this frame for this player's
 // view: only then does the void need filling black.
 static boolean hwr_skydrawn;
@@ -1325,7 +1325,7 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 	// [UWP]: Only an approximation of Software, which keeps the sector's light and moves a semibright sprite's distance
 	// into the nearer half of the table: in a dim sector this is far brighter. Direct3D 12's shaders follow Software
 	// (HWR_SemiBrightLight); without shaders nothing is lit by distance, and the approximation stays.
-	if (semibright && (!HWR_D3D12() || !HWR_UseShader()))
+	if (semibright && (!HWR_VibeRant() || !HWR_UseShader()))
 	{
 		*lightlevel = 192 + (*lightlevel >> 1);
 	}
@@ -1334,7 +1334,7 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 // [UWP]: Marks a surface that HWR_Lighting has just lit as a semibright sprite's, for the driver
 void HWR_SemiBrightLight(FSurfaceInfo *surface, mobj_t *thing)
 {
-	if (HWR_D3D12() && HWR_UseShader() && R_ThingIsSemiBright(thing))
+	if (HWR_VibeRant() && HWR_UseShader() && R_ThingIsSemiBright(thing))
 		surface->LightInfo.light_level |= HWR_LIGHT_SEMIBRIGHT;
 }
 
@@ -1355,7 +1355,7 @@ static sector_t *HWR_FindViewFog(void)
 	ffloor_t *rover;
 	sector_t *control = NULL;
 	// Shader fog remaps at its actual boundaries, including camera exit faces.
-	if (HWR_D3D12() && HWR_UseShader())
+	if (HWR_VibeRant() && HWR_UseShader())
 		return NULL;
 	const UINT32 required = FOF_EXISTS|FOF_RENDERALL|FOF_FOG|FOF_INVERTPLANES
 		|FOF_INVERTSIDES|FOF_DOUBLESHADOW;
@@ -1546,7 +1546,7 @@ UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if 
 // OpenGL's shaders have a smooth curve: both keep the fine offset.
 static boolean HWR_SoftwareLightSteps(void)
 {
-	return HWR_D3D12() && HWR_UseShader();
+	return HWR_VibeRant() && HWR_UseShader();
 }
 
 // [UWP]: A wall's light with Software's offset. The sector is the one whose lighting model says whether there is one:
@@ -1584,7 +1584,7 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, seg_t *seg)
 	return (FUINT)finallight;
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // [UWP]: Software gives some walls no light offset at all, and with its steps (HWR_SoftwareLightSteps) those must have
 // none here either: an offset of half a step or more is now always a whole step, where the fine one was often lost
 // in the rounding. Under a light of a sector's light list, a solid wall (an upper, lower, or one-sided wall:
@@ -1660,7 +1660,7 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, pslope_t *slope, const sector_t 
 //                                   FLOOR/CEILING GENERATION FROM SUBSECTORS
 // ==========================================================================
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // [UWP]: Almost all subsectors have no horizons; avoid scanning their linedefs
 // for every floor, ceiling and sky claim. PU_LEVEL clears the owner on teardown.
 static UINT8 *hwr_horizonflags;
@@ -1729,7 +1729,7 @@ static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
 }
 
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // [UWP]: Software shows the sky only through sky surfaces and draws everything the level doesn't cover black, while
 // Legacy GL draws the sky over the whole view first. A sky plane therefore writes depth without color (like
 // HWR_DrawSkyWall) at its real position, claiming its pixels for the sky; D3D12_FillVoid then blackens the pixels
@@ -1888,10 +1888,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	if (nrPlaneVerts < 3)   //not even a triangle ?
 		return;
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: A 3D floor plane with the sky flat is sky in Software. Only the opaque draws made while walking the BSP
 	// get here with a subsector; queued translucent ones draw after the void is filled.
-	if (HWR_D3D12() && subsector && levelflat == &levelflats[skyflatnum])
+	if (HWR_VibeRant() && subsector && levelflat == &levelflats[skyflatnum])
 	{
 		HWR_RenderSkyClaim(subsector, xsub, fixedheight, slope);
 		return;
@@ -2037,8 +2037,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		if (PolyFlags & PF_Fog)
 		{
 			shader = SHADER_FOG;
-#ifdef HAVE_D3D12
-			if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+			if (HWR_VibeRant())
 				PolyFlags |= PF_FogPlane;
 #endif
 		}
@@ -2050,16 +2050,16 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		PolyFlags |= PF_ColorMapped;
 	}
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		D3D12_SurfaceProbeSource(FOFsector ? "FOF plane" : isceiling ? "ceiling" : "floor",
 			FOFsector ? (INT32)(FOFsector-sectors) : subsector ? (INT32)(subsector-subsectors) : -1);
 #endif
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
 
 	if (subsector
-#ifdef HAVE_D3D12
-		&& (!HWR_D3D12() || HWR_SubsectorHasHorizon(subsector))
+#ifdef HAVE_VIBERANT
+		&& (!HWR_VibeRant() || HWR_SubsectorHasHorizon(subsector))
 #endif
 	)
 	{
@@ -2128,8 +2128,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 					horizonpts[4].y = gl_viewz;
 
 					// Draw
-#ifdef HAVE_D3D12
-					if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+					if (HWR_VibeRant())
 						D3D12_SurfaceProbeSource("horizon", (INT32)(line->linedef-lines));
 #endif
 					HWR_ProcessPolygon(&Surf, horizonpts, 6, PolyFlags, shader, true);
@@ -2312,8 +2312,8 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 		blendmode |= PF_ColorMapped;
 	}
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		D3D12_SurfaceProbeSource(blendmode & PF_Invisible ? "sky occluder" : "wall",
 			gl_curline && gl_curline->linedef ? (INT32)(gl_curline->linedef-lines) : -1);
 #endif
@@ -2327,7 +2327,7 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 //
 // HWR_SplitWall
 //
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // [UWP]: Set by HWR_ProcessSeg around the light splits of the walls Software treats as solid: upper and lower walls
 // and one-sided walls. Software's column drawer leaves the part of such a wall inside a solid 3D floor's thickness
 // (FOF_CUTSOLIDS) undrawn, expecting the 3D floor to cover it, but the column is closed all the same: nothing
@@ -2358,7 +2358,7 @@ static void HWR_DrawCutVoid(const FOutVector *piece)
 }
 #endif
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // Intersect each light band with the ORIGINAL wall. A band can miss one end
 // of a sloped wall entirely; drawing an inverted quad there fills a huge false
 // triangle. Split at every crossing of the four linear height boundaries so
@@ -2419,7 +2419,7 @@ static void HWR_DrawWallLightSlice(const FOutVector *original, float top, float 
 			piece[lower].t = uvtop+(h[0]-piece[lower].y)*peg;
 		}
 		surf->PolyColor.s.alpha = alpha;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 		if (hwr_voidslice)
 			HWR_DrawCutVoid(piece);
 		else
@@ -2471,10 +2471,10 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 	INT32 solid, i;
 	lightlist_t *  list = sector->lightlist;
 	const UINT8 alpha = Surf->PolyColor.s.alpha;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	FOutVector original[4];
 	const sector_t *offsetsector = sector; // [UWP]: see HWR_SliceWallLight
-	if (HWR_D3D12())
+	if (HWR_VibeRant())
 		M_Memcpy(original, wallVerts, sizeof original);
 #endif
 	FUINT lightnum = sector->lightlevel;
@@ -2514,7 +2514,7 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 				if (!pfloor && cutflag == FOF_TRANSLUCENT && !(list[i].flags & FOF_FOG))
 					lightnum = HWR_TranslucentWallLight(lightnum, colormap);
 			}
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 			// [UWP]: hwr_splitvoid is set around the walls Software treats as solid
 			offsetsector = HWR_SoftwareSkipsWallOffset(pfloor, hwr_splitvoid, list[i].flags, colormap) ? NULL : sector;
 #endif
@@ -2551,9 +2551,9 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 
 		if (endheight >= endtop && height >= top)
 		{
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 			// [UWP]: Fill the cut black, from the 3D floor's bottom up to the wall that remains, within the wall
-			if (HWR_D3D12() && hwr_splitvoid && solid && (top > bheight || endtop > endbheight))
+			if (HWR_VibeRant() && hwr_splitvoid && solid && (top > bheight || endtop > endbheight))
 			{
 				hwr_voidslice = true;
 				HWR_DrawWallLightSlice(original, top, endtop, min(bheight, top), min(endbheight, endtop),
@@ -2588,18 +2588,18 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 		//Found a break;
 		bot = bheight;
 
-		if (!HWR_D3D12() && bot < realbot)
+		if (!HWR_VibeRant() && bot < realbot)
 			bot = realbot;
 
 		endbot = endbheight;
 
-		if (!HWR_D3D12() && endbot < endrealbot)
+		if (!HWR_VibeRant() && endbot < endrealbot)
 			endbot = endrealbot;
 
 		Surf->PolyColor.s.alpha = alpha;
 
-#ifdef HAVE_D3D12
-		if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant())
 			HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap, offsetsector);
 		else
 #endif
@@ -2634,8 +2634,8 @@ static void HWR_SplitWall(sector_t *sector, FOutVector *wallVerts, INT32 texnum,
 
 	Surf->PolyColor.s.alpha = alpha;
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		HWR_DrawWallLightSlice(original, top, endtop, bot, endbot, Surf, texnum, basetexnum, polyflags, lightnum, colormap, offsetsector);
 	else
 #endif
@@ -2677,7 +2677,7 @@ static void HWR_DrawSkyWall(FOutVector *wallVerts, FSurfaceInfo *Surf)
 	// PF_Occlude is set in HWR_ProjectWall to draw into the depth buffer
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // [UWP]: R_StoreWallRange leaves floorclip/ceilingclip at the front plane when a step has no
 // wall texture. Software's visible back visplane bleeds across it, including slope-rounding slivers.
 static UINT8 HWR_FlatBleeds(const sector_t *front, const sector_t *back,
@@ -2931,9 +2931,9 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			gl_bottomtexture = R_GetTextureNum(gl_basebottomtexture);
 		}
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 		// [UWP]: Continue visible back flats across untextured steps, as Software does.
-		if (HWR_D3D12())
+		if (HWR_VibeRant())
 		{
 			UINT8 bleed = HWR_FlatBleeds(gl_frontsector, gl_backsector, v1x, v1y, v2x, v2y,
 				gl_bottomtexture != 0, gl_toptexture != 0, gl_curline->polyseg != NULL,
@@ -3012,11 +3012,11 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 
 				if (gl_frontsector->numlights)
 				{
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 					hwr_splitvoid = true;
 #endif
 					HWR_SplitWall(gl_frontsector, wallVerts, gl_toptexture, gl_basetoptexture, &Surf, FOF_CUTLEVEL, NULL, polyflags);
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 					hwr_splitvoid = false;
 #endif
 				}
@@ -3095,11 +3095,11 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 
 				if (gl_frontsector->numlights)
 				{
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 					hwr_splitvoid = true;
 #endif
 					HWR_SplitWall(gl_frontsector, wallVerts, gl_bottomtexture, gl_basebottomtexture, &Surf, FOF_CUTLEVEL, NULL, polyflags);
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 					hwr_splitvoid = false;
 #endif
 				}
@@ -3454,7 +3454,7 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			// [UWP]: Only the part of the wall whose top is above its bottom, as Software draws it. The sky walls
 			// below go by the whole line, so the cut is undone after the wall is drawn.
 			memcpy(uprightwall, wallVerts, sizeof uprightwall);
-			if (HWR_D3D12() && !HWR_ClipWallToUpright(wallVerts))
+			if (HWR_VibeRant() && !HWR_ClipWallToUpright(wallVerts))
 			{
 				// Nothing of it is the right way up
 			}
@@ -3462,11 +3462,11 @@ static void HWR_ProcessSeg(void) // Sort of like GLWall::Process in GZDoom
 			// I don't think that solid walls can use translucent linedef types...
 			if (gl_frontsector->numlights)
 			{
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 				hwr_splitvoid = true;
 #endif
 				HWR_SplitWall(gl_frontsector, wallVerts, gl_midtexture, gl_sidedef->midtexture, &Surf, FOF_CUTLEVEL, NULL, 0);
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 				hwr_splitvoid = false;
 #endif
 			}
@@ -3931,7 +3931,7 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 	return false;
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // Mirror R_CheckViewMorph's roll zoom: viewmorph[].zoomneeded is stale in hardware mode.
 static fixed_t HWR_SoftwareRollZoom(void)
 {
@@ -4081,10 +4081,10 @@ static void HWR_DrawVoidWall(seg_t *line, sector_t *front, UINT8 walls)
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	boolean portaloccludes = true;
 #endif
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	UINT8 voidwalls;
 #endif
 
@@ -4102,13 +4102,13 @@ static void HWR_AddLine(seg_t * line)
 	v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
 	v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// Behind the exit, or the exit line itself, which lies on the clip plane: Software's traversal starts in the exit's
 	// front sector, so it doesn't draw it either
-	if (HWR_D3D12() && hwr_portalexit && (line->linedef == hwr_portalexit
+	if (HWR_VibeRant() && hwr_portalexit && (line->linedef == hwr_portalexit
 		|| (HWR_PortalSide(v1x,v1y) < 0 && HWR_PortalSide(v2x,v2y) < 0)))
 		return;
-	if (HWR_D3D12() && hwr_portalexit)
+	if (HWR_VibeRant() && hwr_portalexit)
 		portaloccludes = HWR_PortalSide(v1x,v1y) >= 0 && HWR_PortalSide(v2x,v2y) >= 0;
 #endif
 	// OPTIMIZE: quickly reject orthogonal back sides.
@@ -4126,8 +4126,8 @@ static void HWR_AddLine(seg_t * line)
 		return;
 	}
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12() && line->side == 0 && line->linedef->special == 40 && hwr_portalpartners
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant() && line->side == 0 && line->linedef->special == 40 && hwr_portalpartners
 		&& hwr_portalpartners[line->linedef-lines] >= 0)
 	{
 		boolean active = hwr_portalsearch;
@@ -4148,17 +4148,17 @@ static void HWR_AddLine(seg_t * line)
 	checkforemptylines = true;
 
 	gl_backsector = line->backsector;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// FOF sides may sample the adjacent sector before its first BSP visit.
 	// Prepare the real sector; keep moved flags for the usual fake-flat refresh.
-	if (HWR_D3D12() && !hwr_portalsearch && gl_backsector && gl_backsector->ffloors
+	if (HWR_VibeRant() && !hwr_portalsearch && gl_backsector && gl_backsector->ffloors
 		&& !gl_backsector->numlights)
 		R_Prep3DFloors(gl_backsector);
 #endif
 
 	if (!line->backsector)
 	{
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 		if (portaloccludes)
 #endif
 			gld_clipper_SafeAddClipRange(angle2, angle1);
@@ -4182,8 +4182,8 @@ static void HWR_AddLine(seg_t * line)
 					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
 				return; // line is empty, don't even bother
 			// treat like wide open window instead
-#ifdef HAVE_D3D12
-			if (!HWR_D3D12() || !hwr_portalsearch)
+#ifdef HAVE_VIBERANT
+			if (!HWR_VibeRant() || !hwr_portalsearch)
 #endif
 				HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
 			return;
@@ -4191,14 +4191,14 @@ static void HWR_AddLine(seg_t * line)
 
 		if (CheckClip(line, gl_frontsector, gl_backsector))
 		{
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 			if (portaloccludes)
 #endif
 				gld_clipper_SafeAddClipRange(angle2, angle1);
 			checkforemptylines = false;
 		}
-#ifdef HAVE_D3D12
-		else if (HWR_D3D12() && portaloccludes && (voidwalls = HWR_WallFillsView(line, gl_frontsector, gl_backsector)) != 0)
+#ifdef HAVE_VIBERANT
+		else if (HWR_VibeRant() && portaloccludes && (voidwalls = HWR_WallFillsView(line, gl_frontsector, gl_backsector)) != 0)
 		{
 			// Software draws this seg, then treats it as solid and leaves the rest of its columns empty: black along
 			// it. The seg stays open in the clipper here, though. The black and the wall hide what is behind them, and
@@ -4219,8 +4219,8 @@ static void HWR_AddLine(seg_t * line)
 			return;
 	}
 
-#ifdef HAVE_D3D12
-	if (!HWR_D3D12() || !hwr_portalsearch)
+#ifdef HAVE_VIBERANT
+	if (!HWR_VibeRant() || !hwr_portalsearch)
 #endif
 		HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
 	return;
@@ -4630,8 +4630,8 @@ static void HWR_Subsector(size_t num)
 		line = NULL;
 	}
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12() && hwr_portalsearch)
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant() && hwr_portalsearch)
 	{
 		while (count--)
 		{
@@ -4753,10 +4753,10 @@ static void HWR_Subsector(size_t num)
 		}
 	}
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: Claim sky planes only from the side they face. From the far side, Software fills only beyond
 	// the marking segs' edges, which our sky walls reproduce; a claimed plane would occlude what is behind it.
-	if (HWR_D3D12() && sub->validcount != validcount)
+	if (HWR_VibeRant() && sub->validcount != validcount)
 	{
 		if (gl_frontsector->floorpic == skyflatnum && cullFloorHeight < dup_viewz)
 			HWR_RenderSkyClaim(sub, &extrasubsectors[num], locFloorHeight, gl_frontsector->f_slope);
@@ -5039,17 +5039,17 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 	hwbbox = bsp->bbox[side];
 
 	// Recursively divide front space.
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: Software clips all segs of a hidden front subsector and draws nothing.
 	// Hardware draws its planes whole; a horizon line has no wall to cover them.
-	if (!HWR_D3D12() || (HWR_CheckBBox(bsp->bbox[side]) && HWR_PortalBBox(bsp->bbox[side])))
+	if (!HWR_VibeRant() || (HWR_CheckBBox(bsp->bbox[side]) && HWR_PortalBBox(bsp->bbox[side])))
 #endif
 		HWR_RenderBSPNode(bsp->children[side]);
 
 	// Possibly divide back space.
 	if (HWR_CheckBBox(bsp->bbox[side^1])
-#ifdef HAVE_D3D12
-		&& (!HWR_D3D12() || HWR_PortalBBox(bsp->bbox[side^1]))
+#ifdef HAVE_VIBERANT
+		&& (!HWR_VibeRant() || HWR_PortalBBox(bsp->bbox[side^1]))
 #endif
 	)
 	{
@@ -5459,8 +5459,8 @@ static void HWR_RotateSpritePolyToAim(gl_vissprite_t *spr, FOutVector *wallVerts
 
 static float HWR_SpriteUV(gl_vissprite_t *spr, boolean vertical)
 {
-#ifdef HAVE_D3D12
-	if (HWR_D3D12() && spr->rollgeometry)
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant() && spr->rollgeometry)
 	{
 		const rollgeometry_t *g = (const rollgeometry_t *)spr->rollgeometry;
 		return vertical ? g->height : g->width;
@@ -6084,8 +6084,8 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 	if (!spr->mobj->subsector)
 		return;
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 	{
 		if (spr->rollgeometry) ++hwr_roll_shader;
 		else if (spr->rotated) ++hwr_roll_cpu;
@@ -6666,7 +6666,7 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
 	return sortnode[n2].plane->drawcount - sortnode[n1].plane->drawcount;
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // Coplanar ripple polygons are pieces of one surface, not stacked water layers.
 // Keep their background immutable even when subsector polygons overlap. A wall,
 // polyobject, non-ripple plane or a different slope/height starts a new capture.
@@ -7047,8 +7047,8 @@ static void HWR_CreateDrawNodes(void)
 
 	for (i = 0; i < p; i++)
 	{
-#ifdef HAVE_D3D12
-		if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant())
 		{
 			const planeinfo_t *plane = sortnode[sortindex[i]].plane;
 			const planeinfo_t *previous = i ? sortnode[sortindex[i-1]].plane : NULL;
@@ -7091,7 +7091,7 @@ static void HWR_CreateDrawNodes(void)
 	}
 	if (sprites) HWR_EndSpriteDraw();
 
-	if (HWR_D3D12())
+	if (HWR_VibeRant())
 		HWD.pfnSetSpecialState(HWD_SET_WATER_SURFACE, 0);
 
 	ps_hw_nodedrawtime = I_GetPreciseTime() - ps_hw_nodedrawtime;
@@ -7192,8 +7192,8 @@ static INT32 HWR_SpringModelBegin(gl_vissprite_t *spr)
 		return HWR_SPRINGMODEL_WHOLE;
 	if (!count)
 		return HWR_SPRINGMODEL_HIDDEN;
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 	{
 		// A model can be wider and taller than its sprite: mark what cuts an area twice the sprite's size.
 		FOutVector area[4];
@@ -7222,7 +7222,7 @@ static INT32 HWR_SpringModelBegin(gl_vissprite_t *spr)
 
 static void HWR_SpringModelEnd(INT32 drawn)
 {
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	size_t i;
 	if (drawn != HWR_SPRINGMODEL_MASKED)
 		return;
@@ -7442,7 +7442,7 @@ static void HWR_ShadowDrawPosition(mobj_t *thing, const interpmobjstate_t *inter
 
 static void HWR_ProjectSprite(mobj_t *thing)
 {
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	const rollgeometry_t *rollgeometry = NULL;
 #endif
 	gl_vissprite_t *vis;
@@ -7500,9 +7500,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
 	}
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// Software tests the interpolated origin before hitlag/sprite offsets.
-	if (HWR_D3D12() && hwr_portalexit && P_PointOnLineSide(interp.x,interp.y,hwr_portalexit) != 0)
+	if (HWR_VibeRant() && hwr_portalexit && P_PointOnLineSide(interp.x,interp.y,hwr_portalexit) != 0)
 		return;
 #endif
 	dispoffset = thing->dispoffset;
@@ -7673,8 +7673,8 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	{
 		rollangle = R_GetRollAngle(papersprite == vflip
 				? spriterotangle : InvAngle(spriterotangle));
-#ifdef HAVE_D3D12
-		if (HWR_D3D12() && !papersprite && !splat && !(thing->flags2 & MF2_LINKDRAW) && D3D_CanRollSprite())
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant() && !papersprite && !splat && !(thing->flags2 & MF2_LINKDRAW) && D3D_CanRollSprite())
 			rollgeometry = Patch_GetRollGeometry(sprframe, thing->frame & FF_FRAMEMASK,
 				rot, flip, sprinfo, rollangle);
 		if (rollgeometry)
@@ -7947,7 +7947,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->spriteyoffset = FIXED_TO_FLOAT(spr_topoffset);
 
 	vis->rotated = false;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	vis->rollgeometry = rollgeometry;
 #endif
 
@@ -8041,8 +8041,8 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	interpmobjstate_t interp = {0};
 
 	// okay... this is a hack, but weather isn't networked, so it should be ok
-#ifdef HAVE_D3D12
-	if ((!HWR_D3D12() || hwr_portallevel == 0) && !P_PrecipThinker(thing))
+#ifdef HAVE_VIBERANT
+	if ((!HWR_VibeRant() || hwr_portallevel == 0) && !P_PrecipThinker(thing))
 #else
 	if (!P_PrecipThinker(thing))
 #endif
@@ -8124,7 +8124,7 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	// store information in a vissprite
 	//
 	vis = HWR_NewVisSprite();
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	vis->rollgeometry = NULL;
 #endif
 	vis->x1 = x1;
@@ -8659,8 +8659,8 @@ static void HWR_DrawViewFogSky(void)
 	HWD.pfnDrawPolygon(&surf, v, 4, PF_Modulated|PF_Multiplicative|PF_NoTexture|PF_NoDepthTest);
 }
 
-#ifdef HAVE_D3D12
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
+#ifdef HAVE_VIBERANT
 static void HWR_RenderPortalViews(player_t *player);
 #endif
 static void HWR_FreePortalViews(void);
@@ -8731,15 +8731,15 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	gl_fovlud = (float)(1.0l/tan((double)(fpov*M_PIl/360l)));
 
 	//------------------------------------------------------------------------
-#ifdef HAVE_D3D12
-	if (!HWR_D3D12() || hwr_portallevel == 0)
+#ifdef HAVE_VIBERANT
+	if (!HWR_VibeRant() || hwr_portallevel == 0)
 #endif
 		HWR_ClearView(); // Whole-screen depth/stencil clear only outside recursion
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	else
 		HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
 			(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
-	if (HWR_D3D12())
+	if (HWR_VibeRant())
 	{
 		D3D12_SetPortalStencil(hwr_portallevel);
 		D3D12_SetPortalPlane(NULL); // sky/fog live at infinity, not behind an exit plane
@@ -8749,7 +8749,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	if (drawSkyTexture)
 	{
 		HWR_DrawSkyBackground(player);
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 		hwr_skydrawn = true;
 #endif
 	}
@@ -8758,8 +8758,8 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = r_splitscreen;
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 	{
 		HWD.pfnSetTransform(&atransform);
 		D3D12_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
@@ -8794,8 +8794,8 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 		angle_t a1 = gld_FrustumAngle(gl_aimingangle);
 		gld_clipper_Clear();
 		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
-#ifdef HAVE_D3D12
-		if (HWR_D3D12() && hwr_portalexit)
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant() && hwr_portalexit)
 			gld_clipper_SafeAddClipRange(hwr_portalangle1,hwr_portalangle2);
 #endif
 #ifdef HAVE_SPHEREFRUSTRUM
@@ -8836,11 +8836,11 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	if (cv_glbatching.value)
 		HWR_RenderBatches();
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: The level's opaque geometry and the sky claims (depth-only sky surfaces) are done. Software draws what
 	// nothing covers black, but the sky was drawn over the whole view first, so blacken the pixels with no depth. This
 	// comes before the sprites and the sorted translucent draws, which Software draws over the void.
-	if (HWR_D3D12() && hwr_skydrawn)
+	if (HWR_VibeRant() && hwr_skydrawn)
 		D3D12_FillVoid();
 #endif
 
@@ -8898,8 +8898,8 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 		HWR_CreateDrawNodes();
 	}
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 	{
 		HWR_FreePortalViews();
 		D3D12_SetPortalPlane(NULL);
@@ -8915,7 +8915,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	hwr_viewfog = NULL; // do not leak into skybox, split-screen or subsequent 2D draws
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // Only renderer globals are saved. validcount remains monotonic: restoring
 // an old value would alias sectors/subsectors stamped by a recursive traversal.
 // Lists of sprites/batches/drawnodes are empty before children and fully consumed
@@ -9029,7 +9029,7 @@ static void HWR_RenderPortalViews(player_t *player)
 }
 #endif
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 static void HWR_FreePortalViews(void)
 {
 	while (hwr_portallist)
@@ -9054,7 +9054,7 @@ static void HWR_RenderViewpoint(player_t *player, boolean drawSkyTexture, boolea
 #endif
 	}
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	hwr_portallevel=0;
 	hwr_portalexit=NULL;
 	hwr_portallist=NULL;
@@ -9074,7 +9074,7 @@ void HWR_RenderSkyboxView(player_t *player)
 	gl_skyboxview = true;
 	HWR_RenderViewpoint(player, drawsky, false);
 	gl_skyboxview = false;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	hwr_skydrawn = true; // the main view's sky surfaces show this view; the rest of its void is black
 #endif
 }
@@ -9123,14 +9123,14 @@ void HWR_RenderPlayerView(void)
 		HWD.pfnSetShaderInfo(HWD_SHADERINFO_LIGHT_BACKLIGHT, maplighting.backlight);
 	}
 
-#ifdef HAVE_D3D12
-	const boolean surfaceprobe = HWR_D3D12() && viewssnum == 0 && !con_destlines && !cv_glbatching.value && !r_splitscreen
+#ifdef HAVE_VIBERANT
+	const boolean surfaceprobe = HWR_VibeRant() && viewssnum == 0 && !con_destlines && !cv_glbatching.value && !r_splitscreen
 		&& D3D12_BeginSurfaceProbe();
 #endif
 	if (viewssnum == 0) // Only do it if it's the first screen being rendered
 		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	hwr_skydrawn = false;
 #endif
 	ps_hw_skyboxtime = I_GetPreciseTime();
@@ -9140,7 +9140,7 @@ void HWR_RenderPlayerView(void)
 
 	// note: sets viewangle, viewx, viewy, viewz
 	R_SetupFrame(viewssnum);
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	if (surfaceprobe)
 		I_OutputMsg("UWP surface probe camera: map=%d lt=%u camera=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f roll=%.2f fov=%.2f batching=%d shaders=%d\n",
 			gamemap, (unsigned)leveltime, FIXED_TO_FLOAT(viewx), FIXED_TO_FLOAT(viewy), FIXED_TO_FLOAT(viewz),
@@ -9154,8 +9154,8 @@ void HWR_RenderPlayerView(void)
 			!skybox && drawsky, // Don't draw the regular sky if there's a skybox
 			true); // Main view is profiled
 
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		D3D12_EndSurfaceProbe();
 #endif
 	HWR_DoPostProcessor(player);
@@ -9163,19 +9163,19 @@ void HWR_RenderPlayerView(void)
 
 void HWR_LoadLevel(void)
 {
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: Specials and BSP may have changed even when level sizes match.
 	HWR_InvalidateHorizonCache();
 #endif
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	size_t i;
 	hwr_maphasportals=false;
 	Z_Free(hwr_portalpartners);
 	hwr_portalpartners=NULL;
-	if (HWR_D3D12())
+	if (HWR_VibeRant())
 		for (i=0; i<numlines; i++)
 			if (lines[i].special == 40) { hwr_maphasportals=true; break; }
-	if (HWR_D3D12() && hwr_maphasportals)
+	if (HWR_VibeRant() && hwr_maphasportals)
 	{
 		Z_Malloc(numlines*sizeof(*hwr_portalpartners),PU_LEVEL,&hwr_portalpartners);
 		for (i=0; i<numlines; i++)
@@ -9238,19 +9238,19 @@ void CV_glanisotropic_OnChange(void)
 		HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 static void TextureAtlas_OnChange(void);
 static consvar_t cv_grtextureatlas = CVAR_INIT("gr_textureatlas", "On", CV_SAVE|CV_CALL, CV_OnOff, TextureAtlas_OnChange);
 static void TextureAtlas_OnChange(void)
 {
-	if (rendermode == render_opengl && HWR_D3D12())
+	if (rendermode == render_opengl && HWR_VibeRant())
 		HWD.pfnSetSpecialState(HWD_SET_TEXTUREATLAS, cv_grtextureatlas.value);
 }
 
 static void HWR_SurfaceProbe_f(void)
 {
 	INT32 x = 15, y = 35;
-	if (!HWR_D3D12())
+	if (!HWR_VibeRant())
 	{
 		CONS_Printf("The surface probe requires the VibeRant D3D renderer.\n");
 		return;
@@ -9322,7 +9322,7 @@ void HWR_AddSessionCommands(void)
 {
 	if (gl_sessioncommandsadded)
 		return;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	CV_RegisterVar(&cv_grtextureatlas);
 	COM_AddCommand("gr_surfaceprobe", HWR_SurfaceProbe_f);
 #endif
@@ -9372,8 +9372,8 @@ void HWR_Switch(void)
 
 	// Set special states from CVARs
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, cv_glfiltermode.value);
-#ifdef HAVE_D3D12
-	if (HWR_D3D12()) HWD.pfnSetSpecialState(HWD_SET_TEXTUREATLAS, cv_grtextureatlas.value);
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant()) HWD.pfnSetSpecialState(HWD_SET_TEXTUREATLAS, cv_grtextureatlas.value);
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_TEXTUREANISOTROPICMODE, cv_glanisotropicmode.value);
 	HWD.pfnSetSpecialState(HWD_SET_PALETTE_RENDERING, gl_palette_rendering_state); // [UWP]
@@ -9481,8 +9481,8 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
 		blendmode |= PF_Fog;
 
 	blendmode |= PF_Modulated;	// No PF_Occlude means overlapping (incorrect) transparency
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		D3D12_SurfaceProbeSource("deferred wall", -1);
 #endif
 	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode, shader, false);
@@ -9532,7 +9532,7 @@ void HWR_DoPostProcessor(player_t *player)
 	if(gamestate != GS_INTERMISSION)
 		HWD.pfnMakeScreenTexture();
 
-	if (HWR_D3D12())
+	if (HWR_VibeRant())
 	{
 		if (cv_reducevfx.value) // Match Software's accessibility gating for water and heat.
 			return;
@@ -9552,7 +9552,7 @@ void HWR_DoPostProcessor(player_t *player)
 		INT32 AMPLITUDE;
 		INT32 FREQUENCY;
 
-		if (HWR_D3D12())
+		if (HWR_VibeRant())
 		{
 			// D3D samples in its pixel shader; the driver ignores the legacy grid.
 			memset(v, 0, sizeof v);
@@ -9583,13 +9583,13 @@ void HWR_DoPostProcessor(player_t *player)
 				}
 			}
 		}
-		if (HWR_D3D12())
+		if (HWR_VibeRant())
 			HWD.pfnGClipRect((INT32)gl_viewwindowx, (INT32)gl_viewwindowy,
 				(INT32)(gl_viewwindowx + gl_viewwidth), (INT32)(gl_viewwindowy + gl_viewheight), NZCLIP_PLANE);
 		HWD.pfnPostImgRedraw(v);
-		if (HWR_D3D12())
+		if (HWR_VibeRant())
 			HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
-		if (!HWR_D3D12() && !(paused || P_AutoPause()))
+		if (!HWR_VibeRant() && !(paused || P_AutoPause()))
 			disStart += FIXED_TO_FLOAT(renderdeltatics);
 
 		// Capture the screen again for screen waving on the intermission

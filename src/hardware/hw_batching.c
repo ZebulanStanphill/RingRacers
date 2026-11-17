@@ -429,8 +429,8 @@ void HWR_RenderBatches(void)
 				changeState = true;
 				changeTexture = true;
 			}
-#ifdef HAVE_D3D12
-			if (HWR_D3D12() && (((currentPolyFlags ^ nextPolyFlags) & PF_RollSprite)
+#ifdef HAVE_VIBERANT
+			if (HWR_VibeRant() && (((currentPolyFlags ^ nextPolyFlags) & PF_RollSprite)
 				|| ((currentPolyFlags & nextPolyFlags & PF_RollSprite)
 				&& memcmp(currentSurfaceInfo.roll, nextSurfaceInfo.roll, sizeof(currentSurfaceInfo.roll)))))
 				changeState = changeSurfaceInfo = true;

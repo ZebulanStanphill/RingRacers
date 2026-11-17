@@ -246,7 +246,7 @@ enum EPolyFlags
 	PF_RemoveYWrap      = 0x00010000,   // Forces clamp texture on Y
 	PF_ForceWrapX       = 0x00020000,   // Forces repeat texture on X
 	PF_ForceWrapY       = 0x00040000,   // Forces repeat texture on Y
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	PF_RollSprite = 0x00800000,
 #endif
 	PF_BeforeSky        = 0x00080000,   // [UWP]: Batched ahead of the sky occluders (a masked middle texture between two skies)
@@ -303,7 +303,7 @@ struct FSurfaceInfo
 	RGBA_t			TintColor;
 	RGBA_t			FadeColor;
 	FLightInfo		LightInfo;
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	INT32 roll[16]; // inverse transform, canvas/crop, source size/flip, UV texel scale
 #endif
 	UINT32			LightTableId; // [UWP]: the surface's light table for palette rendering (from SRB2), or 0
@@ -323,7 +323,7 @@ enum hwdsetspecialstate
 	HWD_SET_PALETTE_RENDERING, // [UWP]
 	HWD_SET_WATER_SURFACE, // [UWP] 0: standalone, 1: new coplanar run, 2: continue
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	HWD_SET_TEXTUREATLAS,
 #endif
 

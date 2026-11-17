@@ -20,18 +20,18 @@ ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 
 The tests extract production code from this checkout; set `RR_SOURCE_DIR` to test
 another one. `cmake --build` regenerates harnesses when tested engine files or
-templates change. Variants built with `_UWP` also define `HAVE_D3D12`, as UWP
-builds have the Direct3D 12 driver by default; engine code under `HAVE_D3D12`
+templates change. Variants built with `_UWP` also define `HAVE_VIBERANT`, as UWP
+builds have the Direct3D 12 driver by default; engine code under `HAVE_VIBERANT`
 does not assume `_UWP` (see "Direct3D 12 without `_UWP`" under Coverage). The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
-Which hardware driver draws is decided at run time by `HWR_D3D12()`
+Which hardware driver draws is decided at run time by `HWR_VibeRant()`
 (`src/hardware/hw_driver.h`): the constant 1 with `_UWP`, the constant 0 without
-`HAVE_D3D12`, and the setting `hwr_d3d12` with `HAVE_D3D12` but not `_UWP`, a build
+`HAVE_VIBERANT`, and the setting `hwr_viberant` with `HAVE_VIBERANT` but not `_UWP`, a build
 that has both drivers. The `_uwp` and `_desktop` variants therefore run the
 Direct3D 12 and the OpenGL behaviour respectively. A variant named `_both` is
-built with `HAVE_D3D12` only, links the engine's own `hw_driver.c` (through
-`tests/hw-driver.cpp`) and sets `hwr_d3d12` to true and then false in one
+built with `HAVE_VIBERANT` only, links the engine's own `hw_driver.c` (through
+`tests/hw-driver.cpp`) and sets `hwr_viberant` to true and then false in one
 executable, expecting the `_uwp` results and then the `_desktop` ones.
 
 The native tests have no desktop variant of the Direct3D 12 driver: engine CMake
@@ -97,10 +97,10 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `metal_capture_judging` (`tests/metal-frames/test_capture.py`) checks how
   `capture.py` judges a run by its log ("Metal frames", below).
 
-- **Texture atlas:** `d3d12_texture_atlas` tests the production shelf allocator
+- **Texture atlas:** `viberant_texture_atlas` tests the production shelf allocator
   with rounded dimensions, full pages, fence-deferred frees, coalescing, and
   empty-page reset. GPU sampling and Xbox resource creation timing require
-  renderer captures and device testing; see [atlas notes](../docs/d3d12-texture-atlas.md).
+  renderer captures and device testing; see [atlas notes](../docs/viberant-texture-atlas.md).
 
 
 - **Plane polygon loops:** `plane_polygon_loops` runs the production plane polygon
@@ -518,8 +518,8 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   selections with the actual Software zlight/scalelight tables and 16,384
   palette-remap samples. Extract bounds from `r_d3d12/d3d12_captures.inc` and
   exercise full/split viewports, eye-plane crossings and behind-camera/offscreen
-  faces in `fog_capture_d3d12`, including oversized-face clamping. Shader-only
-  checks stay in `fog_boundaries`. `fog_capture_d3d12` checks capture copies,
+  faces in `fog_capture_viberant`, including oversized-face clamping. Shader-only
+  checks stay in `fog_boundaries`. `fog_capture_viberant` checks capture copies,
   failure, resizing, bindings and constants against literal expected boxes (including fractional vertices, which
   pin the floor/ceil edge rounding) and literal constant bytes for each viewport,
   poly flag, light level and view width. Wall-slice tests reject directional light
@@ -546,7 +546,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `R_ThingIsSemiBright` and the end of `HWR_ObjectLightLevelPost`. With the Direct3D 12 driver and shaders the
   level is left alone and only the bit is added (level 0 to 255 kept); without shaders, and in the
   desktop build, the old `192 + level / 2` applies and the bit is never set; other things get neither.
-  `semibright_light_both` runs both cases in one executable, switching `hwr_d3d12`.
+  `semibright_light_both` runs both cases in one executable, switching `hwr_viberant`.
   Where the calls are made is checked as text, because the sprite and model draw functions need a map
   and a renderer to run: `HWR_SplitSprite` (both pieces), `HWR_DrawSprite` and `HWR_DrawModel` call it right after each
   `HWR_Lighting`, and `HWR_DrawPrecipitationSprite` and `HWR_DrawDropShadow` do not. WARP's
@@ -654,7 +654,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   checks four palette indices, each dark and bright, as the Encore translation hands
   them over. A surface-colormap shader mutant must fail. `brightmap-smooth` covers
   the smooth-light path. This does not validate Xbox visuals.
-- **Direct3D 12 bookkeeping:** `d3d12_allocators` compiles the production
+- **Direct3D 12 bookkeeping:** `viberant_allocators` compiles the production
   `r_d3d12/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
   GPU. It checks `RingAllocator` alignment (including non-power-of-two), wraparound,
   fence blocking with the highest overlapping fence, `Collect` and `Touch`
@@ -756,13 +756,13 @@ untouched padding.
   consistent. Whether the real race hit rate improves is measured on Xbox, not here.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
-- **Direct3D 12 without `_UWP`:** `python3 tests/check-d3d12-desktop.py build/ninja-release/compile_commands.json`
+- **Direct3D 12 without `_UWP`:** `python3 tests/check-viberant-desktop.py build/ninja-release/compile_commands.json`
   takes the compile database of a normal (Linux or macOS) game build, re-runs the recorded compile
-  command of every `src/hardware/*.c` file with `-DHAVE_D3D12 -fsyntax-only` added and fails if any
-  reports an error. It guards that the engine code under `HAVE_D3D12` (portals, wall light slices,
+  command of every `src/hardware/*.c` file with `-DHAVE_VIBERANT -fsyntax-only` added and fails if any
+  reports an error. It guards that the engine code under `HAVE_VIBERANT` (portals, wall light slices,
   post-processing, palette rendering) does not depend on `_UWP`, so the driver can be built into
   Windows desktop builds; Xbox-only code inside it has its own `_UWP` guard. That code is only
-  compiled in by `#ifdef HAVE_D3D12`; whether it runs is decided by `HWR_D3D12()`. CI no longer runs it: the `linux` job builds the
+  compiled in by `#ifdef HAVE_VIBERANT`; whether it runs is decided by `HWR_VibeRant()`. CI no longer runs it: the `linux` job builds the
   driver with its Vulkan backend, which compiles this code without `_UWP`.
   The driver itself is not checked here: the `windows` job builds it into the desktop game, and the
   `warp` job runs the desktop presenter.
@@ -796,7 +796,7 @@ From an x64 Visual Studio developer PowerShell on Windows:
 The harness compiles production `r_d3d12.cpp`, `d3d12_core.cpp`,
 `d3d12_upload.cpp`, `d3d12_pipeline.cpp` and `d3d12_prewarm.cpp` against
 the real engine headers. It links the production add-on shader translator, built by
-`tests/d3d12-translator/` with the pinned glslang and SPIRV-Cross sources. CI caches that build per runner
+`tests/viberant-translator/` with the pinned glslang and SPIRV-Cross sources. CI caches that build per runner
 image, keyed on its two CMake files, and builds it without fetching when the cache is restored, so only the
 translator's own source is recompiled. SDL, engine-symbol and headless-present functions are
 test stubs. ANGLE is not used. Shaders compile with `fxc` at SM5.1 against the
@@ -866,7 +866,7 @@ must show the fixed color (64, 128, 191). `custom-shader-clean` must show the bu
 again after cleaning the shaders. `custom-shader-invalid` loads invalid GLSL, which must log a
 built-in fallback and draw the built-in color. `custom-shader-nocustom` sets Ignore custom
 shaders, so the custom-color oracle must fail: it's the negative control. They haven't been run
-locally, and Xbox results are untested. See [the Direct3D 12 add-on shader notes](../docs/d3d12-custom-shaders.md).
+locally, and Xbox results are untested. See [the Direct3D 12 add-on shader notes](../docs/viberant-custom-shaders.md).
 Dispatch scenes run last, after the model and sky scenes, and replace only the fragment stage, so
 the built-in vertex stage places the geometry. `custom-none` compiles with nothing loaded and
 draws the built-in color. A fragment for
@@ -1038,7 +1038,7 @@ a Windows build under Wine, each with its renderer's arguments), the default rep
 
 ## Vulkan driver harness (Linux)
 
-The same driver test, `d3d12-driver.cpp`, also runs against the Vulkan backend
+The same driver test, `viberant-driver.cpp`, also runs against the Vulkan backend
 (`src/hardware/r_d3d12/vulkan`, [`docs/vulkan-backend.md`](../docs/vulkan-backend.md)):
 the production driver, vk12, and the runtime shader translator are built into a
 headless executable (`tests/vulkan-driver/CMakeLists.txt`) that needs no window,
@@ -1103,7 +1103,7 @@ fails the run, as it does on WARP. Where the two runs differ:
   must fail through its named pixel oracle (`NEGATIVE_ORACLE_REJECTED`) within 120
   seconds. The production shaders are rebuilt afterwards.
 - **Presentation** isn't exercised: the headless presenter stub is the one WARP's
-  `d3d12-driver` uses, and the Vulkan swap chain (`vk_present.cpp`) has no test
+  `viberant-driver` uses, and the Vulkan swap chain (`vk_present.cpp`) has no test
   here. The separate Windows presenter executable is specific to `run-d3d12.ps1`.
 - **Water, grouped** (`water-group`) starts from a green of 200 on Vulkan, where
   the WARP run uses 120. The scene draws water with an alpha of 1/255 over a uniform
@@ -1128,7 +1128,7 @@ fails the run, as it does on WARP. Where the two runs differ:
 
 ## Metal driver harness (macOS)
 
-The same driver test, `d3d12-driver.cpp`, runs a third time against the Metal backend
+The same driver test, `viberant-driver.cpp`, runs a third time against the Metal backend
 (`src/hardware/r_d3d12/metal`, [`docs/metal-backend.md`](../docs/metal-backend.md)):
 the production driver, mtl12, and the runtime shader translator are built into a
 headless executable (`tests/metal-driver/CMakeLists.txt`) that needs no window, SDL
@@ -1457,16 +1457,16 @@ runner image, pins, and the harness's build file, and a hit keeps FetchContent
 disconnected.
 The `linux` and `macos` jobs build the game with the `ninja-release` preset and check
 `compile_commands.json`: the Linux build must have the driver with only its Vulkan backend
-(`HAVE_D3D12` and `HAVE_VULKAN`, no `HAVE_D3D12_NATIVE`), and the macOS build must have the driver
-with only its Metal backend (`HAVE_D3D12` and `HAVE_METAL`, without `HAVE_VULKAN` or
-`HAVE_D3D12_NATIVE`). The `macos` job also checks that the Metal backend's
+(`HAVE_VIBERANT` and `HAVE_VIBERANT_VULKAN`, no `HAVE_VIBERANT_D3D`), and the macOS build must have the driver
+with only its Metal backend (`HAVE_VIBERANT` and `HAVE_VIBERANT_METAL`, without `HAVE_VIBERANT_VULKAN` or
+`HAVE_VIBERANT_D3D`). The `macos` job also checks that the Metal backend's
 Objective-C++ files and the presenter are compiled with `-fobjc-arc`, which they
 rely on to keep Metal's objects alive, and uploads the app as `macos-app` (an
 archive of the unsigned `.app` for Apple silicon; it loads Homebrew's SDL2, libpng,
 and Opus, and looks for the game's data in the directory it is started from).
 Nothing in this workflow runs the macOS game. The `windows` job builds the ordinary (not UWP) Windows desktop game
-in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_D3D12` is on by
-default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_D3D12` and compiles
+in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_VIBERANT_D3D` is on by
+default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_VIBERANT` and compiles
 `d3d12_present_win32.cpp`, the desktop presenter, and not `d3d12_present.cpp`, UWP's. It builds with
 the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
 from Visual Studio and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
@@ -1493,7 +1493,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   calculation and sine table, compare 262,144 offsets (distances both on and off
   multiples of 1/8, so the shader's `floor` calls matter), and exercise 8,640 shader
   composites across blend modes, alpha values, distances, times and split-view
-  edges. `water_capture_d3d12` extracts projected bounds from
+  edges. `water_capture_viberant` extracts projected bounds from
   `r_d3d12/d3d12_captures.inc` and checks bounded copies, disjoint rectangle
   growth, grouping, allocation failures, resize and clipped faces. Its expected bounds
   (including fractional vertices), constant bytes, scene and sine texture bindings

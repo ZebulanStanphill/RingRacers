@@ -22,7 +22,7 @@ consvar_t cv_renderer, cv_glfiltermode, cv_scr_depth;
 static std::string described(INT32 setting, bool running_viberant, bool vulkan)
 {
     cv_renderer.value = setting;
-    hwr_d3d12 = running_viberant;
+    hwr_viberant = running_viberant;
     hwr_vulkan = vulkan;
     rendermode = render_opengl;
     M_RefreshAdvancedVideoOptions();
@@ -38,10 +38,10 @@ int main()
     const std::string gl = "Legacy GL supports 3D models and true perspective, but many visual features";
     // With Software, which names no hardware renderer, the description is of the VibeRant renderer this build lists
     // first, and never of one it doesn't have
-#if defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_D3D)
     const std::string &first = d3d;
     const char *options = "VibeRant D3D Options...";
-#elif defined(HAVE_VULKAN)
+#elif defined(HAVE_VIBERANT_VULKAN)
     const std::string &first = vulkan;
     const char *options = "VibeRant Vulkan Options...";
 #else
@@ -52,21 +52,21 @@ int main()
     assert(described(1, false, false) == first + " / Legacy GL Options...");
     assert(described(2, false, false) == gl + " / Legacy GL Options...");
     // Legacy GL selected while a VibeRant renderer still runs (the change takes effect at the next start)
-#if defined(HAVE_VULKAN) && !defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_VULKAN) && !defined(HAVE_VIBERANT_D3D)
     assert(described(2, true, true) == gl + " / " + options);
 #else
     assert(described(2, true, false) == gl + " / " + options);
 #endif
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
     assert(described(3, true, false) == d3d + " / VibeRant D3D Options...");
     assert(described(1, true, false) == d3d + " / VibeRant D3D Options...");
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
     assert(described(4, true, true) == vulkan + " / VibeRant Vulkan Options...");
     // Software selected while VibeRant Vulkan still runs
     assert(described(1, true, true) == first + " / VibeRant Vulkan Options...");
 #endif
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
     assert(described(5, true, false) == metal + " / VibeRant Metal Options...");
     assert(described(1, true, false) == metal + " / VibeRant Metal Options...");
 #endif

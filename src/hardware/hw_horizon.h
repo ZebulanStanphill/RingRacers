@@ -4,7 +4,7 @@
 
 // [UWP]: Runtime special changes invalidate the render-only subsector cache.
 // Keep callers valid in software-only and non-D3D12 builds.
-#if defined(HWRENDER) && defined(HAVE_D3D12)
+#if defined(HWRENDER) && defined(HAVE_VIBERANT)
 #ifdef __cplusplus
 extern "C" {
 #endif

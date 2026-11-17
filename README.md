@@ -176,7 +176,7 @@ The vcpkg presets need the `VCPKG_ROOT` environment variable set before the firs
     cmake --preset ninja-x86_mingw_static_vcpkg-develop
     cmake --build --preset ninja-x86_mingw_static_vcpkg-develop
 
-Linux builds include VibeRant Vulkan (`SRB2_CONFIG_VULKAN`), and Windows builds made with MSVC or clang-cl include it and VibeRant D3D (`SRB2_CONFIG_D3D12`). Configuring then downloads the pinned sources they are built with (glslang, SPIRV-Cross, Vulkan-Headers, volk, and, off Windows, DirectX-Headers); `-DSRB2_CONFIG_VULKAN=OFF` builds without them. To run, VibeRant Vulkan needs only your system's Vulkan loader and driver. `.github/workflows/tests.yml` has the commands for each platform.
+Linux builds include VibeRant Vulkan (`SRB2_CONFIG_VIBERANT_VULKAN`), and Windows builds made with MSVC or clang-cl include it and VibeRant D3D (`SRB2_CONFIG_VIBERANT_D3D`). Configuring then downloads the pinned sources they are built with (glslang, SPIRV-Cross, Vulkan-Headers, volk, and, off Windows, DirectX-Headers); `-DSRB2_CONFIG_VIBERANT_VULKAN=OFF` builds without them. To run, VibeRant Vulkan needs only your system's Vulkan loader and driver. `.github/workflows/tests.yml` has the commands for each platform.
 
 ### Repository layout
 

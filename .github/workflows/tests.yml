@@ -147,7 +147,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/d3d12-regressions/legacy-build
-          key: d3d12-translator-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/d3d12-translator/CMakeLists.txt') }}
+          key: viberant-translator-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/viberant-translator/CMakeLists.txt') }}
 
       - name: Direct3D 12 renderer regressions
         shell: pwsh
@@ -228,14 +228,14 @@ jobs:
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       # A Linux build has the VibeRant driver with its Vulkan backend by default, and never Direct3D 12 itself. Building it
-      # is also the check that the hardware renderer's engine code compiles with HAVE_D3D12 but not _UWP, off Windows.
+      # is also the check that the hardware renderer's engine code compiles with HAVE_VIBERANT but not _UWP, off Windows.
       - name: Check that the driver is built with the Vulkan backend only
         run: |
           commands=build/ninja-release/compile_commands.json
-          if ! grep -q -e '-DHAVE_D3D12 ' -e '-DHAVE_D3D12"' $commands || ! grep -q HAVE_VULKAN $commands; then
-            echo "A Linux build must include the VibeRant driver (HAVE_D3D12) with its Vulkan backend (HAVE_VULKAN) by default"; exit 1
+          if ! grep -q -e '-DHAVE_VIBERANT ' -e '-DHAVE_VIBERANT"' $commands || ! grep -q HAVE_VIBERANT_VULKAN $commands; then
+            echo "A Linux build must include the VibeRant driver (HAVE_VIBERANT) with its Vulkan backend (HAVE_VIBERANT_VULKAN) by default"; exit 1
           fi
-          if grep -q HAVE_D3D12_NATIVE $commands; then
+          if grep -q HAVE_VIBERANT_D3D $commands; then
             echo "A Linux build must not include the Direct3D 12 backend"; exit 1
           fi
 
@@ -267,10 +267,10 @@ jobs:
       - name: Check that the driver is built with the Metal backend only
         run: |
           commands=build/ninja-release/compile_commands.json
-          if ! grep -q -e '-DHAVE_D3D12 ' -e '-DHAVE_D3D12"' $commands || ! grep -q HAVE_METAL $commands; then
-            echo "A macOS build must include the VibeRant driver (HAVE_D3D12) with its Metal backend (HAVE_METAL) by default"; exit 1
+          if ! grep -q -e '-DHAVE_VIBERANT ' -e '-DHAVE_VIBERANT"' $commands || ! grep -q HAVE_VIBERANT_METAL $commands; then
+            echo "A macOS build must include the VibeRant driver (HAVE_VIBERANT) with its Metal backend (HAVE_VIBERANT_METAL) by default"; exit 1
           fi
-          if grep -q -e HAVE_D3D12_NATIVE -e HAVE_VULKAN $commands; then
+          if grep -q -e HAVE_VIBERANT_D3D -e HAVE_VIBERANT_VULKAN $commands; then
             echo "A macOS build must not include the Direct3D 12 or the Vulkan backend"; exit 1
           fi
           # The backend's Objective-C++ files rely on automatic reference counting to keep Metal's objects alive
@@ -365,7 +365,7 @@ jobs:
             vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-
             vcpkg-${{ runner.os }}-
 
-      # MSVC-compatible desktop builds have the Direct3D 12 driver by default (SRB2_CONFIG_D3D12), beside OpenGL: the
+      # MSVC-compatible desktop builds have the Direct3D 12 driver by default (SRB2_CONFIG_VIBERANT_D3D), beside OpenGL: the
       # Renderer setting picks one, and it presents on a child window of the SDL window.
       - name: Configure
         shell: pwsh
@@ -380,8 +380,8 @@ jobs:
         shell: pwsh
         run: |
           $commands = "build/ninja-x64_windows_vcpkg-release/compile_commands.json"
-          if (-not (Select-String -Path $commands -Pattern HAVE_D3D12 -Quiet -ErrorAction Stop)) {
-            Write-Error "A Windows desktop build made with clang-cl must define HAVE_D3D12 by default"; exit 1
+          if (-not (Select-String -Path $commands -Pattern HAVE_VIBERANT -Quiet -ErrorAction Stop)) {
+            Write-Error "A Windows desktop build made with clang-cl must define HAVE_VIBERANT by default"; exit 1
           }
           if (-not (Select-String -Path $commands -Pattern 'd3d12_present_win32\.cpp' -Quiet -ErrorAction Stop)) {
             Write-Error "The desktop build must compile d3d12_present_win32.cpp"; exit 1

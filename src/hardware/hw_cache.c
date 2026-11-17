@@ -19,7 +19,7 @@
 #include "hw_drv.h"
 #include "hw_batching.h"
 #include "hw_driver.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "r_d3d12/r_d3d12.h"
 #endif
 
@@ -1020,8 +1020,8 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 	if (!grtex->mipmap.downloaded)
 		HWD.pfnSetTexture(&grtex->mipmap);
 	HWR_SetCurrentTexture(&grtex->mipmap);
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		D3D12_SurfaceProbeTexture(textures[tex]->name);
 #endif
 
@@ -1289,8 +1289,8 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 #endif
 	else // set no texture
 		HWR_SetCurrentTexture(NULL);
-#ifdef HAVE_D3D12
-	if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
 		D3D12_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
 			? textures[levelflat->u.texture.num]->name : levelflat->name);
 #endif

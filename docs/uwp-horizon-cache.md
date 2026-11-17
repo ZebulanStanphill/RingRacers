@@ -13,7 +13,7 @@ Runtime writers call `HWR_LineSpecialChanged(before, after)`, which marks the
 cache dirty only when either value is HORIZONSPECIAL; the next query rebuilds
 the array. A rebuild scans every subsector, so one-shot triggers that clear
 their own (never horizon) specials mid-race must not cause one.
-The hooks are no-ops unless both HWRENDER and HAVE_D3D12 are set.
+The hooks are no-ops unless both HWRENDER and HAVE_VIBERANT are set.
 
 ## Invalidation coverage
 

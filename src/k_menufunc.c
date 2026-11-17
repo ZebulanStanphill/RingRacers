@@ -181,14 +181,14 @@ void M_ChangeCvarDirect(INT32 choice, consvar_t *cv)
 
 		CV_AddValue(cv, choice);
 	}
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	if (cv == &cv_renderer && SCR_RendererNeedsRestart(cv->value))
 		M_StartMessage("Renderer", va("%s will be used the next time the game starts.",
 			SCR_RendererName(cv->value)), NULL, MM_NOTHING, NULL, NULL);
 #endif
 }
 
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 static INT32 renderer_menu_choice;
 #endif
 
@@ -198,7 +198,7 @@ static void M_ChangeCvarResponse(INT32 choice)
 		return;
 
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	if (cvar == &cv_renderer)
 		choice = renderer_menu_choice;
 #endif
@@ -210,13 +210,13 @@ static void M_ChangeCvar(INT32 choice)
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
 
 #if defined(HWRENDER) && !defined(_UWP)
-#if defined(HAVE_D3D12)
+#if defined(HAVE_VIBERANT)
 	renderer_menu_choice = choice;
 	if (cvar == &cv_renderer && choice != -1 &&
 		// Legacy GL comes after the last VibeRant renderer in the list
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 		((cv_renderer.value == 5 && choice == 1) ||
-#elif defined(HAVE_VULKAN)
+#elif defined(HAVE_VIBERANT_VULKAN)
 		((cv_renderer.value == 4 && choice == 1) ||
 #else
 		((cv_renderer.value == 3 && choice == 1) ||

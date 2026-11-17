@@ -9,7 +9,7 @@
 ///
 /// Executes the production D3D_LoadCustomShader, D3D_CompileShaders, D3D_CleanShaders, D3D_SetShader and
 /// CustomDrawProgram. Only translation, shader compilation and pipeline creation are stubs, so failures
-/// can be injected at any layout. The WARP pixel scenes in d3d12-driver.cpp cover what the GPU draws.
+/// can be injected at any layout. The WARP pixel scenes in viberant-driver.cpp cover what the GPU draws.
 #include <cassert>
 #include <cstdarg>
 #include <cstdint>

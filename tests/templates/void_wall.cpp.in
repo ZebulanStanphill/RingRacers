@@ -51,8 +51,8 @@ static boolean checkforemptylines, hwr_portalsearch;
 static sector_t *gl_frontsector, *gl_backsector;
 static void gld_clipper_SafeAddClipRange(angle_t, angle_t) { ++clipranges; }
 static void HWR_DrawVoidWall(seg_t *, sector_t *, UINT8 walls) { voiddraws += walls; }
-#undef HWR_D3D12
-#define HWR_D3D12() 1
+#undef HWR_VibeRant
+#define HWR_VibeRant() 1
 static void AddLineRule(seg_t *line, boolean portaloccludes)
 {
     UINT8 voidwalls = 0;

@@ -34,7 +34,7 @@
 #include "s_sound.h"  // kill
 #include "sdl/ogl_sdl.h"
 #include "st_stuff.h" // kill
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "hardware/r_d3d12/r_d3d12.h"
 #include "hardware/hw_main.h"
 #endif
@@ -179,9 +179,9 @@ static void temp_legacy_finishupdate_draws()
 static void finish_legacy_ogl_update()
 {
 	temp_legacy_finishupdate_draws();
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// [UWP]: Follows the palette rendering setting, which the driver applies as it presents
-	if (HWR_D3D12())
+	if (HWR_VibeRant())
 	{
 		HWR_UpdatePaletteRendering();
 		D3D12_FinishUpdate(cv_vidwait.value);
@@ -296,7 +296,7 @@ void I_FinishUpdate(void)
 		return;
 	}
 
-#if defined(HAVE_VULKAN) || defined(HAVE_METAL)
+#if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 	I_ShowDeferredWindow();
 #endif
 

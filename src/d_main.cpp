@@ -113,7 +113,7 @@
 #ifdef HWRENDER
 #include "hardware/hw_main.h" // 3D View Rendering
 #include "hardware/hw_driver.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "hardware/hw_glob.h"
 #include "hardware/r_d3d12/r_d3d12.h"
 #endif
@@ -594,8 +594,8 @@ static void UWPTraceFinishFrame(bool wipe, bool presented)
 	{
 		INT32 copied = -1, shown = -1;
 		UINT32 copyframe = 0, showframe = 0;
-#ifdef HAVE_D3D12
-		if (HWR_D3D12() && presented && rendermode == render_opengl)
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant() && presented && rendermode == render_opengl)
 			D3D12_GetPresentTrace(&copied, &shown, &copyframe, &showframe);
 #endif
 		char line[640];
@@ -690,9 +690,9 @@ static bool D_Display(bool world)
 		I_UpdateNoBlit();
 	}
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 	// Before any frame drawing or wipe capture: no in-flight batches hold GLMipmap pointers here.
-	if (HWR_D3D12() && rendermode == render_opengl && D3D12_TakeTextureFlushRequest())
+	if (HWR_VibeRant() && rendermode == render_opengl && D3D12_TakeTextureFlushRequest())
 		HWR_ClearAllTextures();
 #endif
 

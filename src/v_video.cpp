@@ -1620,8 +1620,8 @@ void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
-#ifdef HAVE_D3D12
-		if (HWR_D3D12())
+#ifdef HAVE_VIBERANT
+		if (HWR_VibeRant())
 			HWR_DrawCustomFadeMap(lump, strength);
 		else
 #endif

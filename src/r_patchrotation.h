@@ -31,7 +31,7 @@ extern fixed_t rollsinang[ROTANGLES];
 
 #endif
 
-#if defined(ROTSPRITE) && defined(HAVE_D3D12) && defined(HWRENDER)
+#if defined(ROTSPRITE) && defined(HAVE_VIBERANT) && defined(HWRENDER)
 #ifdef __cplusplus
 extern "C" {
 #endif

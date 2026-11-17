@@ -320,7 +320,7 @@ void gld_clipper_Clear(void)
 	cliphead = NULL;
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 void *gld_clipper_SaveState(void)
 {
 	void *state = cliphead;

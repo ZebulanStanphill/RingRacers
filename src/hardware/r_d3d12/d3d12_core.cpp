@@ -11,13 +11,13 @@
 /// complete in order: an allocator or retired object tagged with a value is free once the fence reaches it.
 
 #include "d3d12_core.h"
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 #include <d3d12sdklayers.h>
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 #include "vulkan/vk12.h"
 #endif
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 #include "metal/mtl12.h"
 #endif
 
@@ -54,7 +54,7 @@ UINT g_rtvStep = 0, g_dsvStep = 0;
 UINT64 g_frequency = 0;
 bool g_forceWarp = false;
 double g_waitScale = 1.0;
-#if defined(HAVE_VULKAN) && !defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_VULKAN) && !defined(HAVE_VIBERANT_D3D)
 bool g_vulkan = true; // the only backend
 #else
 bool g_vulkan = false;
@@ -161,7 +161,7 @@ const char *DebugName(const char *a, const wchar_t *w, char *buffer, int size)
 
 void EnableDred()
 {
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 	// Must happen before the device is made. Optional: on Xbox it may not exist.
 	ComPtr<ID3D12DeviceRemovedExtendedDataSettings> settings;
 	g_dredResult = D3D12GetDebugInterface(IID_PPV_ARGS(&settings));
@@ -217,7 +217,7 @@ void LogTimeout(const char *what, double ms)
 	LogBreadcrumbs(dred.Get());
 }
 
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 void LogCaps(const DXGI_ADAPTER_DESC1 &desc)
 {
 	const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0,
@@ -398,7 +398,7 @@ void Core_ScaleWaitsForTest(double factor)
 
 void Core_UseVulkan(bool vulkan)
 {
-#if defined(HAVE_VULKAN) && defined(HAVE_D3D12_NATIVE)
+#if defined(HAVE_VIBERANT_VULKAN) && defined(HAVE_VIBERANT_D3D)
 	if (!g_device)
 		g_vulkan = vulkan;
 #else
@@ -413,7 +413,7 @@ bool Core_Vulkan()
 
 bool Core_Metal()
 {
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 	return true; // the only backend
 #else
 	return false;
@@ -430,7 +430,7 @@ bool Core_Init()
 	if (g_device)
 		return true;
 
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 	if (Core_Metal())
 	{
 		Core_Log("starting VibeRant's Metal backend");
@@ -447,7 +447,7 @@ bool Core_Init()
 	}
 	else
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 	if (g_vulkan)
 	{
 		Core_Log("starting VibeRant's Vulkan backend");
@@ -465,7 +465,7 @@ bool Core_Init()
 	else
 #endif
 	{
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 	Core_Log("starting VibeRant's Direct3D 12 backend");
 	if (g_vulkanValidation)
 	{
@@ -659,7 +659,7 @@ void Core_SetListBegin(void (*callback)(void))
 
 UINT64 Core_Submit(const char *reason)
 {
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 	if (!g_vulkan && g_vulkanValidation && g_device)
 	{
 		ComPtr<ID3D12InfoQueue> info;
@@ -768,13 +768,13 @@ bool Core_Wait(UINT64 value, DWORD ms, const char *what, double *waitedMs)
 		if (elapsed >= limit)
 			break;
 		// An earlier wait that timed out may still set the event, so check the fence after every wake
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 		// mtl12's fence has no event to set; it waits for Metal's command buffers
 		if (Core_Metal())
 			rr_mtl12::WaitFence(g_fence.Get(), value, (DWORD)std::max(1.0, std::ceil(limit - elapsed)));
 		else
 #endif
-#ifdef HAVE_VULKAN
+#ifdef HAVE_VIBERANT_VULKAN
 		// vk12's fence has no event to set; it waits on Vulkan's own fence
 		if (g_vulkan)
 			rr_vk12::WaitFence(g_fence.Get(), value, (DWORD)std::max(1.0, std::ceil(limit - elapsed)));

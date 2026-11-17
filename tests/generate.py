@@ -91,7 +91,7 @@ def generate(engine, output):
     render(templates / "renderer_setting.cpp.in", {
         "CHANGE": Source(engine / "src/screen.c").function("SCR_ChangeRenderer"),
         "DEFAULT": Source(engine / "src/cvars.cpp").section(
-            "#if defined(HAVE_D3D12) && defined(_UWP) // [UWP]: Default", "consvar_t cv_parallelsoftware"),
+            "#if defined(HAVE_VIBERANT) && defined(_UWP) // [UWP]: Default", "consvar_t cv_parallelsoftware"),
         "VALUES": Source(engine / "src/screen.c").section("CV_PossibleValue_t cv_renderer_t[]", "// ========================================================================="),
         "STARTUP": Source(engine / "src/sdl/i_video.cpp").section("\t// Renderer choices", "\tborderlesswindow ="),
     }, output / "renderer_setting.cpp")
@@ -287,7 +287,7 @@ def generate(engine, output):
 
     for kind, param, srv in (("Fog", 16, 11), ("Water", 18, 12)):
         name = "Capture" + kind + "Scene"
-        # Expected constants and boxes are literal (see the tables in capture_d3d12.cpp.in), not recomputed.
+        # Expected constants and boxes are literal (see the tables in capture_viberant.cpp.in), not recomputed.
         expected_constants = ("WaterBytes(p.waterViewport[0],p.waterViewport[1],p.waterViewport[2],"
             "p.waterViewport[3],c.waterMode)" if kind == "Water" else "FogBytes(c.fogPlane,30,.5f)")
         bind_checks = (f"assert(bound[{srv}]==&Scene&&bound[13]==&g_waterSine);" if kind == "Water"
@@ -376,7 +376,7 @@ def generate(engine, output):
     assert(Capture(&surface,PF_Translucent,poly,4,true));
     assert(copies.size()==fullBefore+1);D3D12_BOX full={0,0,0,128,96,1};SameBox(copies.back(),full);
 """
-        render(templates / "capture_d3d12.cpp.in", {
+        render(templates / "capture_viberant.cpp.in", {
             "MULTIPLY": driver12.function("Multiply"),
             "GLOBALS": (driver12.section("GpuTexture g_waterScene, g_waterSine, g_fogScene;", "bool BindCaptureState();") if kind == "Water" else
                 driver12.section("GpuTexture g_waterScene, g_waterSine, g_fogScene;", "UploadAllocation g_waterConstants") +
@@ -390,8 +390,8 @@ def generate(engine, output):
             "CONTINUES": hardware.function("HWR_WaterPlaneContinues") if kind == "Water" else "",
             "DISPATCH": hardware.section("\t\t\tconst planeinfo_t *plane = sortnode[sortindex[i]].plane;", "\n\t\t}\n#endif") if kind == "Water" else "",
             "SINE_FAILURE": "failSine=true;assert(!Capture(&surface,PF_Translucent,poly,4));failSine=false;" if kind == "Water" else "",
-        }, output / (kind.lower() + "_capture_d3d12.cpp"))
-        generated = output / (kind.lower() + "_capture_d3d12.cpp")
+        }, output / (kind.lower() + "_capture_viberant.cpp"))
+        generated = output / (kind.lower() + "_capture_viberant.cpp")
         generated.write_text(re.sub(r"\bScene\b", "g_" + kind.lower() + "Scene", generated.read_text()))
 
     slopes = Source(engine / "src/p_slopes.c")
@@ -563,7 +563,7 @@ def generate(engine, output):
         "BATCH_FIRST": function_section(batching, "HWR_RenderBatches",
             "\tif (currentPolyFlags & PF_NoTexture)", "\n\twhile (1)"),
         "BATCH_ROLL": function_section(batching, "HWR_RenderBatches",
-            "#ifdef HAVE_D3D12\n\t\t\tif (HWR_D3D12() && (((currentPolyFlags", "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
+            "#ifdef HAVE_VIBERANT\n\t\t\tif (HWR_VibeRant() && (((currentPolyFlags", "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
         "BATCH_CHANGE": function_section(batching, "HWR_RenderBatches",
             "\t\t\tif (currentTexture != nextTexture || currentBrightmap != nextBrightmap)",
             "\n\t\t\tif (currentPolyFlags != nextPolyFlags)"),
@@ -772,12 +772,12 @@ def generate(engine, output):
     }, output / "midtexture_sky.cpp")
     render(templates / "sky_claim.cpp.in", {
         "SKY_GATE": function_section(hardware, "HWR_Subsector",
-            "\tif (HWR_D3D12() && sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",
+            "\tif (HWR_VibeRant() && sub->validcount != validcount)\n\t{\n\t\tif (gl_frontsector->floorpic == skyflatnum",
             "\n#endif"),
     }, output / "sky_claim.cpp")
     render(templates / "horizon_cache.cpp.in", {
         "CACHE": hardware.section("static UINT8 *hwr_horizonflags;", "#endif\n\n#ifdef DOPLANES"),
-        "PLANE_GATE": function_section(hardware, "HWR_RenderPlane", "\tif (subsector\n#ifdef HAVE_D3D12", "\n\t{\n\t\t// Horizon lines"),
+        "PLANE_GATE": function_section(hardware, "HWR_RenderPlane", "\tif (subsector\n#ifdef HAVE_VIBERANT", "\n\t{\n\t\t// Horizon lines"),
         "SKY_GATE": function_section(hardware, "HWR_RenderSkyClaim", "\tif (HWR_SubsectorHasHorizon(subsector))", "\n\t{\n\t\tconst float renderdist"),
     }, output / "horizon_cache.cpp")
     decision = bsp.section("\tbacksector = R_FakeFlat(backsector, &tempsec, NULL, NULL, true);", "\nclippass:")
@@ -836,7 +836,7 @@ def generate(engine, output):
         "CLIP_AIM": Source(engine / "src/g_game.c").function("G_SoftwareClipAimingPitch"),
         "WALL_FILLS": hardware.function("HWR_WallFillsView"),
         "ADD_LINE_RULE": function_section(hardware, "HWR_AddLine",
-            "\t\telse if (HWR_D3D12() && portaloccludes && (voidwalls", "\n#endif\n\t\t// Reject empty lines"),
+            "\t\telse if (HWR_VibeRant() && portaloccludes && (voidwalls", "\n#endif\n\t\t// Reject empty lines"),
     }, output / "void_wall.cpp")
 
     render(templates / "batch_sort.cpp.in", {

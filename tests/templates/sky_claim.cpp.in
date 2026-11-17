@@ -24,8 +24,8 @@ static void Submit(subsector_t *sub, sector_t *gl_frontsector,
 }
 int main()
 {
-#if defined(HAVE_D3D12) && !defined(_UWP)
-    hwr_d3d12 = true; // The first cases exercise Direct3D 12 explicitly.
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+    hwr_viberant = true; // The first cases exercise Direct3D 12 explicitly.
 #endif
     sector_t sector{};
     subsector_t sub{};
@@ -67,14 +67,14 @@ int main()
     check(1, 1, 8*unit, true, false);
     check(1, 1, unit, false, false, 6);
     check(1, 1, unit, true, true, 8);
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
     // With OpenGL as the driver nothing claims the sky, wherever the camera is
-    hwr_d3d12 = false;
+    hwr_viberant = false;
     for (fixed_t camera : {-unit, 0, unit, 7*unit, 8*unit, 9*unit})
         for (int floorpic : {0, 1})
             for (int ceilingpic : {0, 1})
                 check(floorpic, ceilingpic, camera, false, false);
-    hwr_d3d12 = true;
+    hwr_viberant = true;
     check(1, 1, unit, true, true);
 #endif
 }

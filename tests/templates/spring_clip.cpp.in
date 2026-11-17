@@ -50,8 +50,8 @@ static int probeLines;
 void I_OutputMsg(const char *fmt,...){++probeLines;va_list ap;va_start(ap,fmt);std::vprintf(fmt,ap);va_end(ap);}
 // Which hardware driver draws: the stencil marks for a spring's model are VibeRant's.
 static bool viberant=true;
-#undef HWR_D3D12
-#define HWR_D3D12() viberant
+#undef HWR_VibeRant
+#define HWR_VibeRant() viberant
 struct Mark { std::vector<FOutVector> v; bool set; };
 static std::vector<Mark> marks;
 static bool markFails;

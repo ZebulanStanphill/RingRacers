@@ -21,11 +21,11 @@
 #include "hardware/hw_data.h"
 #include "hardware/hw_model.h"
 #include "hardware/r_d3d12/r_d3d12.h"
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
 #include <d3d12sdklayers.h>
 #else
 #include <cstdlib>
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 #include <pthread.h>
 #include "hardware/r_d3d12/metal/mtl12.h"
 #else
@@ -245,7 +245,7 @@ static void quadrants(RGB tl,RGB tr,RGB bl,RGB br) { reset({0,0,0}); fillRect(-1
 static RGB probe(int x,int y,int height) { UINT8 p[3]={0xcd,0xcd,0xcd}; readrect(x,height-1-y,1,1,3,reinterpret_cast<UINT16 *>(p)); return {p[0],p[1],p[2]}; }
 static void validate(ID3D12InfoQueue *queue)
 {
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
     bool failed = false;
     static bool clearWarningLogged = false;
     for (UINT64 i = 0; i < queue->GetNumStoredMessages(); i++)
@@ -273,7 +273,7 @@ static void validate(ID3D12InfoQueue *queue)
         }
     }
     if (failed) throw std::runtime_error("debug warning/error");
-#elif defined(HAVE_METAL)
+#elif defined(HAVE_VIBERANT_METAL)
     // What Metal reports through command buffers: one that failed, and each fault shader validation logged. A failure of
     // Metal's API validation never gets here: the debug layer stops the program where it happens.
     if (rr_mtl12::ValidationErrors() != 0) throw std::runtime_error("Metal validation error");
@@ -282,7 +282,7 @@ static void validate(ID3D12InfoQueue *queue)
 #endif
     if (Core_Errors()) throw std::runtime_error("production Core_Errors nonzero");
 }
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
 // tests/metal-driver/metal-objects.mm: what only Objective-C can make
 void *MetalTest_NewTexture(void *device,unsigned width,unsigned height);
 void *MetalTest_NextDrawable(void *device,unsigned width,unsigned height,void **texture);
@@ -528,11 +528,11 @@ static void selfTest() {
 }
 int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
     else if((argc==3 || (argc==4 && !strcmp(argv[3],"null-view"))) && !strcmp(argv[1],"--metal-command-buffer-error") && atoi(argv[2])>0) { metalFailure=atoi(argv[2]); metalFailureInNullView=argc==4; }
 #endif
     else if(argc!=1) return 2;
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
     ComPtr<ID3D12Debug> debug; ComPtr<ID3D12Debug1> gbv;
     if(FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))) || FAILED(debug.As(&gbv))) { fputs("D3D12 debug layer/GBV unavailable; install Windows Graphics Tools\n",stderr); return 77; }
     // A negative control injects a known regression (a shader mutant built by run-d3d12.ps1, or add-on shaders turned off) and
@@ -542,9 +542,9 @@ int main(int argc,char **argv) {
     puts(negative.empty() ? "D3D12 debug layer and GPU-based validation enabled" : "D3D12 debug layer enabled (negative control: GPU-based validation skipped)");
 #endif
     try {
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
         Core_ForceWarp(true);
-#elif defined(HAVE_METAL)
+#elif defined(HAVE_VIBERANT_METAL)
         // Metal has no CPU device: the test runs on the machine's GPU, which on a CI runner is a virtual one shared with
         // other machines. RR_METAL_PRODUCTION_WAITS keeps the waits production gives the GPU.
         if(!getenv("RR_METAL_PRODUCTION_WAITS")) Core_ScaleWaitsForTest(20);
@@ -558,9 +558,9 @@ int main(int argc,char **argv) {
 #endif
         D3D12_SetRingBytesForTest(1024,512,2048);
         if(!function<boolean (*)()>("Init")() || !D3D12_Surface(W,H)) throw std::runtime_error("Init/Surface failed");
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
-#elif defined(HAVE_METAL)
+#elif defined(HAVE_VIBERANT_METAL)
         if(logs.find("API validation on") == std::string::npos || logs.find("shader validation on") == std::string::npos)
             throw std::runtime_error("Metal's API and shader validation are required (MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1)");
         // For run-metal.sh, which looks for the Objective-C runtime's reports of objects this thread autoreleased with no pool
@@ -571,7 +571,7 @@ int main(int argc,char **argv) {
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
         // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
         { reset(); D3D12_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
         if(metalFailure) metalFailedCommandBuffer();
 #endif
         selfTest();
@@ -1361,7 +1361,7 @@ int main(int argc,char **argv) {
             // Rather than accept two answers, the Vulkan run starts from a green of 200 (199.22, then 198.22), whose results
             // can't be taken below a boundary, so that every device agrees on one value.
             const RGB groupClear={80,
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
                 120,
 #else
                 200,
@@ -1930,7 +1930,7 @@ int main(int argc,char **argv) {
                   D3D12_FinishUpdate(0);
               } }
             clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); special(HWD_SET_MODEL_LIGHTING,0);
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
             // mtl12 keeps a compiled Metal function for as long as a pipeline state is made of it, and no longer: sixteen
             // add-on shaders, each compiled, drawn with, and cleaned, must leave its shader cache as it was. Not a scene:
             // the other backends keep no such cache.
@@ -1989,7 +1989,7 @@ int main(int argc,char **argv) {
 #endif
             deleteTexture(&customTexture); D3D12_FinishUpdate(0);
         }
-#ifdef HAVE_METAL
+#ifdef HAVE_VIBERANT_METAL
         metalNullViews();
         metalPresenterHooks();
 #endif
@@ -1999,9 +1999,9 @@ int main(int argc,char **argv) {
         if(!negative.empty()) throw std::runtime_error("unknown or unexercised negative control");
         const std::string problems=oracleProblems();
         if(!problems.empty()) throw std::runtime_error("oracles that never ran, or that aren't listed:"+problems);
-#ifdef HAVE_D3D12_NATIVE
+#ifdef HAVE_VIBERANT_D3D
         puts("Production D3D12 WARP driver scenes passed (RGB tolerance 1, GBV clean)"); return 0;
-#elif defined(HAVE_METAL)
+#elif defined(HAVE_VIBERANT_METAL)
         printf("Production Metal driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;
 #else
         printf("Production Vulkan driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;

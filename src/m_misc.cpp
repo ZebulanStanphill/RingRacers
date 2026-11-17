@@ -933,7 +933,7 @@ static void M_PNGText(png_structp png_ptr, png_infop png_info_ptr, PNG_CONST png
 #else
 	 "Unknown";
 #endif
-#if defined(HAVE_D3D12) && !defined(_UWP)
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
 	char rendermodetxt[16];
 #else
 	char rendermodetxt[9];
@@ -951,8 +951,8 @@ static void M_PNGText(png_structp png_ptr, png_infop png_info_ptr, PNG_CONST png
 			strcpy(rendermodetxt, "Software");
 			break;
 		case render_opengl:
-#if defined(HAVE_D3D12) && !defined(_UWP)
-			strcpy(rendermodetxt, HWR_D3D12() ? HWR_VIBERANT_NAME(HWR_Vulkan()) : "OpenGL");
+#if defined(HAVE_VIBERANT) && !defined(_UWP)
+			strcpy(rendermodetxt, HWR_VibeRant() ? HWR_VIBERANT_NAME(HWR_Vulkan()) : "OpenGL");
 #else
 			strcpy(rendermodetxt, "OpenGL");
 #endif

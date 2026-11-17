@@ -24,7 +24,7 @@
 #include "hw_main.h"
 #include "hw_glob.h"
 #include "hw_drv.h"
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 #include "hw_batching.h"
 #include "r_d3d12/r_d3d12.h"
 #endif
@@ -767,7 +767,7 @@ void HWR_EncoreInvertScreen(void)
 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Invert|PF_NoDepthTest);
 }
 
-#ifdef HAVE_D3D12
+#ifdef HAVE_VIBERANT
 // Apply the software fade table now, before subsequent HUD/2D drawing.
 void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength)
 {
