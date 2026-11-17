@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # A branch started before the driver's names changed could bring one back, and an #ifdef on an old switch would
+      # compile and leave its code out
+      - name: Check for the driver's retired names
+        run: python3 tests/check-retired-names.py
+
       - name: Record the native toolchain image
         run: echo "RR_IMAGE_VERSION=$ImageOS-$ImageVersion" >> "$GITHUB_ENV"
 

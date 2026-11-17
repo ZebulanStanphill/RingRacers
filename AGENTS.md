@@ -98,6 +98,8 @@ and the same scenes on VibeRant Vulkan (Linux) and VibeRant Metal (macOS).
 `.github/workflows/tests.yml` runs all of them, and checks that Linux builds the driver with
 only its Vulkan backend, that macOS builds it with only its Metal backend, and that
 Windows desktop (not UWP) builds with it by default (beside OpenGL, using the desktop presenter).
+It also runs `tests/check-retired-names.py`, which fails on a name the driver had before it
+was called VibeRant; the script lists the old and new names.
 `.github/workflows/build.yml` builds the UWP app with `uwp/build.ps1` and uploads
 the package that is tested on Xbox; there is no local UWP build outside Windows.
 
