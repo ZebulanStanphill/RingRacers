@@ -60,7 +60,7 @@ constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3
 enum Renderer
 {
 	RENDERER_SOFTWARE,
-	RENDERER_LEGACYGL,
+	RENDERER_VIBERANT,
 	RENDERER_NONE,
 	NUMRENDERERS
 };
@@ -216,7 +216,7 @@ Renderer RendererOf(INT32 mode)
 	case render_soft:
 		return RENDERER_SOFTWARE;
 	case render_opengl:
-		return RENDERER_LEGACYGL;
+		return RENDERER_VIBERANT;
 	default:
 		return RENDERER_NONE;
 	}

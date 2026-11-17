@@ -513,7 +513,7 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		}
 		lastwipetic = nowtime;
 
-		// [UWP]: Legacy GL's D3D12 wipes use the same mode, reverse and wiggle as the RHI.
+		// [UWP]: VibeRant's wipes use the same mode, reverse and wiggle as the RHI.
 		g_wipemode = wipemode;
 		g_wipetype = wipetype;
 		g_wipeframe = wipeframe - 1;

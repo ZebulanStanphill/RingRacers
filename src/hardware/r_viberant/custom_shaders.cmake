@@ -1,4 +1,4 @@
-# Pinned source dependencies for UWP's runtime Legacy GL shader translation.
+# Pinned source dependencies for the VibeRant driver's runtime translation of add-on shaders (GLSL written for Legacy GL).
 include(FetchContent)
 if(NOT SRB2_CONFIG_VIBERANT_VULKAN AND NOT SRB2_CONFIG_VIBERANT_METAL)
     set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)

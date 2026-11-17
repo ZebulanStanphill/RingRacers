@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  d3d_present_win32.cpp
-/// \brief [Windows desktop]: Shows VibeRant D3D12's frames in a child window of the game window with a swap chain of its own
+/// \brief [Windows desktop]: Shows VibeRant D3D's frames in a child window of the game window with a swap chain of its own
 ///
 /// A flip-model swap chain can't be made on a window that has an OpenGL pixel format, and the Software renderer's RHI keeps
 /// its OpenGL context on the SDL window, so the driver makes a child window of it, as large as the parent's client area, and

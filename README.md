@@ -134,7 +134,7 @@ On a PC, include `latest-log.txt` from the game's own folder (`~/.ringracers` on
 Every push runs two workflows:
 
 - **Build** builds the Xbox app on Windows and uploads it as the `ring-racers-ze` artifact, which [Install the game](#install-the-game) explains how to use.
-- **Tests** runs the native regression tests and the Direct3D 12 tests described in [tests/README.md](tests/README.md), checks that Linux and macOS still build, and uploads the Windows desktop build as `windows-desktop`.
+- **Tests** runs the native regression tests and the VibeRant driver tests (on Direct3D 12 with WARP, on Vulkan, and on Metal) described in [tests/README.md](tests/README.md), checks that Linux and macOS still build, and uploads the Windows desktop build as `windows-desktop`.
 
 ### Xbox app on Windows
 
@@ -194,7 +194,7 @@ Linux builds include VibeRant Vulkan (`SRB2_CONFIG_VIBERANT_VULKAN`), and Window
 
 - [Kart Krew Dev](https://www.kartkrew.org/) made Dr. Robotnik's Ring Racers, which is based on [Sonic Robo Blast 2](https://srb2.org/), itself based on [Doom Legacy](http://doomlegacy.sourceforge.net/). Their source is at [gitlab.com/kart-krew-dev/ring-racers](https://gitlab.com/kart-krew-dev/ring-racers), mirrored at [KartKrewDev/RingRacers](https://github.com/KartKrewDev/RingRacers).
 - [worleydl](https://github.com/worleydl) made the [UWP port](https://github.com/worleydl/ringracers-uwp) this one builds on, along with [SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) and [uwp-dep](https://github.com/worleydl/uwp-dep).
-- VibeRant D3D's portals implementation is inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s, and its palette rendering is ported from Sonic Robo Blast 2.
+- VibeRant's portals implementation is inspired by [SRB2Kart Saturn](https://github.com/Indev450/SRB2Kart-Saturn)'s, and its palette rendering is ported from Sonic Robo Blast 2.
 
 ## License and disclaimer
 

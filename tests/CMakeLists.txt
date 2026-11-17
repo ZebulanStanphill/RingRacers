@@ -7,7 +7,7 @@ set(RR_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Ring Racers sourc
 option(RR_SANITIZERS "Run with AddressSanitizer and UndefinedBehaviorSanitizer" ON)
 
 if(NOT EXISTS "${RR_SOURCE_DIR}/src/hardware/r_viberant/shaders.hlsl")
-    message(FATAL_ERROR "Set RR_SOURCE_DIR to a Ring Racers checkout with the Direct3D 12 driver; see tests/README.md")
+    message(FATAL_ERROR "Set RR_SOURCE_DIR to a Ring Racers checkout with the VibeRant driver; see tests/README.md")
 endif()
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
    CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
@@ -87,11 +87,11 @@ function(regression name source)
     target_compile_features(${name} PRIVATE cxx_std_17)
     target_compile_definitions(${name} PRIVATE NONX86 NORUSEASM ${ARGN})
     if("_UWP" IN_LIST ARGN)
-        # UWP builds have the Direct3D 12 driver (SRB2_CONFIG_VIBERANT_D3D) by default
+        # UWP builds have the VibeRant driver, with its Direct3D 12 backend (SRB2_CONFIG_VIBERANT_D3D), by default
         target_compile_definitions(${name} PRIVATE HAVE_VIBERANT)
     endif()
     target_include_directories(${name} SYSTEM PRIVATE "${RR_SOURCE_DIR}/src" ${bundled_includes})
-    # Production code asks HWR_VibeRant() which hardware driver draws: always the Direct3D 12 one with _UWP, never without
+    # Production code asks HWR_VibeRant() which hardware driver draws: always the VibeRant one with _UWP, never without
     # HAVE_VIBERANT, and the setting hwr_viberant (defined by the engine's hw_driver.c) with only HAVE_VIBERANT.
     if("HAVE_VIBERANT" IN_LIST ARGN AND NOT "_UWP" IN_LIST ARGN)
         target_sources(${name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/hw-driver.cpp")
@@ -232,7 +232,7 @@ endif()
 add_test(NAME custom_shader_translation COMMAND custom_shader_translation "${CMAKE_CURRENT_BINARY_DIR}/translated-shaders")
 set_tests_properties(custom_shader_translation PROPERTIES TIMEOUT 60)
 
-# Compile GPU-independent D3D12 bookkeeping directly from the production headers.
+# Compile GPU-independent VibeRant bookkeeping directly from the production headers.
 add_executable(viberant_allocators viberant-allocators.cpp)
 target_compile_features(viberant_allocators PRIVATE cxx_std_17)
 target_include_directories(viberant_allocators PRIVATE "${RR_SOURCE_DIR}/src")

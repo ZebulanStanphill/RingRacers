@@ -734,7 +734,7 @@ static struct
 	int draws, texturescreated, textureuploads, framebufferscreated, atlasresets;
 	precise_t tic, playerthink, thinkers, lua, acs, bots;
 	int checkpositions, luamobjhooks;
-	// Legacy GL's renderer
+	// The hardware renderer's
 	int hwframes;
 	precise_t hwskybox, hwnodesort, hwnodedraw, hwspritesort, hwspritedraw, hwbatchsort, hwbatchdraw;
 	INT64 hwpolys, hwverts, hwcalls, hwshaders, hwtextures;

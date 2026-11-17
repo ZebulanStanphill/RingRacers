@@ -1323,7 +1323,7 @@ void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32
 	}
 
 	// [UWP]: Only an approximation of Software, which keeps the sector's light and moves a semibright sprite's distance
-	// into the nearer half of the table: in a dim sector this is far brighter. Direct3D 12's shaders follow Software
+	// into the nearer half of the table: in a dim sector this is far brighter. VibeRant's shaders follow Software
 	// (HWR_SemiBrightLight); without shaders nothing is lit by distance, and the approximation stays.
 	if (semibright && (!HWR_VibeRant() || !HWR_UseShader()))
 	{
@@ -9252,7 +9252,7 @@ static void HWR_SurfaceProbe_f(void)
 	INT32 x = 15, y = 35;
 	if (!HWR_VibeRant())
 	{
-		CONS_Printf("The surface probe requires the VibeRant D3D renderer.\n");
+		CONS_Printf("The surface probe requires a VibeRant renderer.\n");
 		return;
 	}
 	if (COM_Argc() != 1 && COM_Argc() != 3)

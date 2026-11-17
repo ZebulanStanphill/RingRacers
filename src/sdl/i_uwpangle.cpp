@@ -52,7 +52,7 @@ namespace
 constexpr int kFrames = 4; // in the ring
 constexpr int kMarks = UWPANGLE_NUMMARKS;
 
-// ANGLE's EGL, from the same library the Direct3D 12 driver (hardware/r_viberant/d3d_present_uwp.cpp) finds it in
+// ANGLE's EGL, from the same library VibeRant D3D's presenter (hardware/r_viberant/d3d_present_uwp.cpp) finds it in
 typedef void *EGLDisplay;
 typedef void *EGLDeviceEXT;
 typedef int32_t EGLint;

@@ -49,7 +49,7 @@ those commits stay as they are and the merge is made again.
   `_UWP`, the constant 0 without `HAVE_VIBERANT`, and `hwr_viberant` between them.
   `#ifdef HAVE_VIBERANT` is only for what has to be compiled out without the driver:
   includes, types, struct fields, enum values, prototypes, function definitions, a
-  call of a Direct3D 12 function (with the `HWR_VibeRant()` check around it), and
+  call of a VibeRant driver function (with the `HWR_VibeRant()` check around it), and
   bookkeeping that doesn't depend on the driver. Code under `HAVE_VIBERANT` must
   compile without `_UWP` (Xbox-only things inside it get their own `_UWP`
   guard) and without Windows (Linux builds have `HAVE_VIBERANT` with only the
@@ -93,8 +93,9 @@ the unmodified game.
 # Testing
 
 `tests/README.md` describes the native regression tests (Linux or macOS, with
-sanitizers) and the Direct3D 12 WARP harness (Windows).
-`.github/workflows/tests.yml` runs both, and checks that Linux builds the driver with
+sanitizers) and the driver's pixel tests: the Direct3D 12 WARP harness (Windows) for VibeRant D3D,
+and the same scenes on VibeRant Vulkan (Linux) and VibeRant Metal (macOS).
+`.github/workflows/tests.yml` runs all of them, and checks that Linux builds the driver with
 only its Vulkan backend, that macOS builds it with only its Metal backend, and that
 Windows desktop (not UWP) builds with it by default (beside OpenGL, using the desktop presenter).
 `.github/workflows/build.yml` builds the UWP app with `uwp/build.ps1` and uploads

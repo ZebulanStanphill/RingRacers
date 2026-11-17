@@ -7,7 +7,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file r_viberant.h
-/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented with its own swap chain
+/// \brief The VibeRant driver: the hardware renderer's driver, written against the Direct3D 12 interfaces and run on Direct3D 12, Vulkan, or Metal
 
 #ifndef __R_VIBERANT_H__
 #define __R_VIBERANT_H__

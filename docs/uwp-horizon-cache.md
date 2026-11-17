@@ -1,6 +1,6 @@
 # UWP horizon cache
 
-D3D12 caches one byte per subsector, built lazily from its static BSP segs.
+VibeRant caches one byte per subsector, built lazily from its static BSP segs.
 Only `!seg->glseg && seg->linedef && seg->linedef->special == HORIZONSPECIAL`
 sets a byte. Both plane and sky-claim paths skip their whole horizon scan when
 it is clear; marked subsectors retain the original per-seg visibility decision.

@@ -25,7 +25,7 @@ static void Submit(subsector_t *sub, sector_t *gl_frontsector,
 int main()
 {
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
-    hwr_viberant = true; // The first cases exercise Direct3D 12 explicitly.
+    hwr_viberant = true; // The first cases exercise the VibeRant driver explicitly.
 #endif
     sector_t sector{};
     subsector_t sub{};

@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file viberant_screens.inc
-/// \brief [UWP]: Screen copies, wipes, the intermission background, the final screen, post image distortion and fade maps
+/// \brief Screen copies, wipes, the intermission background, the final screen, post image distortion and fade maps
 
 // Included by r_viberant.cpp. A screen copy is an ordinary texture object with a persistent SRV, so it follows the
 // texture rules: replacing or deleting one retires its resource and SRV index with the fence of the work recorded
@@ -191,7 +191,7 @@ FOutVector PostImageVertex(int x, int y, const int viewport[4], int screenHeight
 
 void VibeRant_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
 {
-	(void)points; // The UWP shader uses Software's per-pixel sampling, not Legacy GL's grid.
+	(void)points; // The driver's shader uses Software's per-pixel sampling, not Legacy GL's grid.
 	const int texsize = ScreenTextureSize();
 	const GLState saved = g_gl;
 	g_postImage = true;

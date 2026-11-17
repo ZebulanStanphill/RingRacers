@@ -73,7 +73,7 @@ void *hwSym(const char *funcName,void *handle)
 {
 	void *funcPointer = NULL;
 #ifdef HAVE_VIBERANT
-	// [UWP]: Legacy GL draws with Direct3D 12, since ANGLE has no desktop OpenGL
+	// [UWP]: The hardware renderer is the VibeRant driver, since ANGLE has no desktop OpenGL
 #if defined(_UWP)
 	return VibeRant_GetDriverFunction(funcName);
 #else

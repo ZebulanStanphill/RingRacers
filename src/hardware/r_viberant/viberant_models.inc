@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file viberant_models.inc
-/// \brief [UWP]: Arena-backed models, mesh indices and sky dome draws
+/// \brief Arena-backed models, mesh indices and sky dome draws
 
 // Models and sky retain upload-arena allocations; replacement is fence retired.
 struct ModelVertex

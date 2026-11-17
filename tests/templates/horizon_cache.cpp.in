@@ -26,7 +26,7 @@ void Sky(const subsector_t *subsector) {
 }
 int main() {
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
-    hwr_viberant = true; // The first cases exercise Direct3D 12 explicitly.
+    hwr_viberant = true; // The first cases exercise the VibeRant driver explicitly.
 #endif
     subsector_t subs[3]{}; seg_t sg[4]{}; line_t lines[2]{};
     subsectors=subs; segs=sg; numsubsectors=3;

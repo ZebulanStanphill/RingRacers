@@ -162,7 +162,7 @@ void Prewarm_Start(ID3D12Device *device, ID3D12RootSignature *root)
 						if (SUCCEEDED(hr) && pso)
 						{
 							wchar_t name[128];
-							swprintf(name, ARRAYSIZE(name), L"D3D12 prewarm PSO %u", i + 1);
+							swprintf(name, ARRAYSIZE(name), L"VibeRant prewarm PSO %u", i + 1);
 							pso->SetName(name);
 							retained.push_back(pso);
 							++result.ok;

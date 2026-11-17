@@ -19,9 +19,10 @@ set(viberant_shader_entries VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe 
 	PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
 
 if(SRB2_CONFIG_VIBERANT_D3D OR SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_METAL)
-	# The VibeRant driver: Legacy GL's driver for Direct3D 12 (VibeRant D3D), which the Vulkan backend (VibeRant Vulkan)
-	# runs on Vulkan, and the Metal backend (VibeRant Metal) on Metal, by implementing the Direct3D 12 interfaces it
-	# uses. HAVE_VIBERANT means the driver is built, with any of the backends.
+	# The VibeRant driver, the hardware renderer's driver. It is written against the Direct3D 12 interfaces: the Direct3D 12
+	# backend (VibeRant D3D) runs on Direct3D 12 itself, the Vulkan backend (VibeRant Vulkan) on Vulkan, and the Metal
+	# backend (VibeRant Metal) on Metal, by implementing those interfaces. HAVE_VIBERANT means the driver is built, with
+	# any of the backends.
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT)
 	set(viberant_shader_source "${CMAKE_CURRENT_SOURCE_DIR}/r_viberant/shaders.hlsl")
 	include(r_viberant/custom_shaders.cmake)
@@ -36,9 +37,9 @@ if(SRB2_CONFIG_VIBERANT_D3D)
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT_D3D)
 	find_program(SRB2_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkBinPath}/x64")
 	if(NOT SRB2_FXC)
-		message(FATAL_ERROR "fxc (from the Windows SDK) wasn't found; it compiles Legacy GL's Direct3D 12 shaders")
+		message(FATAL_ERROR "fxc (from the Windows SDK) wasn't found; it compiles the driver's Direct3D 12 shaders")
 	endif()
-	message(STATUS "Compiling Legacy GL's Direct3D 12 shaders with ${SRB2_FXC}")
+	message(STATUS "Compiling the driver's Direct3D 12 shaders with ${SRB2_FXC}")
 
 	set(viberant_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/r_viberant_shaders")
 	set(viberant_shader_headers "")

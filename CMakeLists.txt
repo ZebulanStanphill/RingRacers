@@ -92,16 +92,16 @@ option(SRB2_CONFIG_PROFILEMODE "Compile for profiling (GCC only)." OFF)
 option(SRB2_CONFIG_TRACY "Compile with Tracy profiling enabled" OFF)
 option(SRB2_CONFIG_ASAN "Compile with AddressSanitizer (libasan)." OFF)
 option(SRB2_CONFIG_UWP "Compile in UWP compatibility mode (static lib for external launch)." OFF)
-# VibeRant D3D, the hardware renderer's Direct3D 12 driver (src/hardware/r_viberant). It presents with a swap chain of its
-# own: on a CoreWindow taken from ANGLE in UWP builds, and on a child window of the SDL window in other Windows builds.
-# A UWP build has it as its only hardware driver; a desktop build has it beside OpenGL, and the Renderer setting picks
+# VibeRant D3D, the Direct3D 12 backend of the VibeRant driver (src/hardware/r_viberant), the hardware renderer's driver.
+# It presents with a swap chain of its own: on a CoreWindow taken from ANGLE in UWP builds, and on a child window of the
+# SDL window in other Windows builds. A UWP build has it as its only hardware driver; a desktop build has it beside OpenGL, and the Renderer setting picks
 # one. On by default where its shaders can be compiled: fxc comes with the Windows SDK, which MSVC and clang-cl builds
 # have and MinGW builds don't.
 set(SRB2_CONFIG_VIBERANT_D3D_DEFAULT OFF)
 if(SRB2_CONFIG_UWP OR MSVC)
 	set(SRB2_CONFIG_VIBERANT_D3D_DEFAULT ON)
 endif()
-cmake_dependent_option(SRB2_CONFIG_VIBERANT_D3D "Build the Direct3D 12 hardware driver (VibeRant D3D). Windows only; needs fxc from the Windows SDK." "${SRB2_CONFIG_VIBERANT_D3D_DEFAULT}"
+cmake_dependent_option(SRB2_CONFIG_VIBERANT_D3D "Build the VibeRant driver's Direct3D 12 backend (VibeRant D3D). Windows only; needs fxc from the Windows SDK." "${SRB2_CONFIG_VIBERANT_D3D_DEFAULT}"
 	"WIN32;SRB2_CONFIG_HWRENDER" OFF)
 # VibeRant Vulkan: the same driver on Vulkan (src/hardware/r_viberant/vulkan implements the Direct3D 12 interfaces the
 # driver uses), for platforms without Direct3D 12. Its shaders are shaders.hlsl compiled to SPIR-V by glslang.

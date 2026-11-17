@@ -7,7 +7,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  d3d_present_uwp.cpp
-/// \brief [UWP]: Shows VibeRant D3D12's frames on the window with a swap chain of its own
+/// \brief [UWP]: Shows VibeRant D3D's frames on the window with a swap chain of its own
 ///
 /// The driver takes the window from ANGLE when it starts (or with the first frame, if no ANGLE context is current
 /// by then): ANGLE's window surface goes, as a CoreWindow takes one swap chain at a time. Each frame is then copied

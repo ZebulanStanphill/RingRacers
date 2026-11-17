@@ -96,7 +96,7 @@ jobs:
   warp:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: Direct3D 12 driver on WARP (debug layer + GPU-based validation)
+    name: VibeRant D3D on WARP (debug layer + GPU-based validation)
     needs: regressions
     runs-on: windows-2022
     # The job takes about three minutes; a WARP or GPU hang shouldn't hold a runner for an hour.
@@ -149,7 +149,7 @@ jobs:
           path: build/d3d12-regressions/legacy-build
           key: viberant-translator-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_viberant/custom_shaders.cmake', 'tests/viberant-translator/CMakeLists.txt') }}
 
-      - name: Direct3D 12 renderer regressions
+      - name: VibeRant D3D regressions
         shell: pwsh
         env:
           RR_TRANSLATOR_CACHE_HIT: ${{ steps.translator-cache.outputs.cache-hit }}
@@ -307,7 +307,7 @@ jobs:
   windows:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
-    name: Windows desktop build (OpenGL and Direct3D 12)
+    name: Windows desktop build (OpenGL and VibeRant D3D)
     runs-on: windows-2022
     # A cold vcpkg cache builds SDL2, libvpx, curl and the rest of vcpkg.json's dependencies from source.
     timeout-minutes: 60
@@ -332,7 +332,7 @@ jobs:
           if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $vsLlvm "clang-cl.exe"))) {
             $env:PATH = "$vsLlvm;$env:PATH"
           }
-          # fxc compiles the Direct3D 12 driver's shaders: the developer shell has it on PATH, and CMake also looks in
+          # fxc compiles the Direct3D 12 backend's shaders: the developer shell has it on PATH, and CMake also looks in
           # WindowsSdkVerBinPath
           Get-Command cl.exe, clang-cl.exe, cmake.exe, ninja.exe, fxc.exe -ErrorAction Stop | Select-Object Name, Source
           "WindowsSdkVerBinPath=$env:WindowsSdkVerBinPath"
@@ -365,7 +365,7 @@ jobs:
             vcpkg-${{ runner.os }}-${{ env.RR_IMAGE_VERSION }}-x64-windows-static-md-
             vcpkg-${{ runner.os }}-
 
-      # MSVC-compatible desktop builds have the Direct3D 12 driver by default (SRB2_CONFIG_VIBERANT_D3D), beside OpenGL: the
+      # MSVC-compatible desktop builds have VibeRant D3D, the driver's Direct3D 12 backend, by default (SRB2_CONFIG_VIBERANT_D3D), beside OpenGL: the
       # Renderer setting picks one, and it presents on a child window of the SDL window.
       - name: Configure
         shell: pwsh
@@ -376,7 +376,7 @@ jobs:
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       # Its presenter is the desktop one, not UWP's
-      - name: Check that the Direct3D 12 driver is included
+      - name: Check that VibeRant D3D is included
         shell: pwsh
         run: |
           $commands = "build/ninja-x64_windows_vcpkg-release/compile_commands.json"

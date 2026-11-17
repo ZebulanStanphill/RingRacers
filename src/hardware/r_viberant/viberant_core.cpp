@@ -5,9 +5,9 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  viberant_core.cpp
-/// \brief [UWP]: VibeRant D3D12's device, queue, command list, fences, deferred releases and CPU descriptor heaps
+/// \brief The VibeRant driver's device, queue, command list, fences, deferred releases and CPU descriptor heaps
 ///
-/// D3D11 kept whatever the GPU still used alive; D3D12 doesn't. Everything here assumes one queue, so fence values
+/// D3D11 kept whatever the GPU still used alive; D3D12 (and so the Vulkan and Metal backends that implement its interfaces) doesn't. Everything here assumes one queue, so fence values
 /// complete in order: an allocator or retired object tagged with a value is free once the fence reaches it.
 
 #include "viberant_core.h"

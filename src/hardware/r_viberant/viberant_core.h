@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  viberant_core.h
-/// \brief [UWP]: VibeRant D3D12's device, queue, command list, fences, deferred releases and CPU descriptor heaps
+/// \brief The VibeRant driver's device, queue, command list, fences, deferred releases and CPU descriptor heaps
 ///
 /// The driver records into one command list, which Core_Submit executes and reopens. Nothing a submitted list uses
 /// may be released before its fence completes: release through Core_Retire, which keeps the object until then.

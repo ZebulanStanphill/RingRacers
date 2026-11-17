@@ -224,7 +224,7 @@ static hwr_transbounds_t bounds(const std::vector<FOutVector> &v) {
     for (auto &point : v) HWR_TransparencyBoundsVertex(&result, &point);
     HWR_TransparencyBoundsFinish(&result); return result;
 }
-// The drivers a build can draw with: only Direct3D 12 for UWP (transparency_uwp), only OpenGL without the Direct3D 12
+// The drivers a build can draw with: only VibeRant for UWP (transparency_uwp), only OpenGL without the VibeRant
 // driver (transparency_desktop), and both, one after the other through hwr_viberant, with the driver but not _UWP
 // (transparency_both).
 #if defined(HAVE_VIBERANT) && !defined(_UWP)

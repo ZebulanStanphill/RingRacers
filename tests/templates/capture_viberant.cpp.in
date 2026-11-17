@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file capture_viberant.cpp.in
-/// \brief Native extraction checks for bounded D3D12 fog and water snapshots.
+/// \brief Native extraction checks for bounded fog and water snapshots.
 #include <algorithm>
 #include <cassert>
 #include <cmath>

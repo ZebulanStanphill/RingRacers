@@ -1,12 +1,15 @@
-# Direct3D 12 add-on shaders
+# VibeRant add-on shaders
 
 Add-on shaders from `SHADERS` lumps are translated at load time to Shader Model 5.1, and each
-translated program must build a pipeline state object (PSO) before it is used.
+translated program must build a pipeline state object (PSO) before it is used. This is the same on
+every VibeRant backend; where the text says Direct3D 12, VibeRant Vulkan and VibeRant Metal compile
+the HLSL to SPIR-V instead.
 
 ## Translation and compilation
 
 - Legacy GL's GLSL goes through the pinned glslang and SPIRV-Cross translators to HLSL.
-  The HLSL is then compiled with `D3DCompile` for the 5_1 profiles (`vs_5_1` and `ps_5_1`).
+  The HLSL is then compiled with `D3DCompile` for the 5_1 profiles (`vs_5_1` and `ps_5_1`) on Direct3D 12, and
+  to SPIR-V on Vulkan and Metal.
 - Every polygon, sky and model layout is translated and checked, not only the polygon one.
 
 ## Load-time PSO validation
@@ -57,7 +60,7 @@ Underwater and heat postprocessing always keeps its built-in shader.
 Options > Video > Screen Effect (`cv_scr_effect`) is 0 Nearest, 1 Sharp Bilinear, 2 SalCRT or 3 SalCRT Sharp.
 
 - **Nearest and Sharp Bilinear** only choose how the RHI path scales its smaller backbuffer up to the window.
-  VibeRant D3D draws the frame at the frame's own size, so there is nothing for them to scale and both draw the plain
+  VibeRant draws the frame at the frame's own size, so there is nothing for them to scale and both draw the plain
   frame. The frame is then placed on the screen by Screen Scaling (below), which samples it point by point.
 - **SalCRT and SalCRT Sharp** run the game's CRT fragment shader over the finished frame as a last pass, after
   palette rendering's last step and before the present. The pass draws the frame (the palette step's texture

@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file viberant_captures.inc
-/// \brief [UWP]: Fog and grouped water captures
+/// \brief Fog and grouped water captures
 
 // Included by r_viberant.cpp: fog and grouped immutable water captures.
 

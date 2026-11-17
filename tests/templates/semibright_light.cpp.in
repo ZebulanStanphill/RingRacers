@@ -9,7 +9,7 @@
 #include "hardware/hw_glob.h"
 #include "hardware/hw_main.h"
 // With OpenGL as the driver HWR_SemiBrightLight does nothing and the raised light level stays. The drivers a build can draw
-// with: only Direct3D 12 for UWP (semibright_light_uwp), only OpenGL without the Direct3D 12 driver
+// with: only VibeRant for UWP (semibright_light_uwp), only OpenGL without the VibeRant driver
 // (semibright_light_desktop), and both, one after the other through hwr_viberant, with the driver but not _UWP
 // (semibright_light_both).
 #if defined(HAVE_VIBERANT) && !defined(_UWP)

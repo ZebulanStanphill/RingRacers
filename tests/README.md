@@ -4,7 +4,7 @@ These tests run on Linux, macOS, or WSL without game assets, an Xbox, SDL,
 Direct3D, or vcpkg. Requirements: Python 3.9+, Git, CMake 3.24+, and `clang++`
 with its AddressSanitizer/UndefinedBehaviorSanitizer runtimes. Ubuntu's Clang and
 Apple's Command Line Tools work. Configuration fetches pinned glslang and SPIRV-Cross sources and needs network access on the first run. Native MSVC/clang-cl is not supported by this
-harness; the Windows `warp` job below compiles the Direct3D 12 driver and shaders, and
+harness; the Windows `warp` job below compiles the VibeRant driver, with its Direct3D 12 backend, and its shaders, and
 the Build workflow (`.github/workflows/build.yml`, `uwp/build.ps1`) builds and packages the UWP app.
 
 ## Running
@@ -21,20 +21,20 @@ ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 The tests extract production code from this checkout; set `RR_SOURCE_DIR` to test
 another one. `cmake --build` regenerates harnesses when tested engine files or
 templates change. Variants built with `_UWP` also define `HAVE_VIBERANT`, as UWP
-builds have the Direct3D 12 driver by default; engine code under `HAVE_VIBERANT`
-does not assume `_UWP` (see "Direct3D 12 without `_UWP`" under Coverage). The standalone test project does not configure the
+builds have the VibeRant driver by default; engine code under `HAVE_VIBERANT`
+does not assume `_UWP` (see "VibeRant without `_UWP`" under Coverage). The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
 Which hardware driver draws is decided at run time by `HWR_VibeRant()`
 (`src/hardware/hw_driver.h`): the constant 1 with `_UWP`, the constant 0 without
 `HAVE_VIBERANT`, and the setting `hwr_viberant` with `HAVE_VIBERANT` but not `_UWP`, a build
 that has both drivers. The `_uwp` and `_desktop` variants therefore run the
-Direct3D 12 and the OpenGL behaviour respectively. A variant named `_both` is
+VibeRant and the OpenGL behaviour respectively. A variant named `_both` is
 built with `HAVE_VIBERANT` only, links the engine's own `hw_driver.c` (through
 `tests/hw-driver.cpp`) and sets `hwr_viberant` to true and then false in one
 executable, expecting the `_uwp` results and then the `_desktop` ones.
 
-The native tests have no desktop variant of the Direct3D 12 driver: engine CMake
+The native tests have no desktop variant of VibeRant D3D: engine CMake
 enables it by default with `SRB2_CONFIG_UWP`, which defines `_UWP`, and in Windows
 desktop builds made with MSVC or clang-cl (the `windows` job's, which builds the desktop
 presenter). The shader compilation commands define no `_UWP` or Direct3D macro,
@@ -188,7 +188,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   require the UWP app on a device.
 
 - **Renderer setting at startup:** `renderer_setting`, `renderer_setting_uwp`,
-  `renderer_setting_both` (a desktop build with Direct3D 12 only),
+  `renderer_setting_both` (a desktop build with only the Direct3D 12 backend),
   `renderer_setting_vulkan` (Vulkan only, as on Linux),
   `renderer_setting_metal` (Metal only, as on macOS), and
   `renderer_setting_all` (both backends, as on Windows) execute production
@@ -216,11 +216,11 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   production `vaopt_e` for every renderer setting the build has, while Software, Legacy
   GL, or a VibeRant renderer runs. The lines above the Renderer row must describe the
   renderer the setting names, and with Software, which names none, the VibeRant renderer
-  the build lists first: never Direct3D 12 in a build without it, which is what a Linux
+  the build lists first: never VibeRant D3D in a build without it, which is what a Linux
   or macOS build said. The options heading must name the renderer that runs. Menu drawing
   is not covered.
 
-- **D3D12 rolled sprites:** `sprite_brightmap` also executes the geometry-only
+- **VibeRant rolled sprites:** `sprite_brightmap` also executes the geometry-only
   helper and the extracted HLSL integer `RollSource` function. For all angles
   1–71, both horizontal flips, asymmetric patches with holes, transparent
   patches, and default/frame/default-slot pivots, compare canvas crop, dimensions,
@@ -239,7 +239,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   CPU rotation remains for paper/floor sprites, linkdraw sprites, shaders off,
   active custom sprite shaders, every non-nearest or mipmapped filter mode, and
   art over 1024 pixels or pivots outside ±4096 pixels. Models, precipitation,
-  shadows and non-D3D12 builds retain their paths. The five-second VibeRant perf line
+  shadows and non-VibeRant builds retain their paths. The five-second VibeRant perf line
   reports submitted shader/CPU rolled sprites and geometry computations.
   Windows WARP's `roll-sprite` scene compares every target pixel with a CPU
   inverse-mapped patch uploaded through the ordinary masked path, including a
@@ -314,7 +314,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   stages to `translated-shaders`; Windows CI compiles these and the smoke-test
   add-on's 19 stages there as SM5.1, for 98 total (the 79 include one stand-in screen
   effect fragment, from `TranslateScreenEffect`, which the screen-effect scenes below draw).
-  `custom_shader_dispatch` runs the production Direct3D 12 loader, compiler,
+  `custom_shader_dispatch` runs the production VibeRant loader, compiler,
   cleaner and shader selection with translation, shader compilation and pipeline
   creation stubbed. With no add-on loaded nothing is translated or created and
   the built-ins are selected. A fragment-only replacement gets the real built-in
@@ -545,7 +545,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   `HWR_LIGHT_SEMIBRIGHT` from the light level and choose `lightPlane` 2 are extracted too: only a
   wall, sprite or model with the bit gets 2, and planes, water and fog keep 1 even with it set.
   `semibright_light_uwp` and `semibright_light_desktop` extract `HWR_SemiBrightLight`, `HWR_UseShader`,
-  `R_ThingIsSemiBright` and the end of `HWR_ObjectLightLevelPost`. With the Direct3D 12 driver and shaders the
+  `R_ThingIsSemiBright` and the end of `HWR_ObjectLightLevelPost`. With the VibeRant driver and shaders the
   level is left alone and only the bit is added (level 0 to 255 kept); without shaders, and in the
   desktop build, the old `192 + level / 2` applies and the bit is never set; other things get neither.
   `semibright_light_both` runs both cases in one executable, switching `hwr_viberant`.
@@ -656,7 +656,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   checks four palette indices, each dark and bright, as the Encore translation hands
   them over. A surface-colormap shader mutant must fail. `brightmap-smooth` covers
   the smooth-light path. This does not validate Xbox visuals.
-- **Direct3D 12 bookkeeping:** `viberant_allocators` compiles the production
+- **VibeRant bookkeeping:** `viberant_allocators` compiles the production
   `r_viberant/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
   GPU. It checks `RingAllocator` alignment (including non-power-of-two), wraparound,
   fence blocking with the highest overlapping fence, `Collect` and `Touch`
@@ -758,7 +758,7 @@ untouched padding.
   consistent. Whether the real race hit rate improves is measured on Xbox, not here.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
-- **Direct3D 12 without `_UWP`:** `python3 tests/check-viberant-desktop.py build/ninja-release/compile_commands.json`
+- **VibeRant without `_UWP`:** `python3 tests/check-viberant-desktop.py build/ninja-release/compile_commands.json`
   takes the compile database of a normal (Linux or macOS) game build, re-runs the recorded compile
   command of every `src/hardware/*.c` file with `-DHAVE_VIBERANT -fsyntax-only` added and fails if any
   reports an error. It guards that the engine code under `HAVE_VIBERANT` (portals, wall light slices,
@@ -773,7 +773,7 @@ Implementations under test are extracted at configure time from `RR_SOURCE_DIR`,
 not copied into the tests. `#line` directives point compiler/sanitizer diagnostics
 back to those engine files. Only dependency stubs, inputs and expected behavior
 live in `templates/`, including hand-worked literal bounds and constant bytes
-that independently check Direct3D 12 captures. If a function or section moves incompatibly, generation
+that independently check VibeRant captures. If a function or section moves incompatibly, generation
 fails instead of silently skipping its test.
 
 These are isolated native checks. The network simulation does not run UDP clients
@@ -868,7 +868,7 @@ must show the fixed color (64, 128, 191). `custom-shader-clean` must show the bu
 again after cleaning the shaders. `custom-shader-invalid` loads invalid GLSL, which must log a
 built-in fallback and draw the built-in color. `custom-shader-nocustom` sets Ignore custom
 shaders, so the custom-color oracle must fail: it's the negative control. They haven't been run
-locally, and Xbox results are untested. See [the Direct3D 12 add-on shader notes](../docs/viberant-custom-shaders.md).
+locally, and Xbox results are untested. See [the VibeRant add-on shader notes](../docs/viberant-custom-shaders.md).
 Dispatch scenes run last, after the model and sky scenes, and replace only the fragment stage, so
 the built-in vertex stage places the geometry. `custom-none` compiles with nothing loaded and
 draws the built-in color. A fragment for
@@ -962,7 +962,7 @@ removal run under GPU-based validation, and the `palette:` perf line must report
 table alive; the fade map scenes below are what read the master palette. Fog remapping with
 palette rendering is covered below; water with palette rendering and Xbox colors remain
 untested here.
-The `surface-probe` scene requests the Direct3D 12 driver's pixel history at 50%,50% (pixel 32,32 of
+The `surface-probe` scene requests the VibeRant driver's pixel history at 50%,50% (pixel 32,32 of
 the 64×64 target), draws three flat quads of different colors, labels one with
 `SurfaceProbeSource("wall", 7)` and ends the probe. It checks the logged `begin` pixel, each draw's
 `raw=` value (RGBA8 as a little-endian DWORD, alpha `0xFF`, each color channel within one like the
@@ -979,7 +979,7 @@ submissions exercise rebinding and constant lifetimes. Fog draws over known scen
 palette remapping through a light table. Water checks ordinary surface sampling and captured-scene
 refraction against the fixed-point sine and independent blend math; grouped surfaces must keep their
 original captured background while later pieces draw. The `fog-palette` and `water-refraction`
-shader mutants (above) must fail their oracles, and capture counters check the grouping under GPU-based validation. Native D3D12
+shader mutants (above) must fail their oracles, and capture counters check the grouping under GPU-based validation. Native VibeRant
 capture tests mock the texture, copy, binding and constant helpers, checking literal expected bounds (including fractional vertices) and
 constant bytes, split views, clipping, failures, resizing and disjoint water growth. A growing water
 capture uses one batched transition round trip around up to four strips; an unchanged grouped
@@ -1505,7 +1505,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   WARP checks the shipped blend/capture path and rejects a reciprocal-depth water
   shader with the `water-refraction` oracle. Xbox GPU performance needs device testing.
 
-- **Sky plane claims:** `sky_claim` extracts the D3D12 gate from `HWR_Subsector`.
+- **Sky plane claims:** `sky_claim` extracts the VibeRant gate from `HWR_Subsector`.
   Check floors from above and ceilings from below, rejection from the far side
   and at equality, non-sky flats, both planes together and the validcount guard.
   Cull heights represent the plane at the camera's x,y, independently of the
@@ -1520,7 +1520,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Sky patch offsets:** Software's production `R_SetupSkyDraw` supplies the reference horizon and column offsets. Check the hardware offset helper and dome vertices for both hemispheres, signed offsets and odd/even texture heights; include Water Palace's actual `WPZSKY1` header (512×224, left 0, top 16), whose horizon is row 128. These tests verify alignment. They do not verify background visibility through water.
 
-- **Untextured step flat bleeding:** `flat_bleed` runs the production D3D12 decision,
+- **Untextured step flat bleeding:** `flat_bleed` runs the production VibeRant decision,
   UV and draw helpers. Cover the Green Hills Zone linedef 757 slope-rounding sliver,
   textured steps, reversed/equal heights, either sky flat, camera visibility (including
   equality), polyobjects, mirrored ceilings and steps at only one endpoint. Compare
@@ -1634,7 +1634,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   The alternating case stays within the four-frame debt limit: a sustained
   overload eventually resets debt as specified, after which a fast loop can sleep.
 
-- **Horizon scan cache:** `horizon_cache` executes the production D3D12 cache
+- **Horizon scan cache:** `horizon_cache` executes the production VibeRant cache
   and both plane/sky admission gates. Cover minisegs, null linedefs, ordinary and
   horizon lines, cache reuse, runtime changes, zone teardown and replacement
   levels. `horizon_cache_both` also checks that with OpenGL as the driver every
@@ -1702,7 +1702,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   than matching those inconsistent extents or the texture's opaque columns.
   These checks cover decisions/submission, not GPU pixels or Xbox visuals.
 
-- **Two-player view width:** `split_projection` extracts the D3D12 transform
+- **Two-player view width:** `split_projection` extracts the VibeRant transform
   and shared frustum helper. Check 20 projections (five FOVs, all view layouts)
   against Software's 1.7x horizontal half-tangent, 100 literal frustum angles
   (five pitches in every layout), and 25 pitched two-player corner bounds.
@@ -1710,11 +1710,11 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   the same driver transform; `HWR_WallFillsView` already uses 1.7. Both normal
   rendering and portal searches use the widened frustum. The legacy sky quad's
   height/aim doubling describes the half-height viewport, not a zoom factor.
-  These extracted functions compile natively; the full Windows D3D12 driver,
+  These extracted functions compile natively; the full Windows VibeRant D3D driver,
   WARP and Xbox visuals cannot be checked on macOS.
 
 - **Software perspective shear:** `software_shear` compares the production hardware
-  aiming setup and D3D12 projection translation against Software's rounded view
+  aiming setup and VibeRant projection translation against Software's rounded view
   centre, within one pixel. Checks 1920x1080, two-player 1920x540 (with the 1.7x
   FOV tangent), three/four-player 960x540 and 1280x800, three FOVs, pitches up
   and down including -17.3 degrees, flip, and Off/On/Third-person selection.

@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file custom_dispatch.cpp.in
-/// \brief Native extraction checks for the Direct3D 12 driver's add-on shader loading and selection.
+/// \brief Native extraction checks for the VibeRant driver's add-on shader loading and selection.
 ///
 /// Executes the production VibeRant_LoadCustomShader, VibeRant_CompileShaders, VibeRant_CleanShaders, VibeRant_SetShader and
 /// CustomDrawProgram. Only translation, shader compilation and pipeline creation are stubs, so failures

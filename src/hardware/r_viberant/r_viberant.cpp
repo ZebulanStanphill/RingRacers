@@ -8,7 +8,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file r_viberant.cpp
-/// \brief [UWP]: Legacy GL's driver for Direct3D 12 (VibeRant D3D12), presented with its own swap chain
+/// \brief The VibeRant driver: the hardware renderer's driver, written against the Direct3D 12 interfaces and run on Direct3D 12, Vulkan, or Metal
 ///
 /// GL-state emulation and textured polygon/line draws ported from the former Direct3D 11 driver, using fence-retired
 /// upload rings, persistent texture descriptors and cached pipeline states. Advanced passes arrive in later steps.
@@ -1528,7 +1528,7 @@ bool InitDrawing()
 #endif
 	if (Core_Failed(device->CreateRootSignature(0, rootBlob, rootBytes,
 		IID_PPV_ARGS(&g_root)), "CreateRootSignature")) return false;
-	g_root->SetName(L"Legacy GL root signature");
+	g_root->SetName(L"VibeRant root signature");
 	D3D12_DESCRIPTOR_HEAP_DESC heap = {};
 	heap.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	heap.NumDescriptors = 65536;
@@ -1757,7 +1757,7 @@ ID3D12PipelineState *FindOrCreatePipeline(const PipelineKey &key)
 				(unsigned)g_psoCreated, key.custom ? customVs : ShaderName((VSKind)key.vs), key.custom ? customPs : ShaderName((PSKind)key.ps), key.layout, key.topologyType,
 				key.blend, (unsigned long long)key.depth, key.raster, ms, Prewarm_Done() ? "done" : "running");
 		if (Core_Failed(hr, "CreateGraphicsPipelineState")) created.Reset();
-		else created->SetName(L"Legacy GL cached pipeline");
+		else created->SetName(L"VibeRant cached pipeline");
 		found = g_pipelines.emplace(key, created).first;
 	}
 	return found->second.Get();

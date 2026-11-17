@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file viberant_screeneffect.inc
-/// \brief [UWP]: The SalCRT and SalCRT Sharp screen effects, as a last pass before the frame is presented
+/// \brief The SalCRT and SalCRT Sharp screen effects, as a last pass before the frame is presented
 
 // Included by r_viberant.cpp after palette rendering's last step. Options > Video > Screen Effect (cv_scr_effect) is
 // 0 Nearest, 1 Sharp Bilinear, 2 SalCRT, 3 SalCRT Sharp. The first two only choose how the RHI path scales a smaller

@@ -60,7 +60,7 @@ typedef INT32 rendererchoice_t;
 typedef rendermode_t rendererchoice_t;
 #define RENDERER_UNCHOSEN render_none
 #endif
-// A setting value, not a rendermode (3 is Direct3D 12 in a both-driver build).
+// A setting value, not a rendermode (3 is VibeRant D3D in a both-driver build).
 extern rendererchoice_t chosenrendermode;
 
 /**	\brief setup video mode

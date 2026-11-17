@@ -17,7 +17,7 @@ import time
 from renderers import DEFAULT_SIZE, RENDERERS, SIZES
 
 TICS = [70, 350, 700, 1400, 2100]
-# Lines that fail a map. "failed: 0x" is the Direct3D 12 driver's own error line; "VUID-" and "Validation Error" are
+# Lines that fail a map. "failed: 0x" is the VibeRant driver's own error line; "VUID-" and "Validation Error" are
 # Vulkan's validation layers; "D3D12 debug ERROR" is the Direct3D debug layer, which the driver copies to the log.
 ERROR = re.compile(r'I_Error|not implemented|Validation Error|VUID-|D3D12 debug ERROR|An error occurred within|'
                    r'SIGSEGV|signal:|device (?:lost|removed)|failed: 0x|Falling back to Software|'

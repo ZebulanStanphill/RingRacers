@@ -1486,7 +1486,7 @@ static void UWPUseSurfaceSize(void)
 
 static SDL_bool Impl_CreateContext(void)
 {
-	// [UWP]: Legacy GL draws and presents with Direct3D 12, which takes the window from the RHI's OpenGL ES context
+	// [UWP]: VibeRant D3D draws and presents, and takes the window from the RHI's OpenGL ES context
 	// when it starts, so it needs no context of its own
 #ifdef HWRENDER
 	if (rendermode == render_opengl && !HWR_VibeRant())
@@ -1569,9 +1569,9 @@ boolean VID_CheckRenderer(void)
 		rendererchanged = true;
 
 #ifdef HAVE_VIBERANT
-		// Legacy GL presents with a swap chain of Direct3D 12's own: on UWP on the window, which ANGLE needs back to draw
-		// Software's frames; on the desktop on a child window, which has to go for Software's frames to show. Starting Legacy
-		// GL again takes it again
+		// The VibeRant driver presents with a swap chain of its own: on UWP on the window, which ANGLE needs back to draw
+		// Software's frames; on the desktop on a child window or a window of its own, which has to go for Software's frames
+		// to show. Starting the driver again takes it again
 		if (HWR_VibeRant() && rendermode != render_opengl)
 			VibeRant_ReleaseWindow();
 #endif
@@ -1926,7 +1926,7 @@ void VID_StartupOpenGL(void)
 #ifdef HAVE_VIBERANT
 		if (HWR_VibeRant())
 		{
-			// [UWP]: Palette rendering, which the Direct3D 12 driver supports
+			// [UWP]: Palette rendering, which the VibeRant driver supports
 			*(void**)&HWD.pfnSetScreenPalette = hwSym("SetScreenPalette",NULL);
 			*(void**)&HWD.pfnSetPaletteLookup = hwSym("SetPaletteLookup",NULL);
 			*(void**)&HWD.pfnCreateLightTable = hwSym("CreateLightTable",NULL);
@@ -1970,7 +1970,7 @@ void I_ShutdownGraphics(void)
 
 #ifdef HWRENDER
 #ifdef HAVE_VIBERANT
-	// [UWP]: The Direct3D 12 driver releases its swap chain and ANGLE's device while ANGLE's context exists
+	// [UWP]: The VibeRant driver releases its swap chain and ANGLE's device while ANGLE's context exists
 	VibeRant_Shutdown();
 #endif
 #ifdef _UWP

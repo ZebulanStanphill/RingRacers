@@ -446,7 +446,7 @@ using the local invisible-window macOS harness, with the `sw-parity-walls`
 binary (walls fixes present, sprite/view fixes absent). The observations above
 for those rooms refer to that build. Rooms 8 and 9 were added later and
 rendered in Software with the same harness, and room 9 also in the hardware
-path with its fix. Room 8's hardware expectation rests on the Direct3D 12
+path with its fix. Room 8's hardware expectation rests on the VibeRant
 shader, which the harness doesn't run. The pad/command were also exercised with a temporary
 harness-only Lua probe; this add-on ships no probe or forced camera logic.
 The harness loads the map with `-warp RR_RENDERTEST -file

@@ -1,4 +1,4 @@
-// Pure D3D12 bookkeeping regressions; runs without a graphics API or GPU.
+// Pure VibeRant bookkeeping regressions; runs without a graphics API or GPU.
 #include "hardware/r_viberant/allocators.h"
 #include "hardware/r_viberant/pipeline_key.h"
 #include "hardware/r_viberant/mips.h"

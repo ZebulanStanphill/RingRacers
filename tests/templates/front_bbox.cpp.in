@@ -30,7 +30,7 @@ static void HWR_Subsector(INT32 leaf)
 }
 @@BSP_WALK@@
 
-// The drivers a build can draw with: only Direct3D 12 for UWP (front_bbox_uwp), only OpenGL without the Direct3D 12
+// The drivers a build can draw with: only VibeRant for UWP (front_bbox_uwp), only OpenGL without the VibeRant
 // driver (front_bbox_desktop), and both, one after the other through hwr_viberant, with the driver but not _UWP
 // (front_bbox_both).
 #if defined(HAVE_VIBERANT) && !defined(_UWP)

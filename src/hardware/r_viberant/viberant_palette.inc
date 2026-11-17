@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file viberant_palette.inc
-/// \brief [UWP]: Palette rendering's lookup table, light tables, palettes and last step
+/// \brief Palette rendering's lookup table, light tables, palettes and last step
 
 // Included by r_viberant.cpp. These are ordinary persistent SRVs and staging-ring uploads, so replacing, updating or
 // clearing one follows the texture rules: an update is recorded in order with the draws around it, and a resource,

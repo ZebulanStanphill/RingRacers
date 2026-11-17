@@ -1,7 +1,8 @@
-# Direct3D 12 diagnostics
+# VibeRant diagnostics
 
-The Direct3D 12 driver provides pixel history, presentation diagnostics and
-GPU-hang reports.
+The VibeRant driver provides pixel history, presentation diagnostics and
+GPU-hang reports. The presentation and GPU-hang sections are about VibeRant D3D, the Direct3D 12
+backend.
 
 ## Camera position in screenshots (UWP)
 

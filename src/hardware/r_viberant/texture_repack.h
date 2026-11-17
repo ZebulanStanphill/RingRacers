@@ -5,7 +5,7 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  texture_repack.h
-/// \brief [UWP]: Copies tightly packed 3D texture data into the rows and slices GetCopyableFootprints describes
+/// \brief Copies tightly packed 3D texture data into the rows and slices GetCopyableFootprints describes
 
 #ifndef RR_VIBERANT_TEXTURE_REPACK_H
 #define RR_VIBERANT_TEXTURE_REPACK_H

@@ -105,7 +105,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 #ifdef HAVE_VIBERANT
 	// [UWP]: Texture Quality only picks Legacy GL's OpenGL texture format;
-	// Direct3D 12 always uses 32-bit textures, so its row offers the filter.
+	// VibeRant always uses 32-bit textures, so its row offers the filter.
 	{IT_STRING | IT_CVAR, "Texture Filter", "Nearest keeps texels sharp like Software. Mipmap modes smooth distant textures.",
 		NULL, {.cvar = &cv_glfiltermode}, 0, 0},
 #else

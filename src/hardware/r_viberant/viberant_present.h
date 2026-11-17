@@ -5,9 +5,10 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  viberant_present.h
-/// \brief Shows VibeRant D3D12's frames on the window with a swap chain of its own
+/// \brief Shows the VibeRant driver's frames on the window with a swap chain of its own
 ///
-/// Two implementations, one per platform. UWP (d3d_present_uwp.cpp): the swap chain takes the CoreWindow from ANGLE. Windows
+/// One implementation per backend and system: Direct3D 12's on UWP and on Windows desktop, then Vulkan's (vulkan/vk_present.cpp)
+/// and Metal's (metal/mtl_present.mm). UWP (d3d_present_uwp.cpp): the swap chain takes the CoreWindow from ANGLE. Windows
 /// desktop (d3d_present_win32.cpp): it goes on a child window of the SDL window, which is as large as the SDL window's
 /// client area, and ANGLE isn't involved.
 
@@ -20,11 +21,11 @@
 namespace rr_viberant
 {
 
-// Gets the window to present on, when VibeRant D3D starts.
+// Gets the window to present on, when the driver starts.
 // UWP: takes the window from ANGLE, whose window surface goes, as a CoreWindow takes one swap chain at a time. Call with
 // ANGLE's context current. Returns true once the swap chain has the window, or if no context is current yet, in which
 // case Present_Frame takes it with the first frame. Returns false if taking it failed: ANGLE has the window and its
-// context back, and VibeRant D3D can't present, so the caller falls back to Software.
+// context back, and the driver can't present, so the caller falls back to Software.
 // Desktop: makes the child window of the SDL window and the swap chain on it, which needs no OpenGL context and never
 // waits for one; the SDL window's pixel format and contexts are left alone. Returns false, with nothing left behind, if it
 // can't, and the caller falls back to Software. Returns true without doing anything if the SDL window doesn't exist yet,
@@ -52,7 +53,7 @@ typedef bool (*PlaceFrameFn)(ID3D12Resource *source, D3D12_RESOURCE_STATES sourc
 // system stretches to the window, from then on, until the window is taken again. A window with no client area (minimized) is not presented to.
 void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place);
 
-// Gives the window back, for the Software renderer to use. Does nothing without the swap chain. Starting VibeRant D3D again
+// Gives the window back, for the Software renderer to use. Does nothing without the swap chain. Starting the driver again
 // takes the window again.
 // UWP: releases the swap chain and makes ANGLE's window surface again, and makes no context current: the caller does.
 // Desktop: releases the swap chain and destroys the child window.

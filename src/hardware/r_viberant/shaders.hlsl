@@ -8,11 +8,12 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file shaders.hlsl
-/// \brief [UWP]: Legacy GL's shaders for its Direct3D 12 driver (r_viberant.cpp)
+/// \brief The VibeRant driver's shaders (r_viberant.cpp), in HLSL for Direct3D 12
 ///
 /// The GLSL shaders of r_opengl.c, ported to HLSL, plus the parts of OpenGL's
 /// fixed-function pipeline Legacy GL uses when its shaders are off. Each entry
-/// point is compiled by fxc at build time (see ../CMakeLists.txt).
+/// point is compiled by fxc at build time for Direct3D 12, and by glslang to SPIR-V for
+/// the Vulkan and Metal backends (see ../CMakeLists.txt).
 
 // [UWP]: Shared 25-DWORD root signature; b4 reserves the custom view constants.
 #define RR_ROOT_SIGNATURE "RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_HULL_SHADER_ROOT_ACCESS | DENY_DOMAIN_SHADER_ROOT_ACCESS | DENY_GEOMETRY_SHADER_ROOT_ACCESS), " \
