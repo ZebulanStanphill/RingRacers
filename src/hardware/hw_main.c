@@ -169,7 +169,7 @@ void HWR_UWPPrecacheLevel(boolean players_only)
 	// selected for title-card drawing; subsequent draws select their own textures.
 	HWR_SetCurrentTexture(NULL);
 	HWD.pfnSetTexture(NULL);
-	I_OutputMsg("UWP D3D12: precache (%s): %d wall textures, %d flats, %d models (%d model textures) in %.2f ms\n",
+	I_OutputMsg("VibeRant: precache (%s): %d wall textures, %d flats, %d models (%d model textures) in %.2f ms\n",
 		players_only ? "players" : "level", walls, flats, models, modeltextures,
 		(I_GetPreciseTime() - start) * 1000.0 / I_GetPrecisePrecision());
 }

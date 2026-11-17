@@ -189,7 +189,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(backend_problems('vulkan', vulkan), [])
         self.assertTrue(backend_problems('vulkan', 'VID_StartupOpenGL()\n'))
         d3d = ('VibeRant backend: D3D12\nD3D12 debug layer enabled\nusing WARP for testing\n'
-               "D3D12: device: adapter 'Microsoft Basic Render Driver' 1414:008C\n")
+               "VibeRant D3D: device: adapter 'Microsoft Basic Render Driver' 1414:008C\n")
         self.assertEqual(backend_problems('d3d', d3d), [])
         self.assertTrue(backend_problems('d3d', d3d.replace('using WARP for testing', '')))
         self.assertEqual(backend_problems('gl', 'VID_StartupOpenGL()...\n'), [])

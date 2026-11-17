@@ -237,7 +237,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   CPU rotation remains for paper/floor sprites, linkdraw sprites, shaders off,
   active custom sprite shaders, every non-nearest or mipmapped filter mode, and
   art over 1024 pixels or pivots outside ±4096 pixels. Models, precipitation,
-  shadows and non-D3D12 builds retain their paths. The five-second D3D12 perf line
+  shadows and non-D3D12 builds retain their paths. The five-second VibeRant perf line
   reports submitted shader/CPU rolled sprites and geometry computations.
   Windows WARP's `roll-sprite` scene compares every target pixel with a CPU
   inverse-mapped patch uploaded through the ordinary masked path, including a

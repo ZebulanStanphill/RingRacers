@@ -598,7 +598,7 @@ void Present_LogPerf(double frames)
 #endif
 	const PresentStats &s = g_stats;
 	const double n = frames > 0 ? frames : 1;
-	I_OutputMsg("UWP perf:   D3D12: present: window swap chain (%u buffers, latency %u, %ux%u, tearing %s); per frame draw %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures\n",
+	I_OutputMsg("UWP perf:   VibeRant: present: window swap chain (%u buffers, latency %u, %ux%u, tearing %s); per frame draw %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures\n",
 		kBuffers, kLatency, g_direct.width, g_direct.height, g_direct.tearing ? "allowed" : "not allowed",
 		PreciseToMs(s.drawTime) / n, s.latencyWaitMs / n, s.worstLatencyWaitMs, s.latencyTimeouts,
 		PreciseToMs(s.presentTime) / n, s.worstPresentMs, s.presentFailures);

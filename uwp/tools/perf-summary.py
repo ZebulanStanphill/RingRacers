@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Summarizes the 5-second 'UWP perf' blocks of a latest-log.txt, including the Direct3D 12 'D3D12:' lines and the
-Software renderer's 'ANGLE GPU:' line: averages for each stretch of racing, and with -t, a table of every block.
+"""Summarizes the 5-second 'UWP perf' blocks of a latest-log.txt, including the VibeRant driver's 'VibeRant:' lines
+(logs from earlier builds call them 'D3D12:', which is still read) and the Software renderer's 'ANGLE GPU:' line:
+averages for each stretch of racing, and with -t, a table of every block.
 
 usage: perf-summary.py latest-log.txt [-t]
 """
@@ -24,21 +25,21 @@ PATTERNS = [
      ['mobjs', 'scenery', 'nothink', 'checkpos', 'luahooks']),
     (r'UWP perf:\s+main thread on processors (.*); profiler paused it ([\d.]+) ms per second', ['cpus', 'paused']),
     (r'UWP perf:\s+([\d.]+) R_PointInSubsector calls per second, ([\d.]+)% answered from its cache', ['pointlookups', 'pointcached']),
-    (r'UWP perf:\s+D3D12: ([\d.]+) frames/s; ([\d.]+) submissions per frame \(mid-frame: [^)]*\); ([\d.]+) barriers per frame; \d+ command allocators \(\d+ made\); \d+ releases pending; (\d+) errors',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): ([\d.]+) frames/s; ([\d.]+) submissions per frame \(mid-frame: [^)]*\); ([\d.]+) barriers per frame; \d+ command allocators \(\d+ made\); \d+ releases pending; (\d+) errors',
      ['d12fps', 'submits', 'barriers', 'd12errors']),
-    (r'UWP perf:\s+D3D12: fence waits (\d+), ([\d.]+) ms total \(worst ([\d.]+)\), (\d+) timeouts; presenting ([\d.]+) ms per frame',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): fence waits (\d+), ([\d.]+) ms total \(worst ([\d.]+)\), (\d+) timeouts; presenting ([\d.]+) ms per frame',
      ['fencewaits', 'fencems', 'fenceworst', 'fencetimeouts', 'presentms']),
-    (r'UWP perf:\s+D3D12: per frame ([\d.]+) clears, ([\d.]+) polygons, ([\d.]+) batches, ([\d.]+) lines; ([\d.]+) draws, ([\d.]+) vertices, ([\d.]+) indices, ([\d.]+) constant updates',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): per frame ([\d.]+) clears, ([\d.]+) polygons, ([\d.]+) batches, ([\d.]+) lines; ([\d.]+) draws, ([\d.]+) vertices, ([\d.]+) indices, ([\d.]+) constant updates',
      ['clears', 'polys', 'batches', 'lines', 'd12draws', 'verts', 'indices', 'constupd']),
-    (r'UWP perf:\s+D3D12: pipeline: ([\d.]+) PSO changes/frame; cache (\d+) alive, (\d+) created \(([\d.]+) ms total, worst ([\d.]+) ms\); ([\d.]+) root CBV sets, ([\d.]+) table sets/frame',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): pipeline: ([\d.]+) PSO changes/frame; cache (\d+) alive, (\d+) created \(([\d.]+) ms total, worst ([\d.]+) ms\); ([\d.]+) root CBV sets, ([\d.]+) table sets/frame',
      ['psochanges', 'psoalive', 'psocreated', 'psoms', 'psoworst', 'rootsets', 'tablesets']),
-    (r'UWP perf:\s+D3D12: textures: (\d+) created, (\d+) uploads \(([\d.]+) MB\), (\d+) deleted, (\d+) flushes, (\d+) alive',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): textures: (\d+) created, (\d+) uploads \(([\d.]+) MB\), (\d+) deleted, (\d+) flushes, (\d+) alive',
      ['texcreated', 'texuploads', 'texmb', 'texdeleted', 'texflushes', 'texalive']),
-    (r'UWP perf:\s+D3D12: present: direct swap chain \(\d+ buffers, latency \d+\); per frame copy ([\d.]+) ms, latency wait ([\d.]+) ms \(worst ([\d.]+), (\d+) timeouts\), present ([\d.]+) ms \(worst ([\d.]+)\); (\d+) present failures',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): present: direct swap chain \(\d+ buffers, latency \d+\); per frame copy ([\d.]+) ms, latency wait ([\d.]+) ms \(worst ([\d.]+), (\d+) timeouts\), present ([\d.]+) ms \(worst ([\d.]+)\); (\d+) present failures',
      ['copyms', 'copywait', 'copyworst', 'latencytimeouts', 'directpresentms', 'directpresentworst', 'presentfailures']),
-    (r'UWP perf:\s+D3D12: GPU ([\d.]+) ms per frame \(worst ([\d.]+), (\d+) timed\)', ['gpums', 'gpuworst', 'gputimed']),
+    (r'UWP perf:\s+(?:D3D12|VibeRant): GPU ([\d.]+) ms per frame \(worst ([\d.]+), (\d+) timed\)', ['gpums', 'gpuworst', 'gputimed']),
     # The 'N dedicated,' field is missing from older logs, so its capture is None there and parses as 0.
-    (r'UWP perf:\s+D3D12: texture heaps: (\d+) placed, (?:(\d+) dedicated, )?(\d+) committed created; (\d+) heaps \(([\d.]+) MB used, ([\d.]+) MB allocated, peak ([\d.]+) MB\)',
+    (r'UWP perf:\s+(?:D3D12|VibeRant): texture heaps: (\d+) placed, (?:(\d+) dedicated, )?(\d+) committed created; (\d+) heaps \(([\d.]+) MB used, ([\d.]+) MB allocated, peak ([\d.]+) MB\)',
      ['placed', 'dedicated', 'committed', 'heaps', 'heapused', 'heapalloc', 'heappeak']),
 ]
 
@@ -117,7 +118,7 @@ def summarize(group):
                  f"{sum(g(r, 'angtimed') + g(r, 'angnotready') + g(r, 'angdisjoint') for r in angle):.0f})")
     # The PSO cache's created count is cumulative, so the stretch's own creations are its last minus its first.
     if any('d12fps' in r for r in group):
-        text += (f"; D3D12: {avg('submits'):.2f} submits/frame, {avg('barriers'):.1f} barriers, {avg('psochanges'):.0f} PSO changes "
+        text += (f"; VibeRant: {avg('submits'):.2f} submits/frame, {avg('barriers'):.1f} barriers, {avg('psochanges'):.0f} PSO changes "
                  f"({g(group[-1], 'psocreated') - g(group[0], 'psocreated'):.0f} created during it, worst {avg('psoworst'):.1f} ms), GPU {avg('gpums'):.2f} ms, "
                  f"present copy {avg('copyms'):.2f} + latency wait {avg('copywait'):.2f} + Present {avg('directpresentms'):.2f} ms, "
                  f"{avg('d12draws'):.0f} draws/frame, textures {avg('texalive'):.0f} alive")

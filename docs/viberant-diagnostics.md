@@ -71,15 +71,15 @@ Direct3D 11 context after the take.
 ### Log lines
 
 ```
-UWP D3D12: took the window from ANGLE: WxH swap chain, 3 buffers, frame latency 2 (X ms)
-UWP D3D12: resized the swap chain from AxB to CxD
-UWP D3D12: gave the window back to ANGLE (X ms)
+VibeRant D3D: took the window from ANGLE: WxH swap chain, 3 buffers, frame latency 2 (X ms)
+VibeRant D3D: resized the swap chain from AxB to CxD
+VibeRant D3D: gave the window back to ANGLE (X ms)
 ```
 
 and the perf line:
 
 ```
-UWP perf:   D3D12: present: direct swap chain (3 buffers, latency 2); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures
+UWP perf:   VibeRant: present: direct swap chain (3 buffers, latency 2); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures
 ```
 
 `copy` is recording and submitting the frame's copy; `latency wait` is the time blocked on the waitable
@@ -95,7 +95,7 @@ waited X ms for the frame latency object; presented with sync interval S (0x...,
 If a step of taking the window fails, the log names it:
 
 ```
-UWP D3D12: couldn't take the window from ANGLE (<step> failed: 0x...); VibeRant D3D can't present, so the game falls back to Software
+VibeRant D3D: couldn't take the window from ANGLE (<step> failed: 0x...); VibeRant D3D can't present, so the game falls back to Software
 ```
 
 ANGLE gets the window and its context back, and the driver fails to start (`VibeRant_Init` returns false), so
@@ -116,8 +116,8 @@ When the GPU doesn't reach a fence in time (and the device wasn't removed), the 
 `gave up waiting for <what> ...`. The first such timeout in a run now follows it with
 
 ```
-UWP D3D12: GPU wait for <what> timed out after N ms; breadcrumbs:
-UWP D3D12: DRED: list '...' on '...' stopped after N of M operations
+VibeRant D3D: GPU wait for <what> timed out after N ms; breadcrumbs:
+VibeRant D3D: DRED: list '...' on '...' stopped after N of M operations
 ...
 ```
 

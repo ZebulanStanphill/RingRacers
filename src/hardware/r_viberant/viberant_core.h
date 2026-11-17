@@ -35,7 +35,7 @@ namespace rr_viberant
 
 using Microsoft::WRL::ComPtr;
 
-// "UWP D3D12: " and the message, on a line of its own
+// "VibeRant D3D: ", "VibeRant Vulkan: ", or "VibeRant Metal: " (the backend that is running) and the message, on a line of its own
 void Core_Log(const char *format, ...);
 
 // Logs a failed HRESULT with the device's removal reason (the first 50, then every 1000th) and counts it

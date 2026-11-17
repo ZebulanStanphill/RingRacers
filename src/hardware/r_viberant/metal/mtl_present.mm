@@ -719,7 +719,7 @@ void Present_LogPerf(double frames)
 	const double acquired = s.presented > 0 ? s.presented : 1;
 	char line[512];
 	snprintf(line, sizeof line,
-		"UWP perf:   D3D12: present: Metal layer (%ux%u, %s); %d frames presented, %d skipped while the window was out of sight, %d without a drawable; per presented frame acquire %.2f ms (worst %.2f), draw and submit %.2f ms\n",
+		"UWP perf:   VibeRant: present: Metal layer (%ux%u, %s); %d frames presented, %d skipped while the window was out of sight, %d without a drawable; per presented frame acquire %.2f ms (worst %.2f), draw and submit %.2f ms\n",
 		g_mtl.width, g_mtl.height, g_mtl.vsync ? "waits for the display" : "doesn't wait for the display",
 		s.presented, s.unseen, s.noDrawable, s.acquireMs / acquired, s.worstAcquireMs, s.drawMs / acquired);
 	rr_mtl_present::Output(line);

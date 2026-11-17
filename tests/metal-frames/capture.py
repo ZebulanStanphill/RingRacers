@@ -55,10 +55,10 @@ BAD = [
     (re.compile(r"validation (error|fault|failure)|failed assertion|-\[MTL\w*Debug\w* |MTLDebug.*:\d+: failed", re.I), "Metal validation"),
     (re.compile(r"Metal: (?!device: ).*(command buffer .*(failed|error)|shader validation|device (was )?(lost|removed))", re.I), "Metal error"),
     (re.compile(r"presenter: drawable check \d+ FAILED"), "the drawable isn't the frame"),
-    (re.compile(r"(UWP D3D12|VibeRant \w+): .*(failed|error|couldn't|can't place|removed|gave no drawable)", re.I), "driver error"),
+    (re.compile(r"VibeRant \w+: .*(failed|error|couldn't|can't place|removed|gave no drawable)", re.I), "driver error"),
     # The driver waits half a second for the GPU and then goes on without it: a screenshot whose readback it gave up
     # on is whatever its memory held
-    (re.compile(r"(UWP D3D12|VibeRant \w+): .*gave up waiting", re.I), "the GPU fell behind"),
+    (re.compile(r"VibeRant \w+: .*gave up waiting", re.I), "the GPU fell behind"),
     (re.compile(r"I_Error|SIGSEGV|SIGABRT|signal: |An error occurred within", re.I), "crash"),
     (re.compile(r"couldn't start \(the log says why\)"), "fell back to Software"),
 ]

@@ -434,7 +434,7 @@ static double UWPTraceMs(precise_t elapsed)
 static const char *UWPTraceRenderer(void)
 {
 	return rendermode == render_soft ? "Software/RHI" :
-		rendermode == render_opengl ? "LegacyGL/D3D12" : "none";
+		rendermode == render_opengl ? "VibeRant D3D" : "none";
 }
 
 static void UWPTraceResetFade(precise_t now)

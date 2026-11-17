@@ -49,7 +49,7 @@ The arena's largest class is 4 MB, so a texture whose reported size plus the gua
 
 That's why both paths place the texture in a heap with room after it. Committed textures remain only as a last resort for when creating a heap fails, and the log reports the first one:
 
-`UWP D3D12: committed texture: 1024x1024 could not be placed; its last texel is unreliable on Xbox One`
+`VibeRant D3D: committed texture: 1024x1024 could not be placed; its last texel is unreliable on Xbox One`
 
 The 64×64×64 R8 palette lookup table uses `CreateTextureResource` too: its last texel is the entry for white and needs the same guard.
 

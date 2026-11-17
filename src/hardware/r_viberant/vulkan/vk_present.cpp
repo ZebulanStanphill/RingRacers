@@ -540,7 +540,7 @@ void Present_LogPerf(double frames)
 {
 	const PresentStats &s = g_stats;
 	const double n = frames > 0 ? frames : 1;
-	I_OutputMsg("UWP perf:   D3D12: present: Vulkan swap chain (%u images, %ux%u, %s); per frame acquire %.2f ms (worst %.2f), draw %.2f ms, present %.2f ms (worst %.2f); %d present failures, %d swap chains made\n",
+	I_OutputMsg("UWP perf:   VibeRant: present: Vulkan swap chain (%u images, %ux%u, %s); per frame acquire %.2f ms (worst %.2f), draw %.2f ms, present %.2f ms (worst %.2f); %d present failures, %d swap chains made\n",
 		(unsigned)g_vk.buffers.size(), g_vk.width, g_vk.height,
 		g_vk.mode == VK_PRESENT_MODE_FIFO_KHR ? "waits for the display" : g_vk.mode == VK_PRESENT_MODE_MAILBOX_KHR ? "mailbox" : "immediate",
 		PreciseToMs(s.acquireTime) / n, s.worstAcquireMs, PreciseToMs(s.drawTime) / n, PreciseToMs(s.presentTime) / n,

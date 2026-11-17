@@ -3495,20 +3495,20 @@ void VibeRant_LogPerf(double seconds)
 		return;
 
 	const CoreStats core = Core_TakeStats();
-	I_OutputMsg("UWP perf:   D3D12: %.1f frames/s; %.2f submissions per frame (mid-frame: ring %d, readback %d, upload %d, other %d); %.1f barriers per frame; %d command allocators (%d made); %u releases pending; %d errors\n",
+	I_OutputMsg("UWP perf:   VibeRant: %.1f frames/s; %.2f submissions per frame (mid-frame: ring %d, readback %d, upload %d, other %d); %.1f barriers per frame; %d command allocators (%d made); %u releases pending; %d errors\n",
 		s.frames / seconds, core.submissions / n, core.ringSubmissions, core.readbackSubmissions, core.uploadSubmissions,
 		core.otherSubmissions, core.barriers / n, (int)Core_Allocators(), core.allocatorsCreated,
 		(unsigned)Core_PendingReleases(), Core_Errors());
-	I_OutputMsg("UWP perf:   D3D12: fence waits %d, %.2f ms total (worst %.2f), %d timeouts; presenting %.2f ms per frame\n",
+	I_OutputMsg("UWP perf:   VibeRant: fence waits %d, %.2f ms total (worst %.2f), %d timeouts; presenting %.2f ms per frame\n",
 		core.waits, core.waitMs, core.worstWaitMs, core.waitTimeouts, PreciseToMs(s.presentTime) / n);
 	Present_LogPerf(n);
-	I_OutputMsg("UWP perf:   D3D12: per frame %.1f clears, %.0f polygons, %.0f batches, %.1f lines; %.0f draws, %.0f vertices, %.0f indices, %.0f constant updates (root CBV ring)\n",
+	I_OutputMsg("UWP perf:   VibeRant: per frame %.1f clears, %.0f polygons, %.0f batches, %.1f lines; %.0f draws, %.0f vertices, %.0f indices, %.0f constant updates (root CBV ring)\n",
 		s.clears / n, s.polygons / n, s.batches / n, s.lines / n, s.draws / n, s.vertices / n, s.indices / n, s.constantUpdates / n);
-	I_OutputMsg("UWP perf:   D3D12: pipeline: %.0f PSO changes/frame; cache %u alive, %llu created (%.1f ms total, worst %.1f ms); %.0f root CBV sets, %.0f table sets/frame; prewarm %s\n",
+	I_OutputMsg("UWP perf:   VibeRant: pipeline: %.0f PSO changes/frame; cache %u alive, %llu created (%.1f ms total, worst %.1f ms); %.0f root CBV sets, %.0f table sets/frame; prewarm %s\n",
 		s.psoChanges / n, (unsigned)g_pipelines.size(), (unsigned long long)g_psoCreated, g_psoMs, g_psoWorstMs,
 		s.rootSets / n, s.tableSets / n, Prewarm_Done() ? "done" : "running");
 	const RingStats vertex = g_vertexRing.TakeStats(), index = g_indexRing.TakeStats(), constants = g_constantRing.TakeStats();
-	I_OutputMsg("UWP perf:   D3D12: rings: vertex/index/constant peak MB per frame %.2f/%.2f/%.2f; wraps %u/%u/%u; stalls %u (%.2f ms); grows %u\n",
+	I_OutputMsg("UWP perf:   VibeRant: rings: vertex/index/constant peak MB per frame %.2f/%.2f/%.2f; wraps %u/%u/%u; stalls %u (%.2f ms); grows %u\n",
 		vertex.peakBytes / 1048576.0, index.peakBytes / 1048576.0, constants.peakBytes / 1048576.0,
 		vertex.wraps, index.wraps, constants.wraps, vertex.stalls + index.stalls + constants.stalls,
 		vertex.stallMs + index.stallMs + constants.stallMs, vertex.grows + index.grows + constants.grows);
@@ -3519,44 +3519,44 @@ void VibeRant_LogPerf(double seconds)
 		if (!page.texture.res) continue;
 		page.allocator.Collect(Core_CompletedFence()); used += page.allocator.UsedArea(); ++pages;
 	}
-	I_OutputMsg("UWP perf:   D3D12: atlas: %u textures in %u pages (%.1f%% used), %llu placed and %llu freed, %llu pages released this period; standalone: off %llu, custom %llu, mip %llu, wrap %llu, size %llu, anisotropy %llu, allocation %llu\n",
+	I_OutputMsg("UWP perf:   VibeRant: atlas: %u textures in %u pages (%.1f%% used), %llu placed and %llu freed, %llu pages released this period; standalone: off %llu, custom %llu, mip %llu, wrap %llu, size %llu, anisotropy %llu, allocation %llu\n",
 		atlasAlive, pages, pages ? used * 100.0 / ((UINT64)pages * TextureAtlas::Size * TextureAtlas::Size) : 0.0,
 		(unsigned long long)g_atlasPlaced, (unsigned long long)g_atlasFreed, (unsigned long long)g_atlasPagesReleased,
 		(unsigned long long)g_atlasReasons[0], (unsigned long long)g_atlasReasons[1], (unsigned long long)g_atlasReasons[2],
 		(unsigned long long)g_atlasReasons[3], (unsigned long long)g_atlasReasons[4], (unsigned long long)g_atlasReasons[5], (unsigned long long)g_atlasReasons[6]);
 	g_atlasPlaced = g_atlasFreed = g_atlasPagesReleased = 0; for (auto &reason : g_atlasReasons) reason = 0;
 	const RingStats staging = g_textureRing.TakeStats();
-	I_OutputMsg("UWP perf:   D3D12: textures: %llu created, %llu uploads (%.2f MB), %llu deleted, %d flushes, %u alive; SRVs used %u/65536, samplers %u/2048; allocated %.2f MB vs requested %.2f MB; staging ring peak %.2f MB, %u wraps, %u stalls (%.2f ms), %u grows\n",
+	I_OutputMsg("UWP perf:   VibeRant: textures: %llu created, %llu uploads (%.2f MB), %llu deleted, %d flushes, %u alive; SRVs used %u/65536, samplers %u/2048; allocated %.2f MB vs requested %.2f MB; staging ring peak %.2f MB, %u wraps, %u stalls (%.2f ms), %u grows\n",
 		(unsigned long long)s.texturesCreated, (unsigned long long)s.textureUploads, s.textureUploadBytes / 1048576.0,
 		(unsigned long long)s.texturesDeleted, s.flushes, (unsigned)std::count_if(g_textures.begin(), g_textures.end(),
 			[](const auto &entry) { return !!entry.second.res; }),
 		g_srvIndices.Used() + 4, g_nextSampler, g_textureAllocatedBytes / 1048576.0, g_textureBytes / 1048576.0,
 		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
-	I_OutputMsg("UWP perf:   D3D12: roll sprites: %u shader, %u CPU patches, %u geometry computations\n",
+	I_OutputMsg("UWP perf:   VibeRant: roll sprites: %u shader, %u CPU patches, %u geometry computations\n",
 		hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry);
 	hwr_roll_shader = hwr_roll_cpu = hwr_roll_geometry = 0;
-	I_OutputMsg("UWP perf:   D3D12: screens: %.1f per frame (%.1f copies, %.1f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay\n",
+	I_OutputMsg("UWP perf:   VibeRant: screens: %.1f per frame (%.1f copies, %.1f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay\n",
 		s.screens / n, s.screenCopies / n, core.barriers / n, s.wipes, s.wipeFallbacks, s.postImages, s.fadeMaps, s.fadeMapFallbacks);
-	I_OutputMsg("UWP perf:   D3D12: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);
-	I_OutputMsg("UWP perf:   D3D12: portals: %.1f apertures/frame, %.1f depth resets/frame, %.1f stencil levels/frame, maximum level %d\n",
+	I_OutputMsg("UWP perf:   VibeRant: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);
+	I_OutputMsg("UWP perf:   VibeRant: portals: %.1f apertures/frame, %.1f depth resets/frame, %.1f stencil levels/frame, maximum level %d\n",
 		s.portalApertures / n, s.portalDepthResets / n, s.portalStencilLevels / n, s.portalMaxLevel);
 
 	if (g_paletteRendering || s.lightTablesCreated || s.lightTablesUpdated || s.paletteUploads)
-		I_OutputMsg("UWP perf:   D3D12: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
+		I_OutputMsg("UWP perf:   VibeRant: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
 			g_paletteRendering ? "on" : "off", (unsigned)g_lightTables.size(), s.lightTablesCreated, s.lightTablesUpdated,
 			s.paletteUploads, s.paletteSteps / n, PreciseToMs(s.paletteTime) / n);
 	if (cv_scr_effect.value >= 2 || s.effectPasses)
-		I_OutputMsg("UWP perf:   D3D12: screen effect: %s; %.2f passes per frame, %.2f ms per frame\n",
+		I_OutputMsg("UWP perf:   VibeRant: screen effect: %s; %.2f passes per frame, %.2f ms per frame\n",
 			cv_scr_effect.value >= 2 && cv_scr_effect.value <= 3 ? kEffectNames[cv_scr_effect.value - 2] : "off",
 			s.effectPasses / n, PreciseToMs(s.effectTime) / n);
-	I_OutputMsg("UWP perf:   D3D12: models %.1f/frame, skies %.1f/frame; fallbacks %d, lerps %d, sky rebuilds %d; static arena %u chunks (%.2f MB), %u dedicated buffers; mips %llu generated (%.2f CPU ms)\n",
+	I_OutputMsg("UWP perf:   VibeRant: models %.1f/frame, skies %.1f/frame; fallbacks %d, lerps %d, sky rebuilds %d; static arena %u chunks (%.2f MB), %u dedicated buffers; mips %llu generated (%.2f CPU ms)\n",
 		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
 		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
 		(unsigned)g_staticDedicated, (unsigned long long)s.mipsGenerated, s.mipMs);
 #ifdef _UWP
-	I_OutputMsg("UWP perf:   D3D12: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
+	I_OutputMsg("UWP perf:   VibeRant: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
 #endif
-	I_OutputMsg("UWP perf:   D3D12: texture heaps: %llu placed, %llu dedicated, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
+	I_OutputMsg("UWP perf:   VibeRant: texture heaps: %llu placed, %llu dedicated, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
 		(unsigned long long)g_placedCreated, (unsigned long long)g_dedicatedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
 		g_textureHeapUsed / 1048576.0, g_textureHeaps.size() * kTextureHeapBytes / 1048576.0, g_textureHeapPeak / 1048576.0,
 		(unsigned long long)g_smallPlaced, (unsigned long long)g_normalPlaced, s.textureCreateMs);
@@ -3568,10 +3568,10 @@ void VibeRant_LogPerf(double seconds)
 		+ (g_postTexture.res ? (UINT64)g_postTexture.width * g_postTexture.height * 4 : 0)
 		+ (g_effectTarget.res ? (UINT64)g_effectTarget.width * g_effectTarget.height * 4 : 0) + Present_SwapChainBytes();
 	if (localValid)
-		I_OutputMsg("UWP perf:   D3D12: memory: local budget %.1f, usage %.1f MB; render targets/swap chain ~%.1f MB\n",
+		I_OutputMsg("UWP perf:   VibeRant: memory: local budget %.1f, usage %.1f MB; render targets/swap chain ~%.1f MB\n",
 			local.Budget / 1048576.0, local.CurrentUsage / 1048576.0, targets / 1048576.0);
 	else
-		I_OutputMsg("UWP perf:   D3D12: memory: local unavailable; render targets/swap chain ~%.1f MB\n", targets / 1048576.0);
+		I_OutputMsg("UWP perf:   VibeRant: memory: local unavailable; render targets/swap chain ~%.1f MB\n", targets / 1048576.0);
 
 	memset(&g_stats, 0, sizeof g_stats);
 }
