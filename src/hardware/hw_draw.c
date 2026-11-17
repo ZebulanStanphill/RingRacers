@@ -26,7 +26,7 @@
 #include "hw_drv.h"
 #ifdef HAVE_VIBERANT
 #include "hw_batching.h"
-#include "r_d3d12/r_d3d12.h"
+#include "r_viberant/r_viberant.h"
 #endif
 
 #include "../m_misc.h" //FIL_WriteFile()
@@ -784,7 +784,7 @@ void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength)
 	{
 		const size_t size = W_LumpLength(lumpnum);
 		if (size >= 256 && size % 256 == 0 && size / 256 <= 256
-			&& D3D12_ApplyFadeMap(W_CacheLumpNum(lumpnum, PU_CACHE), size, lumpnum, strength))
+			&& VibeRant_ApplyFadeMap(W_CacheLumpNum(lumpnum, PU_CACHE), size, lumpnum, strength))
 		{
 #ifdef _UWP
 			UWPTraceFade("HWR_DrawCustomFadeMap path=exact lump=%s strength=%u row=%u rows=%u",

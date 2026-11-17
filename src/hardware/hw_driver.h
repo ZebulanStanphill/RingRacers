@@ -5,7 +5,7 @@
 #include "../doomtype.h"
 
 // Which driver the hardware renderer (rendermode == render_opengl) draws with. The engine code around it behaves
-// as Software does where the VibeRant driver (src/hardware/r_d3d12) is the driver, and as upstream's Legacy GL does
+// as Software does where the VibeRant driver (src/hardware/r_viberant) is the driver, and as upstream's Legacy GL does
 // where OpenGL is, so it asks HWR_VibeRant() instead of deciding when it is compiled. HWR_VibeRant() is true for the
 // VibeRant driver on any of its backends: Direct3D 12, Vulkan, or Metal.
 #if defined(HAVE_VIBERANT) && defined(_UWP)

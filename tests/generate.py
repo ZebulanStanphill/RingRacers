@@ -46,12 +46,12 @@ def generate(engine, output):
     generate_fixture(templates.parent / "fixtures", output)
     generate_title(engine, output, templates, render, function_section)
     render(templates / "split_projection.cpp.in", {
-        "TRANSFORM": Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp").function("D3D_SetTransform"),
+        "TRANSFORM": Source(engine / "src/hardware/r_viberant/r_viberant.cpp").function("VibeRant_SetTransform"),
         "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),
     }, output / "split_projection.cpp")
     render(templates / "software_shear.cpp.in", {
         "AIMING": Source(engine / "src/hardware/hw_main.c").function("HWR_SetTransformAiming"),
-        "TRANSFORM": Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp").function("D3D_SetTransform"),
+        "TRANSFORM": Source(engine / "src/hardware/r_viberant/r_viberant.cpp").function("VibeRant_SetTransform"),
         "FREELOOK": Source(engine / "src/r_fps.cpp").function("R_SetupFreelook"),
         "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
         "FIXED_DIV": Source(engine / "src/m_fixed.c").function("FixedDiv2"),
@@ -219,8 +219,8 @@ def generate(engine, output):
         "GET_PIC": cache.function("HWR_GetPic"),
     }, output / "pictures.cpp")
 
-    driver12 = Source(engine / "src/hardware/r_d3d12/r_d3d12.cpp")
-    captures = Source(engine / "src/hardware/r_d3d12/d3d12_captures.inc")
+    driver12 = Source(engine / "src/hardware/r_viberant/r_viberant.cpp")
+    captures = Source(engine / "src/hardware/r_viberant/viberant_captures.inc")
     hardware = Source(engine / "src/hardware/hw_main.c")
     subprocess.run([sys.executable, str(Path(__file__).parent / "addons/shader-smoke/build.py"),
         "--check", "--header", str(output / "smoke_pk3.h")], check=True)
@@ -229,7 +229,7 @@ def generate(engine, output):
         "FIND_DEFS": hardware.function("HWR_FindShaderDefs"),
         "LOAD_SHADERS": hardware.function("HWR_LoadCustomShadersFromFile"),
     }, output / "custom_pk3.cpp")
-    pipeline_header = Source(engine / "src/hardware/r_d3d12/d3d12_pipeline.h")
+    pipeline_header = Source(engine / "src/hardware/r_viberant/viberant_pipeline.h")
     render(templates / "custom_dispatch.cpp.in", {
         "PIPELINE_ENUMS": pipeline_header.section("enum VSKind", "D3D12_BLEND_DESC MakeBlendDesc"),
         "CUSTOM_STATE": driver12.section("struct CustomProgram\n{", "void SetBlendMode(FBITFIELD flags)"),
@@ -237,12 +237,12 @@ def generate(engine, output):
         "RETIRE": driver12.function("RetireCustomPipelines"),
         "ADVANCE": driver12.function("AdvanceCustomGeneration"),
         "VALIDATION_KEY": driver12.function("CustomValidationKey"),
-        "COMPILE": driver12.function("D3D_CompileShaders"),
-        "CLEAN": driver12.function("D3D_CleanShaders"),
-        "LOAD": driver12.function("D3D_LoadCustomShader"),
-        "SET_SHADER": driver12.function("D3D_SetShader"),
+        "COMPILE": driver12.function("VibeRant_CompileShaders"),
+        "CLEAN": driver12.function("VibeRant_CleanShaders"),
+        "LOAD": driver12.function("VibeRant_LoadCustomShader"),
+        "SET_SHADER": driver12.function("VibeRant_SetShader"),
     }, output / "custom_dispatch.cpp")
-    fog = Source(engine / "src/hardware/r_d3d12/shaders.hlsl")
+    fog = Source(engine / "src/hardware/r_viberant/shaders.hlsl")
     renderer = Source(engine / "src/r_main.cpp")
     fog_shader = fog.function("PSFogRemap").replace(" : SV_Target", "")
     fog_shader = fog_shader.replace("int3(", "makeint3(").replace("float4(", "make4(")
@@ -539,7 +539,7 @@ def generate(engine, output):
     sprite_parts = {
         "ROTATION": rotation_parts,
         "ROLL_SURFACE": hardware.function("HWR_RollSurface") + hardware.function("HWR_SpriteUV"),
-        "ROLL_SHADER": Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("RollSource").replace("return int2(", "return makeInt2("),
+        "ROLL_SHADER": Source(engine / "src/hardware/r_viberant/shaders.hlsl").function("RollSource").replace("return int2(", "return makeInt2("),
         "BASELINE": cpp_alloc(Source(Path(__file__).parent / "fixtures/sprite-rotation-baseline.c").section(
             "static void Baseline_CalculateDimensions", "\n// END")),
         "PICTURES": picture_parts,
@@ -660,11 +660,11 @@ def generate(engine, output):
     }, output / "splat_clear.cpp")
 
     render(templates / "distortion.cpp.in", {
-        "VERTEX": Source(engine / "src/hardware/r_d3d12/d3d12_screens.inc").function("PostImageVertex"),
+        "VERTEX": Source(engine / "src/hardware/r_viberant/viberant_screens.inc").function("PostImageVertex"),
         "POSTPROCESS": hardware.function("HWR_DoPostProcessor"),
     }, output / "distortion.cpp")
 
-    water = Source(engine / "src/hardware/r_d3d12/shaders.hlsl")
+    water = Source(engine / "src/hardware/r_viberant/shaders.hlsl")
     def native_water(name):
         code = water.function(name).replace(" : SV_Target", "")
         code = code.replace("int3(", "makeint3(").replace("float4(", "make4(")
@@ -851,7 +851,7 @@ def generate(engine, output):
         "FIRST_PERSON": Source(engine / "src/p_user.c").function("P_CalcPostImg"),
     }, output / "postimg_selection.cpp")
 
-    postimg = Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("PostImageUV")
+    postimg = Source(engine / "src/hardware/r_viberant/shaders.hlsl").function("PostImageUV")
     postimg = re.sub(r"(?<![\w.])(\d+\.\d+)(?![\w.])", r"\1f", postimg)
     reference = Source(Path(__file__).parent / "fixtures/rhi_glsl_fragment_postimg.glsl").section(
         "\tvec2 texcoord0 = v_texcoord0;", "\n#ifdef ENABLE_S_SAMPLER1")
@@ -877,7 +877,7 @@ def generate(engine, output):
             "//\n// R_PointInSubsectorOrNull"),
     }, output / "point_subsector.cpp")
 
-    shader = Source(engine / "src/hardware/r_d3d12/shaders.hlsl").function("PSWipeFull")
+    shader = Source(engine / "src/hardware/r_viberant/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")
     for size in (2, 3, 4):
         shader = shader.replace(f"float{size}(", f"make{size}(")

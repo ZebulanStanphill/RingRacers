@@ -108,7 +108,7 @@ extern "C" __declspec(dllimport) SDL_WinRT_DeviceFamily SDLCALL SDL_WinRTGetDevi
 #include "hwsym_sdl.h"
 #include "ogl_sdl.h"
 #ifdef HAVE_VIBERANT
-#include "../hardware/r_d3d12/r_d3d12.h"
+#include "../hardware/r_viberant/r_viberant.h"
 #endif
 #endif
 #ifdef __APPLE__
@@ -308,7 +308,7 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 	{
 #ifdef HAVE_VIBERANT
 		if (HWR_VibeRant())
-			D3D12_Surface(vid.width, vid.height);
+			VibeRant_Surface(vid.width, vid.height);
 		else
 #endif
 		OglSdlSurface(vid.width, vid.height);
@@ -1217,7 +1217,7 @@ void I_UpdateNoBlit(void)
 #ifdef HAVE_VIBERANT
 			if (HWR_VibeRant())
 			{
-				D3D12_FinishUpdate(cv_vidwait.value);
+				VibeRant_FinishUpdate(cv_vidwait.value);
 			}
 			else
 #endif
@@ -1573,7 +1573,7 @@ boolean VID_CheckRenderer(void)
 		// Software's frames; on the desktop on a child window, which has to go for Software's frames to show. Starting Legacy
 		// GL again takes it again
 		if (HWR_VibeRant() && rendermode != render_opengl)
-			D3D12_ReleaseWindow();
+			VibeRant_ReleaseWindow();
 #endif
 
 		if (rendererchanged)
@@ -1882,7 +1882,7 @@ void VID_StartupOpenGL(void)
 		// -mtldebug: what Metal reports of a failed command buffer, in detail (Metal's own validation is turned on with
 		// its environment variables)
 		if (HWR_VibeRant())
-			D3D12_SelectBackend(HWR_Vulkan(), HWR_Metal() ? M_CheckParm("-mtldebug") != 0
+			VibeRant_SelectBackend(HWR_Vulkan(), HWR_Metal() ? M_CheckParm("-mtldebug") != 0
 				: (M_CheckParm("-vkdebug") || M_CheckParm("-d3ddebug")) != 0, M_CheckParm("-warp") != 0);
 #endif
 		*(void**)&HWD.pfnInit             = hwSym("Init",NULL);
@@ -1971,7 +1971,7 @@ void I_ShutdownGraphics(void)
 #ifdef HWRENDER
 #ifdef HAVE_VIBERANT
 	// [UWP]: The Direct3D 12 driver releases its swap chain and ANGLE's device while ANGLE's context exists
-	D3D12_Shutdown();
+	VibeRant_Shutdown();
 #endif
 #ifdef _UWP
 	// [UWP]: The queries timing ANGLE's GPU work belong to its device, which goes with its context

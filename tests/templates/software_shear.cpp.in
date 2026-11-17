@@ -92,7 +92,7 @@ int main(int argc, char **argv)
                     assert(transform.viewaiming == 123.0f);
                     assert(transform.anglex == float(aimingangle >> ANGLETOFINESHIFT)*(360.0f/FINEANGLES));
                 }
-                D3D_SetTransform(&transform);
+                VibeRant_SetTransform(&transform);
                 if (shear)
                 {
                     // Screen y grows downwards; NDC y grows upwards, reversed by flip.

@@ -8,7 +8,7 @@
 /// \brief Where the game's frame goes on the screen: Options > Video > Screen Scaling (cv_scr_scaling)
 ///
 /// Header-only and free of engine types, so that both renderers (the RHI blit in i_video_common.cpp and VibeRant D3D's
-/// swap chain in r_d3d12/) and the native tests share one calculation.
+/// swap chain in r_viberant/) and the native tests share one calculation.
 
 #ifndef __SCREEN_SCALING_HPP__
 #define __SCREEN_SCALING_HPP__

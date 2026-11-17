@@ -3,25 +3,25 @@ project(RRMetalDriverTests LANGUAGES C CXX OBJCXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OBJCXX_STANDARD 17)
 get_filename_component(RR_ENGINE "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-# The Metal backend of the VibeRant driver (src/hardware/r_d3d12/metal, "mtl12"), with the driver test in front of it:
+# The Metal backend of the VibeRant driver (src/hardware/r_viberant/metal, "mtl12"), with the driver test in front of it:
 # the counterpart of ../vulkan-driver. HAVE_VIBERANT_METAL is the only backend of a macOS build.
 set(SRB2_CONFIG_VIBERANT_METAL ON)
-include("${RR_ENGINE}/src/hardware/r_d3d12/custom_shaders.cmake")
+include("${RR_ENGINE}/src/hardware/r_viberant/custom_shaders.cmake")
 set(metal_backend_sources
-    "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_device.mm"
-    "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_commands.mm"
-    "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_resources.mm"
-    "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_pipeline.mm")
+    "${RR_ENGINE}/src/hardware/r_viberant/metal/mtl12_device.mm"
+    "${RR_ENGINE}/src/hardware/r_viberant/metal/mtl12_commands.mm"
+    "${RR_ENGINE}/src/hardware/r_viberant/metal/mtl12_resources.mm"
+    "${RR_ENGINE}/src/hardware/r_viberant/metal/mtl12_pipeline.mm")
 add_executable(metal-driver
     ../viberant-driver.cpp
-    "${RR_ENGINE}/src/hardware/r_d3d12/r_d3d12.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_core.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_upload.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_pipeline.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_prewarm.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/custom_shader.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/spirv_shader.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/metal/mtl12_msl.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/r_viberant.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_core.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_upload.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_pipeline.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_prewarm.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/custom_shader.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/spirv_shader.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/metal/mtl12_msl.cpp"
     ${metal_backend_sources}
     metal-objects.mm)
 # mtl12 keeps Metal's objects in C++ classes, which automatic reference counting makes safe
@@ -48,8 +48,8 @@ target_include_directories(metal-driver PRIVATE "${rr_directx_headers_SOURCE_DIR
 # driver hands them to mtl12, which translates them to Metal Shading Language when a pipeline state first needs them.
 set(viberant_shader_entries VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
     PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
-set(RR_VULKAN_SHADER_SOURCE "${RR_ENGINE}/src/hardware/r_d3d12/shaders.hlsl" CACHE FILEPATH "HLSL source (negative controls only override this)")
-set(d3d12_shader_source "${RR_VULKAN_SHADER_SOURCE}")
+set(RR_VULKAN_SHADER_SOURCE "${RR_ENGINE}/src/hardware/r_viberant/shaders.hlsl" CACHE FILEPATH "HLSL source (negative controls only override this)")
+set(viberant_shader_source "${RR_VULKAN_SHADER_SOURCE}")
 set(vulkan_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/r_vulkan_shaders")
 set(vulkan_shader_headers "")
 file(MAKE_DIRECTORY "${vulkan_shader_dir}")
@@ -65,8 +65,8 @@ foreach(entry ${viberant_shader_entries})
         OUTPUT "${header}"
         COMMAND glslang-standalone -D -V -S ${stage} -e ${entry} --hlsl-dx-position-w -fhlsl_functionality1
             --shift-ubo-binding 0 --shift-texture-binding 16 --shift-sampler-binding 32
-            -D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${d3d12_shader_source}"
-        DEPENDS "${d3d12_shader_source}" glslang-standalone
+            -D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
+        DEPENDS "${viberant_shader_source}" glslang-standalone
         COMMENT "Compiling the ${entry} shader to SPIR-V"
         VERBATIM
     )

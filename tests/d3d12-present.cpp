@@ -4,11 +4,11 @@
 // terms of the GNU General Public License, version 2.
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
-// Runs the production desktop presenter (d3d12_present_win32.cpp) and the production device core on WARP, with the debug
+// Runs the production desktop presenter (d3d_present_win32.cpp) and the production device core on WARP, with the debug
 // layer on, against a real top-level window that is never shown. Only the engine's services and SDL's window lookup are
 // stubs. The driver's PlaceFrame is replaced by a stub that records what the presenter asks of it and clears the buffer.
-#include "hardware/r_d3d12/d3d12_core.h"
-#include "hardware/r_d3d12/d3d12_present.h"
+#include "hardware/r_viberant/viberant_core.h"
+#include "hardware/r_viberant/viberant_present.h"
 #include "doomdef.h"
 #include "command.h"
 #include "i_system.h"
@@ -26,7 +26,7 @@
 #undef min
 #undef max
 #undef clamp
-using namespace rr_d3d12;
+using namespace rr_viberant;
 
 static std::string logs;
 struct SDL_Window { HWND hwnd; }; // what the stubbed SDL window lookup hands to the presenter

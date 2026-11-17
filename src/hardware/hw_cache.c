@@ -20,7 +20,7 @@
 #include "hw_batching.h"
 #include "hw_driver.h"
 #ifdef HAVE_VIBERANT
-#include "r_d3d12/r_d3d12.h"
+#include "r_viberant/r_viberant.h"
 #endif
 
 #include "../doomstat.h"    //gamemode
@@ -1022,7 +1022,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 	HWR_SetCurrentTexture(&grtex->mipmap);
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
-		D3D12_SurfaceProbeTexture(textures[tex]->name);
+		VibeRant_SurfaceProbeTexture(textures[tex]->name);
 #endif
 
 	// The system-memory data can be purged now.
@@ -1291,7 +1291,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 		HWR_SetCurrentTexture(NULL);
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
-		D3D12_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
+		VibeRant_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
 			? textures[levelflat->u.texture.num]->name : levelflat->name);
 #endif
 }

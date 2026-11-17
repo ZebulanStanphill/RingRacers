@@ -41,7 +41,7 @@ int main()
         FTransform transform{};
         transform.fovxangle = degrees;
         transform.splitscreen = split;
-        D3D_SetTransform(&transform);
+        VibeRant_SetTransform(&transform);
         double half = tan(projected_fov*M_PI/360)*projected_aspect;
         double expected = tan(degrees*M_PI/360)*(split == 1 ? 1.7 : 1.0);
         assert(fabs(half-expected) < 1e-6);

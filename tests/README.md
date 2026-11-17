@@ -301,7 +301,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   Software and with Legacy GL, which differ only in the present slot the trace
   reports.
 - **Add-on shader translation:** compile the production GLSL adapter, glslang
-  parser/linker and SPIRV-Cross emitter from `r_d3d12/`. Translate 36 shader/layout
+  parser/linker and SPIRV-Cross emitter from `r_viberant/`. Translate 36 shader/layout
   pairs with reordered varyings, uniforms/initializers, matrices and fragment
   coordinates; reject invalid interfaces, malformed sources and invalid
   layouts, then verify compiler recovery. The 1 MB source limit is checked with a
@@ -516,7 +516,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   overlapping fog visuals still need an Xbox test.
 - **Fog boundaries and captures:** compare 24,960 production shader row
   selections with the actual Software zlight/scalelight tables and 16,384
-  palette-remap samples. Extract bounds from `r_d3d12/d3d12_captures.inc` and
+  palette-remap samples. Extract bounds from `r_viberant/viberant_captures.inc` and
   exercise full/split viewports, eye-plane crossings and behind-camera/offscreen
   faces in `fog_capture_viberant`, including oversized-face clamping. Shader-only
   checks stay in `fog_boundaries`. `fog_capture_viberant` checks capture copies,
@@ -655,7 +655,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   them over. A surface-colormap shader mutant must fail. `brightmap-smooth` covers
   the smooth-light path. This does not validate Xbox visuals.
 - **Direct3D 12 bookkeeping:** `viberant_allocators` compiles the production
-  `r_d3d12/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
+  `r_viberant/allocators.h` and `pipeline_key.h` headers under ASan and UBSan, with no
   GPU. It checks `RingAllocator` alignment (including non-power-of-two), wraparound,
   fence blocking with the highest overlapping fence, `Collect` and `Touch`
   retirement, same-submission wrap into retired space, zero, exact-capacity and
@@ -793,8 +793,8 @@ From an x64 Visual Studio developer PowerShell on Windows:
 
 `-Engine` tests another checkout.
 
-The harness compiles production `r_d3d12.cpp`, `d3d12_core.cpp`,
-`d3d12_upload.cpp`, `d3d12_pipeline.cpp` and `d3d12_prewarm.cpp` against
+The harness compiles production `r_viberant.cpp`, `viberant_core.cpp`,
+`viberant_upload.cpp`, `viberant_pipeline.cpp` and `viberant_prewarm.cpp` against
 the real engine headers. It links the production add-on shader translator, built by
 `tests/viberant-translator/` with the pinned glslang and SPIRV-Cross sources. CI caches that build per runner
 image, keyed on its two CMake files, and builds it without fetching when the cache is restored, so only the
@@ -852,7 +852,7 @@ aperture's restore as they were.
 These pixel scenes use production driver
 entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
 and fog/water portal interactions still require further testing.
-Void scenes cover `D3D12_FillVoid`, which turns black every pixel of the current viewport and portal stencil level
+Void scenes cover `VibeRant_FillVoid`, which turns black every pixel of the current viewport and portal stencil level
 that still has the depth clear's far value, the way Software draws what the level doesn't cover. Opaque geometry
 keeps its color (`void-fill`), a depth-only (Invisible) surface, standing in for a sky plane or wall, keeps what was
 drawn under it (`void-claim`), translucent geometry drawn afterwards blends with black over the void and with the sky over
@@ -914,8 +914,8 @@ the last two: at a scale of exactly 1 the filters agree, and at 64/30 no pixel's
 sharp edge (the top and bottom halves), leaving only the gradient, which differs from point sampling by a level or two. The self-test places the red quad's frame at the right rectangle, and requires a rectangle a column
 off or a size off to be rejected, as well as a flat frame, which can't tell the filters apart. A screen with no size must place nothing.
 Desktop presenter checks (`d3d12-present.cpp`, run by `run-d3d12.ps1` after the scenes) are their own
-executable, `d3d12-present.exe`, because the presenter, `d3d12_present_win32.cpp`, is the one driver file that must not be
-compiled with `_UWP`, and the scenes' executable is. It compiles that file and `d3d12_core.cpp`, the device and queue it
+executable, `d3d12-present.exe`, because the presenter, `d3d_present_win32.cpp`, is the one driver file that must not be
+compiled with `_UWP`, and the scenes' executable is. It compiles that file and `viberant_core.cpp`, the device and queue it
 presents on, without `_UWP`, against the real engine headers, and runs on WARP with the debug layer (not GPU-based
 validation: there is no shader work). Stubs supply the engine services, `cv_scr_scaling`, and what stands in for SDL's window
 lookup (`d3d12-present-stubs/SDL.h` and `SDL_syswm.h`, with `SDL_GetWindowWMInfo` defined by the test): it hands the presenter
@@ -1039,7 +1039,7 @@ a Windows build under Wine, each with its renderer's arguments), the default rep
 ## Vulkan driver harness (Linux)
 
 The same driver test, `viberant-driver.cpp`, also runs against the Vulkan backend
-(`src/hardware/r_d3d12/vulkan`, [`docs/vulkan-backend.md`](../docs/vulkan-backend.md)):
+(`src/hardware/r_viberant/vulkan`, [`docs/vulkan-backend.md`](../docs/vulkan-backend.md)):
 the production driver, vk12, and the runtime shader translator are built into a
 headless executable (`tests/vulkan-driver/CMakeLists.txt`) that needs no window,
 SDL library, game assets, or game process. From the repository root, with CMake, a
@@ -1129,7 +1129,7 @@ fails the run, as it does on WARP. Where the two runs differ:
 ## Metal driver harness (macOS)
 
 The same driver test, `viberant-driver.cpp`, runs a third time against the Metal backend
-(`src/hardware/r_d3d12/metal`, [`docs/metal-backend.md`](../docs/metal-backend.md)):
+(`src/hardware/r_viberant/metal`, [`docs/metal-backend.md`](../docs/metal-backend.md)):
 the production driver, mtl12, and the runtime shader translator are built into a
 headless executable (`tests/metal-driver/CMakeLists.txt`) that needs no window, SDL
 library, game assets, or game process. (The game's macOS build has the backend too,
@@ -1467,7 +1467,7 @@ and Opus, and looks for the game's data in the directory it is started from).
 Nothing in this workflow runs the macOS game. The `windows` job builds the ordinary (not UWP) Windows desktop game
 in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_VIBERANT_D3D` is on by
 default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_VIBERANT` and compiles
-`d3d12_present_win32.cpp`, the desktop presenter, and not `d3d12_present.cpp`, UWP's. It builds with
+`d3d_present_win32.cpp`, the desktop presenter, and not `d3d_present_uwp.cpp`, UWP's. It builds with
 the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
 from Visual Studio and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
 vcpkg's binary cache stored by runner image, triplet and the hash of `vcpkg.json` and
@@ -1494,7 +1494,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   multiples of 1/8, so the shader's `floor` calls matter), and exercise 8,640 shader
   composites across blend modes, alpha values, distances, times and split-view
   edges. `water_capture_viberant` extracts projected bounds from
-  `r_d3d12/d3d12_captures.inc` and checks bounded copies, disjoint rectangle
+  `r_viberant/viberant_captures.inc` and checks bounded copies, disjoint rectangle
   growth, grouping, allocation failures, resize and clipped faces. Its expected bounds
   (including fractional vertices), constant bytes, scene and sine texture bindings
   are literal values, and the growth strips must cover exactly the union of the

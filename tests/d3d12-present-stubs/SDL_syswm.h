@@ -1,4 +1,4 @@
-// The part of SDL's window manager information d3d12_present_win32.cpp reads (SDL_GetWindowWMInfo on Windows), for
+// The part of SDL's window manager information d3d_present_win32.cpp reads (SDL_GetWindowWMInfo on Windows), for
 // tests/d3d12-present.cpp, which supplies SDL_GetWindowWMInfo
 #pragma once
 

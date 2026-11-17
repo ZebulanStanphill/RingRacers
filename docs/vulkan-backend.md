@@ -1,13 +1,13 @@
 # VibeRant Vulkan
 
-VibeRant Vulkan is the VibeRant driver (`src/hardware/r_d3d12`) running on Vulkan instead of Direct3D 12: the
+VibeRant Vulkan is the VibeRant driver (`src/hardware/r_viberant`) running on Vulkan instead of Direct3D 12: the
 hardware renderer for platforms without Direct3D 12 (Linux), and a second choice on Windows. It is the same driver
 code. Nothing above the device knows which API is underneath, so the two renderers draw the same picture by
 construction, and a fix to the driver is a fix to both.
 
 ## How
 
-The driver uses a small part of Direct3D 12: about 70 methods of a dozen interfaces. `src/hardware/r_d3d12/vulkan/`
+The driver uses a small part of Direct3D 12: about 70 methods of a dozen interfaces. `src/hardware/r_viberant/vulkan/`
 ("vk12") implements those interfaces (`ID3D12Device`, `ID3D12GraphicsCommandList`, `ID3D12Resource`, ...) on Vulkan.
 `Core_Init` makes either a real Direct3D 12 device or a vk12 one; everything else in the driver calls the same
 interfaces either way. `vk12_bases.h`, generated from Microsoft's header by `gen_bases.py`, defines every method of
@@ -16,16 +16,16 @@ starts to use and vk12 lacks says so in the log.
 
 What differs per backend, and where the driver asks (`Core_Vulkan()`):
 
-- **Device creation** (`d3d12_core.cpp`): `rr_vk12::CreateDevice` instead of `D3D12CreateDevice`. Vulkan is loaded at
+- **Device creation** (`viberant_core.cpp`): `rr_vk12::CreateDevice` instead of `D3D12CreateDevice`. Vulkan is loaded at
   run time (volk), so a system without it only makes the renderer fail to start, and the game falls back to Software.
 - **Waiting for the GPU** (`Core_Wait`): vk12's fence waits on Vulkan's own; it has no Win32 event to set.
-- **Shaders** (`d3d12_pipeline.cpp`): the same `shaders.hlsl`, compiled to SPIR-V by glslang's HLSL front end at build
+- **Shaders** (`viberant_pipeline.cpp`): the same `shaders.hlsl`, compiled to SPIR-V by glslang's HLSL front end at build
   time (`r_vulkan_shaders/*.h`, arrays named `g_<entry>_spv`) instead of to DXBC by fxc. Add-on shaders and the CRT
   screen effects take the existing GLSL to SPIR-V to HLSL path and then HLSL to SPIR-V with glslang at run time
   (`rr_vk12::CompileHlsl`) instead of `D3DCompile`.
-- **The root signature** (`r_d3d12.cpp`): vk12 has `shaders.hlsl`'s `RR_ROOT_SIGNATURE` built in (`kRoot`) and takes
+- **The root signature** (`r_viberant.cpp`): vk12 has `shaders.hlsl`'s `RR_ROOT_SIGNATURE` built in (`kRoot`) and takes
   a token in place of Direct3D's serialized one.
-- **Presentation**: `vulkan/vk_present.cpp` is a third implementation of `d3d12_present.h`, with a `VkSwapchainKHR`
+- **Presentation**: `vulkan/vk_present.cpp` is a third implementation of `viberant_present.h`, with a `VkSwapchainKHR`
   whose images are wrapped as `ID3D12Resource`s, so the driver's frame placement draws into them unchanged.
 - **Headers**: Windows builds use the Windows SDK's `d3d12.h`. Other platforms use Microsoft's MIT-licensed
   DirectX-Headers (the same declarations) and `vulkan/vk12_win.h`, which stands in for the few Win32 calls the driver

@@ -115,7 +115,7 @@
 #include "hardware/hw_driver.h"
 #ifdef HAVE_VIBERANT
 #include "hardware/hw_glob.h"
-#include "hardware/r_d3d12/r_d3d12.h"
+#include "hardware/r_viberant/r_viberant.h"
 #endif
 #endif
 
@@ -596,7 +596,7 @@ static void UWPTraceFinishFrame(bool wipe, bool presented)
 		UINT32 copyframe = 0, showframe = 0;
 #ifdef HAVE_VIBERANT
 		if (HWR_VibeRant() && presented && rendermode == render_opengl)
-			D3D12_GetPresentTrace(&copied, &shown, &copyframe, &showframe);
+			VibeRant_GetPresentTrace(&copied, &shown, &copyframe, &showframe);
 #endif
 		char line[640];
 		snprintf(line, sizeof line, "UWP frame: f=%u load=%u t=%.1f lt=%u tics=%u frac=%.3f mo=%d p=(%.1f,%.1f,%.1f) raw=(%.1f,%.1f,%.1f) view=(%.1f,%.1f,%.1f,%.1f) title=%u/%u slot=%d/shown=%d copyf=%u/showf=%u present=%s\n",
@@ -692,7 +692,7 @@ static bool D_Display(bool world)
 
 #ifdef HAVE_VIBERANT
 	// Before any frame drawing or wipe capture: no in-flight batches hold GLMipmap pointers here.
-	if (HWR_VibeRant() && rendermode == render_opengl && D3D12_TakeTextureFlushRequest())
+	if (HWR_VibeRant() && rendermode == render_opengl && VibeRant_TakeTextureFlushRequest())
 		HWR_ClearAllTextures();
 #endif
 

@@ -26,7 +26,7 @@ jobs:
           path: |
             build/regression/_deps
             build/regression/legacy-shader-libs
-          key: native-shader-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/CMakeLists.txt', '.github/workflows/tests.yml') }}
+          key: native-shader-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_viberant/custom_shaders.cmake', 'tests/CMakeLists.txt', '.github/workflows/tests.yml') }}
 
       - name: Configure
         run: >-
@@ -147,7 +147,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/d3d12-regressions/legacy-build
-          key: viberant-translator-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/viberant-translator/CMakeLists.txt') }}
+          key: viberant-translator-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_viberant/custom_shaders.cmake', 'tests/viberant-translator/CMakeLists.txt') }}
 
       - name: Direct3D 12 renderer regressions
         shell: pwsh
@@ -196,7 +196,7 @@ jobs:
             build/metal-tests/_deps
             build/metal-tests/legacy-shader-libs
             build/metal-tests/build-tools
-          key: metal-shader-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_d3d12/custom_shaders.cmake', 'tests/metal-driver/CMakeLists.txt') }}
+          key: metal-shader-tools-${{ runner.os }}-${{ runner.arch }}-${{ env.RR_IMAGE_VERSION }}-${{ hashFiles('src/hardware/r_viberant/custom_shaders.cmake', 'tests/metal-driver/CMakeLists.txt') }}
 
       # The script turns on Metal's API validation and shader validation, and the test fails without them. The runner's
       # GPU is the device: Metal has no CPU implementation.
@@ -383,11 +383,11 @@ jobs:
           if (-not (Select-String -Path $commands -Pattern HAVE_VIBERANT -Quiet -ErrorAction Stop)) {
             Write-Error "A Windows desktop build made with clang-cl must define HAVE_VIBERANT by default"; exit 1
           }
-          if (-not (Select-String -Path $commands -Pattern 'd3d12_present_win32\.cpp' -Quiet -ErrorAction Stop)) {
-            Write-Error "The desktop build must compile d3d12_present_win32.cpp"; exit 1
+          if (-not (Select-String -Path $commands -Pattern 'd3d_present_win32\.cpp' -Quiet -ErrorAction Stop)) {
+            Write-Error "The desktop build must compile d3d_present_win32.cpp"; exit 1
           }
-          if (Select-String -Path $commands -Pattern 'd3d12_present\.cpp' -Quiet -ErrorAction Stop) {
-            Write-Error "The desktop build must not compile the UWP presenter, d3d12_present.cpp"; exit 1
+          if (Select-String -Path $commands -Pattern 'd3d_present_uwp\.cpp' -Quiet -ErrorAction Stop) {
+            Write-Error "The desktop build must not compile the UWP presenter, d3d_present_uwp.cpp"; exit 1
           }
 
       - name: Build

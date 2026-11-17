@@ -23,10 +23,10 @@ if(SRB2_CONFIG_VIBERANT_D3D OR SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERA
 	# runs on Vulkan, and the Metal backend (VibeRant Metal) on Metal, by implementing the Direct3D 12 interfaces it
 	# uses. HAVE_VIBERANT means the driver is built, with any of the backends.
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT)
-	set(d3d12_shader_source "${CMAKE_CURRENT_SOURCE_DIR}/r_d3d12/shaders.hlsl")
-	include(r_d3d12/custom_shaders.cmake)
-	target_sources(SRB2SDL2 PRIVATE r_d3d12/custom_shader.cpp r_d3d12/d3d12_pipeline.cpp r_d3d12/d3d12_prewarm.cpp
-		r_d3d12/d3d12_core.cpp r_d3d12/d3d12_upload.cpp r_d3d12/r_d3d12.cpp)
+	set(viberant_shader_source "${CMAKE_CURRENT_SOURCE_DIR}/r_viberant/shaders.hlsl")
+	include(r_viberant/custom_shaders.cmake)
+	target_sources(SRB2SDL2 PRIVATE r_viberant/custom_shader.cpp r_viberant/viberant_pipeline.cpp r_viberant/viberant_prewarm.cpp
+		r_viberant/viberant_core.cpp r_viberant/viberant_upload.cpp r_viberant/r_viberant.cpp)
 	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
 	target_include_directories(SRB2SDL2 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
@@ -40,41 +40,41 @@ if(SRB2_CONFIG_VIBERANT_D3D)
 	endif()
 	message(STATUS "Compiling Legacy GL's Direct3D 12 shaders with ${SRB2_FXC}")
 
-	set(d3d12_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/r_d3d12_shaders")
-	set(d3d12_shader_headers "")
-	file(MAKE_DIRECTORY "${d3d12_shader_dir}")
+	set(viberant_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/r_viberant_shaders")
+	set(viberant_shader_headers "")
+	file(MAKE_DIRECTORY "${viberant_shader_dir}")
 
 	foreach(entry ${viberant_shader_entries})
 		string(SUBSTRING "${entry}" 0 2 stage)
 		string(TOLOWER "${stage}" stage)
-		set(header "${d3d12_shader_dir}/${entry}.h")
+		set(header "${viberant_shader_dir}/${entry}.h")
 		add_custom_command(
 			OUTPUT "${header}"
-			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /DRR_D3D12 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${d3d12_shader_source}"
-			DEPENDS "${d3d12_shader_source}"
+			COMMAND "${SRB2_FXC}" /nologo /O3 /D_UWP /DRR_D3D12 /T ${stage}_5_1 /E ${entry} /Vn g_${entry} /Fh "${header}" "${viberant_shader_source}"
+			DEPENDS "${viberant_shader_source}"
 			COMMENT "Compiling the ${entry} D3D12 shader"
 			VERBATIM
 		)
-		list(APPEND d3d12_shader_headers "${header}")
+		list(APPEND viberant_shader_headers "${header}")
 	endforeach()
 
-	set(root_header "${d3d12_shader_dir}/RootSignature.h")
+	set(root_header "${viberant_shader_dir}/RootSignature.h")
 	add_custom_command(
 		OUTPUT "${root_header}"
-		COMMAND "${SRB2_FXC}" /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "${root_header}" "${d3d12_shader_source}"
-		DEPENDS "${d3d12_shader_source}"
+		COMMAND "${SRB2_FXC}" /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "${root_header}" "${viberant_shader_source}"
+		DEPENDS "${viberant_shader_source}"
 		COMMENT "Compiling the D3D12 root signature"
 		VERBATIM
 	)
-	add_custom_target(SRB2D3D12Shaders DEPENDS ${d3d12_shader_headers} "${root_header}")
-	add_dependencies(SRB2SDL2 SRB2D3D12Shaders)
+	add_custom_target(SRB2VibeRantShaders DEPENDS ${viberant_shader_headers} "${root_header}")
+	add_dependencies(SRB2SDL2 SRB2VibeRantShaders)
 
 	target_link_libraries(SRB2SDL2 PRIVATE d3dcompiler)
 	# The one platform-specific file: the swap chain on UWP's CoreWindow (taken from ANGLE), or on a child window of the SDL window
 	if(SRB2_CONFIG_UWP)
-		target_sources(SRB2SDL2 PRIVATE r_d3d12/d3d12_present.cpp)
+		target_sources(SRB2SDL2 PRIVATE r_viberant/d3d_present_uwp.cpp)
 	else()
-		target_sources(SRB2SDL2 PRIVATE r_d3d12/d3d12_present_win32.cpp)
+		target_sources(SRB2SDL2 PRIVATE r_viberant/d3d_present_win32.cpp)
 		# UWP gets these from its own dependency set
 		target_link_libraries(SRB2SDL2 PRIVATE d3d12 dxgi dxguid user32)
 	endif()
@@ -114,8 +114,8 @@ if(SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_METAL)
 			OUTPUT "${header}"
 			COMMAND glslang-standalone -D -V -S ${stage} -e ${entry} --hlsl-dx-position-w -fhlsl_functionality1
 				--shift-ubo-binding 0 --shift-texture-binding 16 --shift-sampler-binding 32
-				-D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${d3d12_shader_source}"
-			DEPENDS "${d3d12_shader_source}" glslang-standalone
+				-D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
+			DEPENDS "${viberant_shader_source}" glslang-standalone
 			COMMENT "Compiling the ${entry} shader to SPIR-V"
 			VERBATIM
 		)
@@ -124,7 +124,7 @@ if(SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERANT_METAL)
 	add_custom_target(SRB2VulkanShaders DEPENDS ${vulkan_shader_headers})
 	add_dependencies(SRB2SDL2 SRB2VulkanShaders)
 
-	target_sources(SRB2SDL2 PRIVATE r_d3d12/spirv_shader.cpp)
+	target_sources(SRB2SDL2 PRIVATE r_viberant/spirv_shader.cpp)
 endif()
 
 if(SRB2_CONFIG_VIBERANT_VULKAN)
@@ -142,17 +142,17 @@ if(SRB2_CONFIG_VIBERANT_VULKAN)
 	target_include_directories(SRB2SDL2 PRIVATE "${rr_vulkan_headers_SOURCE_DIR}/include" "${rr_volk_SOURCE_DIR}")
 
 	target_sources(SRB2SDL2 PRIVATE "${rr_volk_SOURCE_DIR}/volk.c"
-		r_d3d12/vulkan/vk12_device.cpp r_d3d12/vulkan/vk12_commands.cpp r_d3d12/vulkan/vk12_resources.cpp
-		r_d3d12/vulkan/vk12_pipeline.cpp r_d3d12/vulkan/vk_present.cpp)
+		r_viberant/vulkan/vk12_device.cpp r_viberant/vulkan/vk12_commands.cpp r_viberant/vulkan/vk12_resources.cpp
+		r_viberant/vulkan/vk12_pipeline.cpp r_viberant/vulkan/vk_present.cpp)
 endif()
 
 if(SRB2_CONFIG_VIBERANT_METAL)
 	# The Metal backend (macOS), "mtl12", and its presenter: Objective-C++, except the SPIR-V to Metal Shading Language
 	# step (SPIRV-Cross) and the presenter's way to the game's own headers, which Apple's can't share a file with
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT_METAL)
-	set(metal_objcxx_sources r_d3d12/metal/mtl12_device.mm r_d3d12/metal/mtl12_commands.mm
-		r_d3d12/metal/mtl12_resources.mm r_d3d12/metal/mtl12_pipeline.mm r_d3d12/metal/mtl_present.mm)
-	target_sources(SRB2SDL2 PRIVATE ${metal_objcxx_sources} r_d3d12/metal/mtl12_msl.cpp r_d3d12/metal/mtl_present_game.cpp)
+	set(metal_objcxx_sources r_viberant/metal/mtl12_device.mm r_viberant/metal/mtl12_commands.mm
+		r_viberant/metal/mtl12_resources.mm r_viberant/metal/mtl12_pipeline.mm r_viberant/metal/mtl_present.mm)
+	target_sources(SRB2SDL2 PRIVATE ${metal_objcxx_sources} r_viberant/metal/mtl12_msl.cpp r_viberant/metal/mtl_present_game.cpp)
 	# mtl12 keeps Metal's objects in C++ classes, which automatic reference counting makes safe: without it nothing
 	# retains them. The option is the target's, for its Objective-C++ files, which are these five and no others: a
 	# source file's own properties only reach targets of the directory that sets them, the target is made in the

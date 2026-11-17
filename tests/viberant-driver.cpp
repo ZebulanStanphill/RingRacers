@@ -5,9 +5,9 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 // Runs the production driver and GPU code; only engine services and presentation on the window are stubbed.
-#include "hardware/r_d3d12/d3d12_core.h"
-#include "hardware/r_d3d12/d3d12_present.h"
-#include "hardware/r_d3d12/d3d12_prewarm.h"
+#include "hardware/r_viberant/viberant_core.h"
+#include "hardware/r_viberant/viberant_present.h"
+#include "hardware/r_viberant/viberant_prewarm.h"
 #include "doomdef.h"
 #include "command.h"
 #include "i_system.h"
@@ -20,16 +20,16 @@
 #include "hardware/hw_main.h"
 #include "hardware/hw_data.h"
 #include "hardware/hw_model.h"
-#include "hardware/r_d3d12/r_d3d12.h"
+#include "hardware/r_viberant/r_viberant.h"
 #ifdef HAVE_VIBERANT_D3D
 #include <d3d12sdklayers.h>
 #else
 #include <cstdlib>
 #ifdef HAVE_VIBERANT_METAL
 #include <pthread.h>
-#include "hardware/r_d3d12/metal/mtl12.h"
+#include "hardware/r_viberant/metal/mtl12.h"
 #else
-#include "hardware/r_d3d12/vulkan/vk12.h"
+#include "hardware/r_viberant/vulkan/vk12.h"
 #endif
 #endif
 #include <algorithm>
@@ -47,7 +47,7 @@
 #undef min
 #undef max
 #undef clamp
-using namespace rr_d3d12;
+using namespace rr_viberant;
 static_assert((PF_Invert & PF_Occlude) == 0, "Inversion must not alias depth writes");
 // negative names the one negative control this process runs, if any: a regression is injected and the oracle that should
 // catch it must then reject it. Every other oracle is checked by selfTest and the hit registry below.
@@ -91,7 +91,7 @@ RGBA_t *pMasterPalette = nullptr;
 static bool deviceFailsOnPurpose=false;
 void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stderr,fmt,ap); va_end(ap); if(deviceFailsOnPurpose) { fflush(stdout); fflush(stderr); _Exit(1); } exit(1); }
 }
-namespace rr_d3d12 {
+namespace rr_viberant {
 bool Present_TakeWindow() { return true; }
 static int presentedFrames=0;
 void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool, PlaceFrameFn) {
@@ -108,7 +108,7 @@ bool Present_Tracing() { return false; }
 void Present_FrameDone() {}
 UINT64 Present_SwapChainBytes() { return 0; }
 }
-template<class T> T function(const char *name) { auto p=D3D12_GetDriverFunction(name); if(!p) throw std::runtime_error(name); return reinterpret_cast<T>(p); }
+template<class T> T function(const char *name) { auto p=VibeRant_GetDriverFunction(name); if(!p) throw std::runtime_error(name); return reinterpret_cast<T>(p); }
 static auto clear = function<void (*)(FBOOLEAN,FBOOLEAN,FRGBAFloat *)>("ClearBuffer");
 static auto blend = function<void (*)(FBITFIELD)>("SetBlend");
 static auto polygon = function<void (*)(FSurfaceInfo *,FOutVector *,FUINT,FBITFIELD)>("DrawPolygon");
@@ -156,16 +156,16 @@ static void expect(const char *scene,RGB want,int x=32,int y=32) { auto p=pixels
 // right one, a quarter of the screen from the diagonal; the quad spans -0.8 to 0.8, so all three are inside it.
 static void expectQuad(const char *scene,RGB want) { auto p=pixels(); validate(validationQueue); check(scene,p,32,32,want); check(scene,p,20,20,want); check(scene,p,44,44,want); }
 // Palette rendering's last step, read like expect reads the screen. It leaves the buffer as filled while Palette Rendering is off.
-static std::vector<UINT8> palettePixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
+static std::vector<UINT8> palettePixels() { std::vector<UINT8> p(W*H*3,0xcd); VibeRant_ReadPaletteRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
 // What the driver hands to the present: the finished frame after palette rendering's last step and the screen effect
-static std::vector<UINT8> presentedPixels() { std::vector<UINT8> p(W*H*3,0xcd); D3D12_ReadPresentedRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
+static std::vector<UINT8> presentedPixels() { std::vector<UINT8> p(W*H*3,0xcd); VibeRant_ReadPresentedRectForTest(0,0,W,H,W*3,reinterpret_cast<UINT16 *>(p.data())); return p; }
 // The frame as the driver places it on a screenWidth by screenHeight target for Screen Scaling mode 1 (Integer) or 2 (1:1), read
 // whole. Inside the rectangle at (x0, y0) of size k times the frame's, every pixel is the frame's pixel at (x - x0) / k, (y - y0) / k;
 // outside it, every pixel is black although the target was filled with magenta beforehand. The rectangle is worked out by hand in
 // each scene, not by the production calculation.
 static void expectPlaced(const char *scene,int mode,int screenWidth,int screenHeight,int x0,int y0,int k,const std::vector<UINT8> &frame) {
     std::vector<UINT8> p((size_t)screenWidth*screenHeight*3,0xcd);
-    const bool placed=D3D12_ReadPlacedRectForTest(mode,screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
+    const bool placed=VibeRant_ReadPlacedRectForTest(mode,screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
     validate(validationQueue);
     require(scene,placed,"the driver didn't place the frame");
     int wrong=0, black=0;
@@ -182,7 +182,7 @@ static void expectPlaced(const char *scene,int mode,int screenWidth,int screenHe
 // Modes that leave the frame to the system (Fit, or a frame larger than the screen) place nothing
 static void expectNotPlaced(const char *scene,int mode,int screenWidth,int screenHeight) {
     std::vector<UINT8> p((size_t)screenWidth*screenHeight*3,0xcd);
-    const bool placed=D3D12_ReadPlacedRectForTest(mode,screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
+    const bool placed=VibeRant_ReadPlacedRectForTest(mode,screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
     validate(validationQueue);
     require(scene,!placed,"the driver placed a frame that is left to the system");
 }
@@ -196,7 +196,7 @@ static void expectNotPlaced(const char *scene,int mode,int screenWidth,int scree
 // center need fall between the texels of the frame's one sharp edge, so the smooth gradient is all that is left to blend.
 static void expectFitPlaced(const char *scene,int screenWidth,int screenHeight,int x0,int y0,int w,int h,const std::vector<UINT8> &frame,bool mayAgree=false) {
     std::vector<UINT8> p((size_t)screenWidth*screenHeight*3,0xcd);
-    const bool placed=D3D12_ReadFitRectForTest(screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
+    const bool placed=VibeRant_ReadFitRectForTest(screenWidth,screenHeight,0,0,screenWidth,screenHeight,screenWidth*3,reinterpret_cast<UINT16 *>(p.data()));
     validate(validationQueue);
     require(scene,placed,"the driver didn't place the frame");
     int wrong=0, black=0, blended=0, distinguishing=0;
@@ -233,7 +233,7 @@ static void checkAny(const char *scene,const std::vector<UINT8> &p,int x,int y0,
     bool found=false; for(int y=y0;y<=y1;y++) found=found || within(at(p,x,y,width),want);
     require(scene,found,"no pixel of the rows matched");
 }
-static std::array<UINT64,3> captureCounts() { std::array<UINT64,3> result={}; D3D12_GetCaptureCountsForTest(&result[0],&result[1],&result[2]); return result; }
+static std::array<UINT64,3> captureCounts() { std::array<UINT64,3> result={}; VibeRant_GetCaptureCountsForTest(&result[0],&result[1],&result[2]); return result; }
 // Fog and water captures (fog, water copies, water round trips) since before
 static void countDelta(const char *scene,std::array<UINT64,3> before,UINT64 fogCount,UINT64 waterCount) {
     const auto after=captureCounts();
@@ -398,7 +398,7 @@ static void metalFailedCommandBuffer() {
     const HRESULT reason=metalFailure==11 ? DXGI_ERROR_DEVICE_REMOVED : metalFailure==1 ? DXGI_ERROR_DRIVER_INTERNAL_ERROR
         : metalFailure==2 || metalFailure==4 || metalFailure==7 ? DXGI_ERROR_DEVICE_HUNG : DXGI_ERROR_DEVICE_RESET;
     // A frame that works first, with a draw in it: frames that are only a clear aren't presented while the renderer starts
-    reset(); fillRect(-1,1,-1,1,{200,40,16}); D3D12_FinishUpdate(0);
+    reset(); fillRect(-1,1,-1,1,{200,40,16}); VibeRant_FinishUpdate(0);
     if(presentedFrames!=1 || !Core_WaitIdle(30000,"failed command buffer") || Core_DeviceRemoved() || Core_RemovedReason()!=S_OK || rr_mtl12::DeviceLost() || rr_mtl12::ValidationErrors())
         throw std::runtime_error("Metal failed command buffer: the device wasn't a working one to begin with");
     reset();
@@ -419,7 +419,7 @@ static void metalFailedCommandBuffer() {
     if(logs.find("a command buffer failed: a failure injected by a test")==std::string::npos) throw std::runtime_error("Metal failed command buffer: the log doesn't say so");
     printf("METAL_FAILURE_REACHED_DRIVER: %d%s as 0x%08X\n",metalFailure,metalFailureInNullView ? " null-view" : "",(unsigned)reason); fflush(stdout);
     // The driver ends the frame by stopping the game, as it does for a Direct3D 12 device that was removed
-    deviceFailsOnPurpose=true; D3D12_FinishUpdate(0);
+    deviceFailsOnPurpose=true; VibeRant_FinishUpdate(0);
     throw std::runtime_error("Metal failed command buffer: the frame after it didn't stop the game");
 }
 #endif
@@ -556,8 +556,8 @@ int main(int argc,char **argv) {
         if(!getenv("RR_VULKAN_HARDWARE")) Core_ScaleWaitsForTest(20);
         Core_VulkanValidation(true);
 #endif
-        D3D12_SetRingBytesForTest(1024,512,2048);
-        if(!function<boolean (*)()>("Init")() || !D3D12_Surface(W,H)) throw std::runtime_error("Init/Surface failed");
+        VibeRant_SetRingBytesForTest(1024,512,2048);
+        if(!function<boolean (*)()>("Init")() || !VibeRant_Surface(W,H)) throw std::runtime_error("Init/Surface failed");
 #ifdef HAVE_VIBERANT_D3D
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
 #elif defined(HAVE_VIBERANT_METAL)
@@ -570,7 +570,7 @@ int main(int argc,char **argv) {
 #endif
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
         // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
-        { reset(); D3D12_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
+        { reset(); VibeRant_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
 #ifdef HAVE_VIBERANT_METAL
         if(metalFailure) metalFailedCommandBuffer();
 #endif
@@ -589,12 +589,12 @@ int main(int argc,char **argv) {
         // The surface probe copies the pixel under 50%,50% after each draw and logs the draws' colors at the end of the frame.
         { const RGB colors[3]={{200,40,20},{20,200,40},{40,20,200}};
           reset({0,0,0});
-          if(D3D12_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began without a request");
-          if(!D3D12_RequestSurfaceProbe(50,50) || D3D12_RequestSurfaceProbe(50,50)) throw std::runtime_error("surface probe requests weren't accepted once");
+          if(VibeRant_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began without a request");
+          if(!VibeRant_RequestSurfaceProbe(50,50) || VibeRant_RequestSurfaceProbe(50,50)) throw std::runtime_error("surface probe requests weren't accepted once");
           const size_t start=logs.size();
-          if(!D3D12_BeginSurfaceProbe()) throw std::runtime_error("the surface probe didn't begin");
-          for(int i=0;i<3;i++) { if(i==1) D3D12_SurfaceProbeSource("wall",7); draw(colors[i],PF_NoDepthTest); }
-          D3D12_EndSurfaceProbe(); validate(validationQueue);
+          if(!VibeRant_BeginSurfaceProbe()) throw std::runtime_error("the surface probe didn't begin");
+          for(int i=0;i<3;i++) { if(i==1) VibeRant_SurfaceProbeSource("wall",7); draw(colors[i],PF_NoDepthTest); }
+          VibeRant_EndSurfaceProbe(); validate(validationQueue);
           const std::string probeLog=logs.substr(start);
           require("surface-probe",probeLog.find("surface probe: begin pixel=(32,32) screen=64x64")!=std::string::npos,"surface probe begin line");
           for(int i=0;i<3;i++)
@@ -610,14 +610,14 @@ int main(int argc,char **argv) {
           expect("surface-probe-pixel",colors[2]);
           // Without a request, the next frame copies and logs nothing
           const size_t quiet=logs.size();
-          reset(); if(D3D12_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began twice for one request");
-          draw(colors[0],PF_NoDepthTest); D3D12_EndSurfaceProbe(); expect("surface-probe-quiet",colors[0]);
+          reset(); if(VibeRant_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began twice for one request");
+          draw(colors[0],PF_NoDepthTest); VibeRant_EndSurfaceProbe(); expect("surface-probe-quiet",colors[0]);
           if(logs.find("surface probe:",quiet)!=std::string::npos) throw std::runtime_error("an inactive surface probe logged"); }
         RGB src={160,96,64},dst={48,80,112};
         struct Mode { const char *name; FBITFIELD flags; } modes[]={{"opaque",0},{"translucent",PF_Translucent},{"additive",PF_Additive},{"subtract",PF_Subtractive},{"reverse",PF_ReverseSubtract},{"multiply",PF_Multiplicative},{"environment",PF_Environment},{"masked",PF_Masked},{"invert",PF_Invert},{"fog",PF_Fog}};
         // The color of a source with this alpha drawn over a destination in one of these modes
         auto blended=[](FBITFIELD flags,RGB source,RGB target,int alpha) { const double a=alpha/255.; RGB result={}; for(int c=0;c<3;c++) { double s=source[c],d=target[c],v=s; switch(flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } return result; };
-        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expectQuad(m.name,blended(m.flags,src,dst,128)); D3D12_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
+        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expectQuad(m.name,blended(m.flags,src,dst,128)); VibeRant_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
         reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expectQuad("depth",{200,40,20});
         draw({20,40,200},PF_NoDepthTest,1.5f); expectQuad("nodepth",{20,40,200});
         reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expectQuad("noocclude",{20,200,40});
@@ -630,35 +630,35 @@ int main(int argc,char **argv) {
                     {extent*z,extent*z,z,0,0},{-extent*z,extent*z,z,0,0}}};
             };
             auto open=[&](const std::array<FOutVector,4> &v,int level,bool restore=false) {
-                if(!D3D12_DrawPortalAperture(v.data(),level,restore)) throw std::runtime_error("portal aperture failed");
+                if(!VibeRant_DrawPortalAperture(v.data(),level,restore)) throw std::runtime_error("portal aperture failed");
             };
             reset();
-            require("portal-supported",D3D12_PortalsSupported()!=0,"portal PSO preflight failed");
+            require("portal-supported",VibeRant_PortalsSupported()!=0,"portal PSO preflight failed");
             // Preflight and mask creation must preserve color; stencil == 1 confines the child.
             auto outer=aperture(.6f,.25f), inner=aperture(.25f,.2f);
             open(outer,0);
             { auto p=pixels(); validate(validationQueue); check("portal-aperture",p,32,32,background); }
-            D3D12_SetPortalStencil(1); draw(child,PF_NoDepthTest);
+            VibeRant_SetPortalStencil(1); draw(child,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("portal-aperture",p,32,32,child); check("portal-aperture",p,8,32,background); }
             // Level 2 rejects the parent-only portion; restore returns it to level 1.
-            open(inner,1); D3D12_SetPortalStencil(2); draw(nested,PF_NoDepthTest);
+            open(inner,1); VibeRant_SetPortalStencil(2); draw(nested,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("portal-nested",p,32,32,nested); check("portal-nested",p,46,32,child); check("portal-nested",p,8,32,background); }
-            D3D12_SetPortalStencil(1); open(inner,1,true); draw(parent,PF_NoDepthTest);
+            VibeRant_SetPortalStencil(1); open(inner,1,true); draw(parent,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("portal-nested",p,32,32,parent); check("portal-nested",p,46,32,parent); check("portal-nested",p,8,32,background); }
             // The entrance depth restored on return blocks farther parent geometry.
-            D3D12_SetPortalStencil(0); open(outer,0,true); draw(nested,PF_Occlude,1.5f);
+            VibeRant_SetPortalStencil(0); open(outer,0,true); draw(nested,PF_Occlude,1.5f);
             { auto p=pixels(); validate(validationQueue); check("portal-restore",p,32,32,parent); check("portal-restore",p,8,32,nested); }
             // A global depth clear would wrongly reveal the far draw outside the aperture.
             reset(); draw(parent,PF_Occlude,.5f); open(outer,0);
-            D3D12_ResetPortalDepth(1); D3D12_SetPortalStencil(0); draw(child,PF_Occlude,1.5f);
+            VibeRant_ResetPortalDepth(1); VibeRant_SetPortalStencil(0); draw(child,PF_Occlude,1.5f);
             { auto p=pixels(); validate(validationQueue); check("portal-depth",p,32,32,child); check("portal-depth",p,8,32,parent); }
             // The world exit plane accepts x >= 0; disabling it must restore both sides.
-            reset(); const float plane[4]={1,0,0,0}; D3D12_SetPortalPlane(plane);
+            reset(); const float plane[4]={1,0,0,0}; VibeRant_SetPortalPlane(plane);
             draw(child,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("portal-plane",p,16,32,background); check("portal-plane",p,48,32,child); }
-            D3D12_SetPortalPlane(nullptr); draw(parent,PF_NoDepthTest);
+            VibeRant_SetPortalPlane(nullptr); draw(parent,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("portal-plane",p,16,32,parent); check("portal-plane",p,48,32,parent); }
-            D3D12_SetPortalStencil(0); D3D12_FinishUpdate(0);
+            VibeRant_SetPortalStencil(0); VibeRant_FinishUpdate(0);
         }
         // A spring's model is hidden behind the silhouettes Software draws over the spring's sprite. The mask is the
         // stencil buffer's top bit: set over a polygon whatever its depth, without color or depth of its own, honored
@@ -669,42 +669,42 @@ int main(int argc,char **argv) {
                 return std::array<FOutVector,4>{{{x0*z,-z,z,0,0},{x1*z,-z,z,0,0},{x1*z,z,z,0,0},{x0*z,z,z,0,0}}};
             };
             auto mark=[&](const std::array<FOutVector,4> &v,bool set) {
-                if(!D3D12_DrawSpringMask(v.data(),4,set)) throw std::runtime_error("spring mask failed");
+                if(!VibeRant_DrawSpringMask(v.data(),4,set)) throw std::runtime_error("spring mask failed");
             };
             // The left half is marked from behind a nearer wall, and from in front of where the model will be.
             reset(); draw(wall,PF_Occlude,.5f); mark(half(-1,0,1.5f),true);
             { auto p=pixels(); validate(validationQueue); check("spring-mask",p,16,32,wall); check("spring-mask",p,48,32,wall); }
-            D3D12_UseSpringMask(true,0); draw(model,PF_NoDepthTest);
+            VibeRant_UseSpringMask(true,0); draw(model,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask",p,16,32,wall); check("spring-mask",p,48,32,model); }
             // Out of use, the mask hides nothing; the mark is still there when it is used again.
-            D3D12_UseSpringMask(false,0); draw(later,PF_NoDepthTest);
+            VibeRant_UseSpringMask(false,0); draw(later,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-unused",p,16,32,later); check("spring-mask-unused",p,48,32,later); }
-            D3D12_UseSpringMask(true,0); draw(model,PF_NoDepthTest);
+            VibeRant_UseSpringMask(true,0); draw(model,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-unused",p,16,32,later); check("spring-mask-unused",p,48,32,model); }
             // Cleared, the whole model shows; and the marks wrote no depth, so the wall still hides what is behind it.
-            D3D12_UseSpringMask(false,0); mark(half(-1,0,.25f),false);
-            D3D12_UseSpringMask(true,0); draw(wall,PF_NoDepthTest);
+            VibeRant_UseSpringMask(false,0); mark(half(-1,0,.25f),false);
+            VibeRant_UseSpringMask(true,0); draw(wall,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-clear",p,16,32,wall); check("spring-mask-clear",p,48,32,wall); }
             draw(model,PF_Occlude,.4f);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-clear",p,16,32,model); check("spring-mask-clear",p,48,32,model); }
             draw(later,PF_Occlude,1.f);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-clear",p,16,32,model); check("spring-mask-clear",p,48,32,model); }
-            D3D12_UseSpringMask(false,0);
+            VibeRant_UseSpringMask(false,0);
             // Inside a portal the model stays inside the aperture as well, and clearing the mark leaves the level as it was.
             reset(); const std::array<FOutVector,4> aperture=half(-.6f,.6f,.25f);
             std::array<FOutVector,4> opening=aperture; opening[0].y=opening[1].y=-.6f*.25f; opening[2].y=opening[3].y=.6f*.25f;
-            if(!D3D12_DrawPortalAperture(opening.data(),0,false)) throw std::runtime_error("portal aperture failed");
-            D3D12_SetPortalStencil(1); draw(child,PF_NoDepthTest); mark(half(-1,0,1.5f),true);
-            D3D12_UseSpringMask(true,1); draw(model,PF_NoDepthTest);
+            if(!VibeRant_DrawPortalAperture(opening.data(),0,false)) throw std::runtime_error("portal aperture failed");
+            VibeRant_SetPortalStencil(1); draw(child,PF_NoDepthTest); mark(half(-1,0,1.5f),true);
+            VibeRant_UseSpringMask(true,1); draw(model,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-portal",p,24,32,child); check("spring-mask-portal",p,40,32,model);
               check("spring-mask-portal",p,8,32,background); check("spring-mask-portal",p,56,32,background); }
-            D3D12_UseSpringMask(false,1); mark(half(-1,0,1.5f),false); draw(later,PF_NoDepthTest);
+            VibeRant_UseSpringMask(false,1); mark(half(-1,0,1.5f),false); draw(later,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-portal",p,24,32,later); check("spring-mask-portal",p,40,32,later);
               check("spring-mask-portal",p,8,32,background); check("spring-mask-portal",p,56,32,background); }
-            D3D12_SetPortalStencil(0); if(!D3D12_DrawPortalAperture(opening.data(),0,true)) throw std::runtime_error("portal aperture failed");
+            VibeRant_SetPortalStencil(0); if(!VibeRant_DrawPortalAperture(opening.data(),0,true)) throw std::runtime_error("portal aperture failed");
             draw(wall,PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("spring-mask-portal",p,8,32,wall); check("spring-mask-portal",p,32,32,wall); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         reset(); auto v=quad(); auto s=surface({24,180,220}); UINT32 ix[]={0,1,2,0,2,3}; indexed(&s,v.data(),6,PF_Modulated|PF_NoTexture|PF_NoDepthTest,ix); expectQuad("indexed",{24,180,220});
         reset(); blend(PF_NoDepthTest|PF_NoTexture); F2DCoord p1={-.75f,0},p2={.75f,0}; auto ls=surface({240,160,80}); line(&p1,&p2,ls.PolyColor);
@@ -752,7 +752,7 @@ int main(int argc,char **argv) {
                 texture(&m); sharedDraw(.1f,.8f);
                 expect("shared-brightmap",{216,48,24},18,32);
                 expect("shared-brightmap",{32,200,80},46,32);
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             deleteTexture(&a); deleteTexture(&m);
             function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
@@ -768,19 +768,19 @@ int main(int argc,char **argv) {
             GLMipmap_t atlased={}; atlased.format=GL_TEXFMT_RGBA; atlased.width=atlased.height=64; atlased.data=pixels.data();
             texture(&atlased);
             Placement p={};
-            if(D3D12_GetTexturePlacementForTest(atlased.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
+            if(VibeRant_GetTexturePlacementForTest(atlased.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
                 throw std::runtime_error("texture-guard 64x64 texture did not go to the atlas");
             reset(); texture(&atlased); textured();
             expect("texture-guard",RGB{24,120,232});
             deleteTexture(&atlased);
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         {
             // Empty pages give their memory back, except one kept for the next upload. 192 textures of 256x256
             // fill three pages; deleting the first 128 empties two, of which the second is released.
-            auto settle=[&](UINT32 pages) { for(int frame=0;frame<8 && D3D12_GetAtlasPagesForTest()!=pages;frame++) D3D12_FinishUpdate(0); };
+            auto settle=[&](UINT32 pages) { for(int frame=0;frame<8 && VibeRant_GetAtlasPagesForTest()!=pages;frame++) VibeRant_FinishUpdate(0); };
             special(HWD_SET_TEXTUREATLAS,0); special(HWD_SET_TEXTUREATLAS,1); settle(1);
-            if(D3D12_GetAtlasPagesForTest()>1) throw std::runtime_error("atlas-pages kept more than one empty page after a flush");
+            if(VibeRant_GetAtlasPagesForTest()>1) throw std::runtime_error("atlas-pages kept more than one empty page after a flush");
             std::vector<UINT8> pixels(256*256*4), other(pixels.size());
             for(size_t pixel=0;pixel<256*256;pixel++) {
                 pixels[pixel*4]=200; pixels[pixel*4+1]=96; pixels[pixel*4+2]=24; pixels[pixel*4+3]=255;
@@ -788,13 +788,13 @@ int main(int argc,char **argv) {
             }
             std::vector<GLMipmap_t> first(192), second(65);
             for(auto &t:first) { t={}; t.format=GL_TEXFMT_RGBA; t.width=t.height=256; t.data=pixels.data(); texture(&t); }
-            if(D3D12_GetAtlasPagesForTest()!=3) throw std::runtime_error("atlas-pages 192 textures did not fill three pages");
+            if(VibeRant_GetAtlasPagesForTest()!=3) throw std::runtime_error("atlas-pages 192 textures did not fill three pages");
             for(size_t i=0;i<128;i++) deleteTexture(&first[i]);
             settle(2);
-            if(D3D12_GetAtlasPagesForTest()!=2) throw std::runtime_error("atlas-pages did not release the second empty page");
+            if(VibeRant_GetAtlasPagesForTest()!=2) throw std::runtime_error("atlas-pages did not release the second empty page");
             // 64 more fill the kept page, and the next one needs the released page again, between the two others.
             for(auto &t:second) { t={}; t.format=GL_TEXFMT_RGBA; t.width=t.height=256; t.data=(&t==&second.back()?other:pixels).data(); texture(&t); }
-            if(D3D12_GetAtlasPagesForTest()!=3) throw std::runtime_error("atlas-pages did not create the released page again");
+            if(VibeRant_GetAtlasPagesForTest()!=3) throw std::runtime_error("atlas-pages did not create the released page again");
             reset(); texture(&second.back()); textured();
             expect("atlas-pages",RGB{32,208,160});
             reset(); texture(&first.back()); textured();
@@ -802,7 +802,7 @@ int main(int argc,char **argv) {
             for(size_t i=128;i<first.size();i++) deleteTexture(&first[i]);
             for(auto &t:second) deleteTexture(&t);
             settle(1);
-            if(D3D12_GetAtlasPagesForTest()!=1) throw std::runtime_error("atlas-pages did not release the emptied pages");
+            if(VibeRant_GetAtlasPagesForTest()!=1) throw std::runtime_error("atlas-pages did not release the emptied pages");
         }
         // The placement checks below need standalone resources.
         special(HWD_SET_TEXTUREATLAS,0);
@@ -821,7 +821,7 @@ int main(int argc,char **argv) {
                 auto &t=textures[i]; t.format=GL_TEXFMT_RGBA; t.width=t.height=side; t.data=data[i].data();
                 texture(&t);
                 auto &p=placements[i];
-                if(!D3D12_GetTexturePlacementForTest(t.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
+                if(!VibeRant_GetTexturePlacementForTest(t.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
                     throw std::runtime_error("texture-guard did not use placed storage");
                 const UINT64 alignment=i<2?65536:4096;
                 const UINT64 expectedBlock=i<2?320*1024:20*1024;
@@ -842,14 +842,14 @@ int main(int argc,char **argv) {
                 expect("texture-guard",i%2?RGB{16,200,80}:RGB{200,40,16});
                 deleteTexture(&textures[i]);
             }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         special(HWD_SET_TEXTUREATLAS,1);
         // A 1024x1024 texture exceeds the shared heaps' largest class once its guard is counted. It must get a heap
         // of its own rather than committed storage, whose last texel the Xbox One driver's state word can zero.
         {
             UINT64 placedBefore=0,dedicatedBefore=0,committedBefore=0;
-            D3D12_GetTextureStorageCountsForTest(&placedBefore,&dedicatedBefore,&committedBefore);
+            VibeRant_GetTextureStorageCountsForTest(&placedBefore,&dedicatedBefore,&committedBefore);
             std::vector<UINT8> big(1024*1024*4);
             for(size_t pixel=0;pixel<big.size()/4;pixel++) { big[pixel*4]=40; big[pixel*4+1]=96; big[pixel*4+2]=216; big[pixel*4+3]=255; }
             // The bottom-right texel differs so that a zeroed or clamped last texel would show.
@@ -857,10 +857,10 @@ int main(int argc,char **argv) {
             GLMipmap_t t={}; t.format=GL_TEXFMT_RGBA; t.width=t.height=1024; t.data=big.data();
             reset(); texture(&t);
             Placement p={};
-            if(D3D12_GetTexturePlacementForTest(t.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
+            if(VibeRant_GetTexturePlacementForTest(t.downloaded,&p.heap,&p.offset,&p.block,&p.reported,&p.alignment))
                 throw std::runtime_error("texture-dedicated used a shared heap block");
             UINT64 placed=0,dedicated=0,committed=0;
-            D3D12_GetTextureStorageCountsForTest(&placed,&dedicated,&committed);
+            VibeRant_GetTextureStorageCountsForTest(&placed,&dedicated,&committed);
             if(placed!=placedBefore || dedicated!=dedicatedBefore+1 || committed!=committedBefore)
                 throw std::runtime_error("texture-dedicated storage counts oracle failed");
             // Draw with texel (1023,1023) alone on the top-right pixel: s and t of 1 sample the last texel with point filtering.
@@ -869,7 +869,7 @@ int main(int argc,char **argv) {
             auto white=surface({255,255,255}); const FBITFIELD flags=PF_Modulated|PF_NoDepthTest;
             blend(flags); polygon(&white,q.data(),4,flags);
             expect("texture-dedicated",{40,96,216},8,32); expect("texture-dedicated",{232,200,24},W-1,0);
-            deleteTexture(&t); D3D12_FinishUpdate(0);
+            deleteTexture(&t); VibeRant_FinishUpdate(0);
         }
         // Add-on shaders use the Legacy GL loader and replace a valid base slot.
         // NOCUSTOM must make the same custom-color oracle fail with built-in pixels.
@@ -934,14 +934,14 @@ int main(int argc,char **argv) {
             cv_scr_effect.value=2; quadrants(tl,tr,bl,br);
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
             // A presented frame, and a second pass: nothing is built again
-            D3D12_FinishUpdate(0); quadrants(tl,tr,bl,br);
+            VibeRant_FinishUpdate(0); quadrants(tl,tr,bl,br);
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
             const std::string effectText=logs.substr(effectLog);
             require("screen-effect",occurrences(effectText,"screen effect SalCRT is ready")==1 && effectText.find("SalCRT failed")==std::string::npos,"SalCRT was not built exactly once");
             // Not the shaders of the other mode, either
             cv_scr_effect.value=3; quadrants(tl,tr,bl,br);
             for(int frame=0;frame<2;frame++) {
-                auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-fallback",p,tl,tr,bl,br); D3D12_FinishUpdate(0); quadrants(tl,tr,bl,br);
+                auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-fallback",p,tl,tr,bl,br); VibeRant_FinishUpdate(0); quadrants(tl,tr,bl,br);
             }
             const std::string fallbackText=logs.substr(effectLog);
             require("screen-effect-fallback",occurrences(fallbackText,"screen effect SalCRT Sharp failed: translation failed")==1 && fallbackText.find("SalCRT Sharp is ready")==std::string::npos,"SalCRT Sharp's failure was not logged once");
@@ -1001,8 +1001,8 @@ int main(int argc,char **argv) {
             expectFitPlaced("scaling-fit",64,64,0,0,64,64,gradient,true); // the frame's own size: every pixel at a texel's center
             // Sizes that make no sense are left alone
             { std::vector<UINT8> unused((size_t)100*3,0xcd);
-              require("scaling-fit",!D3D12_ReadFitRectForTest(0,100,0,0,1,1,3,reinterpret_cast<UINT16 *>(unused.data()))
-                && !D3D12_ReadFitRectForTest(100,-1,0,0,1,1,3,reinterpret_cast<UINT16 *>(unused.data())),"the driver placed a frame in a screen with no size"); }
+              require("scaling-fit",!VibeRant_ReadFitRectForTest(0,100,0,0,1,1,3,reinterpret_cast<UINT16 *>(unused.data()))
+                && !VibeRant_ReadFitRectForTest(100,-1,0,0,1,1,3,reinterpret_cast<UINT16 *>(unused.data())),"the driver placed a frame in a screen with no size"); }
         }
         std::array<UINT8,16> texels={240,32,16,255, 16,224,48,255, 32,48,240,255, 224,192,16,255};
         GLMipmap_t tex={}; tex.format=GL_TEXFMT_RGBA; tex.width=tex.height=2; tex.data=texels.data();
@@ -1016,16 +1016,16 @@ int main(int argc,char **argv) {
         // No ReadRect/present between draws: an in-place upload must retain the first draw's version.
         updateTexture(&tex); texture(&tex); textured(.1f,.8f);
         expect("texture-update",{200,40,16},18,32); expect("texture-update",{16,200,80},46,32);
-        deleteTexture(&tex); D3D12_FinishUpdate(0);
+        deleteTexture(&tex); VibeRant_FinishUpdate(0);
         for(int frame=0;frame<96;frame++) {
             const RGB c={(frame&1)?208:32,64,(frame&1)?24:216};
             for(int i=0;i<4;i++) { solid[i*4]=(UINT8)c[0]; solid[i*4+1]=(UINT8)c[1]; solid[i*4+2]=(UINT8)c[2]; }
             reset(); texture(&tex); textured(); deleteTexture(&tex);
             // Delete while recorded work still references the placed resource and descriptor.
-            expect("texture-reuse",c); D3D12_FinishUpdate(0);
+            expect("texture-reuse",c); VibeRant_FinishUpdate(0);
         }
         UINT64 placed=0,blockReuses=0,srvReuses=0;
-        D3D12_GetReuseCountsForTest(&placed,&blockReuses,&srvReuses);
+        VibeRant_GetReuseCountsForTest(&placed,&blockReuses,&srvReuses);
         if(!placed || !blockReuses || !srvReuses) throw std::runtime_error("placed block/SRV reuse was not exercised");
         // At LOD 3 the two bright columns in each eight average to 72.
         // Base-level bilinear sampling hits the two bright columns (240), so missing mips fail.
@@ -1041,9 +1041,9 @@ int main(int argc,char **argv) {
         {
             auto shader=function<void (*)(int)>("SetShader");
             special(HWD_SET_SHADERS,HWD_SHADEROPTION_ON); shader(SHADER_SPRITE);
-            require("roll-sprite",D3D_CanRollSprite()!=0,"nearest built-in sprite shader rejected");
+            require("roll-sprite",VibeRant_CanRollSprite()!=0,"nearest built-in sprite shader rejected");
             special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_BILINEAR);
-            require("roll-sprite",!D3D_CanRollSprite(),"linear filtering must use CPU rotation");
+            require("roll-sprite",!VibeRant_CanRollSprite(),"linear filtering must use CPU rotation");
             special(HWD_SET_TEXTUREFILTERMODE,HWD_SET_TEXTUREFILTER_POINTSAMPLED);
             constexpr int sw=9,sh=11,cw=32,ch=32;
             std::vector<UINT8> base(sw*sh*4),bright(sw*sh*4),rot(cw*ch*4),rotbright(cw*ch*4);
@@ -1091,7 +1091,7 @@ int main(int argc,char **argv) {
                 auto actual=pixels(); validate(validationQueue);
                 for(int y=0;y<H;y++) for(int x=0;x<W;x++)
                     same("roll-sprite","pixel",x,y,at(actual,x,y),at(expected,x,y));
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             deleteTexture(&bm); deleteTexture(&br); deleteTexture(&rm); deleteTexture(&rr);
             shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
@@ -1141,14 +1141,14 @@ int main(int argc,char **argv) {
             { auto p=presentedPixels(); validate(validationQueue); same("screen-effect-palette","pixel",32,32,at(p,32,32),{index19[0],index19[1]/2,128}); }
             cv_scr_effect.value=0;
             // Presenting again repeats the pass on the same screen
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             // b) One frame, no readback between the draws: the first keeps the old table, the second gets the new one.
             reset(); paletteDraw(lightId,-.8f,-.1f);
             lightTable[7]=rgba(newColor); updateLightTable(lightId,lightTable.data());
             paletteDraw(lightId,.1f,.8f);
             expect("light-table-update",oldColor,18,32); expect("light-table-update",newColor,46,32);
             expectPost("light-table-update-post",index19,18,32); expectPost("light-table-update-post",index7,46,32);
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             // Use an explicit 90-degree view: SetTransform negates eye-space z,
             // so clip w = quad(z)'s positive z. Its x/y scale with z as well.
             // light=160 -> lightnum=20 -> start=22. At z=200.125:
@@ -1172,7 +1172,7 @@ int main(int argc,char **argv) {
                 blend(flags); polygon(&lit,q.data(),4,flags);
                 const int row=shader==SHADER_FLOOR?16:10;
                 expect("surface-light",{16+row*7,240-row*6,32+row*5});
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             // A semibright sprite (HWR_LIGHT_SEMIBRIGHT in its light level) at the same depth. Software keeps the sector's
             // light and moves the scale index into the nearer half of the table: index 25 at z=200.125 becomes
@@ -1187,7 +1187,7 @@ int main(int argc,char **argv) {
                 blend(flags); polygon(&lit,q.data(),4,flags);
                 const int row=4;
                 expect("surface-light-semibright",{16+row*7,240-row*6,32+row*5});
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             setShader(SHADER_FLOOR);
             // Bright texels use the base full-bright row (32), never the surface row. The four texel colors stand for palette
@@ -1221,7 +1221,7 @@ int main(int argc,char **argv) {
                     auto q=quad(distance);
                     polygon(&bs,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
                     expect("brightmap-palette",bright?brightColors[index]:darkColors[index]);
-                    D3D12_FinishUpdate(0);
+                    VibeRant_FinishUpdate(0);
                 }
                 // The smooth path must retain the same pretranslated colors at full light.
                 special(HWD_SET_PALETTE_RENDERING,0);
@@ -1235,7 +1235,7 @@ int main(int argc,char **argv) {
                     auto q=quad(128.125f);
                     polygon(&bs,q.data(),4,PF_Modulated|PF_ColorMapped|PF_NoDepthTest);
                     expect("brightmap-smooth",texelColors[index]);
-                    D3D12_FinishUpdate(0);
+                    VibeRant_FinishUpdate(0);
                 }
                 special(HWD_SET_PALETTE_RENDERING,1);
                 deleteTexture(&brightTexture);
@@ -1257,13 +1257,13 @@ int main(int argc,char **argv) {
                 polygon(&fog,q.data(),4,PF_Modulated|PF_ColorMapped|PF_Fog|PF_NoTexture|PF_NoDepthTest|(plane?PF_FogPlane:0));
                 expect("fog-palette",remapped);
                 expect("fog-palette",{24,180,220},2,2);
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             // Restore the table and shader for the lifetime scenes below.
             lightTable.assign(256*33,rgba({252,12,244})); texture(&paletteTexture); setShader(SHADER_FLOOR);
             // c) Clear and remake the table every frame, so its views and resources are retired while recorded work uses them,
             // and descriptors come back after the fence.
-            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; D3D12_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
+            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; VibeRant_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
             for(int frame=0;frame<96;frame++) {
                 const RGB lit=(frame&1)?oldColor:newColor;
                 lightTable[7]=rgba(lit); clearLightTables();
@@ -1271,9 +1271,9 @@ int main(int argc,char **argv) {
                 if(!lightId) throw std::runtime_error("recreating a light table failed");
                 reset(); paletteDraw(lightId); clearLightTables();
                 expect("light-table-clear",lit); expectPost("light-table-clear",(frame&1)?index19:index7);
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
-            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; D3D12_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
+            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; VibeRant_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
             if(srvsAfter<=srvsBefore) throw std::runtime_error("light table SRV reuse was not exercised");
             // d) The screen palette changes between frames and recolors the same screen
             lightTable[7]=rgba(oldColor); lightId=createLightTable(lightTable.data());
@@ -1282,13 +1282,13 @@ int main(int argc,char **argv) {
                 screenPalette[19]=rgba(flash); setScreenPalette(screenPalette.data());
                 reset(); paletteDraw(lightId);
                 expect("screen-palette",oldColor); expectPost("screen-palette",flash);
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             // With palette rendering off, there is no last step to read
             special(HWD_SET_PALETTE_RENDERING,0);
             { auto p=palettePixels(); bool untouched=true; for(auto c:p) untouched=untouched && c==0xcd;
               require("palette-off",untouched,"palette step ran with palette rendering off"); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             pMasterPalette=nullptr; setLookup(lut.data()); // without a master palette, it goes
             clearLightTables(); deleteTexture(&paletteTexture);
             function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
@@ -1311,7 +1311,7 @@ int main(int argc,char **argv) {
                 for(int c=0;c<3;c++) want[c]=(int)std::lround(std::clamp(brightness*tint[c]/255*strength+colors[i][c]*(1-strength),0.,255.));
                 check("fog-remap",image,(i&1)?44:20,(i&2)?44:20,want);
             }
-            function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); D3D12_FinishUpdate(0);
+            function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); VibeRant_FinishUpdate(0);
         }
         // Water surface UV distortion and scene refraction use separate shader equations.
         {
@@ -1348,7 +1348,7 @@ int main(int argc,char **argv) {
                 int angle=(tick*140+(int)std::floor(distance*128))&8191;
                 int shift=(int)std::floor(double(finesine[angle])/(4096+std::floor(distance*32)));
                 for(int y:{20,32,44}) { int row=std::clamp(y+shift,0,63); check("water-refraction",image,32,y,{(int)std::lround(row*3*254./255),(int)std::lround((240-row*3)*254./255),64}); }
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             // Nested coplanar faces reuse the run's first capture; a second run gets a fresh one.
             // Tiny constant/geometry rings may submit between these draws, exercising capture lifetime.
@@ -1370,7 +1370,7 @@ int main(int argc,char **argv) {
             auto groupPass=[](RGB c) { for(int &v:c) v=(int)std::lround(v*254./255); return c; };
             reset(groupClear); shaderInfo(HWD_SHADERINFO_LEVELTIME,6);
             UINT64 fogBefore=0,copiesBefore=0,tripsBefore=0;
-            D3D12_GetCaptureCountsForTest(&fogBefore,&copiesBefore,&tripsBefore);
+            VibeRant_GetCaptureCountsForTest(&fogBefore,&copiesBefore,&tripsBefore);
             for(int run=0;run<2;run++) {
                 special(HWD_SET_WATER_SURFACE,1);
                 for(int face=0;face<8;face++) {
@@ -1382,9 +1382,9 @@ int main(int argc,char **argv) {
             }
             special(HWD_SET_WATER_SURFACE,0);
             UINT64 fogAfter=0,copiesAfter=0,tripsAfter=0;
-            D3D12_GetCaptureCountsForTest(&fogAfter,&copiesAfter,&tripsAfter);
+            VibeRant_GetCaptureCountsForTest(&fogAfter,&copiesAfter,&tripsAfter);
             require("water-group-counts",copiesAfter-copiesBefore==2 && tripsAfter-tripsBefore==2,"grouped water copy/roundtrip oracle failed");
-            expect("water-group",groupPass(groupPass(groupClear))); D3D12_FinishUpdate(0);
+            expect("water-group",groupPass(groupPass(groupClear))); VibeRant_FinishUpdate(0);
             auto fog=surface({248,4,252}); fog.LightInfo.light_level=255; fog.LightInfo.fade_end=31;
             auto captureQuad=quad(128.125f);
             const FBITFIELD waterFlags=PF_Modulated|PF_ColorMapped|PF_Ripple|PF_Translucent|PF_NoDepthTest;
@@ -1402,7 +1402,7 @@ int main(int argc,char **argv) {
                 if(!mixedSameList) { function<void (*)()>("UnSetShader")(); draw({24,180,220},PF_NoDepthTest); }
             }
             if(!mixedSameList) throw std::runtime_error("mixed captures never shared a command list");
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
 
             // Flush while both captured textures are referenced by recorded draws. Continuing the old
             // grouped run must capture afresh, rather than retaining its retired snapshot or ready flag.
@@ -1410,17 +1410,17 @@ int main(int argc,char **argv) {
             function<void (*)()>("FlushScreenTextures")();
             auto recreateBefore=captureCounts(); reset({40,80,120}); special(HWD_SET_WATER_SURFACE,2);
             waterDraw(); fogDraw(); countDelta("capture-recreate",recreateBefore,1,1);
-            expect("capture-recreate",{40,80,120}); D3D12_FinishUpdate(0);
+            expect("capture-recreate",{40,80,120}); VibeRant_FinishUpdate(0);
             // Actual size changes replace both capture allocations. Keep a grouped run ready across
             // each Surface call and verify that state 2 still reads the new target's known color.
             auto clip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
             for(int size:{128,64}) {
                 special(HWD_SET_WATER_SURFACE,1); waterDraw(); fogDraw();
-                if(!D3D12_Surface(size,size)) throw std::runtime_error("capture resize failed");
+                if(!VibeRant_Surface(size,size)) throw std::runtime_error("capture resize failed");
                 clip(0,0,size,size,.1f); reset({40,80,120}); special(HWD_SET_WATER_SURFACE,2);
                 recreateBefore=captureCounts(); waterDraw(); fogDraw(); countDelta("capture-recreate",recreateBefore,1,1);
                 same("capture-recreate","pixel after resize",size/2,size/2,probe(size/2,size/2,size),{40,80,120});
-                validate(validationQueue); D3D12_FinishUpdate(0);
+                validate(validationQueue); VibeRant_FinishUpdate(0);
             }
             special(HWD_SET_WATER_SURFACE,0);
 
@@ -1434,7 +1434,7 @@ int main(int argc,char **argv) {
             }
             captureQuad=fullQuad; waterDraw(); fogDraw();
             require("capture-skipped",sameList,"skipped captures did not share a pending command list");
-            countDelta("capture-skipped",skippedBefore,9,9); expect("capture-skipped",{80,120,159}); D3D12_FinishUpdate(0);
+            countDelta("capture-skipped",skippedBefore,9,9); expect("capture-skipped",{80,120,159}); VibeRant_FinishUpdate(0);
             deleteTexture(&water); function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
         }
         const RGB tl={200,40,16}, tr={16,64,224}, bl={32,200,64}, br={232,216,24}; // quadrants of the screen the copies hold
@@ -1451,7 +1451,7 @@ int main(int argc,char **argv) {
             blend(PF_NoDepthTest); drawIntermission();
             { auto p=pixels(); validate(validationQueue);
               check("screen-copy",p,16,16,tl); check("screen-copy",p,48,16,tr); check("screen-copy",p,16,48,bl); check("screen-copy",p,48,48,br); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             // b) The final screen, drawn into a viewport twice as wide as it is tall: a quarter of the width has black bars on each side
             quadrants(tl,tr,bl,br); makeFinal(); reset({96,96,96});
             blend(PF_NoDepthTest); drawFinal(64,32);
@@ -1459,7 +1459,7 @@ int main(int argc,char **argv) {
               check("final-screen",p,24,40,tl); check("final-screen",p,40,40,tr); check("final-screen",p,24,56,bl); check("final-screen",p,40,56,br);
               check("final-screen",p,4,40,{0,0,0}); check("final-screen",p,60,56,{0,0,0}); check("final-screen",p,32,8,{0,0,0}); }
             clip(0,0,W,H,.1f);
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             // c) Flushed, the screen textures are remade, and the new copy shows
             flushScreens();
             quadrants(br,bl,tr,tl); makeScreen(); reset({96,96,96});
@@ -1467,16 +1467,16 @@ int main(int argc,char **argv) {
             { auto p=pixels(); validate(validationQueue);
               check("screen-flush",p,16,16,br); check("screen-flush",p,48,16,bl); check("screen-flush",p,16,48,tr); check("screen-flush",p,48,48,tl); }
             // The copies are retired while recorded work still draws them, and their descriptors come back after the fence
-            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; D3D12_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
+            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; VibeRant_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
             for(int frame=0;frame<64;frame++) {
                 const RGB a=(frame&1)?tl:br, b=(frame&1)?tr:bl;
                 quadrants(a,b,b,a); makeScreen(); reset({96,96,96});
                 blend(PF_NoDepthTest); drawIntermission(); flushScreens();
                 auto p=pixels(); validate(validationQueue);
                 check("screen-flush",p,16,16,a); check("screen-flush",p,48,16,b); check("screen-flush",p,16,48,b); check("screen-flush",p,48,48,a);
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
-            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; D3D12_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
+            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; VibeRant_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
             if(srvsAfter<=srvsBefore) throw std::runtime_error("screen texture SRV reuse was not exercised");
         }
         // Wipes. The mask lump is 80x50, its first row at the bottom of the screen; each pixel's byte is 31 - 31 * the share of the end screen.
@@ -1517,7 +1517,7 @@ int main(int argc,char **argv) {
                 check(scene,p,48,16,wiped(shaderMode[wipemode],start,end,maskTR,reverse!=0));
                 check(scene,p,16,48,wiped(shaderMode[wipemode],start,end,maskBL,reverse!=0));
                 check(scene,p,48,48,wiped(shaderMode[wipemode],start,end,maskBR,reverse!=0));
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             // Encore's wiggle shifts each row sideways by a share of the screen; the start screen's edge shows where. Its mask
             // keeps all of the start screen (a byte of 31), in the to-black mode.
@@ -1544,7 +1544,7 @@ int main(int argc,char **argv) {
                     }
                 }
                 if(shifted<40) throw std::runtime_error("the wiggle shifted too few pixels to test");
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
             }
             // The two-pass wipe, when the mask lump is missing: the end screen over the start screen, by a texture's alpha
             {
@@ -1562,7 +1562,7 @@ int main(int argc,char **argv) {
                 check("wipe-fallback",p,16,16,over(alpha[0])); check("wipe-fallback",p,48,16,over(alpha[1]));
                 check("wipe-fallback",p,16,48,over(alpha[2])); check("wipe-fallback",p,48,48,over(alpha[3]));
                 deleteMask(&fadeMask);
-                D3D12_FinishUpdate(0);
+                VibeRant_FinishUpdate(0);
                 if(logs.find("wipe: the full wipe isn't available")==std::string::npos) throw std::runtime_error("the two-pass wipe wasn't logged");
             }
             // A wipe's mask is remade at a new size, and the screen after a wipe still draws
@@ -1570,7 +1570,7 @@ int main(int argc,char **argv) {
             reset(S); startWipe(); reset(E); endWipe(); g_wipemode=0; g_wipereverse=0; g_wipeencorewiggle=0; doWipe();
             unbindTextures(); draw({20,200,40},PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("wipe-after",p,32,32,{20,200,40}); check("wipe-after",p,2,2,E); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             g_wipeframe=0;
         }
         // Post image distortion samples the saved screen: not at all with none, a few pixels' sway with the water's
@@ -1585,7 +1585,7 @@ int main(int argc,char **argv) {
             reset({96,96,96}); postimgtype[0]=postimg_none; leveltime=0; postImage(grid);
             { auto p=pixels(); validate(validationQueue);
               for(int y=0;y<H;y+=7) { check("postimg-identity",p,31,y,left); check("postimg-identity",p,32,y,right); check("postimg-identity",p,5,y,left); check("postimg-identity",p,58,y,right); } }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             // Water: each row's texture coordinate sways by a sine, up to 0.64 of a pixel here, which moves the edge at a pixel boundary
             const UINT32 ticks=40;
             reset({96,96,96}); postimgtype[0]=postimg_water; leveltime=ticks; postImage(grid);
@@ -1601,7 +1601,7 @@ int main(int argc,char **argv) {
                   check("postimg-shift",p,32,y,rightMoves?left:right);
               }
               if(moved<6) throw std::runtime_error("the water's sway moved too few rows to test"); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         // Fade maps: the screen's colors become palette indices, are remapped by a row of the table, and come back as the master palette's
         {
@@ -1622,33 +1622,33 @@ int main(int argc,char **argv) {
             // Palette rendering off leaves the screen alone, and tells the caller to fall back
             special(HWD_SET_PALETTE_RENDERING,0);
             reset(index7);
-            if(D3D12_ApplyFadeMap(table.data(),table.size(),1234,1)) throw std::runtime_error("a fade map drew without palette rendering");
+            if(VibeRant_ApplyFadeMap(table.data(),table.size(),1234,1)) throw std::runtime_error("a fade map drew without palette rendering");
             expect("fade-map-off",index7);
             special(HWD_SET_PALETTE_RENDERING,1);
-            reset(index7); if(!D3D12_ApplyFadeMap(table.data(),table.size(),1234,1)) throw std::runtime_error("the fade map didn't draw");
+            reset(index7); if(!VibeRant_ApplyFadeMap(table.data(),table.size(),1234,1)) throw std::runtime_error("the fade map didn't draw");
             expect("fade-map",m40);
-            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,2); expect("fade-map",m41);
-            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,0); expect("fade-map-row",m7); // the identity row
-            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,9); expect("fade-map-clamp",m41); // the last row
-            reset(index19); D3D12_ApplyFadeMap(table.data(),table.size(),1234,2); expect("fade-map",m43);
+            reset(index7); VibeRant_ApplyFadeMap(table.data(),table.size(),1234,2); expect("fade-map",m41);
+            reset(index7); VibeRant_ApplyFadeMap(table.data(),table.size(),1234,0); expect("fade-map-row",m7); // the identity row
+            reset(index7); VibeRant_ApplyFadeMap(table.data(),table.size(),1234,9); expect("fade-map-clamp",m41); // the last row
+            reset(index19); VibeRant_ApplyFadeMap(table.data(),table.size(),1234,2); expect("fade-map",m43);
             // The same table id with four rows remakes its texture
             std::vector<UINT8> four(4*256); for(int row=0;row<4;row++) for(int i=0;i<256;i++) four[row*256+i]=(UINT8)i;
             four[3*256+7]=43;
-            reset(index7); D3D12_ApplyFadeMap(four.data(),four.size(),1234,3); expect("fade-map-remake",m43);
+            reset(index7); VibeRant_ApplyFadeMap(four.data(),four.size(),1234,3); expect("fade-map-remake",m43);
             // Drawing after a fade map still works, and the screen keeps its fade-mapped color around the new quad
             unbindTextures();
-            reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,1); draw({20,200,40},PF_NoDepthTest);
+            reset(index7); VibeRant_ApplyFadeMap(table.data(),table.size(),1234,1); draw({20,200,40},PF_NoDepthTest);
             { auto p=pixels(); validate(validationQueue); check("fade-map-after",p,32,32,{20,200,40}); check("fade-map-after",p,2,2,m40); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
             // A new table every frame retires the old one and its descriptor while recorded work reads them
-            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; D3D12_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
+            UINT64 placedBefore=0,blocksBefore=0,srvsBefore=0; VibeRant_GetReuseCountsForTest(&placedBefore,&blocksBefore,&srvsBefore);
             for(int frame=0;frame<64;frame++) {
                 std::vector<UINT8> remap((frame&1)?3*256:4*256); for(size_t i=0;i<remap.size();i++) remap[i]=(UINT8)(i&255);
                 remap[(frame&1)?256+7:3*256+7]=(frame&1)?40:41;
-                reset(index7); D3D12_ApplyFadeMap(remap.data(),remap.size(),5000+(UINT32)(frame>>1),(UINT8)((frame&1)?1:3));
-                expect("fade-map-reuse",(frame&1)?m40:m41); D3D12_FinishUpdate(0);
+                reset(index7); VibeRant_ApplyFadeMap(remap.data(),remap.size(),5000+(UINT32)(frame>>1),(UINT8)((frame&1)?1:3));
+                expect("fade-map-reuse",(frame&1)?m40:m41); VibeRant_FinishUpdate(0);
             }
-            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; D3D12_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
+            UINT64 placedAfter=0,blocksAfter=0,srvsAfter=0; VibeRant_GetReuseCountsForTest(&placedAfter,&blocksAfter,&srvsAfter);
             if(srvsAfter<=srvsBefore) throw std::runtime_error("fade map SRV reuse was not exercised");
 
             // A new screen size remakes the screen textures and the fade map's copy of the screen
@@ -1657,14 +1657,14 @@ int main(int argc,char **argv) {
             auto clip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
             for(auto size:{std::array<int,2>{640,400},std::array<int,2>{W,H}}) {
                 const int w=size[0], h=size[1];
-                if(!D3D12_Surface(w,h)) throw std::runtime_error("resizing failed");
+                if(!VibeRant_Surface(w,h)) throw std::runtime_error("resizing failed");
                 clip(0,0,w,h,.1f);
-                reset(index7); D3D12_ApplyFadeMap(table.data(),table.size(),1234,1);
+                reset(index7); VibeRant_ApplyFadeMap(table.data(),table.size(),1234,1);
                 same("resize-fade-map","fade map after a resize",w/2,h/2,probe(w/2,h/2,h),m40);
                 quadrants(tl,tr,bl,br); makeScreen(); reset({96,96,96}); blend(PF_NoDepthTest); drawIntermission();
                 const struct { int x, y; RGB want; } samples[]={{w/4,h/4,tl},{w*3/4,h/4,tr},{w/4,h*3/4,bl},{w*3/4,h*3/4,br}};
                 for(auto &sample:samples) same("resize-screen","screen texture after a resize",sample.x,sample.y,probe(sample.x,sample.y,h),sample.want);
-                validate(validationQueue); D3D12_FinishUpdate(0);
+                validate(validationQueue); VibeRant_FinishUpdate(0);
             }
             special(HWD_SET_PALETTE_RENDERING,0);
             pMasterPalette=nullptr; setLookup(lut.data());
@@ -1719,10 +1719,10 @@ int main(int argc,char **argv) {
             for(int ty=0;ty<32;ty++) for(int tx=0;tx<32;tx++) fillRect(tx/16.f-1,(tx+1)/16.f-1,1-(ty+1)/16.f,1-ty/16.f,tileColor(tx,ty));
             auto p=pixels(); validate(validationQueue);
             for(int ty=0;ty<32;ty++) for(int tx=0;tx<32;tx++) for(int dy=0;dy<2;dy++) for(int dx=0;dx<2;dx++) check("rings",p,2*tx+dx,2*ty+dy,tileColor(tx,ty));
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         reset(); std::vector<FOutVector> huge(400,quad()[0]); huge[0]=quad()[0]; huge[1]=quad()[1]; huge[2]=quad()[2]; huge[3]=quad()[3]; auto hs=surface({32,220,96}); polygon(&hs,huge.data(),(FUINT)huge.size(),PF_Modulated|PF_NoTexture|PF_NoDepthTest); expect("growth",{32,220,96});
-        D3D12_FinishUpdate(0); D3D12_LogPerf(1);
+        VibeRant_FinishUpdate(0); VibeRant_LogPerf(1);
         if(logs.find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
         // Every light table the palette scenes made is gone by now
         { unsigned alive=9; int parsed=0; auto pp=logs.find("UWP perf:   D3D12: palette: rendering ");
@@ -1746,10 +1746,10 @@ int main(int argc,char **argv) {
                 draw(src,to.flags|PF_Occlude,.25f,128);
                 expectQuad("blend-invisible-restore",blended(to.flags,src,dst,128));
             }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         // The void: Legacy GL draws the sky first, then the level, and Software draws what the level doesn't cover black.
-        // D3D12_FillVoid runs after the opaque geometry and the sky claims (depth-only surfaces): pixels with depth keep
+        // VibeRant_FillVoid runs after the opaque geometry and the sky claims (depth-only surfaces): pixels with depth keep
         // their color, the rest turn black, and the depth is left as it was.
         {
             const RGB sky=dst, red={200,40,20}, green={20,200,40}, blue={40,20,200}, black={0,0,0};
@@ -1762,7 +1762,7 @@ int main(int argc,char **argv) {
             rect(-1,-.5f,red,PF_Occlude);
             rect(-.5f,0,{255,255,255},PF_Invisible|PF_Occlude);
             { auto p=pixels(); validate(validationQueue); check("void-fill",p,10,32,red); check("void-claim",p,20,32,sky); check("void-fill",p,44,32,sky); }
-            D3D12_FillVoid();
+            VibeRant_FillVoid();
             { auto p=pixels(); validate(validationQueue);
               check("void-fill",p,44,32,black); check("void-fill",p,60,32,black); check("void-fill",p,8,2,black); // above the rows the quads cover, the void is black too
               check("void-claim",p,20,32,sky); check("void-claim",p,28,32,sky); check("void-fill",p,10,32,red); }
@@ -1775,34 +1775,34 @@ int main(int argc,char **argv) {
             // The fill wrote no depth: a farther surface still shows over the void and is still hidden by the claim
             rect(-.5f,1,blue,PF_Occlude,1.5f);
             { auto p=pixels(); validate(validationQueue); check("void-depth",p,60,32,blue); check("void-depth",p,20,32,sky); check("void-depth",p,10,32,red); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         // The fill stays inside the viewport (split-screen), though the depth clear before it covers the whole target
         {
             auto gclip=function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
-            reset(dst); gclip(0,0,W/2,H,.1f); D3D12_FillVoid(); gclip(0,0,W,H,.1f);
+            reset(dst); gclip(0,0,W/2,H,.1f); VibeRant_FillVoid(); gclip(0,0,W,H,.1f);
             { auto p=pixels(); validate(validationQueue); check("void-viewport",p,16,32,{0,0,0}); check("void-viewport",p,16,2,{0,0,0});
               check("void-viewport",p,48,32,dst); check("void-viewport",p,48,2,dst); }
-            reset(dst); gclip(W/2,0,W,H,.1f); D3D12_FillVoid(); gclip(0,0,W,H,.1f);
+            reset(dst); gclip(W/2,0,W,H,.1f); VibeRant_FillVoid(); gclip(0,0,W,H,.1f);
             { auto p=pixels(); validate(validationQueue); check("void-viewport",p,48,32,{0,0,0}); check("void-viewport",p,16,32,dst); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         // Inside a portal only the portal's pixels are filled: the child's far-depth reset and stencil level confine it
         {
             const RGB child={24,180,220};
             auto aperture=std::array<FOutVector,4>{{{-.6f*.25f,-.6f*.25f,.25f,0,0},{.6f*.25f,-.6f*.25f,.25f,0,0},{.6f*.25f,.6f*.25f,.25f,0,0},{-.6f*.25f,.6f*.25f,.25f,0,0}}};
             reset(dst);
-            if(!D3D12_DrawPortalAperture(aperture.data(),0,false)) throw std::runtime_error("portal aperture failed");
-            D3D12_ResetPortalDepth(1); D3D12_SetPortalStencil(1);
+            if(!VibeRant_DrawPortalAperture(aperture.data(),0,false)) throw std::runtime_error("portal aperture failed");
+            VibeRant_ResetPortalDepth(1); VibeRant_SetPortalStencil(1);
             { std::vector<FOutVector> v={{-.2f,-.9f,1,0,0},{.2f,-.9f,1,0,0},{.2f,.9f,1,0,0},{-.2f,.9f,1,0,0}};
               auto surf=surface(child); blend(PF_Modulated|PF_NoTexture|PF_Occlude); polygon(&surf,v.data(),4,PF_Modulated|PF_NoTexture|PF_Occlude); }
-            D3D12_FillVoid(); D3D12_SetPortalStencil(0);
+            VibeRant_FillVoid(); VibeRant_SetPortalStencil(0);
             { auto p=pixels(); validate(validationQueue);
               check("void-portal",p,32,32,child);       // the child's geometry
               check("void-portal",p,20,32,{0,0,0});     // the portal's void
               check("void-portal",p,4,32,dst);          // outside the portal, the parent's sky is untouched
               check("void-portal",p,60,32,dst); }
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         // Fog and water composites write the final color themselves, so they disable blending but keep the write mask,
         // and the next surface blends normally again, however often a composite came before it.
@@ -1838,7 +1838,7 @@ int main(int argc,char **argv) {
                 expect("blend-remap-restore",blended(PF_Translucent,src,remapped,128));
             }
             deleteTexture(&waterTexture); function<void (*)()>("UnSetShader")(); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
-            D3D12_FinishUpdate(0);
+            VibeRant_FinishUpdate(0);
         }
         // Add-on shaders are picked per vertex layout (polygon, sky and model), and a fragment-only replacement
         // keeps the built-in vertex stage. The native custom_shader_dispatch test counts translations and injects
@@ -1927,7 +1927,7 @@ int main(int argc,char **argv) {
                       // The unrefracted result differs by half a shift of three levels per row
                       check("custom-water-refraction",image,32,y,want);
                   }
-                  D3D12_FinishUpdate(0);
+                  VibeRant_FinishUpdate(0);
               } }
             clean(); shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF); special(HWD_SET_MODEL_LIGHTING,0);
 #ifdef HAVE_VIBERANT_METAL
@@ -1937,7 +1937,7 @@ int main(int argc,char **argv) {
             {
                 // Retired pipeline states go when the frames that used them are done
                 auto settle=[&]() {
-                    for(int i=0;i<4;i++) { reset(); D3D12_FinishUpdate(0); if(!Core_WaitIdle(30000,"shader cache")) throw std::runtime_error("Metal shader cache: idle failed"); }
+                    for(int i=0;i<4;i++) { reset(); VibeRant_FinishUpdate(0); if(!Core_WaitIdle(30000,"shader cache")) throw std::runtime_error("Metal shader cache: idle failed"); }
                 };
                 clean(); settle();
                 const size_t before=rr_mtl12::CountsForTest().shaders; size_t most=before;
@@ -1962,7 +1962,7 @@ int main(int argc,char **argv) {
             // shows, on either side of zero (in front of the near plane on one, beyond the far plane on the other), but
             // Metal's shader validation on Apple's own GPUs reports a vertex function that puts out an infinity. With no
             // rotation the view depth is the quad's z itself, so clip z is m10 * -z + m14 of the driver's projection
-            // (Perspective in r_d3d12.cpp, with GClipRect's near plane), and the quads here are at the 49 floats around the
+            // (Perspective in r_viberant.cpp, with GClipRect's near plane), and the quads here are at the 49 floats around the
             // z where that is zero: whichever way a GPU rounds, some of them should land on it. Not a scene: what it
             // checks beyond "nothing drawn" is the validation, and only some devices' validation sees it.
             {
@@ -1987,14 +1987,14 @@ int main(int argc,char **argv) {
                 shader(SHADER_NONE); special(HWD_SET_SHADERS,HWD_SHADEROPTION_OFF);
             }
 #endif
-            deleteTexture(&customTexture); D3D12_FinishUpdate(0);
+            deleteTexture(&customTexture); VibeRant_FinishUpdate(0);
         }
 #ifdef HAVE_VIBERANT_METAL
         metalNullViews();
         metalPresenterHooks();
 #endif
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(validationQueue);
-        D3D12_Shutdown(); validate(validationQueue);
+        VibeRant_Shutdown(); validate(validationQueue);
         require("shutdown",Core_Device()==nullptr,"shutdown device lifetime oracle failed");
         if(!negative.empty()) throw std::runtime_error("unknown or unexercised negative control");
         const std::string problems=oracleProblems();
@@ -2006,5 +2006,5 @@ int main(int argc,char **argv) {
 #else
         printf("Production Vulkan driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;
 #endif
-    } catch(const std::exception &e) { fprintf(stderr,"FAIL: %s\n",e.what()); D3D12_Shutdown(); if(negativeRejected) fprintf(stderr,"NEGATIVE_ORACLE_REJECTED: %s\n",negative.c_str()); return 1; }
+    } catch(const std::exception &e) { fprintf(stderr,"FAIL: %s\n",e.what()); VibeRant_Shutdown(); if(negativeRejected) fprintf(stderr,"NEGATIVE_ORACLE_REJECTED: %s\n",negative.c_str()); return 1; }
 }

@@ -35,7 +35,7 @@
 #include "sdl/ogl_sdl.h"
 #include "st_stuff.h" // kill
 #ifdef HAVE_VIBERANT
-#include "hardware/r_d3d12/r_d3d12.h"
+#include "hardware/r_viberant/r_viberant.h"
 #include "hardware/hw_main.h"
 #endif
 
@@ -184,7 +184,7 @@ static void finish_legacy_ogl_update()
 	if (HWR_VibeRant())
 	{
 		HWR_UpdatePaletteRendering();
-		D3D12_FinishUpdate(cv_vidwait.value);
+		VibeRant_FinishUpdate(cv_vidwait.value);
 	}
 	else
 #endif

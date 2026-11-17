@@ -42,7 +42,7 @@ The driver takes its samples as follows:
 
 ## Presenting: the swap chain
 
-This section is about UWP (`d3d12_present.cpp`); Windows desktop builds present with `d3d12_present_win32.cpp`,
+This section is about UWP (`d3d_present_uwp.cpp`); Windows desktop builds present with `d3d_present_win32.cpp`,
 and VibeRant Vulkan with `vulkan/vk_present.cpp`. On UWP the driver presents with a swap chain of its own on the window, with no ANGLE in between. A CoreWindow takes
 one swap chain at a time, so the driver takes the window from ANGLE: ANGLE draws to a 1x1 pbuffer, so that it
 lets go of the window's back buffer, and its window surface is destroyed (SDL's `SDL_WinRTReleaseGLSurface`,
@@ -53,7 +53,7 @@ letterboxed with black bars. There is nothing to configure.
 
 ### When the window is taken
 
-- **When VibeRant D3D starts.** `D3D_Init` takes the window every time the driver starts or the player switches
+- **When VibeRant D3D starts.** `VibeRant_Init` takes the window every time the driver starts or the player switches
   to VibeRant D3D, with ANGLE's context current. The swap chain starts at the video mode's size, and is resized
   when a frame's size differs.
 - **With the first frame, if no ANGLE context was current at start** (an `-opengl` launch starts the
@@ -84,7 +84,7 @@ UWP perf:   D3D12: present: direct swap chain (3 buffers, latency 2); per frame 
 
 `copy` is recording and submitting the frame's copy; `latency wait` is the time blocked on the waitable
 object (a timeout is 500 ms); a `present failure` is an `IDXGISwapChain::Present` error other than a removed
-or reset device, which ends the run in `D3D12_FinishUpdate` as before. A second line, `GPU %.2f ms per frame
+or reset device, which ends the run in `VibeRant_FinishUpdate` as before. A second line, `GPU %.2f ms per frame
 (worst %.2f, %d timed)`, is the GPU time of the frames' commands, from timestamps around each frame's work.
 
 The first three frames also trace their steps (`  copied the screen to back buffer N, submitted as fence F;
@@ -98,7 +98,7 @@ If a step of taking the window fails, the log names it:
 UWP D3D12: couldn't take the window from ANGLE (<step> failed: 0x...); VibeRant D3D can't present, so the game falls back to Software
 ```
 
-ANGLE gets the window and its context back, and the driver fails to start (`D3D_Init` returns false), so
+ANGLE gets the window and its context back, and the driver fails to start (`VibeRant_Init` returns false), so
 the engine's existing handling of a Legacy GL library error switches to the Software renderer. Switching to
 VibeRant D3D again tries to take the window again. If the take only happens with the first frame (the `-opengl`
 launch above), there is nothing to fall back from, and the game stops with `Direct3D 12 couldn't take the game

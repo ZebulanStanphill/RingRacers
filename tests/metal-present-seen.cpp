@@ -1,6 +1,6 @@
 // What VibeRant Metal's presenter does with a frame when its window may be out of sight: the production decision
-// (src/hardware/r_d3d12/metal/mtl_present_seen.h), driven here by a model of the layer and the display.
-#include "hardware/r_d3d12/metal/mtl_present_seen.h"
+// (src/hardware/r_viberant/metal/mtl_present_seen.h), driven here by a model of the layer and the display.
+#include "hardware/r_viberant/metal/mtl_present_seen.h"
 #include <cassert>
 #include <cstdio>
 #include <deque>

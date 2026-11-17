@@ -148,7 +148,7 @@ clear around it (`i_video_common.cpp`), and Scale and Screen X/Y then act within
 - Screen Scaling's calculation is the native `screen_scaling` test (Fit, Integer, 1:1, odd remainders, wider and taller
   screens, and the fallbacks when the frame is larger than the screen in either dimension, plus a sweep of invariants).
   The WARP scenes `scaling-integer`, `scaling-1to1`, `scaling-fallback` and `scaling-effect` run the driver's `PlaceFrame`
-  on a screen-sized target through `D3D12_ReadPlacedRectForTest` (the target is filled with magenta first): every pixel
+  on a screen-sized target through `VibeRant_ReadPlacedRectForTest` (the target is filled with magenta first): every pixel
   of the placed rectangle is checked against the frame's pixel k times smaller, every pixel outside it against black, at
   exact fits, odd remainders, k of 1, 2 and 3, and wider and taller screens; Fit and frames larger than the screen place
   nothing; and with SalCRT on, the placed pixels are the effect's output.

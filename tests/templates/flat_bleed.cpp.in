@@ -59,7 +59,7 @@ void HWR_GetLevelFlat(levelflat_t *flat, boolean noEncore) { assert(noEncore); b
 INT32 R_GetPlaneLight(sector_t *, fixed_t height, boolean underside)
 { assert(!underside); lightHeight = height; return selectedLight; }
 static boolean HWR_UseShader() { return useShader; }
-static void D3D12_SurfaceProbeSource(const char *kind, INT32 line)
+static void VibeRant_SurfaceProbeSource(const char *kind, INT32 line)
 { assert(std::strcmp(kind, "flat bleed") == 0); probeLine = line; }
 void HWR_ProcessPolygon(FSurfaceInfo *, FOutVector *verts, FUINT count, FBITFIELD flags, int shader, boolean horizon)
 { assert(count == 4 && !horizon); std::memcpy(submitted, verts, sizeof submitted); submittedFlags = flags; submittedShader = shader; }

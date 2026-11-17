@@ -1,4 +1,4 @@
-// The few SDL declarations d3d12_present_win32.cpp and the engine headers it includes use (sdlmain.h, screen.h), for
+// The few SDL declarations d3d_present_win32.cpp and the engine headers it includes use (sdlmain.h, screen.h), for
 // tests/d3d12-present.cpp, which supplies the definitions. The real SDL isn't linked.
 #pragma once
 

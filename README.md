@@ -187,7 +187,7 @@ Linux builds include VibeRant Vulkan (`SRB2_CONFIG_VIBERANT_VULKAN`), and Window
 - `uwp/pgo/`: recordings of play on an Xbox One X, which the build uses to optimize the engine.
 - `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ring-racers-ze-symbols` artifact from the same build), and name the functions in a logged crash.
 - [`uwp/tools/storage-probe/`](uwp/tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
-- `src/hardware/r_d3d12/`: the VibeRant driver, with its Vulkan backend in `vulkan/`. Its docs are in `docs/`.
+- `src/hardware/r_viberant/`: the VibeRant driver, with its Vulkan backend in `vulkan/`. Its docs are in `docs/`.
 - `tests/`: the regression tests and test add-ons.
 
 ## Credits

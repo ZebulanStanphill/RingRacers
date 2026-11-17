@@ -1,7 +1,7 @@
 // Whether a drawable holds the frame that VibeRant Metal's presenter placed in it: the production comparison
-// (src/hardware/r_d3d12/metal/mtl_present_check.h, what -mtlcheck judges with), given drawables made here from a
+// (src/hardware/r_viberant/metal/mtl_present_check.h, what -mtlcheck judges with), given drawables made here from a
 // frame the way the driver's placement makes them, and drawables that are wrong in the ways a presenter could be.
-#include "hardware/r_d3d12/metal/mtl_present_check.h"
+#include "hardware/r_viberant/metal/mtl_present_check.h"
 #include <cassert>
 #include <cstdio>
 #include <vector>

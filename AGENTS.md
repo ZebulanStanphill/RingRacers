@@ -32,12 +32,12 @@ those commits stay as they are and the merge is made again.
   code. Don't reformat, rename or reorder upstream code you aren't changing.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
   UWP build, and `HAVE_VIBERANT` for builds that contain the VibeRant driver
-  (`src/hardware/r_d3d12`). The driver has three backends. `HAVE_VIBERANT_D3D`
+  (`src/hardware/r_viberant`). The driver has three backends. `HAVE_VIBERANT_D3D`
   (`SRB2_CONFIG_VIBERANT_D3D`) is Direct3D 12 itself, VibeRant D3D, which UWP builds and
   Windows desktop builds made with MSVC or clang-cl have by default.
   `HAVE_VIBERANT_VULKAN` (`SRB2_CONFIG_VIBERANT_VULKAN`) is the Vulkan backend, VibeRant Vulkan,
   which Linux builds and those Windows desktop builds have by default:
-  `src/hardware/r_d3d12/vulkan` implements the Direct3D 12 interfaces the driver
+  `src/hardware/r_viberant/vulkan` implements the Direct3D 12 interfaces the driver
   uses, so the driver's own code is the same for both
   (`docs/vulkan-backend.md`). Only code that makes the device, compiles shaders
   or presents asks which backend it is on (`Core_Vulkan()`); engine code doesn't,
@@ -56,7 +56,7 @@ those commits stay as they are and the merge is made again.
   Vulkan backend; `vulkan/vk12_win.h` stands in for the few Win32 calls the
   driver makes). MinGW builds must build without any of them.
   `HAVE_VIBERANT_METAL` (`SRB2_CONFIG_VIBERANT_METAL`) is a third backend, VibeRant Metal, which
-  macOS builds have by default, and as their only one: `src/hardware/r_d3d12/metal`
+  macOS builds have by default, and as their only one: `src/hardware/r_viberant/metal`
   implements the same interfaces on Metal (`docs/metal-backend.md`),
   `Core_Metal()` is where the driver asks, and `HWR_Metal()` names the renderer.
   Its files are Objective-C++ and can't include the game's headers (Apple's and

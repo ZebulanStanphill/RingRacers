@@ -2,10 +2,10 @@ param([string]$Engine = (Join-Path $PSScriptRoot ".."))
 $ErrorActionPreference = "Stop"
 $Engine = (Resolve-Path $Engine).Path
 $Output = Join-Path $PSScriptRoot "..\build\d3d12-regressions"
-$Shaders = Join-Path $Output "r_d3d12_shaders"
+$Shaders = Join-Path $Output "r_viberant_shaders"
 New-Item -ItemType Directory -Force $Shaders | Out-Null
 # Match src/hardware/CMakeLists.txt exactly, including embedded root signatures.
-$Source = Join-Path $Engine "src\hardware\r_d3d12\shaders.hlsl"
+$Source = Join-Path $Engine "src\hardware\r_viberant\shaders.hlsl"
 $Entries = @('VSPoly','VSPolyClip','VSSky','VSModel','VSModelLight','VSWipe','VSFullscreen','VSPostImage',
     'PSFixed','PSDefault','PSSoftware','PSSoftwareModelLight','PSWater','PSWaterRefraction','PSFog','PSFogRemap','PSSky','PSWipe','PSWipeFull','PSPalettePostprocess','PSFadeMap','PSPostImage')
 foreach ($Entry in $Entries) {
@@ -15,8 +15,8 @@ foreach ($Entry in $Entries) {
 }
 & fxc.exe /nologo /D_UWP /DRR_D3D12 /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "$Shaders\RootSignature.h" $Source
 if ($LASTEXITCODE -ne 0) { throw "Production root signature compilation failed" }
-$Driver = Join-Path $Engine "src\hardware\r_d3d12"
-$Files = @((Join-Path $PSScriptRoot 'viberant-driver.cpp'), "$Driver\r_d3d12.cpp", "$Driver\d3d12_core.cpp", "$Driver\d3d12_upload.cpp", "$Driver\d3d12_pipeline.cpp", "$Driver\d3d12_prewarm.cpp")
+$Driver = Join-Path $Engine "src\hardware\r_viberant"
+$Files = @((Join-Path $PSScriptRoot 'viberant-driver.cpp'), "$Driver\r_viberant.cpp", "$Driver\viberant_core.cpp", "$Driver\viberant_upload.cpp", "$Driver\viberant_pipeline.cpp", "$Driver\viberant_prewarm.cpp")
 $Includes = @("/I$Engine\src", "/I$Output", "/I$PSScriptRoot\viberant-stubs")
 # The real engine headers use third-party headers even though the harness calls no engine services.
 Get-ChildItem "$Engine\thirdparty" -Directory | ForEach-Object {
@@ -46,13 +46,13 @@ if ($LASTEXITCODE -eq 77) {
     & $Exe
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
-# The desktop presenter, d3d12_present_win32.cpp, is the one driver file that isn't built with _UWP (the UWP one, d3d12_present.cpp,
+# The desktop presenter, d3d_present_win32.cpp, is the one driver file that isn't built with _UWP (the UWP one, d3d_present_uwp.cpp,
 # is the harness's stub above), so it and the device core it presents on are compiled without it, into a second executable with
 # its own stubs: SDL's window lookup hands it a real top-level window that is never shown. The engine headers it includes
 # compile without _UWP, as they do in the desktop game.
 $PresentOutput = Join-Path $Output 'present'
 New-Item -ItemType Directory -Force $PresentOutput | Out-Null
-$PresentFiles = @((Join-Path $PSScriptRoot 'd3d12-present.cpp'), "$Driver\d3d12_core.cpp", "$Driver\d3d12_present_win32.cpp")
+$PresentFiles = @((Join-Path $PSScriptRoot 'd3d12-present.cpp'), "$Driver\viberant_core.cpp", "$Driver\d3d_present_win32.cpp")
 $PresentIncludes = @("/I$PSScriptRoot\d3d12-present-stubs") + $Includes
 $PresentExe = Join-Path $PresentOutput 'd3d12-present.exe'
 & cl.exe /nologo /std:c++17 /O2 /MD /EHsc /W3 /DHAVE_VIBERANT /DHAVE_VIBERANT_D3D /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @PresentIncludes "/Fe:$PresentExe" "/Fo:$PresentOutput\" @PresentFiles /link d3d12.lib dxgi.lib dxguid.lib user32.lib
@@ -110,7 +110,7 @@ $ProductionSource = Get-Content -Raw $Source
 foreach ($Control in $Controls) {
     if (-not $ProductionSource.Contains($Control.Good)) { throw "Cannot inject $($Control.Scene) shader regression" }
     $ControlDir = Join-Path $Output $Control.Scene
-    $ControlShaders = Join-Path $ControlDir 'r_d3d12_shaders'
+    $ControlShaders = Join-Path $ControlDir 'r_viberant_shaders'
     New-Item -ItemType Directory -Force $ControlShaders | Out-Null
     Copy-Item "$Shaders\*.h" $ControlShaders
     $ControlSource = Join-Path $ControlDir 'shaders.hlsl'
@@ -118,11 +118,11 @@ foreach ($Control in $Controls) {
     $Entry = $Control.Entry
     & fxc.exe /nologo /O3 /D_UWP /DRR_D3D12 /T ps_5_1 /E $Entry /Vn "g_$Entry" /Fh "$ControlShaders\$Entry.h" $ControlSource
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) SM5.1 compilation failed" }
-    $PipelineObject = Join-Path $ControlDir 'd3d12_pipeline.obj'
+    $PipelineObject = Join-Path $ControlDir 'viberant_pipeline.obj'
     $ControlIncludes = @("/I$ControlDir") + $Includes
-    & cl.exe /nologo /c /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_VIBERANT /DHAVE_VIBERANT_D3D /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @ControlIncludes "/Fo:$PipelineObject" "$Driver\d3d12_pipeline.cpp"
+    & cl.exe /nologo /c /std:c++17 /O2 /MD /EHsc /W3 /D_UWP /DHAVE_VIBERANT /DHAVE_VIBERANT_D3D /DHWRENDER /DHAVE_SDL /DHAVE_THREADS /D_CRT_SECURE_NO_WARNINGS /DNONX86 /DNORUSEASM @ControlIncludes "/Fo:$PipelineObject" "$Driver\viberant_pipeline.cpp"
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) pipeline compilation failed" }
-    $Objects = @($Files | Where-Object { [IO.Path]::GetFileName($_) -ne 'd3d12_pipeline.cpp' } | ForEach-Object { Join-Path $Output ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj') })
+    $Objects = @($Files | Where-Object { [IO.Path]::GetFileName($_) -ne 'viberant_pipeline.cpp' } | ForEach-Object { Join-Path $Output ([IO.Path]::GetFileNameWithoutExtension($_) + '.obj') })
     $ControlExe = Join-Path $ControlDir 'viberant-driver.exe'
     & cl.exe /nologo "/Fe:$ControlExe" @Objects $PipelineObject /link d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib @LegacyLibraries
     if ($LASTEXITCODE -ne 0) { throw "Negative $($Control.Scene) harness link failed" }

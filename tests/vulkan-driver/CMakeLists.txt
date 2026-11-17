@@ -3,15 +3,15 @@ project(RRVulkanDriverTests LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 get_filename_component(RR_ENGINE "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(SRB2_CONFIG_VIBERANT_VULKAN ON)
-include("${RR_ENGINE}/src/hardware/r_d3d12/custom_shaders.cmake")
+include("${RR_ENGINE}/src/hardware/r_viberant/custom_shaders.cmake")
 add_executable(vulkan-driver
     ../viberant-driver.cpp
-    "${RR_ENGINE}/src/hardware/r_d3d12/r_d3d12.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_core.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_upload.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_pipeline.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/d3d12_prewarm.cpp"
-    "${RR_ENGINE}/src/hardware/r_d3d12/custom_shader.cpp")
+    "${RR_ENGINE}/src/hardware/r_viberant/r_viberant.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_core.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_upload.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_pipeline.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_prewarm.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/custom_shader.cpp")
 target_compile_definitions(vulkan-driver PRIVATE HAVE_VIBERANT HWRENDER HAVE_SDL HAVE_THREADS NONX86 NORUSEASM)
 target_include_directories(vulkan-driver PRIVATE "${RR_ENGINE}/src" "${CMAKE_CURRENT_BINARY_DIR}" ../viberant-stubs)
 file(GLOB thirdparty_includes "${RR_ENGINE}/thirdparty/*/include")
@@ -19,8 +19,8 @@ target_include_directories(vulkan-driver PRIVATE ${thirdparty_includes})
 target_link_libraries(vulkan-driver PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl ${CMAKE_DL_LIBS})
 set(viberant_shader_entries VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
 	PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
-set(RR_VULKAN_SHADER_SOURCE "${RR_ENGINE}/src/hardware/r_d3d12/shaders.hlsl" CACHE FILEPATH "HLSL source (negative controls only override this)")
-set(d3d12_shader_source "${RR_VULKAN_SHADER_SOURCE}")
+set(RR_VULKAN_SHADER_SOURCE "${RR_ENGINE}/src/hardware/r_viberant/shaders.hlsl" CACHE FILEPATH "HLSL source (negative controls only override this)")
+set(viberant_shader_source "${RR_VULKAN_SHADER_SOURCE}")
 if(SRB2_CONFIG_VIBERANT_VULKAN)
 	# The Vulkan backend. Its shaders are the same shaders.hlsl, compiled to SPIR-V headers by glslang's HLSL front end:
 	# registers become bindings of one descriptor set (b0.. at 0, t0.. at 16, s0.. at 32), SV_Position.w stays
@@ -64,8 +64,8 @@ if(SRB2_CONFIG_VIBERANT_VULKAN)
 			OUTPUT "${header}"
 			COMMAND glslang-standalone -D -V -S ${stage} -e ${entry} --hlsl-dx-position-w -fhlsl_functionality1
 				--shift-ubo-binding 0 --shift-texture-binding 16 --shift-sampler-binding 32
-				-D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${d3d12_shader_source}"
-			DEPENDS "${d3d12_shader_source}" glslang-standalone
+				-D_UWP -DRR_D3D12 -DRR_VULKAN --vn g_${entry}_spv -o "${header}" "${viberant_shader_source}"
+			DEPENDS "${viberant_shader_source}" glslang-standalone
 			COMMENT "Compiling the ${entry} Vulkan shader"
 			VERBATIM
 		)
@@ -75,6 +75,6 @@ if(SRB2_CONFIG_VIBERANT_VULKAN)
 	add_dependencies(vulkan-driver SRB2VulkanShaders)
 
 	target_sources(vulkan-driver PRIVATE "${rr_volk_SOURCE_DIR}/volk.c"
-		${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_device.cpp ${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_commands.cpp ${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_resources.cpp
-		${RR_ENGINE}/src/hardware/r_d3d12/vulkan/vk12_pipeline.cpp ${RR_ENGINE}/src/hardware/r_d3d12/spirv_shader.cpp)
+		${RR_ENGINE}/src/hardware/r_viberant/vulkan/vk12_device.cpp ${RR_ENGINE}/src/hardware/r_viberant/vulkan/vk12_commands.cpp ${RR_ENGINE}/src/hardware/r_viberant/vulkan/vk12_resources.cpp
+		${RR_ENGINE}/src/hardware/r_viberant/vulkan/vk12_pipeline.cpp ${RR_ENGINE}/src/hardware/r_viberant/spirv_shader.cpp)
 endif()

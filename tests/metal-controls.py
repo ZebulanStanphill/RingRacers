@@ -7,7 +7,7 @@ import sys
 
 build = pathlib.Path(sys.argv[1]).resolve()
 root = pathlib.Path(__file__).resolve().parent.parent
-source = root / "src/hardware/r_d3d12/shaders.hlsl"
+source = root / "src/hardware/r_viberant/shaders.hlsl"
 exe = build / "metal-driver"
 
 

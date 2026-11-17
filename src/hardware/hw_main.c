@@ -68,7 +68,7 @@
 ///      	SRB2CB itself ported this from PrBoom+
 #include "hw_clip.h"
 #ifdef HAVE_VIBERANT
-#include "r_d3d12/r_d3d12.h"
+#include "r_viberant/r_viberant.h"
 #endif
 #ifdef _UWP
 #include "../i_time.h" // HWR_UWPLoadKeepAlive
@@ -1025,7 +1025,7 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 			hwr_springpeakpieces = count;
 #ifdef HAVE_VIBERANT
 		if (mask && cut && hwr_numspringmasks < HWR_SPRINGMAXMASKS
-			&& D3D12_DrawSpringMask(hwr_springwalls[w].v, hwr_springwalls[w].numverts, true))
+			&& VibeRant_DrawSpringMask(hwr_springwalls[w].v, hwr_springwalls[w].numverts, true))
 			hwr_springmasks[hwr_numspringmasks++] = w;
 #endif
 		if (probe && (cut || HWR_SpringProbeOverlaps(&hwr_springwalls[w], &view)))
@@ -1732,7 +1732,7 @@ static boolean HWR_ShouldExtendHorizon(seg_t *line, sector_t *front)
 #ifdef HAVE_VIBERANT
 // [UWP]: Software shows the sky only through sky surfaces and draws everything the level doesn't cover black, while
 // Legacy GL draws the sky over the whole view first. A sky plane therefore writes depth without color (like
-// HWR_DrawSkyWall) at its real position, claiming its pixels for the sky; D3D12_FillVoid then blackens the pixels
+// HWR_DrawSkyWall) at its real position, claiming its pixels for the sky; VibeRant_FillVoid then blackens the pixels
 // that no surface claimed. The height is per vertex for a slope.
 static void HWR_SkyClaimVert(FOutVector *vert, float vx, float vy, float height, pslope_t *slope)
 {
@@ -1767,7 +1767,7 @@ static void HWR_RenderSkyClaim(subsector_t *subsector, extrasubsector_t *xsub, f
 		HWR_SkyClaimVert(&skyVerts[i], pv->x, pv->y, height, slope);
 	Surf.PolyColor.s.alpha = 255;
 	HWR_SetCurrentTexture(NULL);
-	D3D12_SurfaceProbeSource("sky plane", -1);
+	VibeRant_SurfaceProbeSource("sky plane", -1);
 	// The same state as HWR_DrawSkyWall, so the batcher keeps both together
 	const FBITFIELD flags = PF_Invisible|PF_NoTexture|PF_Modulated|PF_Occlude|(HWR_UseShader() ? PF_ColorMapped : 0);
 	const INT32 shader = HWR_UseShader() ? SHADER_WALL : SHADER_DEFAULT;
@@ -1822,7 +1822,7 @@ static void HWR_RenderSkyClaim(subsector_t *subsector, extrasubsector_t *xsub, f
 					(horizonpts[3].z - gl_viewy) * farrenderdist / renderdist + gl_viewy, height, slope);
 				horizonpts[4].y = gl_viewz;
 
-				D3D12_SurfaceProbeSource("sky horizon", (INT32)(line->linedef-lines));
+				VibeRant_SurfaceProbeSource("sky horizon", (INT32)(line->linedef-lines));
 				HWR_ProcessPolygon(&Surf, horizonpts, 6, flags, shader, false);
 			}
 		}
@@ -2052,7 +2052,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
-		D3D12_SurfaceProbeSource(FOFsector ? "FOF plane" : isceiling ? "ceiling" : "floor",
+		VibeRant_SurfaceProbeSource(FOFsector ? "FOF plane" : isceiling ? "ceiling" : "floor",
 			FOFsector ? (INT32)(FOFsector-sectors) : subsector ? (INT32)(subsector-subsectors) : -1);
 #endif
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
@@ -2130,7 +2130,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 					// Draw
 #ifdef HAVE_VIBERANT
 					if (HWR_VibeRant())
-						D3D12_SurfaceProbeSource("horizon", (INT32)(line->linedef-lines));
+						VibeRant_SurfaceProbeSource("horizon", (INT32)(line->linedef-lines));
 #endif
 					HWR_ProcessPolygon(&Surf, horizonpts, 6, PolyFlags, shader, true);
 				}
@@ -2314,7 +2314,7 @@ static void HWR_ProjectWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIEL
 
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
-		D3D12_SurfaceProbeSource(blendmode & PF_Invisible ? "sky occluder" : "wall",
+		VibeRant_SurfaceProbeSource(blendmode & PF_Invisible ? "sky occluder" : "wall",
 			gl_curline && gl_curline->linedef ? (INT32)(gl_curline->linedef-lines) : -1);
 #endif
 	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode|PF_Modulated|PF_Occlude, shader, false);
@@ -2353,7 +2353,7 @@ static void HWR_DrawCutVoid(const FOutVector *piece)
 	}
 	surf.PolyColor.s.alpha = 255; // black
 	HWR_SetCurrentTexture(NULL);
-	D3D12_SurfaceProbeSource("cut void", (INT32)(gl_curline->linedef-lines));
+	VibeRant_SurfaceProbeSource("cut void", (INT32)(gl_curline->linedef-lines));
 	HWR_ProcessPolygon(&surf, v, 4, PF_NoTexture|PF_Modulated|PF_Occlude, SHADER_DEFAULT, false);
 }
 #endif
@@ -2808,7 +2808,7 @@ static void HWR_DrawFlatBleed(boolean ceiling, fixed_t front1, fixed_t front2,
 		shader = SHADER_FLOOR;
 		flags |= PF_ColorMapped;
 	}
-	D3D12_SurfaceProbeSource("flat bleed", (INT32)(gl_linedef-lines));
+	VibeRant_SurfaceProbeSource("flat bleed", (INT32)(gl_linedef-lines));
 	HWR_ProcessPolygon(&Surf, verts, 4, flags, shader, false);
 }
 #endif
@@ -4050,7 +4050,7 @@ static void HWR_DrawVoidQuad(seg_t *line, float bottom1, float bottom2, float to
 	v[2].y = top2;
 	surf.PolyColor.s.alpha = 255; // black
 	HWR_SetCurrentTexture(NULL);
-	D3D12_SurfaceProbeSource("void wall", (INT32)(line->linedef-lines));
+	VibeRant_SurfaceProbeSource("void wall", (INT32)(line->linedef-lines));
 	HWR_ProcessPolygon(&surf, v, 4, PF_NoTexture|PF_Modulated|PF_Occlude, SHADER_DEFAULT, false);
 }
 
@@ -7212,7 +7212,7 @@ static INT32 HWR_SpringModelBegin(gl_vissprite_t *spr)
 		HWR_SpringSubtract(quad, area, flags, spr, true, &buffer, &count);
 		if (hwr_numspringmasks)
 		{
-			D3D12_UseSpringMask(true, hwr_portallevel);
+			VibeRant_UseSpringMask(true, hwr_portallevel);
 			return HWR_SPRINGMODEL_MASKED;
 		}
 	}
@@ -7226,9 +7226,9 @@ static void HWR_SpringModelEnd(INT32 drawn)
 	size_t i;
 	if (drawn != HWR_SPRINGMODEL_MASKED)
 		return;
-	D3D12_UseSpringMask(false, hwr_portallevel);
+	VibeRant_UseSpringMask(false, hwr_portallevel);
 	for (i = 0; i < hwr_numspringmasks; i++)
-		D3D12_DrawSpringMask(hwr_springwalls[hwr_springmasks[i]].v, hwr_springwalls[hwr_springmasks[i]].numverts, false);
+		VibeRant_DrawSpringMask(hwr_springwalls[hwr_springmasks[i]].v, hwr_springwalls[hwr_springmasks[i]].numverts, false);
 	hwr_numspringmasks = 0;
 #else
 	(void)drawn;
@@ -7674,7 +7674,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		rollangle = R_GetRollAngle(papersprite == vflip
 				? spriterotangle : InvAngle(spriterotangle));
 #ifdef HAVE_VIBERANT
-		if (HWR_VibeRant() && !papersprite && !splat && !(thing->flags2 & MF2_LINKDRAW) && D3D_CanRollSprite())
+		if (HWR_VibeRant() && !papersprite && !splat && !(thing->flags2 & MF2_LINKDRAW) && VibeRant_CanRollSprite())
 			rollgeometry = Patch_GetRollGeometry(sprframe, thing->frame & FF_FRAMEMASK,
 				rot, flip, sprinfo, rollangle);
 		if (rollgeometry)
@@ -8741,8 +8741,8 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 			(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
 	if (HWR_VibeRant())
 	{
-		D3D12_SetPortalStencil(hwr_portallevel);
-		D3D12_SetPortalPlane(NULL); // sky/fog live at infinity, not behind an exit plane
+		VibeRant_SetPortalStencil(hwr_portallevel);
+		VibeRant_SetPortalPlane(NULL); // sky/fog live at infinity, not behind an exit plane
 	}
 #endif
 
@@ -8762,11 +8762,11 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	if (HWR_VibeRant())
 	{
 		HWD.pfnSetTransform(&atransform);
-		D3D12_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
+		VibeRant_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
 		if (hwr_portallevel > 0 && cv_glshaders.value) HWR_SetPortalViewLight();
 		HWR_SetShaderState();
 		if (!gl_skyboxview && hwr_maphasportals && cv_maxportals.value > hwr_portallevel
-			&& D3D12_PortalsSupported())
+			&& VibeRant_PortalsSupported())
 			HWR_RenderPortalViews(player);
 	}
 #endif
@@ -8841,7 +8841,7 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	// nothing covers black, but the sky was drawn over the whole view first, so blacken the pixels with no depth. This
 	// comes before the sprites and the sorted translucent draws, which Software draws over the void.
 	if (HWR_VibeRant() && hwr_skydrawn)
-		D3D12_FillVoid();
+		VibeRant_FillVoid();
 #endif
 
 #ifdef ALAM_LIGHTING
@@ -8902,8 +8902,8 @@ static void HWR_RenderViewPass(player_t *player, boolean drawSkyTexture, boolean
 	if (HWR_VibeRant())
 	{
 		HWR_FreePortalViews();
-		D3D12_SetPortalPlane(NULL);
-		D3D12_SetPortalStencil(0);
+		VibeRant_SetPortalPlane(NULL);
+		VibeRant_SetPortalStencil(0);
 	}
 #endif
 	HWD.pfnSetTransform(NULL);
@@ -8965,8 +8965,8 @@ static void HWR_RestorePortalView(const hwr_viewcontext_t *c)
 	HWD.pfnGClipRect((INT32)gl_viewwindowx,(INT32)gl_viewwindowy,
 		(INT32)(gl_viewwindowx+gl_viewwidth),(INT32)(gl_viewwindowy+gl_viewheight),ZCLIP_PLANE);
 	HWD.pfnSetTransform(&atransform);
-	D3D12_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
-	D3D12_SetPortalStencil(hwr_portallevel);
+	VibeRant_SetPortalPlane(hwr_portalexit ? hwr_portalplane : NULL);
+	VibeRant_SetPortalStencil(hwr_portallevel);
 	if (cv_glshaders.value) HWR_SetPortalViewLight();
 	HWR_SetShaderState();
 }
@@ -8994,12 +8994,12 @@ static void HWR_RenderPortalViews(player_t *player)
 		const line_t *exit = portal->exit;
 		const float dx=FIXED_TO_FLOAT(exit->dx), dy=FIXED_TO_FLOAT(exit->dy);
 		const float length=sqrtf(dx*dx+dy*dy);
-		if (length == 0 || !D3D12_DrawPortalAperture(portal->aperture,hwr_portallevel,false))
+		if (length == 0 || !VibeRant_DrawPortalAperture(portal->aperture,hwr_portallevel,false))
 			continue;
 		// The first mask tests against the frame's cleared depth. Ancestors reset
 		// only their mask to far; finished siblings contribute entrance depth.
 		// Parent foreground has not drawn yet: it occludes portal color later.
-		D3D12_ResetPortalDepth(hwr_portallevel+1);
+		VibeRant_ResetPortalDepth(hwr_portallevel+1);
 		HWR_SavePortalView(&parent);
 		viewx=portal->x; viewy=portal->y; viewz=portal->z; viewangle=portal->yaw;
 		viewsin=FINESINE(viewangle>>ANGLETOFINESHIFT); viewcos=FINECOSINE(viewangle>>ANGLETOFINESHIFT);
@@ -9019,7 +9019,7 @@ static void HWR_RenderPortalViews(player_t *player)
 		HWR_RestorePortalView(&parent);
 		// ALWAYS depth overwrites child scene depth with the entrance depth;
 		// simultaneously decrement only stencil == n+1 back to n. No color.
-		D3D12_DrawPortalAperture(portal->aperture,hwr_portallevel,true);
+		VibeRant_DrawPortalAperture(portal->aperture,hwr_portallevel,true);
 		portal->rendered=true;
 	}
 #ifdef _UWP
@@ -9125,7 +9125,7 @@ void HWR_RenderPlayerView(void)
 
 #ifdef HAVE_VIBERANT
 	const boolean surfaceprobe = HWR_VibeRant() && viewssnum == 0 && !con_destlines && !cv_glbatching.value && !r_splitscreen
-		&& D3D12_BeginSurfaceProbe();
+		&& VibeRant_BeginSurfaceProbe();
 #endif
 	if (viewssnum == 0) // Only do it if it's the first screen being rendered
 		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
@@ -9156,7 +9156,7 @@ void HWR_RenderPlayerView(void)
 
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
-		D3D12_EndSurfaceProbe();
+		VibeRant_EndSurfaceProbe();
 #endif
 	HWR_DoPostProcessor(player);
 }
@@ -9287,7 +9287,7 @@ static void HWR_SurfaceProbe_f(void)
 		CONS_Printf("Turn Batching Off first (gr_batching off), then request the surface probe.\n");
 		return;
 	}
-	if (D3D12_RequestSurfaceProbe(x, y))
+	if (VibeRant_RequestSurfaceProbe(x, y))
 		CONS_Printf("Surface probe armed at %d%% across, %d%% down. Close the console to capture one world frame; that frame may pause briefly.\n", x, y);
 	else
 		CONS_Printf("A surface probe is already pending.\n");
@@ -9483,7 +9483,7 @@ void HWR_RenderWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, FBITFIELD blend,
 	blendmode |= PF_Modulated;	// No PF_Occlude means overlapping (incorrect) transparency
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
-		D3D12_SurfaceProbeSource("deferred wall", -1);
+		VibeRant_SurfaceProbeSource("deferred wall", -1);
 #endif
 	HWR_ProcessPolygon(pSurf, wallVerts, 4, blendmode, shader, false);
 }

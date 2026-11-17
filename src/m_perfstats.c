@@ -30,7 +30,7 @@
 #include "screen.h"
 #ifdef HAVE_VIBERANT
 #include "hardware/hw_driver.h"
-#include "hardware/r_d3d12/r_d3d12.h"
+#include "hardware/r_viberant/r_viberant.h"
 #endif
 #endif
 
@@ -894,7 +894,7 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant() && rendermode == render_opengl)
-		D3D12_LogPerf(seconds);
+		VibeRant_LogPerf(seconds);
 #endif
 
 	// Taken every summary, to start the next from nothing

@@ -1,8 +1,8 @@
 // Pure D3D12 bookkeeping regressions; runs without a graphics API or GPU.
-#include "hardware/r_d3d12/allocators.h"
-#include "hardware/r_d3d12/pipeline_key.h"
-#include "hardware/r_d3d12/mips.h"
-#include "hardware/r_d3d12/texture_repack.h"
+#include "hardware/r_viberant/allocators.h"
+#include "hardware/r_viberant/pipeline_key.h"
+#include "hardware/r_viberant/mips.h"
+#include "hardware/r_viberant/texture_repack.h"
 #include <cmath>
 #include <random>
 #include <cassert>
@@ -12,10 +12,10 @@
 #include <set>
 #include <unordered_set>
 
-using rr_d3d12::RingAllocator;
-using rr_d3d12::PipelineKey;
-using rr_d3d12::PipelineKeyHash;
-using rr_d3d12::IndexFreeList;
+using rr_viberant::RingAllocator;
+using rr_viberant::PipelineKey;
+using rr_viberant::PipelineKeyHash;
+using rr_viberant::IndexFreeList;
 
 static void allocate(RingAllocator &ring, size_t bytes, size_t alignment,
                      uint64_t fence, size_t offset, bool wrapped = false)
@@ -225,7 +225,7 @@ static void indexListTests()
 
 static void arenaTests()
 {
- using Arena = rr_d3d12::SizeClassArena;
+ using Arena = rr_viberant::SizeClassArena;
  Arena arena;
  assert(!arena.Allocate(1).valid);
  arena.Reset(256, Arena::MaxClass, 2);
@@ -294,7 +294,7 @@ static void arenaTests()
 // Independently enumerate the fine classes rather than repeat Allocate's rounding.
 static size_t fineClass(size_t bytes, size_t alignment)
 {
- using Arena = rr_d3d12::SizeClassArena;
+ using Arena = rr_viberant::SizeClassArena;
  size_t best = Arena::MaxClass;
  for (size_t power = 4096; power < Arena::MaxClass; power *= 2)
   for (size_t quarter = 0; quarter <= 4; ++quarter) {
@@ -307,7 +307,7 @@ static size_t fineClass(size_t bytes, size_t alignment)
 
 static void fineArenaTests()
 {
- using Arena = rr_d3d12::SizeClassArena;
+ using Arena = rr_viberant::SizeClassArena;
  constexpr size_t KB = 1024, small = 4 * KB, large = 64 * KB;
  Arena arena;
  auto reset = [&]() { arena.Reset(small, Arena::MaxClass, SIZE_MAX, true); };
@@ -430,7 +430,7 @@ static void fineArenaTests()
 
 static void mipTests()
 {
- using rr_d3d12::GenerateMipChainRGBA8;
+ using rr_viberant::GenerateMipChainRGBA8;
  assert(GenerateMipChainRGBA8(nullptr, 1, 1).empty());
  uint8_t pixel[4] = {1, 2, 3, 4};
  assert(GenerateMipChainRGBA8(pixel, 0, 1).empty());
@@ -473,13 +473,13 @@ static void repackTests()
     constexpr size_t rowBytes = 5, rows = 4, depth = 3, pitch = 8;
     std::vector<uint8_t> source(rowBytes * rows * depth), destination(pitch * rows * depth, 0xEE);
     for (size_t i = 0; i < source.size(); ++i) source[i] = uint8_t(i + 1);
-    rr_d3d12::RepackTexture3D(destination.data(), source.data(), rowBytes, rows, depth, pitch);
+    rr_viberant::RepackTexture3D(destination.data(), source.data(), rowBytes, rows, depth, pitch);
     for (size_t z = 0; z < depth; ++z) for (size_t y = 0; y < rows; ++y) for (size_t x = 0; x < pitch; ++x)
         assert(destination[(z * rows + y) * pitch + x] == (x < rowBytes ? source[(z * rows + y) * rowBytes + x] : 0xEE));
     // The palette lookup's shape: 64 bytes a row in 256-byte pitch, red fastest
     std::vector<uint8_t> lut(64 * 64 * 64), staged(256 * 64 * 64);
     for (size_t i = 0; i < lut.size(); ++i) lut[i] = uint8_t(i * 7 + (i >> 8));
-    rr_d3d12::RepackTexture3D(staged.data(), lut.data(), 64, 64, 64, 256);
+    rr_viberant::RepackTexture3D(staged.data(), lut.data(), 64, 64, 64, 256);
     for (size_t b = 0; b < 64; b += 21) for (size_t g = 0; g < 64; g += 9) for (size_t r = 0; r < 64; r += 5)
         assert(staged[(b * 64 + g) * 256 + r] == lut[(b * 64 + g) * 64 + r]);
 }

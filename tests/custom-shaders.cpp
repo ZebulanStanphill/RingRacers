@@ -5,7 +5,7 @@
 #include <string>
 #include <set>
 #include <sstream>
-#include "hardware/r_d3d12/custom_shader.h"
+#include "hardware/r_viberant/custom_shader.h"
 #include "hardware/hw_defs.h"
 #include "hardware/hw_glsl.h"
 #include "screen-effect-fixtures.h"

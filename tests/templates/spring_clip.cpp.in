@@ -55,7 +55,7 @@ static bool viberant=true;
 struct Mark { std::vector<FOutVector> v; bool set; };
 static std::vector<Mark> marks;
 static bool markFails;
-boolean D3D12_DrawSpringMask(const FOutVector *v,INT32 n,boolean set){
+boolean VibeRant_DrawSpringMask(const FOutVector *v,INT32 n,boolean set){
     assert(n>=3&&n<=32);if(markFails)return false;marks.push_back({{v,v+n},set!=0});return true;
 }
 @@HELPERS@@
@@ -96,7 +96,7 @@ fixed_t P_GetFFloorBottomZAt(const ffloor_t *f,fixed_t,fixed_t){return *f->botto
 @@ROUTES@@
 static INT32 hwr_portallevel;
 static std::vector<std::pair<bool,INT32>> maskUse;
-void D3D12_UseSpringMask(boolean on,INT32 level){maskUse.push_back({on!=0,level});}
+void VibeRant_UseSpringMask(boolean on,INT32 level){maskUse.push_back({on!=0,level});}
 static int modelDraws;
 static bool modelExists=true,maskUsedAtDraw;
 static size_t marksAtDraw;

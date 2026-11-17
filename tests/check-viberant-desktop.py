@@ -3,7 +3,7 @@
 
 Usage: check-viberant-desktop.py PATH/TO/compile_commands.json
 
-For each C file under src/hardware/ (the Direct3D 12 driver in src/hardware/r_d3d12/
+For each C file under src/hardware/ (the Direct3D 12 driver in src/hardware/r_viberant/
 is C++ and is not included) in a normal game build's compile database, re-runs its
 recorded compile command with -DHAVE_VIBERANT and -fsyntax-only added and the output
 options removed. Exits 1 if any of them reports an error, or if the database has no
