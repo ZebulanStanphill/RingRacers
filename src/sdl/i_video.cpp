@@ -111,6 +111,9 @@ extern "C" __declspec(dllimport) SDL_WinRT_DeviceFamily SDLCALL SDL_WinRTGetDevi
 #include "../hardware/r_d3d12/r_d3d12.h"
 #endif
 #endif
+#ifdef __APPLE__
+#include "../screen_scaling.hpp" // [UWP]: FitWindowToScreen
+#endif
 
 #ifdef HAVE_DISCORDRPC
 #include "../discord.h"
@@ -217,6 +220,27 @@ static void CenterWindow(void)
 	);
 }
 
+#ifdef __APPLE__
+// [UWP]: macOS gives no window that is taller than the screen has room for. It cuts the height and leaves the width,
+// so a video mode larger than the screen got a window wider than its picture, with bars at the picture's sides. Such a
+// window takes the largest size of the mode's shape that the screen has room for.
+static void FitWindowToScreen(int width, int height)
+{
+	int w, h;
+	SDL_Rect usable;
+
+	SDL_GetWindowSize(window, &w, &h);
+	if (SDL_GetDisplayUsableBounds(SDL_GetWindowDisplayIndex(window), &usable) == 0 && usable.w > 0 && usable.w < w)
+		w = usable.w;
+	if (w >= width && h >= height)
+		return;
+
+	const screen_scaling::Placement fit = screen_scaling::FitRect(width, height, w, h);
+	if (!fit.fit)
+		SDL_SetWindowSize(window, fit.w, fit.h);
+}
+#endif
+
 static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool reposition)
 {
 	static SDL_bool wasfullscreen = SDL_FALSE;
@@ -252,6 +276,9 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 			}
 			// Reposition window only in windowed mode
 			SDL_SetWindowSize(window, width, height);
+#ifdef __APPLE__
+			FitWindowToScreen(width, height);
+#endif
 			if (reposition)
 			{
 				ValidateDisplay();
@@ -268,6 +295,12 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 		{
 			SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 		}
+#ifdef __APPLE__
+		else
+		{
+			FitWindowToScreen(width, height);
+		}
+#endif
 	}
 
 #ifdef HWRENDER

@@ -185,6 +185,10 @@ static void fitRectTests()
 	expectFitRect(1280, 720, 1000, 1500, 0, 469, 1000, 562);
 	// Exactly the frame's aspect ratio, at the frame's size and at other sizes: no bars
 	expectFitRect(640, 400, 640, 400, 0, 0, 640, 400);
+	// The room a Mac's screen of 1440x900 points has for a window, which a larger video mode's window is fitted to
+	// (FitWindowToScreen in sdl/i_video.cpp)
+	expectFitRect(1920, 1200, 1440, 804, 77, 0, 1286, 804);
+	expectFitRect(1440, 900, 1440, 804, 77, 0, 1286, 804);
 	expectFitRect(640, 400, 1280, 800, 0, 0, 1280, 800);
 	expectFitRect(1280, 720, 1920, 1080, 0, 0, 1920, 1080);
 	expectFitRect(320, 200, 160, 100, 0, 0, 160, 100);
