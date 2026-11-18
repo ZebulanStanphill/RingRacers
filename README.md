@@ -18,7 +18,7 @@ Coding agents were used heavily in the development of this fork. I have thorough
 
 ## What's different from the official game
 
-[CHANGES.md](CHANGES.md) lists every change and says which have been tested. All Xbox testing was on an Xbox One X. This is what you'll notice.
+[CHANGES.md](CHANGES.md) lists every change and says which have been tested. All Xbox testing was on an Xbox One X.
 
 ### VibeRant D3D, VibeRant Vulkan, and VibeRant Metal
 
@@ -37,11 +37,11 @@ It goes past Software in one place: seen from above, rippling water also distort
 
 On Xbox, VibeRant D3D is the default renderer, and on the Xbox One X it runs faster than Software.
 
-**VibeRant Vulkan** is the same renderer on Vulkan, for PCs. It isn't a second implementation: it shares VibeRant D3D's drawing code and shaders, and draws the same picture. Compared on 1,002 frames from all 213 tracks, the two differ in about one pixel in a thousand, at the edges between texels. It is the default renderer on Linux, where it has been tested on one PC, with an AMD Radeon. If Vulkan isn't working on your PC, the game says so and uses Software.
+**VibeRant Vulkan** is the same renderer on Vulkan, for PCs. It shares VibeRant D3D's drawing code and shaders, and draws the same picture. In a comparison of 1,002 frames from all 213 tracks, the two differ in about one pixel in a thousand, at the edges between texels. It is the default renderer on Linux, where it has been tested on one PC, with an AMD Radeon. If Vulkan isn't working on your PC, the game says so and uses Software.
 
 Windows desktop builds have both, with VibeRant D3D as the default. Those have only been tested under Wine, not on a real Windows PC.
 
-**VibeRant Metal** is the same renderer again on Apple's Metal, for Macs, and the default renderer of a macOS build. It is native Metal, not Vulkan translated to it. It has run on two real Macs, a Mac mini with an M4 Pro and an Intel MacBook Pro with Iris Plus graphics, and on GitHub's macOS test machines, whose graphics are virtual. On each it played replays under Metal's own error checking (on all 213 tracks, and on 89 of them on the Intel Mac) and drew the same picture as VibeRant Vulkan, about one pixel in a thousand apart. Nobody has played it yet, though: those were automated tests on Macs nobody sat at, so how it looks on a screen, a Retina one above all, has not been seen. If Metal can't be started on a Mac, the game says so and uses Software. (If Metal starts and only its window can't be made, which hasn't happened anywhere it ran, the game stops with an error instead, and starting it with `-software` gets around that.)
+**VibeRant Metal** is the same renderer again on Apple's Metal, for Macs, and the default renderer of a macOS build. It is native Metal, not Vulkan translated to it. It has run on two real Macs, a Mac mini with an M4 Pro and an Intel MacBook Pro with Iris Plus graphics, and on GitHub's macOS test machines, whose graphics are virtual. On each it played replays under Metal's own error checking (on all 213 tracks, and on 89 of them on the Intel Mac) and drew the same picture as VibeRant Vulkan, about one pixel in a thousand apart. These were automated tests. Nobody has played it yet or checked how it looks on a screen, especially a Retina display. If Metal can't be started on a Mac, the game says so and uses Software. (If Metal starts and only its window can't be made, which hasn't happened anywhere it ran, the game stops with an error instead, and starting it with `-software` gets around that.)
 
 ### On Xbox
 
@@ -53,7 +53,7 @@ Windows desktop builds have both, with VibeRant D3D as the default. Those have o
 
 ### New video options
 
-Both are in Options → Video.
+Open Options → Video to change either setting.
 
 **Screen Scaling** decides how the picture is enlarged when the game's resolution is lower than your screen's:
 
@@ -71,7 +71,7 @@ You need:
 
 - an Xbox One or Xbox Series console in [Developer Mode](https://learn.microsoft.com/en-us/previous-versions/windows/uwp/xbox-apps/devkit-activation)
 - a USB drive
-- a PC to prepare the drive with: Windows, or a Mac or Linux PC with [Xbox Media Drive Helper](https://github.com/ZebulanStanphill/xbox-media-drive-helper)
+- a Windows PC to prepare the drive, or a Mac or Linux PC with [Xbox Media Drive Helper](https://github.com/ZebulanStanphill/xbox-media-drive-helper)
 
 ### Prepare the USB drive
 
@@ -98,7 +98,7 @@ The Xbox calls the drive `E:`, so the game looks for its files in `E:\ringracers
 
 ### Why the drive needs permissions
 
-Preparing the drive includes giving Xbox apps access to it. That is needed because every app on the Xbox runs in a sandbox. Windows lets a sandboxed app open a file only if the file's permissions allow both the app and the user it runs as:
+Give both Xbox apps and the account they run under access to the drive. Every Xbox app runs in a sandbox, and Windows checks both sets of permissions before letting it open a file.
 
 - The first command allows the app, through the group "ALL APPLICATION PACKAGES" (`S-1-15-2-1`). A drive formatted by Windows doesn't have this.
 - The second allows the user, through "Authenticated Users" (`S-1-5-11`). A drive formatted by Windows already has this, but a drive formatted another way may not. The game couldn't open a drive that had only the first grant until the second was added.
@@ -152,15 +152,15 @@ From an **x64 Native Tools Command Prompt for VS 2022**, in a clone of this repo
 powershell -ExecutionPolicy Bypass -File uwp\build.ps1
 ```
 
-This builds the engine, builds SDL2, downloads ANGLE into `uwp/deps/`, and then generates and builds the launcher solution at `uwp/build/ring-racers-ze.sln`. Open that in Visual Studio to deploy to your Xbox (Remote Machine) or to create an app package (Project → Publish → Create App Packages).
+Open `uwp/build/ring-racers-ze.sln` in Visual Studio to deploy to your Xbox (Remote Machine) or create an app package (Project → Publish → Create App Packages). The script builds the engine and SDL2, downloads ANGLE into `uwp/deps/`, and then generates and builds the launcher solution.
 
 To help optimize future builds with a recording of your own play session, see [docs/uwp-pgo.md](docs/uwp-pgo.md).
 
 ### Desktop game
 
-The game for Windows, Linux, and macOS builds the way upstream's does. You need a C++ toolchain that supports C++17 and C11 (GCC, MinGW, Clang, or Apple Clang), CMake, and ninja.
+To build the game for Windows, Linux, or macOS, use a toolchain that supports C++17 and C11 (GCC, MinGW, Clang, or Apple Clang), CMake, and Ninja, as for the upstream game.
 
-On Linux you need these libraries on the system: libcurl, zlib, libpng, libogg, libvorbis, libvpx, libyuv, SDL2, and libopus. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
+On Linux, install libcurl, zlib, libpng, libogg, libvorbis, libvpx, libyuv, SDL2, and libopus. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
 
 `CMakePresets.json` has [CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html), among them:
 
