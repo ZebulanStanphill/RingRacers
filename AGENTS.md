@@ -43,9 +43,10 @@ those commits stay as they are and the merge is made again.
   which Linux builds and those Windows desktop builds have by default:
   `src/hardware/r_viberant/vulkan` implements the Direct3D 12 interfaces the driver
   uses, so the driver's own code is the same for both
-  (`docs/vulkan-backend.md`). Only code that makes the device, compiles shaders,
-  or presents asks which backend it is on (`Core_Vulkan()`); engine code doesn't,
-  except to name the renderer (`HWR_Vulkan()`). A UWP build has the driver as its
+  (`docs/vulkan-backend.md`). Only the driver's device, shader, and pipeline
+  setup, presentation, and messages ask which backend it is on
+  (`Core_Vulkan()`); engine code asks (`HWR_Vulkan()`) only to pick the
+  renderer, handle its window, and name it. A UWP build has the driver as its
   only hardware driver; a build with `HAVE_VIBERANT` but not `_UWP` has both it and
   OpenGL, and the video code picks one per run. Driver-dependent behavior (what
   the hardware renderer draws, how it walks the level, and calls into the
