@@ -47,15 +47,16 @@ Windows desktop builds use `d3d_present_win32.cpp`, and VibeRant Vulkan uses `vu
 A CoreWindow takes
 one swap chain at a time, so the driver takes the window from ANGLE: ANGLE draws to a 1x1 pbuffer, so that it
 lets go of the window's back buffer, and its window surface is destroyed (SDL's `SDL_WinRTReleaseGLSurface`,
-from `uwp/patches/sdl-egl-surface-handoff.patch`). Then each frame is copied into the next of three
-back buffers and presented, with `vid_wait` as the sync interval, and the swap chain's frame latency (2)
-enforced by waiting on its waitable object before the copy. Frames whose aspect ratio isn't the window's get black letterbox bars. This needs no configuration.
+from `uwp/patches/sdl-egl-surface-handoff.patch`). The driver waits on the frame-latency object (latency 2) before filling the next of three back buffers. Fit
+copies the frame to a frame-sized swap chain. Integer and 1:1 draw it into the placement rectangle of a
+screen-sized swap chain. The driver presents with the sync interval set by `vid_wait`. Frames whose aspect
+ratio differs from the window's get black letterbox bars. This needs no configuration.
 
 ### When the window is taken
 
 - **When VibeRant D3D starts.** `VibeRant_Init` takes the window every time the driver starts or the player switches
-  to VibeRant D3D, with ANGLE's context current. The swap chain starts at the video mode's size, and is resized
-  when a frame's size differs.
+  to VibeRant D3D, with ANGLE's context current. The swap chain starts at the video mode's size and resizes when the selected layout needs different buffer
+  dimensions.
 - **With the first frame, if no ANGLE context was current at start** (an `-opengl` launch starts the
   driver before the window exists). The log says `no ANGLE context is current, so the window can't be taken from
   it yet` until it can.
@@ -81,8 +82,8 @@ and the perf line:
 VibeRant perf: present: direct swap chain (3 buffers, latency 2); per frame copy %.2f ms, latency wait %.2f ms (worst %.2f, %d timeouts), present %.2f ms (worst %.2f); %d present failures
 ```
 
-`copy` is recording and submitting the frame's copy; `latency wait` is the time blocked on the waitable
-object (a timeout is 500 ms); a `present failure` is an `IDXGISwapChain::Present` error other than a removed
+`copy` measures recording and submitting the frame copy or placement draw. `latency wait` measures time
+blocked on the waitable object (a timeout is 500 ms). A `present failure` is an `IDXGISwapChain::Present` error other than a removed
 or reset device, which ends the run in `VibeRant_FinishUpdate` as before. A second line, `GPU %.2f ms per frame
 (worst %.2f, %d timed)`, is the GPU time of the frames' commands, from timestamps around each frame's work.
 
