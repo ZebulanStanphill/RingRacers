@@ -340,7 +340,7 @@ python3 tests/addons/renderer-test/build.py --encore-from path/to/PLAYPAL
 `--check` rebuilds, compares every PK3 entry and model file byte for byte, and
 validates the committed files. The one exception is the map's `ZNODES`, which
 node builds on different machines may order differently, so it is validated
-instead. `--validate` (also run by the others, and needing no ZDBSP) re-parses
+instead. The build and `--check` run the same validation. `--validate` needs no ZDBSP and re-parses
 the TEXTMAP and checks what the engine requires: the namespace and version
 first, valid vertex, line, and sidedef references, closed sector boundaries with
 no lines crossing or touching mid-line, 3D-floor specials aimed at sectors that
@@ -357,11 +357,12 @@ The parity checks additionally require the fog style/midtexture and front
 colormap, matching fade-room/control colormaps with sprite-cutting light
 blocks, all eight scenery variants (0 to 7, with `scenery.lua` making variant 6
 ordinary-lit and variant 7 semibright), the darkness pad's tag matching Lua,
-room 8's two bays (light 128 and 96, no colormap, nine posts each, in rows of
-ordinary, semibright, and fullbright), the two zero-height two-sky sectors
-(rooms 6 and 9) and their blocked `midpeg` edges, room 9's three tree-line
-edges (all two-sided, blocking, `midpeg`, RTTREE, with sky ceilings at 224 or
-the zero-height sky sector behind, and RTTREE's tips above 224), all forty ruler
+room 8's two bays (light 128 and 96, no colormap, nine posts each, in columns
+of ordinary, semibright, and fullbright posts), the two zero-height two-sky sectors
+(rooms 6 and 9) and their blocked `midpeg` edges, three tree-line edges across rooms 6 and 9 (all two-sided, blocking, `midpeg`,
+and RTTREE, with a zero-height sky sector behind room 6's edge and sky ceilings
+at 224 or a zero-height sky sector behind room 9's two edges), RTTREE's tips
+above 224, all forty ruler
 bands and their width, and every generated texture. Zero-height sky sectors are
 checked separately from the original deep sky pit rules.
 
