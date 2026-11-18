@@ -14,7 +14,7 @@ outside levels ("title and menus", "intermission", "voting", "podium", "cutscene
 With call stacks in the profile (builds after 9aa8798), also shows each function's time including what it called
 ("inclusive"), and which game functions the hottest code was called from. --dll maps addresses in other modules to
 their exports (like memset in VCRUNTIME140_APP.dll), given a copy of that DLL (the VCLibs .appx in the
-ring-racers-ze artifact is a zip that has one). Needs a program named objdump on PATH for that, which reads
+ring-racers-ze-uwp artifact is a zip that has one). Needs a program named objdump on PATH for that, which reads
 Windows DLLs (GNU objdump with PE support, or llvm-objdump linked or copied as objdump).
 """
 import bisect, collections, re, subprocess, sys

@@ -126,7 +126,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.pgo_generate && 'ring-racers-ze-pgo-instrumented' || 'ring-racers-ze' }}
+          name: ${{ inputs.pgo_generate && 'ring-racers-ze-uwp-pgo-instrumented' || 'ring-racers-ze-uwp' }}
           path: out/
 
       # The linker map of this build, which maps the addresses in the game's profile (uwp-profile.txt) to functions
@@ -138,6 +138,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ inputs.pgo_generate && 'ring-racers-ze-pgo-instrumented-symbols' || 'ring-racers-ze-symbols' }}
+          name: ${{ inputs.pgo_generate && 'ring-racers-ze-uwp-pgo-instrumented-symbols' || 'ring-racers-ze-uwp-symbols' }}
           path: symbols/
           if-no-files-found: error

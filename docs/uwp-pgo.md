@@ -4,7 +4,7 @@ The instrumented build records which engine code runs most often. It runs more
 slowly than the normal build; use the normal package again after collecting data.
 
 1. Run the **Build** GitHub Actions workflow manually with **pgo_generate**
-   enabled. Download **ring-racers-ze-pgo-instrumented**, and install its
+   enabled. Download **ring-racers-ze-uwp-pgo-instrumented**, and install its
    package using the usual Dev Mode installation instructions.
 2. Leave the prepared USB drive connected, with writable `E:\ringracers`.
    Play a varied session: Grand Prix with bots, Time Attack, menus, and online

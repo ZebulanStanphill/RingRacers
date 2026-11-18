@@ -3,7 +3,7 @@
 
 usage: crash-report.py latest-log.txt ring-racers-ze.map
 
-The map must come from the same build as the log (the ring-racers-ze-symbols artifact).
+The map must come from the same build as the log (the ring-racers-ze-uwp-symbols artifact).
 """
 import bisect, re, sys
 

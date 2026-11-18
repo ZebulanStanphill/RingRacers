@@ -92,7 +92,7 @@ The Xbox calls the drive `E:`, so the game looks for its files in `E:\ringracers
 
 ### Install the game
 
-1. Download the `ring-racers-ze` artifact of the latest successful **Build** run from this repository's [Actions](https://github.com/ZebulanStanphill/RingRacers/actions/workflows/build.yml) tab (GitHub asks you to sign in), or [build it yourself](#xbox-app-on-windows). It contains an `.msix` package, and a `.cer` certificate that only a Windows PC needs.
+1. Download the `ring-racers-ze-uwp` artifact of the latest successful **Build** run from this repository's [Actions](https://github.com/ZebulanStanphill/RingRacers/actions/workflows/build.yml) tab (GitHub asks you to sign in), or [build it yourself](#xbox-app-on-windows). It contains an `.msix` package, and a `.cer` certificate that only a Windows PC needs.
 2. In Xbox Device Portal, install the `.msix`. A console in Developer Mode doesn't need the certificate. Uninstall the game before installing a different build. Your config and saves are on the USB drive and stay. If you installed the earlier "Ring Racers" package, uninstall it too: this app is separate from it and doesn't update it.
 3. Start the game. You don't need to change the **App type** that Dev Home shows for it: on an Xbox One X, the game ran the same as an App and as a Game. If the game says at launch that it is running as an app, follow the steps it shows to change the type to Game. If you have changed the type, say so when you report a bug.
 
@@ -133,7 +133,7 @@ On a PC, include `latest-log.txt` from the game's own folder (`~/.ringracers` on
 
 Every push runs two workflows:
 
-- **Build** builds the Xbox app on Windows and uploads it as the `ring-racers-ze` artifact, which [Install the game](#install-the-game) explains how to use.
+- **Build** builds the Xbox app on Windows and uploads it as the `ring-racers-ze-uwp` artifact, which [Install the game](#install-the-game) explains how to use.
 - **Tests** runs the native regression tests and the VibeRant driver tests (on Direct3D 12 with WARP, on Vulkan, and on Metal) described in [tests/README.md](tests/README.md), checks that Linux and macOS still build, and uploads the Windows desktop build as `windows-desktop`.
 
 ### Xbox app on Windows
@@ -185,7 +185,7 @@ Linux builds include VibeRant Vulkan (`SRB2_CONFIG_VIBERANT_VULKAN`), and Window
 - `uwp/`: the Xbox app's launcher and `build.ps1`. The launcher links the game with libuwp from [worleydl/uwp-dep](https://github.com/worleydl/uwp-dep), SDL2, and [ANGLE for UWP](https://www.nuget.org/packages/ANGLE.WindowsStore).
 - `uwp/patches/`: changes to [worleydl's SDL2 for UWP](https://github.com/worleydl/SDL-uwp-gl) that build it for OpenGL ES, stop it from seeing each controller twice, and let Direct3D 12 take the window from ANGLE and give it back.
 - `uwp/pgo/`: recordings of play on an Xbox One X, which the build uses to optimize the engine.
-- `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ring-racers-ze-symbols` artifact from the same build), and name the functions in a logged crash.
+- `uwp/tools/`: scripts that summarize the performance lines of `latest-log.txt`, turn `uwp-profile.txt` into function timings (with the `ring-racers-ze-uwp-symbols` artifact from the same build), and name the functions in a logged crash.
 - [`uwp/tools/storage-probe/`](uwp/tools/storage-probe/): a separate Xbox Dev Mode app that measures storage volume identities and toggles a 512 MiB ballast file to test whether apps share internal space.
 - `src/hardware/r_viberant/`: the VibeRant driver, with its Vulkan backend in `vulkan/`. Its docs are in `docs/`.
 - `tests/`: the regression tests and test add-ons.
