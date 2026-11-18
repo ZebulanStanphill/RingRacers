@@ -55,8 +55,8 @@ Underwater and heat postprocessing always keeps its built-in shader.
 Options > Video > Screen Effect (`cv_scr_effect`) is 0 Nearest, 1 Sharp Bilinear, 2 SalCRT, or 3 SalCRT Sharp.
 
 - **Nearest and Sharp Bilinear** only choose how the RHI path scales its smaller backbuffer up to the window.
-  VibeRant draws at the frame's own size, so both modes leave it plain. Screen Scaling places the frame and
-  samples it point by point.
+  VibeRant draws at the frame's own size, so both modes leave it plain. Screen Scaling places the frame. Integer and
+  1:1 use point sampling, while desktop Fit uses linear filtering.
 - **SalCRT and SalCRT Sharp** run the game's CRT fragment shader over the finished frame as a last pass, after
   palette rendering's last step and before the present. The pass draws into a same-size render target for
   presentation. It reads the palette step's texture with palette rendering, or the screen otherwise. Screenshots
