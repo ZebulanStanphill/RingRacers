@@ -194,12 +194,153 @@ static int comparePolygonKeys(const void *p1, const void *p2)
 	return 0;
 }
 
-// [ZE]: Sorts indices into polygonSortKeys rather than the keys themselves: qsort moves
-// whole elements, and moving 64-byte keys cost more than the comparisons saved.
-static int comparePolygonIndices(const void *p1, const void *p2)
+// [ZE]: Each group keeps its first polygon and a count that becomes its write position.
+typedef struct
 {
-	// [ZE]: Compare through the keys that the indices point to.
-	return comparePolygonKeys(&polygonSortKeys[*(const UINT32 *)p1], &polygonSortKeys[*(const UINT32 *)p2]);
+	UINT32 representative;
+	UINT32 count;
+} PolygonSortGroup;
+
+// [ZE]: Reuse the grouping scratch space across frames. UINT32_MAX marks an empty slot.
+static UINT32 *polygonGroupSlots = NULL;
+static PolygonSortGroup *polygonSortGroups = NULL;
+static UINT32 *polygonGroupOrder = NULL;
+static UINT32 *polygonGroupForIndex = NULL;
+static size_t polygonGroupTableCapacity = 0;
+
+// [ZE]: Hash every field that defines a group, including both halves of the flags.
+static UINT32 hashPolygonGroupKey(const PolygonSortKey *key)
+{
+	UINT32 hash = 2166136261U;
+#define MIX_GROUP_FIELD(value) hash = (hash ^ (UINT32)(value)) * 16777619U
+	MIX_GROUP_FIELD(key->shader);
+	MIX_GROUP_FIELD(key->texture);
+	MIX_GROUP_FIELD(key->brightmap);
+	MIX_GROUP_FIELD(key->polyFlags);
+	MIX_GROUP_FIELD(key->polyFlags >> 32);
+	MIX_GROUP_FIELD(key->polyColor);
+	MIX_GROUP_FIELD(key->tintColor);
+	MIX_GROUP_FIELD(key->fadeColor);
+	MIX_GROUP_FIELD(key->lightLevel);
+	MIX_GROUP_FIELD(key->fadeStart);
+	MIX_GROUP_FIELD(key->fadeEnd);
+	MIX_GROUP_FIELD(key->directional);
+	MIX_GROUP_FIELD(key->lightTableId);
+#undef MIX_GROUP_FIELD
+
+	// [ZE]: Mix high bits into the low bits used to choose a slot.
+	hash ^= hash >> 16;
+	hash *= 0x85ebca6bU;
+	return hash ^ (hash >> 13);
+}
+
+// [ZE]: Resolve hash collisions by comparing fields, excluding the index tiebreak.
+static boolean equalPolygonGroupKeys(const PolygonSortKey *key1, const PolygonSortKey *key2)
+{
+	return key1->shader == key2->shader
+		&& key1->texture == key2->texture
+		&& key1->brightmap == key2->brightmap
+		&& key1->polyFlags == key2->polyFlags
+		&& key1->polyColor == key2->polyColor
+		&& key1->tintColor == key2->tintColor
+		&& key1->fadeColor == key2->fadeColor
+		&& key1->lightLevel == key2->lightLevel
+		&& key1->fadeStart == key2->fadeStart
+		&& key1->fadeEnd == key2->fadeEnd
+		&& key1->directional == key2->directional
+		&& key1->lightTableId == key2->lightTableId;
+}
+
+// [ZE]: Sort group numbers by their representative polygons using the original order.
+static int comparePolygonGroups(const void *p1, const void *p2)
+{
+	const PolygonSortGroup *group1 = &polygonSortGroups[*(const UINT32 *)p1];
+	const PolygonSortGroup *group2 = &polygonSortGroups[*(const UINT32 *)p2];
+	return comparePolygonKeys(&polygonSortKeys[group1->representative], &polygonSortKeys[group2->representative]);
+}
+
+// [ZE]: Grow all scratch arrays together. At most half the slots can be occupied.
+static void reservePolygonGroups(size_t tableSize)
+{
+	const size_t capacity = tableSize / 2;
+	if (tableSize <= polygonGroupTableCapacity)
+		return;
+	if (tableSize > SIZE_MAX / sizeof(*polygonGroupSlots) || capacity > SIZE_MAX / sizeof(*polygonSortGroups))
+		I_Error("Polygon sort scratch space is too large");
+
+	free(polygonGroupSlots);
+	free(polygonSortGroups);
+	free(polygonGroupOrder);
+	free(polygonGroupForIndex);
+	polygonGroupSlots = malloc(tableSize * sizeof(*polygonGroupSlots));
+	polygonSortGroups = malloc(capacity * sizeof(*polygonSortGroups));
+	polygonGroupOrder = malloc(capacity * sizeof(*polygonGroupOrder));
+	polygonGroupForIndex = malloc(capacity * sizeof(*polygonGroupForIndex));
+	if (!polygonGroupSlots || !polygonSortGroups || !polygonGroupOrder || !polygonGroupForIndex)
+		I_Error("Could not allocate polygon sort scratch space");
+	polygonGroupTableCapacity = tableSize;
+}
+
+// [ZE]: Group equal keys before sorting. Scatter polygons in submission order to
+// keep the original index tiebreak within each group.
+static void sortPolygonIndices(UINT32 *indices, UINT32 count)
+{
+	size_t tableSize = 2;
+	size_t mask;
+	UINT32 numGroups = 0;
+	UINT32 offset = 0;
+	UINT32 i;
+
+	if (!count)
+		return;
+	while (tableSize / 2 < count)
+	{
+		if (tableSize > SIZE_MAX / 2)
+			I_Error("Polygon sort table is too large");
+		tableSize *= 2;
+	}
+	reservePolygonGroups(tableSize);
+	mask = tableSize - 1;
+	// [ZE]: Clear only the slots used by this frame, even after a larger frame.
+	memset(polygonGroupSlots, 0xff, tableSize * sizeof(*polygonGroupSlots));
+
+	// [ZE]: Assign group numbers in order of first appearance using linear probing.
+	for (i = 0; i < count; i++)
+	{
+		const PolygonSortKey *key = &polygonSortKeys[i];
+		size_t slot = hashPolygonGroupKey(key) & mask;
+		UINT32 group = polygonGroupSlots[slot];
+		while (group != UINT32_MAX
+			&& !equalPolygonGroupKeys(key, &polygonSortKeys[polygonSortGroups[group].representative]))
+		{
+			slot = (slot + 1) & mask;
+			group = polygonGroupSlots[slot];
+		}
+		if (group == UINT32_MAX)
+		{
+			group = numGroups++;
+			polygonGroupSlots[slot] = group;
+			polygonSortGroups[group].representative = i;
+			polygonSortGroups[group].count = 0;
+			polygonGroupOrder[group] = group;
+		}
+		polygonGroupForIndex[i] = group;
+		polygonSortGroups[group].count++;
+	}
+
+	// [ZE]: Turn each group's count into its starting position in the sorted array.
+	qsort(polygonGroupOrder, numGroups, sizeof(*polygonGroupOrder), comparePolygonGroups);
+	for (i = 0; i < numGroups; i++)
+	{
+		PolygonSortGroup *group = &polygonSortGroups[polygonGroupOrder[i]];
+		UINT32 start = offset;
+		offset += group->count;
+		group->count = start;
+	}
+
+	// [ZE]: Each group's members occupy consecutive positions in ascending index order.
+	for (i = 0; i < count; i++)
+		indices[polygonSortGroups[polygonGroupForIndex[i]].count++] = i;
 }
 
 // [ZE]: Fills the sort key of every polygon. With shaders, the order is shader, texture,
@@ -282,8 +423,7 @@ void HWR_RenderBatches(void)
 	FBITFIELD nextPolyFlags = 0;
 	FSurfaceInfo currentSurfaceInfo;
 	FSurfaceInfo nextSurfaceInfo;
-
-	int i;
+	// [ZE]: The loop counter that filled polygonIndexArray went with that loop into sortPolygonIndices.
 
 	if (!currently_batching)
 		I_Error("HWR_RenderBatches called without starting batching");
@@ -314,12 +454,8 @@ void HWR_RenderBatches(void)
 		polygonSortKeysAllocSize = polygonArrayAllocSize;
 	}
 	buildPolygonSortKeys(cv_glshaders.value && gl_shadersavailable);
-	for (i = 0; i < polygonArraySize; i++)
-	{
-		polygonIndexArray[i] = i;
-	}
-	// [ZE]: Sort the indices by their keys.
-	qsort(polygonIndexArray, polygonArraySize, sizeof(UINT32), comparePolygonIndices);
+	// [ZE]: Sort groups of equal keys, retaining submission order within each group.
+	sortPolygonIndices(polygonIndexArray, polygonArraySize);
 	ps_hw_batchsorttime = I_GetPreciseTime() - ps_hw_batchsorttime;
 	// sort order
 	// 1. shader

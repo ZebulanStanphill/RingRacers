@@ -1,0 +1,140 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <random>
+#include <vector>
+#include "doomtype.h"
+
+[[noreturn]] static void I_Error(const char *message, ...)
+{
+	std::fprintf(stderr, "%s\n", message);
+	std::abort();
+}
+
+@@KEY@@
+
+namespace grouped
+{
+@@COMPARE@@
+#undef COMPARE_KEY_FIELD
+
+static PolygonSortKey *polygonSortKeys;
+@@SORT@@
+}
+
+namespace wrong
+{
+using grouped::comparePolygonKeys;
+static PolygonSortKey *polygonSortKeys;
+@@BAD_SORT@@
+}
+
+namespace baseline
+{
+static const PolygonSortKey *polygonSortKeys;
+@@BASELINE@@
+}
+#undef COMPARE_KEY_FIELD
+
+static unsigned cases;
+
+static std::vector<UINT32> check(std::vector<PolygonSortKey> keys, const char *scenario)
+{
+	for (UINT32 i = 0; i < keys.size(); i++)
+		keys[i].index = i;
+
+	std::vector<UINT32> actual(keys.size(), UINT32_MAX);
+	std::vector<UINT32> expected(keys.size(), UINT32_MAX);
+	grouped::polygonSortKeys = keys.data();
+	baseline::polygonSortKeys = keys.data();
+	grouped::sortPolygonIndices(actual.data(), actual.size());
+	if (!keys.empty())
+		baseline::sortPolygonIndices(expected.data(), expected.size());
+
+	const auto mismatch = std::mismatch(actual.begin(), actual.end(), expected.begin());
+	if (mismatch.first != actual.end())
+	{
+		std::fprintf(stderr, "%s, case %u with %zu polygons, slot %td: got %u, expected %u\n",
+			scenario, cases, keys.size(), mismatch.first - actual.begin(), *mismatch.first, *mismatch.second);
+		std::abort();
+	}
+	cases++;
+	return expected;
+}
+
+static std::vector<PolygonSortKey> repeatedKeys(UINT32 count, std::mt19937 &random)
+{
+	std::vector<PolygonSortKey> choices(64);
+	// Include interleaved before-sky and skywall or horizon keys with index ties.
+	choices[0].shader = -2;
+	choices[1].shader = -1;
+	for (size_t i = 2; i < choices.size(); i++)
+	{
+		PolygonSortKey &key = choices[i];
+		key.shader = random() % 4;
+		key.texture = random() % 8;
+		key.brightmap = random() % 4;
+		const UINT64 highFlags = random() % 4;
+		key.polyFlags = (highFlags << 32) | (random() % 4);
+		key.polyColor = random() % 4;
+		key.tintColor = random() % 4;
+		key.fadeColor = random() % 4;
+		key.lightLevel = random() % 4;
+		key.fadeStart = random() % 4;
+		key.fadeEnd = random() % 4;
+		key.directional = random() % 2;
+		key.lightTableId = random() % 4;
+	}
+	std::vector<PolygonSortKey> keys(count);
+	for (PolygonSortKey &key : keys)
+		key = choices[random() % choices.size()];
+	return keys;
+}
+
+int main()
+{
+	PolygonSortKey low{};
+	PolygonSortKey high{};
+	high.lightTableId = 1;
+	check({}, "empty");
+	check({low}, "one polygon");
+	check({high, low}, "two polygons");
+
+	std::vector<PolygonSortKey> lightTables{high, low, high, low};
+	const auto expected = check(lightTables, "light table IDs");
+	for (UINT32 i = 0; i < lightTables.size(); i++)
+		lightTables[i].index = i;
+	std::vector<UINT32> wrongOrder(lightTables.size(), UINT32_MAX);
+	wrong::polygonSortKeys = lightTables.data();
+	wrong::sortPolygonIndices(wrongOrder.data(), wrongOrder.size());
+	assert((expected == std::vector<UINT32>{1, 3, 0, 2}));
+	assert((wrongOrder == std::vector<UINT32>{0, 1, 2, 3}));
+
+	high.lightTableId = 0;
+	high.polyFlags = UINT64_C(1) << 63;
+	low.polyFlags = high.polyFlags >> 1;
+	check({high, low, high, low}, "high polygon flags");
+
+	PolygonSortKey beforeSky{};
+	PolygonSortKey skywall{};
+	beforeSky.shader = -2;
+	skywall.shader = -1;
+	check({skywall, low, beforeSky, skywall, beforeSky, low}, "before-sky and skywall order");
+
+	std::mt19937 random(0x52524253);
+	for (UINT32 count : {3, 33, 7, 257, 0, 15, 1025, 2, 4097, 17, 8193, 0, 4096})
+		check(repeatedKeys(count, random), "growing and shrinking frames");
+
+	check(std::vector<PolygonSortKey>(4096, low), "all keys equal");
+	std::vector<PolygonSortKey> distinct(8193);
+	for (UINT32 i = 0; i < distinct.size(); i++)
+		distinct[i].texture = distinct.size() - i;
+	check(distinct, "all keys distinct");
+
+	for (UINT32 trial = 0; trial < 200; trial++)
+		check(repeatedKeys(random() % 4097, random), "seeded frames with ties");
+
+	std::printf("%u permutations matched, and the negative control disagreed\n", cases);
+}

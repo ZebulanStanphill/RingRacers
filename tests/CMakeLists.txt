@@ -20,7 +20,7 @@ file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/a
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
     ${templates} fixtures/sprite-rotation-baseline.c fixtures/spring-clip-reference.inc source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
-    fixtures/block-lines-baseline.c
+    fixtures/block-lines-baseline.c fixtures/batch-sort-baseline.c
     "${RR_SOURCE_DIR}/src/p_map.c"
     "${RR_SOURCE_DIR}/src/p_maputl.c"
     "${RR_SOURCE_DIR}/src/p_maputl.h"
@@ -190,6 +190,7 @@ regression(front_bbox_uwp front_bbox _UWP HWRENDER)
 regression(front_bbox_desktop front_bbox HWRENDER)
 regression(front_bbox_both front_bbox HWRENDER HAVE_VIBERANT)
 regression(batch_sort_keys batch_sort HWRENDER)
+regression(batch_sort_groups batch_sort_groups)
 regression(horizon_visibility horizon HWRENDER)
 regression(void_wall void_wall _UWP HWRENDER)
 regression(flat_bleed flat_bleed _UWP HWRENDER)

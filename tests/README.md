@@ -584,8 +584,8 @@ Use the CTest filter under Running to select the cases below by name.
   `surface-light-semibright` scene draws a semibright sprite at that depth and expects row 4.
 - **Batch sort keys:** run `ctest -R '^batch_sort_keys'` to check Legacy GL
   batch order and `PF_BeforeSky`. The test extracts the production sort-key
-  struct, key builder, comparator, collection, and `HWR_RenderBatches` draw loop
-  from `hw_batching.c`, with a recording driver. Skywalls and horizon lines sort
+  struct, key builder, grouped sort, collection, and `HWR_RenderBatches` draw
+  loop from `hw_batching.c`, with a recording driver. Skywalls and horizon lines sort
   first in submission order, then shader, texture, brightmap, polyflags, colors,
   and light fields (including colors above and below `0x80000000`). The test
   checks submission order for identical states and the shaderless order.
@@ -603,6 +603,16 @@ Use the CTest filter under Running to select the cases below by name.
   scene. The calls must draw the flagged wall, occluder, and ordinary wall in
   that order. An unflagged wall must still draw after the occluder. The checks
   fail if the key builder drops the flagged group.
+
+- **Hardware batch sorting:** `batch_sort_groups` compares the production grouped
+  sort with the previous index sort, frozen in `fixtures/batch-sort-baseline.c`.
+  It checks empty, single, and two-polygon batches, all-equal and all-distinct
+  keys, and seeded frames with many ties. Frame sizes grow and shrink in the
+  same process to exercise scratch space reuse. Separate cases check the order
+  of before-sky and skywall polygons, light table IDs, and the high 32 bits of
+  polygon flags. A sort that ignores light table IDs produces a different
+  permutation in the light table case.
+
 - **Sprite brightmaps:** run `ctest -R '^sprite_brightmap'` to check brightmap
   admission, rotation, cache lifetime, and binding. The test runs the shared
   Software lookup, real patch converters and pixel reader, production sprite

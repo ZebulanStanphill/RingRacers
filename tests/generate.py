@@ -527,6 +527,30 @@ def generate(engine, output):
                      ("unsortedVertexArray", "FOutVector"), ("polygonSortKeys", "PolygonSortKey"),
                      ("new_index_array", "unsigned int")]:
         batch_code = batch_code.replace(lhs + " = malloc(", lhs + " = (" + typ + " *)malloc(")
+    group_sort = batching.section("// [ZE]: Each group keeps its first polygon",
+                                  "// [ZE]: Fills the sort key")
+    for lhs, typ in [("polygonGroupSlots", "UINT32"), ("polygonSortGroups", "PolygonSortGroup"),
+                     ("polygonGroupOrder", "UINT32"), ("polygonGroupForIndex", "UINT32")]:
+        assignment = lhs + " = malloc("
+        cast = lhs + " = (" + typ + " *)malloc("
+        batch_code = batch_code.replace(assignment, cast)
+        group_sort = group_sort.replace(assignment, cast)
+    # Remove lightTableId from both hash and equality so these keys always share a group.
+    light_table_fields = ["\tMIX_GROUP_FIELD(key->lightTableId);\n",
+                          "\n\t\t&& key1->lightTableId == key2->lightTableId"]
+    bad_group_sort = group_sort
+    for field in light_table_fields:
+        if bad_group_sort.count(field) != 1:
+            raise ValueError("Could not inject the batch sort light table negative control")
+        bad_group_sort = bad_group_sort.replace(field, "")
+    render(templates / "batch_sort_groups.cpp.in", {
+        "KEY": batching.section("// [ZE]: What the sort compares", "// [ZE]: One compact key"),
+        "COMPARE": batching.section("// [ZE]: Compares one field", "// [ZE]: Each group keeps"),
+        "SORT": group_sort,
+        "BAD_SORT": bad_group_sort,
+        "BASELINE": Source(templates.parent / "fixtures/batch-sort-baseline.c").section(
+            "// Frozen index sort", "\n// END"),
+    }, output / "batch_sort_groups.cpp")
     # The three local new_array declarations have distinct pointer types.
     batch_code = batch_code.replace("new_array = malloc(polygon", "new_array = (PolygonArrayEntry *)malloc(polygon")
     batch_code = batch_code.replace("new_array = malloc(", "new_array = (FOutVector *)malloc(")
