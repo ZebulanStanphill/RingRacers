@@ -251,90 +251,89 @@ What the presenter uses of mtl12 (`mtl12.h`):
 
 ## Validation
 
-Metal's validation is turned on from outside the program, with environment variables that have to be set before the
-device is made (`man MetalValidation`): `MTL_DEBUG_LAYER=1` (API validation, which stops the program at the first
-misuse; with `MTL_DEBUG_LAYER_WARNING_MODE=assert`, at the first warning too) and `MTL_SHADER_VALIDATION=1` (which
-checks what the shaders read and write as they run). The log's device line says which of them the device was made
-with, by the classes Metal wrapped it in: `MTLDebugDevice` for the first, and `MTLGPUDebugDevice` or
-`MTLLegacySVDevice` for the second. With `DeviceOptions::validation` (`Core_VulkanValidation`; the game's `-mtldebug`,
-the counterpart of `-vkdebug`), each command buffer also says which of its passes failed. `rr_mtl12::ValidationErrors()` counts failed command buffers and the faults
-shader validation logs with them, such as a function reading a texture that was never bound. Completion handlers
-run on Metal's threads, so what they have to say is kept and written to the log from the driver's thread.
+Set Metal's validation variables before creating the device (`man MetalValidation`). `MTL_DEBUG_LAYER=1` stops
+the program at the first API misuse, and `MTL_DEBUG_LAYER_WARNING_MODE=assert` also stops it at the first warning.
+`MTL_SHADER_VALIDATION=1` checks shader reads and writes at run time. The device log line identifies validation by
+the wrapper classes: `MTLDebugDevice` for API validation and `MTLGPUDebugDevice` or `MTLLegacySVDevice` for
+shader validation.
+
+Enable `DeviceOptions::validation` (`Core_VulkanValidation` through the game's `-mtldebug`, the counterpart of
+`-vkdebug`) to report which passes failed in each command buffer. `rr_mtl12::ValidationErrors()` counts failed
+command buffers and the shader validation faults logged with them, such as reading an unbound texture. Completion
+handlers run on Metal's threads and save their messages for the driver's thread to log.
 
 ## Autorelease pools
 
-Objective-C's frameworks hand out objects that the caller doesn't own by putting them in the thread's innermost
-autorelease pool, which releases them when it is drained. A Cocoa program's main thread has one per turn of its event
-loop. The game's main loop is C++ and has none (SDL makes one only inside its own calls), so an object autoreleased
-there with no pool open is kept for as long as the thread lives. mtl12 and the presenter therefore open a pool in
-every function that calls into Metal, AppKit, or Core Animation.
+Open an autorelease pool in every mtl12 or presenter function that calls Metal, AppKit, or Core Animation. The
+game's C++ main loop has no pool, and SDL opens one only inside its calls. Objective-C frameworks put objects
+the caller doesn't own in the thread's innermost pool for release when it drains. Cocoa's main thread has a
+pool per event-loop turn. Without a pool, autoreleased objects stay for the life of the thread.
 
-Whether that covered everything was measured on the two Macs with the Objective-C runtime's own report
-(`OBJC_DEBUG_MISSING_POOLS=YES`, which logs each object autoreleased with no pool in place, by thread). It didn't:
-a replay left about a thousand reports on the driver's thread, all of them the device, autoreleased by
-`-[IOGPUMetalResource dealloc]` each time the driver released a texture or a buffer outside a pool (found with a
-library loaded for the purpose that printed where; mostly the thousand textures freed at shutdown). Each kept eight
-bytes and a reference to the device that was never given back. The destructors of mtl12's resources, pipeline
-states, and lists now open a pool too, as does the completion handler, and the same replay has no report on the
-driver's thread: `capture.py hardware`'s `autorelease` scene checks that (`tests/README.md`, "On a Mac").
+On both Macs, `OBJC_DEBUG_MISSING_POOLS=YES` logged each object autoreleased without a pool by thread. A replay
+logged about a thousand reports on the driver's thread, mostly for the thousand textures freed at shutdown.
+A library loaded to trace the calls showed they were all the device, which `-[IOGPUMetalResource dealloc]`
+autoreleased each time the driver released a texture or buffer outside a pool. Each kept eight bytes and a
+device reference that was never released. Resource, pipeline-state, and list destructors and the completion
+handler now open pools. The same replay has no driver-thread reports, which `capture.py hardware` checks in the
+`autorelease` scene (`tests/README.md`, "On a Mac").
 
-The other reports, four to eight per presented frame, are on Metal's and Core Animation's own threads, from their own
-code (`CAMetalLayer`, the arrays and numbers of a presented drawable, a frame-pacing record), on macOS 15 and 27
-alike; a pool around the driver's completion handler doesn't change their number. They don't accumulate: without the
-debug variable (with it the runtime leaks what it reports), the game presented 39,614 frames in eleven minutes on
-the M4 Pro with its memory between 272,912 and 273,024 KB from the first minute on.
+Metal and Core Animation still report four to eight per presented frame on their own threads and from their own
+code (`CAMetalLayer`, a presented drawable's arrays and numbers, and a frame-pacing record) on macOS 15 and 27.
+The driver's completion-handler pool doesn't change the count. They don't accumulate in normal runs. With the
+debug variable off (the runtime leaks what it reports when it is on), the M4 Pro presented 39,614 frames in
+eleven minutes, with memory between 272,912 and 273,024 KB from the first minute onward.
 
 ## A command buffer that fails
 
-Metal reports what went wrong on the GPU per command buffer (`MTLCommandBufferError`): a timeout, a page fault, no
-memory left, an invalid resource, the device removed. Direct3D 12 has one way for the GPU's work to fail, the device
-being removed, and that is what any of them is to the driver: a command buffer that failed did some part of its
-uploads, draws, and copies and not the rest, nothing says which, and the driver's bookkeeping already counts the
-textures as uploaded. From the first failure on, mtl12's fences read as `UINT64_MAX`, waits fail, `Signal` fails, and
-`GetDeviceRemovedReason` gives a reason by Metal's code: `DXGI_ERROR_DEVICE_REMOVED` for the device removed,
-`DXGI_ERROR_DEVICE_HUNG` for a timeout or a device the system took away after too many of them,
-`DXGI_ERROR_DRIVER_INTERNAL_ERROR` for an internal error, and `DXGI_ERROR_DEVICE_RESET` for the rest. The driver
-then ends the frame as it does for a removed Direct3D 12 device, by stopping the game with an error that names the
-reason; the log has Metal's own description and code. There is no recovery short of starting the renderer again,
-which makes a new device.
+Any failed Metal command buffer counts as device removal to the driver. Metal reports the GPU error per command
+buffer (`MTLCommandBufferError`), such as a timeout, page fault, out-of-memory error, invalid resource, or device
+removal. Direct3D 12 reports GPU work failures as removal. A failed buffer can finish some uploads, draws, and
+copies, with no indication of which finished, while the driver already counts the textures as uploaded.
 
-Before, only the device removed counted. Any other failure was logged and its fence completed as if the work had
-been done, so a readback could return pixels that were never written. No command buffer has failed on any GPU this
-ran on; the driver test has mtl12 treat a command buffer as failed (`FailNextSubmissionForTest`) to check the path
-(`tests/README.md`, "Metal driver harness").
+After the first failure, mtl12 fences read as `UINT64_MAX`, waits fail, and `Signal` fails.
+`GetDeviceRemovedReason` maps Metal's code to `DXGI_ERROR_DEVICE_REMOVED` for removal, `DXGI_ERROR_DEVICE_HUNG`
+for timeouts or a device taken away after too many timeouts, `DXGI_ERROR_DRIVER_INTERNAL_ERROR` for internal
+errors, and `DXGI_ERROR_DEVICE_RESET` for the rest. The driver ends the frame as for a removed Direct3D 12
+device, stopping the game with an error naming the reason. The log includes Metal's description and code.
+Recovery requires restarting the renderer to create a new device.
+
+Previously, only Metal device removal counted. Other failures were logged and their fences completed as if work
+had finished, so a readback could return unwritten pixels. No command buffer has failed on any tested GPU.
+The driver test injects a failure with `FailNextSubmissionForTest` (`tests/README.md`, "Metal driver harness").
 
 ## Apple's paravirtual GPU
 
-A macOS virtual machine's GPU ("Apple Paravirtual device": GitHub's runners, and any VM made with Apple's
-Virtualization framework) has a driver that passes Metal's commands to the host, and that driver has a bug the game
-runs into. It writes each encoder's commands into chunks of 131,072 bytes. When an encoder ends with its last chunk
-within four bytes of full, the first command of the next encoder made on the same command buffer is tested against
-the old chunk's fill, found not to fit the new, empty chunk, and the driver stops the program at an assertion of its
-own (`-[AppleParavirtCommandBuffer endCurrentChunk]`, "`_commandCurrentStorage.currentOffset`"). A race's 3D view is
-one pass of about 600 draws and 350,000 bytes, and a draw's size varies, so by the arithmetic of it the pass ends on
-such a fill about once in 16,000 frames: the first time it happened was 80 frames into Aerial Highlands, in the copy
-of the screen that follows the 3D view. Found by running the failing frame under `lldb` on a runner and reading the driver's code around
-the assertion; the sizes were measured there (macOS 15.8, with shader validation: a draw 350 to 620 bytes with the
-buffers it binds, a pipeline state 68, a texture 20, a new pass 850, a copy up to 200).
+On "Apple Paravirtual device", mtl12 ends render passes after 48 draws and blit encoders after 96 copies to
+avoid a driver assertion. `CreateDevice` identifies the device by its class (`AppleParavirt...`). The next
+draw or copy opens another encoder. Results are the same because mtl12's passes load and store everything.
+Other devices have no limit.
 
-An encoder that never fills a chunk can't end on a full one. So on this device (`CreateDevice` knows it by the class
-of the device, `AppleParavirt...`) a list ends a pass after 48 draws and a blit encoder after 96 copies, and the
-next draw or copy begins another, which is the same as far as the result goes: mtl12's passes load and store
-everything. Even at twice the measured sizes that stays under a chunk. Other devices are not affected and get no
-limit. With the limit, 213 replays (436,000 frames) ran without the assertion, where the estimate without it is
-one stop in every eight replays. `-mtldebug` made the same bug show sooner, because Metal then ends every pass with
-a small blit encoder of its own; it runs with the limit too.
+The virtual GPU on GitHub's macOS runners and on any VM made with Apple's Virtualization framework passes
+commands to the host in chunks of 131,072 bytes per encoder. If an encoder ends within four bytes of filling
+its last chunk, the driver tests the next encoder's first command against the old fill on the same command buffer.
+It concludes the command won't fit the new, empty chunk and asserts
+(`-[AppleParavirtCommandBuffer endCurrentChunk]`, "`_commandCurrentStorage.currentOffset`").
+
+A race's 3D view uses one pass of about 600 draws and 350,000 bytes. Draw sizes vary, so that pass is estimated
+to end at such a fill about once in 16,000 frames. It first happened 80 frames into Aerial Highlands, in the
+screen copy after the 3D view. Running that frame under `lldb` on a runner exposed the assertion and the driver
+code around it. Measurements there (macOS 15.8, shader validation on) were 350 to 620 bytes for a draw with its
+buffer bindings, 68 for a pipeline state, 20 for a texture, 850 for a new pass, and up to 200 for a copy.
+
+The limits stay under one chunk even at twice the measured sizes. With them, 213 replays (436,000 frames) ran
+without the assertion. Without them, the estimate is one stop every eight replays. `-mtldebug` exposed the same
+bug sooner because Metal ends each pass with a small blit encoder of its own. It runs with the limits too.
 
 ## What can differ from the other backends
 
-As on Vulkan, the driver's logic, shaders, textures, and states are the same, and what is left is arithmetic: another
-shader compiler rounds differently in the last bit, and depth is 32-bit float where Direct3D's is 24-bit. Besides:
+The driver uses the same logic, shaders, textures, and states as Vulkan. Another shader compiler can round the
+last bit differently, and Metal uses 32-bit float depth where Direct3D uses 24-bit depth. Other differences:
 
-- **Depth bias** on a float depth buffer is in units of the depth value's own precision rather than of 1/2^24, as on
-  Vulkan devices without 24-bit depth.
-- **Strips** always restart at the index 0xFFFF (or 0xFFFFFFFF) in Metal. Direct3D 12 only does when the pipeline
-  state says so, and the driver's never do; it would take a strip of 65,536 vertices to tell.
-- **`SV_VertexID`** counts from the draw's first vertex in Metal, as in Vulkan, and from zero in Direct3D. The
+- **Depth bias** on a float depth buffer uses the depth value's own precision as its unit in place of 1/2^24,
+  as on Vulkan devices without 24-bit depth.
+- **Strips** always restart at index 0xFFFF (or 0xFFFFFFFF) in Metal. Direct3D 12 restarts only when the pipeline
+  state enables it. The driver never enables it, and it would take a strip of 65,536 vertices to tell.
+- **`SV_VertexID`** counts from the draw's first vertex in Metal and Vulkan, and from zero in Direct3D. The
   driver's only use draws from vertex zero.
 
 ## What was tested, and what wasn't
