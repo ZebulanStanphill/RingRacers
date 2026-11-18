@@ -1,11 +1,14 @@
 # Native regression tests
 
-These tests run on Linux, macOS, or WSL without game assets, an Xbox, SDL,
-Direct3D, or vcpkg. Requirements: Python 3.9+, Git, CMake 3.24+, and `clang++`
+The native suite checks production engine code on Linux, macOS, or WSL without
+game assets, an Xbox, SDL, Direct3D, or vcpkg. To run it, use the commands below
+with Python 3.9+, Git, CMake 3.24+, and `clang++`
 with its AddressSanitizer/UndefinedBehaviorSanitizer runtimes. Ubuntu's Clang and
-Apple's Command Line Tools work. Configuration fetches pinned glslang and SPIRV-Cross sources and needs network access on the first run. Native MSVC/clang-cl is not supported by this
-harness; the Windows `warp` job below compiles the VibeRant driver, with its Direct3D 12 backend, and its shaders, and
-the Build workflow (`.github/workflows/build.yml`, `uwp/build.ps1`) builds and packages the UWP app.
+Apple's Command Line Tools work. The first configuration needs network access to fetch pinned glslang and
+SPIRV-Cross sources. This harness does not support native MSVC/clang-cl. The
+Windows `warp` job compiles the VibeRant driver with its Direct3D 12 backend and
+shaders. The Build workflow (`.github/workflows/build.yml`, `uwp/build.ps1`)
+builds and packages the UWP app.
 
 ## Running
 
@@ -18,18 +21,18 @@ cmake --build build/regression --parallel 4
 ctest --test-dir build/regression --output-on-failure --output-junit results.xml
 ```
 
-The tests extract production code from this checkout; set `RR_SOURCE_DIR` to test
-another one. `cmake --build` regenerates harnesses when tested engine files or
+Set `RR_SOURCE_DIR` to extract and test production code from another checkout.
+By default, the tests use this checkout. `cmake --build` regenerates harnesses when tested engine files or
 templates change. Variants built with `_UWP` also define `HAVE_VIBERANT`, as UWP
 builds have the VibeRant driver by default; engine code under `HAVE_VIBERANT`
 does not assume `_UWP` (see "VibeRant without `_UWP`" under Coverage). The standalone test project does not configure the
 engine's normal CMake project or change its source files.
 
-Which hardware driver draws is decided at run time by `HWR_VibeRant()`
+The hardware driver is selected at run time by `HWR_VibeRant()`
 (`src/hardware/hw_driver.h`): the constant 1 with `_UWP`, the constant 0 without
 `HAVE_VIBERANT`, and the setting `hwr_viberant` with `HAVE_VIBERANT` but not `_UWP`, a build
 that has both drivers. The `_uwp` and `_desktop` variants therefore run the
-VibeRant and the OpenGL behaviour respectively. A variant named `_both` is
+VibeRant and OpenGL behavior, respectively. A variant named `_both` is
 built with `HAVE_VIBERANT` only, links the engine's own `hw_driver.c` (through
 `tests/hw-driver.cpp`) and sets `hwr_viberant` to true and then false in one
 executable, expecting the `_uwp` results and then the `_desktop` ones.
@@ -47,18 +50,19 @@ compiled without it (below).
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
 builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop`, `front_bbox_desktop` and `semibright_light_desktop`.
-The code that now picks a driver at run time also has `_both` variants: `transparency_both`, `front_bbox_both`,
+Driver selection at run time also has `_both` variants: `transparency_both`, `front_bbox_both`,
 `semibright_light_both`, `sky_claim_both` and `horizon_cache_both`.
-Where the preprocessed code is identical, a second executable would only repeat
-the first, so the test runs the cases for each runtime setting (for example both
-renderers) in one executable.
+Where the preprocessed code is identical, one executable tests every runtime
+setting (for example, both renderers).
 
 Sanitizers are enabled by default and any reported undefined behavior fails the
 test. Use `-DRR_SANITIZERS=OFF` only for a toolchain without sanitizer support.
 Assertions remain enabled in every build configuration, including Release.
-To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
+For one group, use a filter such as `ctest --test-dir build/regression -R '^online_' -V`.
 
 ## Coverage
+
+Use the CTest filter under Running to select the cases below by name.
 
 - **Metal presenter, a window out of sight:** `metal_present_seen` runs the production
   decision of VibeRant Metal's presenter (`metal/mtl_present_seen.h`, plain C++; the
@@ -74,8 +78,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   ten times in the first ten minutes and once per five minutes after. A window whose
   drawables the system takes without showing them (a locked screen) gets frames at
   that pace, and nothing waits. A window the system hands drawables back to slowly
-  makes the game wait six times in the first minute and four in the ten after. Also:
-  no probe goes out while two drawables are unaccounted for unless reports are late,
+  makes the game wait six times in the first minute and four in the ten after. No probe goes out while two drawables are unaccounted for unless reports are late,
   the pause after a slow probe doubles from one second to five minutes and ends after
   thirty quick ones or when the window is in sight, a minimized or hidden window gets
   nothing, `-mtlunseen` presents regardless, and a layer in sight without a drawable
@@ -88,22 +91,21 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 
 - **Metal presenter, what a drawable holds:** `metal_present_check` runs the production
   comparison behind `-mtlcheck` (`metal/mtl_present_check.h`, plain C++) on drawables
-  made here from a frame the way the driver's placement makes them: at the frame's own
+  made from a frame using the driver's placement: at the frame's own
   size, a level's rounding apart, centered in a larger drawable, a 320x200 frame as
   Fit and as Integer on a 1024x768 screen, and a 1280x720 frame made smaller and
-  larger. Each must match; and each of these must not: a black drawable, red and blue
+  larger. Each must match. The following must fail: a black drawable, red and blue
   swapped, upside down, another frame, moved by four pixels, scaled where it was meant
   at its own size, filtered half a pixel off, ten levels too bright, a pixel outside
   the rectangle that isn't black, and a rectangle that isn't in the drawable. Five
   defects put into the header one at a time (not kept) each failed an assertion.
   `metal_capture_judging` (`tests/metal-frames/test_capture.py`) checks how
-  `capture.py` judges a run by its log ("Metal frames", below).
+  `capture.py` judges the run log ("Metal frames", below).
 
 - **Texture atlas:** `viberant_texture_atlas` tests the production shelf allocator
   with rounded dimensions, full pages, fence-deferred frees, coalescing, and
   empty-page reset. GPU sampling and Xbox resource creation timing require
   renderer captures and device testing; see [atlas notes](../docs/viberant-texture-atlas.md).
-
 
 - **Plane polygon loops:** `plane_polygon_loops` runs the production plane polygon
   construction and seg adjustment on a four-subsector map whose partitions cross a
@@ -126,13 +128,13 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   disclaimer visibility and progression guards, natural durations, key mapping
   and event latch behavior. `startup_gamepads` executes the initial SDL
   controller-added event drain and open handler against mocks, checking failed
-  opens, instance IDs, preserved buttons and no duplicate opens. The pre-fix
+  opens, instance IDs, preserved buttons, and no duplicate opens. The pre-fix
   ticker fails the UWP immediate associates-card skip case. See
   [timing analysis and device limitations](../docs/uwp-intro-skip.md).
 
 - **Floor sprites under the floor:** `splat_clear` executes the production
   `HWR_FloorOverFloorSprite` and `HWR_ClearFloorUnderSprite` (cut from
-  `hw_main.c`) and the lines of `HWR_DrawSprite` that call them after
+  `hw_main.c`) and their calls in `HWR_DrawSprite` after
   `HWR_SpriteVertices`, with the level's `P_FloorzAtPos`, `P_CeilingzAtPos`, and
   `P_BaseStepUp` stubbed. For a level and a sloped sprite (a camera that isn't over
   its center), a floor exactly the clearance under the sprite, far under it, or a
@@ -163,10 +165,9 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   the sky walls that follow.
 
 - **Quit signals:** `quit_signal` executes the production handler of SIGINT and
-  SIGTERM. The first signal must only leave a note for the event loop
-  (`I_QuitSignaled`), with the program still running and the handler still in
-  place; a second one must end the process at once, without running exit
-  handlers. The old handler ran the whole shutdown from inside the signal, which
+  SIGTERM. The first signal must set only `I_QuitSignaled` for the event loop and leave
+  the program and handler in place. The second must exit immediately without
+  running exit handlers. The old handler ran the whole shutdown from inside the signal, which
   could hang or crash when the signal had interrupted an allocation or a
   graphics driver call.
 
@@ -175,15 +176,15 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   events with nothing reading the queue (stick movement during the loading
   screen) must still register the pad once, and the newest 127 events must
   survive in order. The pre-fix queue wrapped at 128 events and lost the added
-  event, so the pad's input was ignored. Also checks a removal and a second pad
-  across an overflow, and bookkeeping that posts an event of its own.
+  event, so the pad's input was ignored. It checks removal and a second pad across an overflow, and bookkeeping
+  that posts its own event.
 
 - **Xbox Fullscreen row:** `video_fullscreen` and `video_fullscreen_uwp` execute
-  the production SDL device-family query, menu definition, removal helper and
+  the production SDL device-family query, menu definition, removal helper, and
   refresh function through the opening hook in `M_InitOptions`. Only Xbox in the UWP variant removes Fullscreen; desktop,
-  mobile and unknown UWP families retain it. Check all other rows stay in order,
+  mobile, and unknown UWP families retain it. Check all other rows stay in order,
   the spacer directly precedes Screen Scaling after removal, repeated refreshes
-  do nothing, and the helper handles empty, absent, first and last items.
+  do nothing, and the helper handles empty, absent, first, and last items.
   SDL's device-family result is mocked; real device detection and menu drawing
   require the UWP app on a device.
 
@@ -195,15 +196,14 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   setting callbacks and the SDL command-line selection block with real renderer
   mappings and driver lifetime bookkeeping. Fresh child processes check every
   setting the build lists, `-software`, `-opengl`, `-d3d12`, `-vulkan`, and `-metal` where
-  available, and `-renderer` with every listed name, and that the driver and
-  the backend that start are the ones the setting names.
+  available, and `-renderer` with every listed name, and that the selected driver and backend start.
   The Metal-only case also checks the exact list of settings and the default the
   production `cvars.cpp` gives the variable, and every variant checks that the
   name of a renderer the build doesn't list selects nothing.
-  Config-only cases execute the callback and model application of its queued
-  setting; they do not create SDL contexts or initialize a GPU driver.
+  Config-only cases execute the callback and model applying its queued setting
+  without creating SDL contexts or initializing a GPU driver.
   Check stale startup queues, repeated changes before a frame, command-line
-  priority and load failure. Desktop cases start each hardware renderer
+  priority, and load failure. Desktop cases start each hardware renderer
   separately, switch through Software, then select each other one (the other
   driver, or VibeRant's other backend): no switch is queued, the saved setting
   survives, and the exact restart notice is printed. A failed
@@ -289,7 +289,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   a list of level times is read into ascending tics without repeats, that an empty list, an
   empty item, a sign, a decimal, a hex number, a suffix, a space, a ten-digit number and a list
   over the limit of 1024 are refused, and that screenshot names are `<MAP>_<tic>.png` with the
-  map's name cleaned to letters, digits, `_` and `-`, so that no map name can name another
+  map's name cleaned to letters, digits, `_` and `-`, so no map name can name another
   directory and the same replay and tic always give the same file, and that the time between
   two frames is one tic while capturing and the measured time otherwise. The capture itself (one
   frame per tic, the screenshot, the exit) needs a game with its data and a renderer, so it is
@@ -532,7 +532,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
 - **Surface lighting:** `surface_light` compares the built-in shader's colormap
   row with Software's actual plane and wall/sprite tables for all 256 light levels,
   table edges and midpoints, near and far distances, and full/half-width views.
-  It also checks the driver's surface classification and viewport light ratio.
+  It checks the driver's surface classification and viewport light ratio.
   Sprites and walls in dim sectors were darker than Software's, found comparing
   Xbox screenshots of the renderer test map. WARP's `surface-light` scene reads
   distinct row colors for a plane, wall and sprite at the same known depth.
@@ -554,7 +554,7 @@ To run one group, use e.g. `ctest --test-dir build/regression -R '^online_' -V`.
   and a renderer to run: `HWR_SplitSprite` (both pieces), `HWR_DrawSprite` and `HWR_DrawModel` call it right after each
   `HWR_Lighting`, and `HWR_DrawPrecipitationSprite` and `HWR_DrawDropShadow` do not. WARP's
   `surface-light-semibright` scene draws a semibright sprite at that depth and expects row 4.
-- **Batch sort keys:** extract the production batching code from `hw_batching.c` (the sort-key struct, key builder, comparator, collection and the `HWR_RenderBatches` draw loop, with a recording driver) and check the Legacy GL batch order: skywalls and horizon lines first in submission order, then shader, texture, brightmap, polyflags, colors and light fields (including colors above and below `0x80000000`), identical states in submission order, and the shaderless order. It also checks `PF_BeforeSky`, the flag of a masked wall texture between two sky-ceilinged (or two sky-floored) sectors. Software shows that texture against the sky, but in hardware the invisible sky polygons, which batching draws first, wrote depth over the part of the texture above the nearer sky ceiling and cut it off flat (found on the renderer test map). Flagged polygons must sort before the untextured group and before every ordinary textured polygon, with and without shaders and in every submission order. Among themselves they keep the normal order (texture, brightmap, polyflags, colors, light, submission index; the shader no longer takes part). The order of all other polygons, the untextured group above all, is unchanged by flagged polygons. A polygon that is both untextured and flagged stays in the untextured group. The draw loop test submits a flagged wall, a sky occluder and an ordinary wall in all six orders, and a larger scene, and checks the draw calls come out flagged wall, occluder, ordinary wall, and that an unflagged wall is still drawn after the occluder. These fail if the key builder stops giving flagged polygons their own group. Run with `ctest -R '^batch_sort_keys'`.
+- **Batch sort keys:** extract the production batching code from `hw_batching.c` (the sort-key struct, key builder, comparator, collection and the `HWR_RenderBatches` draw loop, with a recording driver) and check the Legacy GL batch order: skywalls and horizon lines first in submission order, then shader, texture, brightmap, polyflags, colors and light fields (including colors above and below `0x80000000`), identical states in submission order, and the shaderless order. It checks `PF_BeforeSky`, the flag of a masked wall texture between two sky-ceilinged (or two sky-floored) sectors. Software shows that texture against the sky, but in hardware the invisible sky polygons, which batching draws first, wrote depth over the part of the texture above the nearer sky ceiling and cut it off flat (found on the renderer test map). Flagged polygons must sort before the untextured group and before every ordinary textured polygon, with and without shaders and in every submission order. Among themselves they keep the normal order (texture, brightmap, polyflags, colors, light, submission index; the shader no longer takes part). The order of all other polygons, the untextured group above all, is unchanged by flagged polygons. A polygon that is both untextured and flagged stays in the untextured group. The draw loop test submits a flagged wall, a sky occluder and an ordinary wall in all six orders, and a larger scene, and checks the draw calls come out flagged wall, occluder, ordinary wall, and that an unflagged wall is still drawn after the occluder. These fail if the key builder stops giving flagged polygons their own group. Run with `ctest -R '^batch_sort_keys'`.
 - **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary and light-split paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. For every rotated case the coordinate oracle must also reject a missing map, a blank map of the right size and the right map moved one pixel in each direction (the previous dropped-map behavior and a one-pixel transform error), so it cannot go blind unnoticed. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
 - **Encore brightmap colors:** run production sprite colormap selection, Software
   full-bright selection, mapped-cache lookup/update, column conversion and light-table
