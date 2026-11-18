@@ -47,9 +47,10 @@ Before and after the ballast operation, the probe measures its LocalState
 If `LocalState\ballast.bin` is absent, the probe writes **512 MiB** in 1 MiB
 chunks using `CreateFile2` / `WriteFile`, flushes with `FlushFileBuffers`, closes
 it, and remeasures. It writes real nonzero data, not a sparse file or a file-length change. On failure,
-it stops writing, reports completed chunks, and leaves a partial file for
-cleanup. If the file already exists (including a partial file), the next
-launch deletes it with `DeleteFileW` and remeasures.
+it stops writing. If it opened the file for writing, it reports completed
+chunks, and a partial file may remain. If the file already exists (including a
+partial file), the next launch tries to delete it with `DeleteFileW` and
+remeasures.
 The before/after volume measurements bracket the operation with its handle closed.
 
 Use this protocol to check whether the two apps share storage:
