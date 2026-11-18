@@ -5,7 +5,7 @@ and GPU-hang reports here apply to VibeRant D3D, the Direct3D 12 backend.
 
 ## Performance logs (UWP)
 
-If a five-second `UWP perf:` block is written during a level, its `level:` line records the map lump name and title, gametype, gear, and active modes. The `racers:` line gives the active player, bot, spectator, and local player counts, along with the 3D model and drop shadow settings and the first local player's FOV. Run `uwp/tools/perf-summary.py` with `-t` to see this context alongside each block.
+If a five-second `UWP perf:` block is written during a level, its `level:` line records the map lump name and title, gametype, gear, and active modes. The `racers:` line gives the active player, bot, spectator, and local player counts, the bots' level (or lowest and highest levels when they differ), along with the 3D model and drop shadow settings and the first local player's FOV. Run `uwp/tools/perf-summary.py` with `-t` to see this context alongside each block.
 
 ## Camera position in screenshots (UWP)
 

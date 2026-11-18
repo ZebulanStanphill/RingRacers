@@ -790,6 +790,8 @@ static void PS_UWPLogLevelContext(void)
 	char *title = mapname ? G_BuildMapTitle(gamemap) : NULL;
 	const char *speed = va("%u", (unsigned)gamespeed);
 	int playing = 0, bots = 0, spectating = 0;
+	int lowlevel = 0, highlevel = 0; // The bots' levels: harder bots race faster and use more items.
+	char botlevels[32] = "";
 
 	for (const CV_PossibleValue_t *gear = kartspeed_cons_t; gear->strvalue; gear++)
 	{
@@ -810,7 +812,15 @@ static void PS_UWPLogLevelContext(void)
 		{
 			playing++;
 			if (players[i].bot)
+			{
+				const int level = players[i].botvars.difficulty;
+
+				if (!bots || level < lowlevel)
+					lowlevel = level;
+				if (!bots || level > highlevel)
+					highlevel = level;
 				bots++;
+			}
 		}
 	}
 
@@ -821,8 +831,13 @@ static void PS_UWPLogLevelContext(void)
 	if (title)
 		Z_Free(title);
 
-	I_OutputMsg("UWP perf:   racers: %d playing (%d bots), %d spectating, %d on this console; 3D models %s, drop shadows %s, FOV %s\n",
-		playing, bots, spectating, r_splitscreen + 1,
+	if (bots && lowlevel == highlevel)
+		snprintf(botlevels, sizeof botlevels, ", level %d", lowlevel);
+	else if (bots)
+		snprintf(botlevels, sizeof botlevels, ", levels %d to %d", lowlevel, highlevel);
+
+	I_OutputMsg("UWP perf:   racers: %d playing (%d bots%s), %d spectating, %d on this console; 3D models %s, drop shadows %s, FOV %s\n",
+		playing, bots, botlevels, spectating, r_splitscreen + 1,
 #ifdef HWRENDER
 		cv_glmodels.string,
 #else

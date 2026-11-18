@@ -9,15 +9,15 @@ import re, sys
 
 LEVEL_KEYS = ['map', 'title', 'gametype', 'speed', 'encore', 'netgame', 'grandprix', 'timeattack', 'replay']
 # Keys whose captures are kept as text rather than parsed as numbers.
-STRING_KEYS = {'cpus', *LEVEL_KEYS, 'models', 'shadows', 'fov'}
+STRING_KEYS = {'cpus', *LEVEL_KEYS, 'botlevels', 'models', 'shadows', 'fov'}
 
 PATTERNS = [
     (r'UWP perf:\s+([\d.]+) frames/s \(([\d.]+) with 3D\) from ([\d.]+) loops/s; work ([\d.]+) ms per loop, ([\d.]+) ms at worst',
      ['fps', 'fps3d', 'loops', 'work', 'worst']),
     (r'UWP perf:\s+level: (\S*) "(.*)", (.*), game speed (.*), encore (On|Off), netgame (off|host|client), Grand Prix (On|Off), time attack (On|Off), replay (On|Off)$',
      LEVEL_KEYS),
-    (r'UWP perf:\s+racers: (\d+) playing \((\d+) bots\), (\d+) spectating, (\d+) on this console; 3D models (.*), drop shadows (.*), FOV (.*)$',
-     ['playing', 'botracers', 'spectating', 'local', 'models', 'shadows', 'fov']),
+    (r'UWP perf:\s+racers: (\d+) playing \((\d+) bots((?:, levels? [^)]*)?)\), (\d+) spectating, (\d+) on this console; 3D models (.*), drop shadows (.*), FOV (.*)$',
+     ['playing', 'botracers', 'botlevels', 'spectating', 'local', 'models', 'shadows', 'fov']),
     (r'UWP perf:\s+3D ([\d.]+) ms per frame \(BSP ([\d.]+), sprite clip ([\d.]+), portals and skybox ([\d.]+), planes ([\d.]+), masked ([\d.]+)\)',
      ['r3d', 'bsp', 'spr', 'portal', 'planes', 'masked']),
     (r'UWP perf:\s+UI ([\d.]+) ms, software screen ([\d.]+) ms, finish update ([\d.]+) ms', ['ui', 'sw', 'fin']),
@@ -88,7 +88,7 @@ def show(rows):
             print(f"""         level: {r['map']} "{r['title']}", {r['gametype']}, game speed {r['speed']}, encore {r['encore']}, """
                   f"netgame {r['netgame']}, Grand Prix {r['grandprix']}, time attack {r['timeattack']}, replay {r['replay']}")
         if 'playing' in r:
-            print(f"         racers: {r['playing']:.0f} playing ({r['botracers']:.0f} bots), {r['spectating']:.0f} spectating, "
+            print(f"         racers: {r['playing']:.0f} playing ({r['botracers']:.0f} bots{r['botlevels']}), {r['spectating']:.0f} spectating, "
                   f"{r['local']:.0f} on this console; 3D models {r['models']}, drop shadows {r['shadows']}, FOV {r['fov']}")
 
 def races(rows):
