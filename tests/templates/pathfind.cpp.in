@@ -1,0 +1,455 @@
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#include <random>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "k_pathfind.h"
+#include "k_bheap.h"
+#include "z_zone.h"
+
+static std::unordered_map<void *, size_t> allocations;
+
+void I_Error(const char *message, ...)
+{
+	std::fprintf(stderr, "%s\n", message);
+	std::abort();
+}
+
+void CONS_Debug(INT32, const char *, ...) {}
+
+void *M_Memcpy(void *dest, const void *src, size_t size)
+{
+	return std::memcpy(dest, src, size);
+}
+
+void *Z_Malloc2(size_t size, INT32 tag, void *user, INT32, const char *, INT32)
+{
+	assert(tag == PU_STATIC && user == nullptr);
+	void *ptr = std::malloc(size);
+	assert(ptr != nullptr);
+	assert(allocations.emplace(ptr, size).second);
+	return ptr;
+}
+
+void *Z_Calloc2(size_t size, INT32 tag, void *user, INT32 align, const char *file, INT32 line)
+{
+	return std::memset(Z_Malloc2(size, tag, user, align, file, line), 0, size);
+}
+
+void Z_Free2(void *ptr, const char *, INT32)
+{
+	if (ptr)
+	{
+		assert(allocations.erase(ptr) == 1);
+		std::free(ptr);
+	}
+}
+
+void *Z_Realloc2(void *ptr, size_t size, INT32 tag, void *user, INT32 align, const char *file, INT32 line)
+{
+	if (!ptr)
+		return Z_Calloc2(size, tag, user, align, file, line);
+
+	// Like the engine, allocate while the previous block is still live.
+	void *replacement = Z_Malloc2(size, tag, user, align, file, line);
+	std::memcpy(replacement, ptr, std::min(size, allocations.at(ptr)));
+	Z_Free2(ptr, file, line);
+	return replacement;
+}
+
+@@HEAP@@
+namespace production
+{
+@@ASTAR@@
+}
+
+namespace baseline
+{
+@@REFERENCE@@
+}
+
+namespace no_closed_flag
+{
+@@NO_CLOSED_FLAG@@
+}
+
+namespace stale_lookup
+{
+@@STALE_LOOKUP@@
+}
+
+namespace wrong_rebase
+{
+@@WRONG_REBASE@@
+}
+
+struct Node
+{
+	int id = -1;
+	UINT32 heuristic = 0;
+	std::vector<void *> neighbors;
+	std::vector<UINT32> costs;
+};
+
+using Graph = std::vector<Node>;
+using Capacities = std::array<size_t, 3>;
+
+static Graph MakeGraph(size_t size)
+{
+	Graph graph(size);
+	for (size_t i = 0; i < size; ++i)
+		graph[i].id = static_cast<int>(i);
+	return graph;
+}
+
+static void AddEdge(Graph &graph, size_t from, int to, UINT32 cost)
+{
+	graph[from].neighbors.push_back(to < 0 ? nullptr : &graph[to]);
+	graph[from].costs.push_back(cost);
+}
+
+static int Id(const void *data)
+{
+	return data ? static_cast<const Node *>(data)->id : -1;
+}
+
+static int Predecessor(const pathfindnode_t &node)
+{
+	return node.camefrom ? Id(node.camefrom->nodedata) : -1;
+}
+
+enum class Callback { Neighbors, Costs, Heuristic, Traversable, Finished };
+
+struct Call
+{
+	Callback callback;
+	std::vector<size_t> args;
+
+	bool operator==(const Call &other) const
+	{
+		return callback == other.callback && args == other.args;
+	}
+};
+
+struct PathNode
+{
+	void *data;
+	UINT32 gscore, hscore;
+	size_t heapindex;
+
+	bool operator==(const PathNode &other) const
+	{
+		return data == other.data && gscore == other.gscore && hscore == other.hscore
+			&& heapindex == other.heapindex;
+	}
+};
+
+struct Search
+{
+	int start, end, finish;
+	Capacities initial;
+	unsigned rejection = 0;
+};
+
+struct Result
+{
+	bool success;
+	UINT32 totaldist;
+	Capacities capacities;
+	std::vector<PathNode> path;
+	std::vector<Call> calls;
+};
+
+static const Search *search;
+static const pathfindsetup_t *active_setup;
+static std::vector<Call> *calls;
+
+static Capacities GetCapacities(const pathfindsetup_t &setup)
+{
+	return {setup.nodesarraycapacity, setup.closedsetcapacity, setup.opensetcapacity};
+}
+
+static size_t Key(const void *data)
+{
+	return reinterpret_cast<size_t>(data);
+}
+
+static void **Neighbors(void *data, size_t *count)
+{
+	calls->push_back({Callback::Neighbors, {Key(data), *count}});
+	auto &node = *static_cast<Node *>(data);
+	*count = node.neighbors.size();
+	return node.neighbors.empty() ? nullptr : node.neighbors.data();
+}
+
+static UINT32 *Costs(void *data)
+{
+	calls->push_back({Callback::Costs, {Key(data)}});
+	auto &costs = static_cast<Node *>(data)->costs;
+	return costs.empty() ? nullptr : costs.data();
+}
+
+static UINT32 Heuristic(void *data, void *end)
+{
+	calls->push_back({Callback::Heuristic, {Key(data), Key(end)}});
+	return static_cast<Node *>(data)->heuristic;
+}
+
+static boolean Traversable(void *data, void *from)
+{
+	calls->push_back({Callback::Traversable, {Key(data), Key(from)}});
+	return search->rejection == 0 || (3 * Id(data) + Id(from)) % search->rejection != 0;
+}
+
+static boolean Finished(void *data, void *setup_data)
+{
+	assert(setup_data == active_setup);
+	const auto &setup = *active_setup;
+	const auto &node = *static_cast<pathfindnode_t *>(data);
+	const auto capacities = GetCapacities(setup);
+	// Compare the node and setup the callback can read. Node storage addresses
+	// are local to each run, so record the predecessor chain by node-data pointer.
+	Call call{Callback::Finished, {Key(node.nodedata), node.gscore, node.hscore, node.heapindex,
+		Key(setup.startnodedata), Key(setup.endnodedata), setup.endgscore,
+		capacities[0], capacities[1], capacities[2]}};
+	for (const pathfindnode_t *previous = node.camefrom; previous; previous = previous->camefrom)
+	{
+		call.args.insert(call.args.end(), {Key(previous->nodedata), previous->gscore,
+			previous->hscore, previous->heapindex});
+	}
+	calls->push_back(std::move(call));
+	return Id(node.nodedata) == search->finish;
+}
+
+using Pathfinder = boolean (*)(path_t *, pathfindsetup_t *);
+
+static Result Run(Pathfinder pathfinder, Graph &graph, const Search &input)
+{
+	pathfindsetup_t setup{};
+	setup.startnodedata = &graph[input.start];
+	setup.endnodedata = &graph[input.end];
+	setup.endgscore = 32;
+	setup.nodesarraycapacity = input.initial[0];
+	setup.closedsetcapacity = input.initial[1];
+	setup.opensetcapacity = input.initial[2];
+	setup.getconnectednodes = Neighbors;
+	setup.getconnectioncosts = Costs;
+	setup.getheuristic = Heuristic;
+	setup.gettraversable = Traversable;
+	setup.getfinished = Finished;
+	search = &input;
+	active_setup = &setup;
+
+	// Seed a path so that success must replace it and failure must preserve it.
+	path_t path{};
+	path.array = static_cast<pathfindnode_t *>(Z_Calloc(sizeof(*path.array), PU_STATIC, nullptr));
+	path.array[0].nodedata = &graph[input.end];
+	path.array[0].gscore = 77;
+	path.numnodes = 1;
+	path.totaldist = 77;
+	auto *prior_path = path.array;
+
+	Result result{};
+	calls = &result.calls;
+	result.success = pathfinder(&path, &setup);
+	result.totaldist = path.totaldist;
+	result.capacities = GetCapacities(setup);
+	assert(setup.startnodedata == &graph[input.start] && setup.endnodedata == &graph[input.end]);
+	assert(setup.endgscore == 32 && setup.getconnectednodes == Neighbors && setup.getconnectioncosts == Costs
+		&& setup.getheuristic == Heuristic && setup.gettraversable == Traversable && setup.getfinished == Finished);
+
+	if (!result.success)
+		assert(path.array == prior_path);
+	for (size_t i = 0; i < path.numnodes; ++i)
+	{
+		const auto &node = path.array[i];
+		assert(node.camefrom == (i ? &path.array[i - 1] : nullptr));
+		result.path.push_back({node.nodedata, node.gscore, node.hscore, node.heapindex});
+	}
+	Z_Free(path.array);
+	return result;
+}
+
+static const char *Difference(const Result &reference, const Result &actual)
+{
+	if (reference.success != actual.success)
+		return "return value";
+	if (reference.capacities != actual.capacities)
+		return "setup capacities";
+	if (reference.path != actual.path || reference.totaldist != actual.totaldist)
+		return "returned path";
+	if (reference.calls != actual.calls)
+		return "callback log";
+	return nullptr;
+}
+
+static size_t comparisons, successes;
+
+static Result Compare(Graph &graph, const Search &input)
+{
+	const Result reference = Run(baseline::K_PathfindAStar, graph, input);
+	const Result actual = Run(production::K_PathfindAStar, graph, input);
+	if (const char *difference = Difference(reference, actual))
+	{
+		std::fprintf(stderr, "Search %zu (%zu nodes, %d to %d, finish %d) differs in %s\n",
+			comparisons, graph.size(), input.start, input.end, input.finish, difference);
+		std::abort();
+	}
+	++comparisons;
+	successes += actual.success;
+	return actual;
+}
+
+static void DirectedCases()
+{
+	auto graph = MakeGraph(4);
+	AddEdge(graph, 0, 1, 5);
+	AddEdge(graph, 0, 2, 1);
+	AddEdge(graph, 1, 3, 1);
+	AddEdge(graph, 2, 1, 1);
+	AddEdge(graph, 3, 3, 0);
+	graph[2].heuristic = 10;
+	graph[3].heuristic = 20;
+	const Search input{0, 3, 3, {1, 1, 1}};
+
+	// Node 1 is closed by the time node 2 offers a cheaper route to it.
+	// Ignoring membership rewrites node 1's predecessor in the returned path.
+	const Result reference = Compare(graph, input);
+	assert(reference.success && reference.path.size() == 3);
+	assert((reference.capacities == Capacities{4, 4, 1})); // Upstream does not report later heap growth.
+	const Result broken = Run(no_closed_flag::K_PathfindAStar, graph, input);
+	const char *difference = Difference(reference, broken);
+	assert(difference && std::strcmp(difference, "returned path") == 0);
+	assert(broken.path.size() == 4 && broken.path[1].data == &graph[2]);
+
+	auto single = MakeGraph(1);
+	AddEdge(single, 0, 0, 0);
+	AddEdge(single, 0, -1, 0);
+	assert(Compare(single, {0, 0, 0, {0, 0, 0}}).success);
+	assert(!Compare(single, {0, 0, -1, {2, 2, 2}}).success);
+	single[0].neighbors.clear();
+	assert(!Compare(single, {0, 0, 0, {0, 0, 0}}).success);
+	graph[2].costs.clear();
+	assert(Compare(graph, input).success);
+}
+
+static void RandomCases()
+{
+	std::mt19937 rng(0xbadc0de);
+	for (size_t scene = 0; scene < 1200; ++scene)
+	{
+		// Alternate between large graphs and small ones to exercise reused storage.
+		const int size = 1 + static_cast<int>(rng() % (scene % 2 == 0 ? 384 : 8));
+		auto graph = MakeGraph(size);
+		for (int i = 0; i < size; ++i)
+		{
+			graph[i].heuristic = rng() % 4;
+			AddEdge(graph, i, (i + 1) % size, rng() % 4);
+			const size_t degree = 4 + rng() % 16;
+			for (size_t edge = 0; edge < degree; ++edge)
+			{
+				const int neighbor = static_cast<int>(rng() % (size + 1)) - 1;
+				AddEdge(graph, i, neighbor, rng() % 4);
+			}
+		}
+
+		const int start = rng() % size;
+		const int end = rng() % size;
+		const Result exhausted = Compare(graph, {start, end, -1, {1, 1, 1}});
+		assert(!exhausted.success);
+		assert(Compare(graph, {start, end, end, {2, 2, 2}}).success);
+		Compare(graph, {start, end, static_cast<int>(rng() % size), {0, 3, 1}, 7});
+		Compare(graph, {end, start, start, exhausted.capacities, 11});
+	}
+}
+
+static void StaleLookupCases()
+{
+	std::mt19937 rng(0x57a1e);
+	constexpr int size = 32;
+	const Capacities capacities{size, size, 1};
+	auto &scratch = stale_lookup::pathfindscratch;
+	size_t mismatches = 0, followups = 0;
+	for (size_t scene = 0; scene < 32; ++scene)
+	{
+		auto graph = MakeGraph(size);
+		for (int i = 0; i < size; ++i)
+		{
+			graph[i].heuristic = rng() % 4;
+			AddEdge(graph, i, (i + 1) % size, 1 + rng() % 16);
+		}
+		const int start = rng() % size;
+
+		// Start each scene with an empty table, then let the exhausted search
+		// populate it. The smaller searches keep the graph and active table size.
+		if (scratch.lookup)
+			std::fill_n(scratch.lookup, scratch.lookupcapacity, 0);
+		assert(!Run(stale_lookup::K_PathfindAStar, graph, {start, start, -1, capacities}).success);
+
+		// Every retained index names an initialized node in this allocation.
+		// The follow-ups cannot replace it or grow the table on this graph.
+		assert(scratch.nodescapacity == size && scratch.lookupcapacity == 2 * size);
+		for (int i = 0; i < size; ++i)
+		{
+			assert(scratch.closed[i]);
+			assert(scratch.nodes[i].nodedata == &graph[(start + i) % size]);
+		}
+		for (size_t i = 0; i < scratch.lookupcapacity; ++i)
+			assert(scratch.lookup[i] <= size);
+		const auto *nodes = scratch.nodes;
+		const auto *lookup = scratch.lookup;
+
+		for (int trial = 0; trial < 3; ++trial)
+		{
+			const int hops = 1 + rng() % (size / 4);
+			const int finish = (start + hops) % size;
+			const Search input{start, finish, finish, capacities};
+			const Result reference = Run(baseline::K_PathfindAStar, graph, input);
+			assert(reference.success && reference.path.size() == static_cast<size_t>(hops + 1));
+			const Result broken = Run(stale_lookup::K_PathfindAStar, graph, input);
+			assert(scratch.nodes == nodes && scratch.lookup == lookup);
+			mismatches += Difference(reference, broken) != nullptr;
+			++followups;
+		}
+	}
+	assert(mismatches > 0);
+	std::printf("Stale lookup differed on %zu of %zu follow-up searches\n", mismatches, followups);
+}
+
+static void WrongRebaseCase()
+{
+	auto graph = MakeGraph(5);
+	for (int i = 0; i < 4; ++i)
+		AddEdge(graph, i, i + 1, 1);
+	AddEdge(graph, 4, 4, 0);
+	const Search input{0, 4, 4, {1, 1, 1}};
+	const Result reference = Run(baseline::K_PathfindAStar, graph, input);
+	const Result broken = Run(wrong_rebase::K_PathfindAStar, graph, input);
+
+	// Discovering the fifth node moves the array and rebases node 3's
+	// predecessor to the start, skipping nodes 1 and 2 in the returned path.
+	assert(reference.success && reference.path.size() == 5);
+	assert(broken.success && broken.capacities[0] == 8 && broken.path.size() == 3);
+	assert(broken.path[1].data == &graph[3]);
+	const char *difference = Difference(reference, broken);
+	assert(difference && std::strcmp(difference, "returned path") == 0);
+}
+
+int main()
+{
+	DirectedCases();
+	RandomCases();
+	StaleLookupCases();
+	WrongRebaseCase();
+	// Each implementation with scratch storage retains four allocations.
+	assert(allocations.size() == 16);
+	std::printf("%zu A* comparisons (%zu paths, %zu misses), 3 rejected negative controls\n",
+		comparisons, successes, comparisons - successes);
+}

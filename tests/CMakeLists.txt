@@ -20,7 +20,9 @@ file(GLOB_RECURSE smoke_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/a
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
     ${templates} fixtures/sprite-rotation-baseline.c fixtures/spring-clip-reference.inc source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
-    fixtures/block-lines-baseline.c fixtures/batch-sort-baseline.c
+    fixtures/block-lines-baseline.c fixtures/batch-sort-baseline.c fixtures/pathfind-baseline.c
+    "${RR_SOURCE_DIR}/src/k_pathfind.c"
+    "${RR_SOURCE_DIR}/src/k_bheap.c"
     "${RR_SOURCE_DIR}/src/p_map.c"
     "${RR_SOURCE_DIR}/src/p_maputl.c"
     "${RR_SOURCE_DIR}/src/p_maputl.h"
@@ -161,6 +163,7 @@ regression(menu_desktop menu)
 regression(trace_uwp_hw trace _UWP HWRENDER)
 regression(wipe_math wipe)
 regression(view_interpolation view_interp)
+regression(pathfind pathfind)
 regression(block_lines block_lines)
 # Exercise invalid pointers through the production linedef box accessor.
 regression(block_lines_paranoia block_lines PARANOIA TEST_LINE_PARANOIA)

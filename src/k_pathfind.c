@@ -69,80 +69,83 @@ static void K_NodeUpdateHeapIndex(void *const node, const size_t newheapindex)
 	}
 }
 
-/*--------------------------------------------------
-	static pathfindnode_t *K_NodesArrayContainsNodeData(
-		pathfindnode_t *nodesarray,
-		void* nodedata,
-		size_t nodesarraycount)
-
-		Checks whether the Nodes Array contains a node with a waypoint. Searches from the end to the start for speed
-			reasons.
-
-	Input Arguments:-
-		nodesarray      - The nodes array within the A* algorithm
-		waypoint        - The waypoint to check is within the nodes array
-		nodesarraycount - The current size of the nodes array
-
-	Return:-
-		The pathfind node that has the waypoint if there is one. NULL if the waypoint is not in the nodes array.
---------------------------------------------------*/
-static pathfindnode_t *K_NodesArrayContainsNodeData(
-	pathfindnode_t *nodesarray,
-	void* nodedata,
-	size_t nodesarraycount)
+// [ZE]: Keep scratch storage across searches. Only the waypoint code calls A*, and its
+// callbacks do not start another search. Setup capacities still track the original growth.
+static struct
 {
-	pathfindnode_t *foundnode = NULL;
-	size_t i = 0U;
+	// [ZE]: Keep closed flags by node index without changing pathfindnode_t.
+	pathfindnode_t *nodes;
+	UINT8 *closed;
+	size_t nodescapacity;
+	pathfindnode_t **closedset;
+	size_t closedsetcapacity;
+	size_t *lookup;
+	size_t lookupcapacity;
+} pathfindscratch;
 
-	I_Assert(nodesarray != NULL);
-	I_Assert(nodedata != NULL);
-
-	// It is more likely that we'll find the node we are looking for from the end of the array
-	// Yes, the for loop looks weird, remember that size_t is unsigned and we want to check 0, after it hits 0 it
-	// will loop back up to SIZE_MAX
-	for (i = nodesarraycount - 1U; i < nodesarraycount; i--)
+// [ZE]: Allocate new node storage without freeing the old array. The caller fixes
+// live pointers while both arrays still exist.
+static void K_PathfindReserveNodes(size_t capacity)
+{
+	if (capacity > pathfindscratch.nodescapacity)
 	{
-		if (nodesarray[i].nodedata == nodedata)
-		{
-			foundnode = &nodesarray[i];
-			break;
-		}
-	}
-	return foundnode;
+		// [ZE]: Only live nodes will be copied into this array.
+		pathfindscratch.nodes = Z_Malloc(capacity * sizeof(*pathfindscratch.nodes), PU_STATIC, NULL);
+		pathfindscratch.closed = Z_Realloc(pathfindscratch.closed, capacity * sizeof(*pathfindscratch.closed), PU_STATIC, NULL);
+		pathfindscratch.nodescapacity = capacity;
+	} // [ZE]: The old nodes remain available to the caller for pointer fix-ups.
 }
 
-/*--------------------------------------------------
-	static boolean K_ClosedsetContainsNode(pathfindnode_t **closedset, pathfindnode_t *node, size_t closedsetcount)
-
-		Checks whether the Closedset contains a node. Searches from the end to the start for speed reasons.
-
-	Input Arguments:-
-		closedset      - The closed set within the A* algorithm
-		node           - The node to check is within the closed set
-		closedsetcount - The current size of the closedset
-
-	Return:-
-		True if the node is in the closed set, false if it isn't
---------------------------------------------------*/
-static boolean K_ClosedsetContainsNode(pathfindnode_t **closedset, pathfindnode_t *node, size_t closedsetcount)
+// [ZE]: Grow backing storage only when it cannot fit the current setup capacity.
+static void K_PathfindReserveClosedSet(size_t capacity)
 {
-	boolean nodeisinclosedset = false;
-	size_t i = 0U;
-
-	I_Assert(closedset != NULL);
-	I_Assert(node != NULL);
-	// It is more likely that we'll find the node we are looking for from the end of the array
-	// Yes, the for loop looks weird, remember that size_t is unsigned and we want to check 0, after it hits 0 it
-	// will loop back up to SIZE_MAX
-	for (i = closedsetcount - 1U; i < closedsetcount; i--)
+	if (capacity > pathfindscratch.closedsetcapacity)
 	{
-		if (closedset[i] == node)
-		{
-			nodeisinclosedset = true;
-			break;
-		}
+		pathfindscratch.closedset = Z_Realloc(pathfindscratch.closedset, capacity * sizeof(*pathfindscratch.closedset), PU_STATIC, NULL);
+		pathfindscratch.closedsetcapacity = capacity;
 	}
-	return nodeisinclosedset;
+}
+
+// [ZE]: Replace the reverse node scan with linear probing. A slot stores the
+// node index plus one, leaving zero for empty. There are no deletions.
+static size_t K_PathfindLookupSlot(const pathfindnode_t *nodes, const void *nodedata, size_t mask)
+{
+	uintptr_t hash = (uintptr_t)nodedata;
+	size_t slot;
+
+	// [ZE]: Mix higher address bits into the low bits before masking.
+	hash ^= hash >> 16;
+	hash *= UINT32_C(0x7feb352d);
+	hash ^= hash >> 15;
+	slot = (size_t)hash & mask;
+
+	while (pathfindscratch.lookup[slot] != 0U
+		&& nodes[pathfindscratch.lookup[slot] - 1U].nodedata != nodedata)
+	{
+		slot = (slot + 1U) & mask;
+	}
+
+	return slot;
+}
+
+// [ZE]: Clear the active table at the start of a search and reinsert live
+// indices when its size changes. Keep the table at most half full.
+static void K_PathfindResetLookup(size_t capacity, const pathfindnode_t *nodes, size_t count)
+{
+	size_t i;
+	if (capacity > pathfindscratch.lookupcapacity)
+	{
+		Z_Free(pathfindscratch.lookup);
+		pathfindscratch.lookup = Z_Malloc(capacity * sizeof(*pathfindscratch.lookup), PU_STATIC, NULL);
+		pathfindscratch.lookupcapacity = capacity;
+	}
+	memset(pathfindscratch.lookup, 0, capacity * sizeof(*pathfindscratch.lookup));
+	for (i = 0; i < count; ++i)
+	{
+		const size_t slot = K_PathfindLookupSlot(nodes, nodes[i].nodedata, capacity - 1U);
+		// [ZE]: Keep the node's index even if its address has changed.
+		pathfindscratch.lookup[slot] = i + 1U;
+	}
 }
 
 /*--------------------------------------------------
@@ -330,6 +333,8 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 			size_t         connectingnodeheapindex = 0U;
 			size_t         nodesarraycount         = 0U;
 			size_t         closedsetcount          = 0U;
+			// [ZE]: Active lookup capacity can be smaller than the backing buffer.
+			size_t         lookupcapacity          = 2U;
 			size_t         i                       = 0U;
 			UINT32         tentativegscore         = 0U;
 
@@ -347,17 +352,23 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 				pathfindsetup->closedsetcapacity = DEFAULT_CLOSEDSET_CAPACITY;
 			}
 
-			// Allocate the necessary memory
-			nodesarray = Z_Calloc(pathfindsetup->nodesarraycapacity * sizeof(pathfindnode_t), PU_STATIC, NULL);
-			if (nodesarray == NULL)
+			// [ZE]: Reuse scratch arrays in place of the per-search zero-filled allocations.
+			if (pathfindsetup->nodesarraycapacity > pathfindscratch.nodescapacity)
 			{
-				I_Error("K_PathfindAStar: Out of memory allocating nodes array.");
+				Z_Free(pathfindscratch.nodes);
+				K_PathfindReserveNodes(pathfindsetup->nodesarraycapacity);
 			}
-			closedset = Z_Calloc(pathfindsetup->closedsetcapacity * sizeof(pathfindnode_t*), PU_STATIC, NULL);
-			if (closedset == NULL)
+			// [ZE]: Take the retained arrays after any growth.
+			nodesarray = pathfindscratch.nodes;
+			K_PathfindReserveClosedSet(pathfindsetup->closedsetcapacity);
+			closedset = pathfindscratch.closedset;
+			while (lookupcapacity / 2U < pathfindsetup->nodesarraycapacity)
 			{
-				I_Error("K_PathfindAStar: Out of memory allocating closed set.");
+				// [ZE]: Use a power of two so probing wraps with a mask.
+				lookupcapacity *= 2U;
 			}
+			// [ZE]: Discard indices from the previous search.
+			K_PathfindResetLookup(lookupcapacity, nodesarray, 0U);
 			K_BHeapInit(&openset, pathfindsetup->opensetcapacity);
 
 			// Create the first node and add it to the open set
@@ -367,6 +378,9 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 			newnode->camefrom  = NULL;
 			newnode->gscore    = 0U;
 			newnode->hscore    = pathfindsetup->getheuristic(newnode->nodedata, pathfindsetup->endnodedata);
+			// [ZE]: Initialize membership and publish the source node's index.
+			pathfindscratch.closed[nodesarraycount] = false;
+			pathfindscratch.lookup[K_PathfindLookupSlot(nodesarray, newnode->nodedata, lookupcapacity - 1U)] = nodesarraycount + 1U;
 			nodesarraycount++;
 			K_BHeapPush(&openset, newnode, K_NodeGetFScore(newnode), K_NodeUpdateHeapIndex);
 
@@ -393,16 +407,14 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 				// Place the node we just popped into the closed set, as we are now evaluating it
 				if (closedsetcount >= pathfindsetup->closedsetcapacity)
 				{
-					// Need to reallocate closedset to fit another node
+					// [ZE]: Preserve the logical doubling and grow backing storage as needed.
 					pathfindsetup->closedsetcapacity = pathfindsetup->closedsetcapacity * 2;
-					closedset =
-						Z_Realloc(closedset, pathfindsetup->closedsetcapacity * sizeof(pathfindnode_t*), PU_STATIC, NULL);
-					if (closedset == NULL)
-					{
-						I_Error("K_PathfindAStar: Out of memory reallocating closed set.");
-					}
+					K_PathfindReserveClosedSet(pathfindsetup->closedsetcapacity);
+					closedset = pathfindscratch.closedset;
 				}
 				closedset[closedsetcount] = currentnode;
+				// [ZE]: Record membership when upstream appends the node.
+				pathfindscratch.closed[currentnode - nodesarray] = true;
 				closedsetcount++;
 
 				// Get the needed data for the next nodes from the current node
@@ -440,14 +452,17 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 							// Figure out what the gscore of this route for the connecting node is
 							tentativegscore = currentnode->gscore + connectingnodecosts[i];
 
-							// find this data in the nodes array if it's been generated before
-							connectingnode = K_NodesArrayContainsNodeData(nodesarray, checknodedata, nodesarraycount);
+							// [ZE]: Look up the existing node by data pointer, as the reverse scan did.
+							size_t lookupslot = K_PathfindLookupSlot(nodesarray, checknodedata, lookupcapacity - 1U);
+							const size_t storedindex = pathfindscratch.lookup[lookupslot];
+							connectingnode = storedindex ? &nodesarray[storedindex - 1U] : NULL;
 
 							if (connectingnode != NULL)
 							{
 								// The connecting node has been seen before, so it must be in either the closedset (skip it)
 								// or the openset (re-evaluate it's gscore)
-								if (K_ClosedsetContainsNode(closedset, connectingnode, closedsetcount) == true)
+								// [ZE]: The flag tracks the closed set without scanning it.
+								if (pathfindscratch.closed[storedindex - 1U] == true)
 								{
 									continue;
 								}
@@ -477,20 +492,18 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 								// Reallocate nodesarray if it's full
 								if (nodesarraycount >= pathfindsetup->nodesarraycapacity)
 								{
-									pathfindnode_t *nodesarrayrealloc = NULL;
+									// [ZE]: Preserve the logical doubling even if the backing array already fits.
 									pathfindsetup->nodesarraycapacity = pathfindsetup->nodesarraycapacity * 2;
-									nodesarrayrealloc = Z_Realloc(nodesarray, pathfindsetup->nodesarraycapacity * sizeof(pathfindnode_t), PU_STATIC, NULL);
+									K_PathfindReserveNodes(pathfindsetup->nodesarraycapacity);
 
-									if (nodesarrayrealloc == NULL)
+									// [ZE]: Copy live nodes and fix their pointers before freeing the old array.
+									if (nodesarray != pathfindscratch.nodes)
 									{
-										I_Error("K_PathfindAStar: Out of memory reallocating nodes array.");
-									}
-
-									// Need to update pointers in closedset, openset, and node "camefrom" if nodesarray moved.
-									if (nodesarray != nodesarrayrealloc)
-									{
+										pathfindnode_t *nodesarrayrealloc = pathfindscratch.nodes;
 										size_t j = 0U;
 										size_t arrayindex = 0U;
+										// [ZE]: Only entries that belong to this search are live.
+										M_Memcpy(nodesarrayrealloc, nodesarray, nodesarraycount * sizeof(*nodesarray));
 										for (j = 0U; j < closedsetcount; j++)
 										{
 											arrayindex = closedset[j] - nodesarray;
@@ -510,11 +523,22 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 											}
 										}
 
+										// [ZE]: Fix the current pointer before releasing the old storage too.
 										arrayindex = currentnode - nodesarray;
 										currentnode = &nodesarrayrealloc[arrayindex];
-									}
 
-									nodesarray = nodesarrayrealloc;
+										// [ZE]: All retained pointers now refer to the new array.
+										Z_Free(nodesarray);
+										nodesarray = nodesarrayrealloc;
+									}
+								}
+
+								// [ZE]: Keep at least one empty slot for every live node.
+								if (nodesarraycount >= lookupcapacity / 2U)
+								{
+									lookupcapacity *= 2U;
+									K_PathfindResetLookup(lookupcapacity, nodesarray, nodesarraycount);
+									lookupslot = K_PathfindLookupSlot(nodesarray, checknodedata, lookupcapacity - 1U);
 								}
 
 								// Create the new node and add it to the nodes array and open set
@@ -524,6 +548,9 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 								newnode->camefrom  = currentnode;
 								newnode->gscore    = tentativegscore;
 								newnode->hscore    = pathfindsetup->getheuristic(newnode->nodedata, pathfindsetup->endnodedata);
+								// [ZE]: Initialize membership and publish the new node's index.
+								pathfindscratch.closed[nodesarraycount] = false;
+								pathfindscratch.lookup[lookupslot] = nodesarraycount + 1U;
 								nodesarraycount++;
 								K_BHeapPush(&openset, newnode, K_NodeGetFScore(newnode), K_NodeUpdateHeapIndex);
 							}
@@ -532,10 +559,8 @@ boolean K_PathfindAStar(path_t *const path, pathfindsetup_t *const pathfindsetup
 				}
 			}
 
-			// Clean up the memory
+			// [ZE]: Free the heap as before and retain the other arrays for the next search.
 			K_BHeapFree(&openset);
-			Z_Free(closedset);
-			Z_Free(nodesarray);
 		}
 	}
 

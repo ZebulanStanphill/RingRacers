@@ -40,11 +40,64 @@ def function_section(source, name, first, after):
     return source.annotated(offset + start, offset + end)
 
 
+
+def generate_pathfind(engine, templates, output):
+    def implementation(source, first):
+        start = source.text.index(first)
+        code = source.annotated(start, len(source.text))
+        # Adapt C's allocation casts and zero initializers for the C++ harness.
+        for lhs, typ in [
+            ("path->array", "pathfindnode_t *"),
+            ("nodesarray", "pathfindnode_t *"),
+            ("nodesarrayrealloc", "pathfindnode_t *"),
+            ("closedset", "pathfindnode_t **"),
+            ("pathfindscratch.nodes", "pathfindnode_t *"),
+            ("pathfindscratch.closed", "UINT8 *"),
+            ("pathfindscratch.closedset", "pathfindnode_t **"),
+            ("pathfindscratch.lookup", "size_t *"),
+            ("heap->array", "bheapitem_t *"),
+        ]:
+            code = re.sub(rf"(?<![\w.])({re.escape(lhs)}\s*=\s*)(Z_(?:Malloc|Calloc|Realloc)\()",
+                          rf"\1({typ})\2", code)
+        return code.replace("= {0};", "= {};")
+
+    first_capacity = "static const size_t DEFAULT_NODEARRAY_CAPACITY"
+    astar = implementation(Source(engine / "src/k_pathfind.c"), first_capacity)
+    mark_closed = "pathfindscratch.closed[currentnode - nodesarray] = true;"
+    clear_lookup = (
+        "pathfindscratch.lookupcapacity = capacity;\n"
+        "\t}\n"
+        "\tmemset(pathfindscratch.lookup, 0, capacity * sizeof(*pathfindscratch.lookup));"
+    )
+    rebase = "nodesarrayrealloc[j].camefrom = &nodesarrayrealloc[arrayindex];"
+    mutations = {
+        "NO_CLOSED_FLAG": (mark_closed, mark_closed.replace("true", "false")),
+        "STALE_LOOKUP": (clear_lookup, (
+            "pathfindscratch.lookupcapacity = capacity;\n"
+            "\t\tmemset(pathfindscratch.lookup, 0, capacity * sizeof(*pathfindscratch.lookup));\n"
+            "\t}"
+        )),
+        "WRONG_REBASE": (rebase, rebase.replace("[arrayindex]", "[0]")),
+    }
+    for name, (original, _) in mutations.items():
+        if astar.count(original) != 1:
+            raise ValueError(f"Could not inject the A* {name} negative control")
+
+    render(templates / "pathfind.cpp.in", {
+        "HEAP": implementation(Source(engine / "src/k_bheap.c"),
+                               "static boolean K_BHeapItemValidate(bheap_t *heap, bheapitem_t *item)\n{"),
+        "ASTAR": astar,
+        "REFERENCE": implementation(Source(templates.parent / "fixtures/pathfind-baseline.c"), first_capacity),
+        **{name: astar.replace(original, replacement) for name, (original, replacement) in mutations.items()},
+    }, output / "pathfind.cpp")
+
+
 def generate(engine, output):
     output.mkdir(parents=True, exist_ok=True)
     templates = Path(__file__).parent / "templates"
     generate_fixture(templates.parent / "fixtures", output)
     generate_title(engine, output, templates, render, function_section)
+    generate_pathfind(engine, templates, output)
     render(templates / "split_projection.cpp.in", {
         "TRANSFORM": Source(engine / "src/hardware/r_viberant/r_viberant.cpp").function("VibeRant_SetTransform"),
         "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),

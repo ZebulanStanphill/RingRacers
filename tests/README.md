@@ -64,6 +64,22 @@ For one group, use a filter such as `ctest --test-dir build/regression -R '^onli
 
 Use the CTest filter under Running to select the cases below by name.
 
+- **Waypoint pathfinding.** `pathfind` compares the production A* search with
+  the frozen copy in `fixtures/pathfind-baseline.c`. Both use the production
+  binary heap, extracted by `generate.py` along with the search. It checks the return
+  value, path order, scores, predecessor links, setup capacities, and every
+  callback and its arguments. It runs four searches on each of 1,200 seeded
+  graphs that alternate between large and small to exercise scratch reuse.
+  The graphs include ties, duplicate edges, self-loops, null neighbors, and
+  rejected edges. Directed cases cover the one-node path, empty neighbor
+  lists, missing costs, and a cheaper route to an already closed node.
+  Three generated negative controls verify that the comparison detects an
+  error. Skipping the closed flag changes the returned path in the cheaper
+  route case. Leaving the lookup table uncleared changes the results of
+  shorter searches on the same seeded graph after an exhaustive search.
+  Rebasing every predecessor to the start changes the returned path when a
+  five-node chain forces the node array to move.
+
 - **Blockmap line walks:** `block_lines` compares the production iterators and
   the three callback rejection prefixes against a frozen pre-table walk. It
   checks callback order and live query boxes, early stop and abort results, and
