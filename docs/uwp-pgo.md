@@ -1,7 +1,8 @@
 # Training the Xbox build with PGO
 
 The instrumented build records which engine code runs most often. It runs more
-slowly than the normal build; use the normal package again after collecting data.
+slowly than the normal build. Switch back to the normal package after collecting
+data.
 
 1. Run the **Build** GitHub Actions workflow manually with **pgo_generate**
    enabled. Download **ring-racers-ze-uwp-pgo-instrumented**, and install its
@@ -14,22 +15,22 @@ slowly than the normal build; use the normal package again after collecting data
    termination or power loss can lose the unsaved part of a session.
 4. Copy **all** `.profraw` files from `E:\ringracers\pgo\` on the USB drive
    and send them to the maintainer, along with the instrumented build's commit
-   and your console model/settings. Each successful dump starts a fresh segment;
-   include every segment once. The game logs paths and save results in
-   `E:\ringracers\latest-log.txt`; there are no in-game PGO notifications.
+   and your console model/settings. Each successful dump starts a fresh segment.
+   Include every segment once. The game logs paths and save results in
+   `E:\ringracers\latest-log.txt` and shows no in-game PGO notifications.
 
 The folder is created automatically. If saves fail, check the USB permissions
 from the installation instructions and send the log. Failed writes retain the
 counters for a later retry. Capture timing and counter resets can lose a few
-samples from active worker threads; these are optimisation hints, not game data.
+samples from active worker threads. The profile contains optimization hints only.
 
 ## Maintainers
 
-Commit collected files under the `uwp/pgo/` directory. Keep filenames
-unique, avoid duplicate submissions (which would overweight a session), and record
-the capture build/toolchain and workload in the commit message. Do not commit the
-merged `uwp/build/ringracers.profdata`. Normal push/PR builds automatically use tracked
-`uwp/pgo/*.profraw` files when present, otherwise PGO stays off.
+Commit the captures under `uwp/pgo/`. Keep filenames unique, avoid duplicate
+submissions (which would overweight a session), and record the capture
+build/toolchain and workload in the commit message. Do not commit the
+merged `uwp/build/ringracers.profdata`. Normal push/PR builds use tracked
+`uwp/pgo/*.profraw` files when present and leave PGO off otherwise.
 
 From the x64 VS developer shell, `./uwp/build.ps1 -Pgo generate`, `-Pgo use`,
 `-Pgo off`, or `-Pgo auto` selects the mode; `RR_PGO` supplies the default.
@@ -56,9 +57,10 @@ compiler. All tracked captures are merged in one invocation before configuration
 unreadable or incompatible captures fail the build rather than silently disabling
 PGO. A compiler upgrade may require new captures.
 
-Stale, structurally compatible profiles only lose optimisation, never correctness:
-Clang ignores mismatched function data. Expected unprofiled/out-of-date diagnostics
-are suppressed; other warnings/errors remain visible. PGO does not enable fast
+Clang ignores mismatched function data in stale, structurally compatible
+profiles, so they can reduce optimization without affecting correctness. The
+build suppresses expected unprofiled/out-of-date diagnostics and still shows
+other warnings and errors. PGO does not enable fast
 math or change game logic, netplay, or replay semantics.
 
 ## UWP runtime audit and device validation
@@ -86,4 +88,4 @@ branches are unused. WindowsApp/OneCore and Xbox Dev Mode may provide them, but
 link/package validation and an Xbox test remain required. If imports are rejected,
 a UWP-compatible compiler-rt build may be necessary; do not assume this runtime
 is Store-certifiable. Verify dump success, nonempty captures, merging, suspension,
-and the optimised package on the console before treating PGO as validated.
+and the optimized package on the console before treating PGO as validated.
