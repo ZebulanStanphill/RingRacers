@@ -810,7 +810,9 @@ the real driver and shader code, and the Build workflow builds the UWP app.
 
 ## Direct3D 12 WARP harness
 
-From an x64 Visual Studio developer PowerShell on Windows:
+The WARP harness checks the production VibeRant D3D driver with pixel scenes,
+lifetime counters, the debug layer, and GPU-based validation. Run it from an x64
+Visual Studio developer PowerShell on Windows.
 
 ```powershell
 ./tests/run-d3d12.ps1
@@ -819,32 +821,29 @@ From an x64 Visual Studio developer PowerShell on Windows:
 `-Engine` tests another checkout.
 
 The harness compiles production `r_viberant.cpp`, `viberant_core.cpp`,
-`viberant_upload.cpp`, `viberant_pipeline.cpp` and `viberant_prewarm.cpp` against
+`viberant_upload.cpp`, `viberant_pipeline.cpp`, and `viberant_prewarm.cpp` against
 the real engine headers. It links the production add-on shader translator, built by
-`tests/viberant-translator/` with the pinned glslang and SPIRV-Cross sources. CI caches that build per runner
-image, keyed on its two CMake files, and builds it without fetching when the cache is restored, so only the
-translator's own source is recompiled. SDL, engine-symbol and headless-present functions are
-test stubs. ANGLE is not used. Shaders compile with `fxc` at SM5.1 against the
+`tests/viberant-translator/` with pinned glslang and SPIRV-Cross sources. CI caches that build per runner
+image, keyed on its two CMake files, and rebuilds only the translator's source without fetching on a cache hit. The harness stubs SDL, engine-symbol, and headless-present functions and runs
+without ANGLE. Shaders compile with `fxc` at SM5.1 against the
 production root signature. Scenes run on WARP with the debug layer and GPU-based
-validation enabled. Any debug-layer warning, error or corruption message, or any
-`Core_Errors` report, fails the run. The sole allowlist is warning #820 about
-a missing or mismatched optimized render-target clear value: the runtime guarantees
-the requested clear color, which the pixel oracle checks. It only affects clear
-performance. Scenes cover clears, blends, depth, indexed
-triangles, 2D lines and a tiny-ring stress test. A quad is two triangles and the screen's center
-lies in only one of them, so the blend, depth, indexed and model scenes also sample a pixel in the
+validation enabled. Any debug-layer warning, error, or corruption message, or any
+`Core_Errors` report, fails the run. Only warning #820 is allowed. A missing or mismatched optimized render-target
+clear value affects only clear performance. The runtime guarantees the requested
+clear color, and the pixel oracle checks it. Scenes cover clears, blends, depth, indexed
+triangles, 2D lines, and a tiny-ring stress test. A quad is two triangles and the screen's center
+lies in only one of them, so the blend, depth, indexed, and model scenes also sample a pixel in the
 other. The ring stress draws a 32×32 grid of 2×2-pixel tiles per frame for four frames, each tile
-a color of its own, through rings of 1,024, 512 and 2,048 bytes, and checks every pixel, so a ring
+a color of its own, through rings of 1,024, 512, and 2,048 bytes, and checks every pixel, so a ring
 overwrite, stale constant or corrupt vertex in any draw shows, not only in the last.
-The harness checks its own oracles rather than running a negative process per scene.
-Before the scenes, a self-test hands every kind of comparison (a screen pixel, a pixel of the
+Before the scenes, an in-process self-test gives each comparison (a screen pixel, a pixel of the
 palette step, of an image read earlier or of a probed pixel, a line's rows, a plain verdict, and
 the capture-count deltas) a wrong expectation, off by two levels in each channel in turn where that
-applies, and requires the specific rejection that kind throws; a right expectation, or one a level
-off, must pass. A hit registry then requires every listed scene's oracle to run at least once in the
-full run, and no oracle to run that isn't listed, so a skipped, renamed or misspelled scene fails the
-run. Six negative controls remain, because each changes the code under test while keeping the
-correct oracle, which must then reject it: shader mutants of `water-refraction` and `fog-palette`
+applies, and requires its specific rejection. A correct expectation or one a level off
+must pass. A hit registry then requires every listed scene's oracle to run at least once in
+the full run and rejects unlisted oracles. Skipped, renamed, or misspelled scenes
+fail the run. Six negative controls change the code under test. The correct oracle must reject
+each one. shader mutants of `water-refraction` and `fog-palette`
 (reciprocal depth), of `brightmap-palette` (the surface row instead of the full-bright row), of
 `surface-light` (the planes' table for every surface) and of `surface-light-semibright` (the semibright
 branch made unreachable), which
@@ -854,12 +853,11 @@ rejects it, with the debug layer on but GPU-based validation off, since it runs 
 as the full run; it must exit having rejected the scene it names, and a control still running
 after two minutes is killed and fails, so a GPU or WARP hang can't hold the job. The `warp` job
 itself is limited to 20 minutes (it takes about three).
-New texture, model and sky scenes cover texture creation, point sampling, reuploads,
+Texture, model, and sky scenes cover texture creation, point sampling, reuploads,
 delete-and-recreate, mip chains, sky fan-strip rebuilds, and model buffered/lerped
 UV fallback (`texture`, `texture-update`, `texture-reuse`, `mips`, `sky`, `model-buffered`,
-`model-lerped` and `model-fallback`). Tiny models, lit models and textured sky
-aren't exercised, so they remain untested here. WARP doesn't measure Xbox performance;
-texture creation time, heap behavior and frame rate need an Xbox run.
+`model-lerped` and `model-fallback`). The scenes leave tiny models, lit models, and textured sky untested. WARP doesn't measure Xbox performance;
+texture creation time, heap behavior, and frame rate need an Xbox run.
 Portal scenes require the production PSO preflight to succeed (`portal-supported`).
 `portal-aperture` checks color preservation and stencil-1 confinement; `portal-nested`
 checks incrementing 1 to 2 and restoring 2 to 1. `portal-restore` checks that the return
@@ -874,9 +872,9 @@ still there afterwards; `spring-mask-clear` checks that the same polygon clears 
 marking wrote no depth; `spring-mask-portal` checks that a masked draw inside a portal also
 stays inside the aperture, and that clearing the mark leaves the portal level and the
 aperture's restore as they were.
-These pixel scenes use production driver
-entry points under debug/GBV; recursive map visuals, transformed camera/model clipping,
-and fog/water portal interactions still require further testing.
+The pixel scenes use production driver entry points under debug/GBV. Recursive
+map visuals, transformed camera/model clipping, and fog/water portal interactions
+still need testing.
 Void scenes cover `VibeRant_FillVoid`, which turns black every pixel of the current viewport and portal stencil level
 that still has the depth clear's far value, the way Software draws what the level doesn't cover. Opaque geometry
 keeps its color (`void-fill`), a depth-only (Invisible) surface, standing in for a sky plane or wall, keeps what was
@@ -1041,29 +1039,29 @@ replaces tables for 64 frames while recorded work reads them. `resize-screen` an
 `resize-fade-map` switch the screen to 640×400 and back, which remakes the screen
 textures and the fade map's copy of the screen, under GPU-based validation.
 The inversion oracle caught the upstream `PF_Invert`/`PF_Occlude` bit collision;
-`PF_Invert` now uses its own blend bit, so it survives the blend mask. If the Graphics
-Tools feature is missing, the script retries its install and then fails loudly
-rather than running without the debug layer.
+`PF_Invert` now uses its own blend bit, so it survives the blend mask. If Graphics Tools is missing, the script retries installation and fails if the
+debug layer is still unavailable.
 
-Reinitialization is currently unsupported: `g_shutdown` is terminal. These tests
-do not change that lifecycle. They do not cover Xbox rendering or performance.
+Reinitialization remains unsupported because `g_shutdown` is terminal. The tests
+leave that lifecycle intact and do not cover Xbox rendering or performance.
 
 ## Frame comparison between renderers
 
 `tests/frame-compare/` plays the same staff ghosts in two builds or renderers with the game's data,
-takes screenshots at the same game tics, and compares them pixel by pixel, to check that one renderer
-(VibeRant D3D under Wine, a Vulkan build, Legacy GL) draws what another draws. The engine's part is the
+and compares screenshots pixel by pixel at the same game tics. The sides can use
+VibeRant D3D under Wine, a Vulkan build, or Legacy GL. The engine's part is the
 `-shottics 70,210,350` capture mode (one frame per tic, no interpolation, a screenshot named
 `<MAP>_<tic>.png`, quit after the last one; `-shotghost <staff ghost>` starts the replay), whose tic
-list parsing has the native test `frame_capture`; the runner, the comparer and the report are Python run with
-`uv run`. It needs real game data and a window, so the Tests workflow does not run it; the Map sweep workflow
-("Automated map sweeps" below) plays the same capture mode on hosted runners. See
+list parsing has the native test `frame_capture`; run the Python runner, comparer, and report with
+`uv run`. The test needs real game data and a window. The Tests workflow skips it. Map sweep
+("Automated map sweeps" below) uses the same capture mode on hosted runners. See
 [frame-compare/README.md](frame-compare/README.md) for the commands, the sides it takes (a native binary or
 a Windows build under Wine, each with its renderer's arguments), the default replays, and how to read the report.
 
 ## Vulkan driver harness (Linux)
 
-The same driver test, `viberant-driver.cpp`, also runs against the Vulkan backend
+Run `viberant-driver.cpp` against the Vulkan backend to check the same driver
+scenes as WARP
 (`src/hardware/r_viberant/vulkan`, [`docs/vulkan-backend.md`](../docs/vulkan-backend.md)):
 the production driver, vk12, and the runtime shader translator are built into a
 headless executable (`tests/vulkan-driver/CMakeLists.txt`) that needs no window,
@@ -1096,10 +1094,9 @@ LD_LIBRARY_PATH="$sdk/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
 tests/run-vulkan.sh
 ```
 
-What it covers is what the WARP run covers: the same scene registry, oracle
-self-test, pixel comparisons (RGB tolerance 1), and capture, ring, and lifetime
-counters, through the production driver's entry points, against the same expected
-colors. A scene that is never reached, or reached but missing from the registry,
+The production driver entry points run WARP's scene registry, oracle self-test,
+pixel comparisons (RGB tolerance 1), and capture, ring, and lifetime counters
+against the same expected colors. A scene that is never reached, or reached but missing from the registry,
 fails the run, as it does on WARP. Where the two runs differ:
 
 - **Validation** replaces the Direct3D debug layer and GPU-based validation. The
@@ -1153,7 +1150,8 @@ fails the run, as it does on WARP. Where the two runs differ:
 
 ## Metal driver harness (macOS)
 
-The same driver test, `viberant-driver.cpp`, runs a third time against the Metal backend
+Run `viberant-driver.cpp` against the Metal backend to check the same driver
+scenes as WARP and Vulkan
 (`src/hardware/r_viberant/metal`, [`docs/metal-backend.md`](../docs/metal-backend.md)):
 the production driver, mtl12, and the runtime shader translator are built into a
 headless executable (`tests/metal-driver/CMakeLists.txt`) that needs no window, SDL
@@ -1183,10 +1181,9 @@ caches the build of the shader tools by runner image and their pins, and takes
 a little over a minute with the cache; building the tools first adds about a
 minute and a half.
 
-What it covers is what the WARP and Vulkan runs cover: the same scene registry,
-oracle self-test, pixel comparisons (RGB tolerance 1), and capture, ring, and
-lifetime counters, through the production driver's entry points, against the same
-expected colors. No scene is skipped or given another expected color for Metal;
+The production driver entry points run the same scene registry, oracle self-test,
+pixel comparisons (RGB tolerance 1), and capture, ring, and lifetime counters
+against the same expected colors. No scene is skipped or given another expected color for Metal;
 `water-group` starts from the green the Vulkan run starts from. Where the runs
 differ:
 
@@ -1197,9 +1194,8 @@ differ:
   or, on the runner's GPU, `MTLLegacySVDevice`). A failure of API validation stops
   the program where it happens (an abort, exit status 134), which fails the script,
   and the script's `MTL_DEBUG_LAYER_WARNING_MODE=assert` makes the debug layer's
-  warnings (a state set twice, a buffer bound and never used) do the same. What
-  shader validation finds comes back with the command buffer; mtl12 writes it to
-  the log and counts it, and `rr_mtl12::ValidationErrors()` being nonzero fails the
+  warnings (a state set twice, a buffer bound and never used) do the same. mtl12 logs and counts shader validation errors from the completed command
+  buffer. `rr_mtl12::ValidationErrors()` fails the
   run at the next check, as does a command buffer that failed for any other reason.
   `Core_Errors` must stay zero, as on WARP. Both kinds were tried once on the
   runner with mtl12 broken on purpose (not kept in the tree): a scissor rectangle
@@ -1273,8 +1269,8 @@ differ:
   threads report tens of thousands under validation, which the script counts and
   leaves alone.
 - **The shader cache** is checked after the add-on shader scenes, outside the
-  registry as well: sixteen add-on shaders are each compiled, drawn with (the
-  pixel is checked), and cleaned, and once the frames that used them are done,
+  registry. Sixteen add-on shaders are each compiled, drawn with (the
+  pixel is checked), and cleaned. Once the frames that used them finish,
   mtl12's cache must hold as many compiled functions as before
   (`rr_mtl12::CountsForTest`). With the pruning taken out of mtl12 (not kept in
   the tree) the count went from 42 to 58 and the run failed.
