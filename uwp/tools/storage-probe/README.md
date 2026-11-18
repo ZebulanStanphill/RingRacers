@@ -39,9 +39,10 @@ Before and after the ballast operation, the probe measures its LocalState
   `CREATEFILE2_EXTENDED_PARAMETERS`, then
   `GetFileInformationByHandleEx(FileIdInfo).VolumeSerialNumber` (hex) and
   `GetFinalPathNameByHandleW` with `VOLUME_NAME_NT` and `VOLUME_NAME_GUID`.
-- Every failed Win32 operation records `GetLastError`; WinRT path lookup failures
-  record HRESULT. Even optional GUID/identity failures turn the screen red.
-  The remaining measurements and the ballast operation continue.
+- The probe logs Win32 error codes, usually from `GetLastError`, and records
+  HRESULT for WinRT path lookup failures. Even optional GUID/identity failures
+  turn the screen red. The remaining measurements and the ballast operation
+  continue.
 
 If `LocalState\ballast.bin` is absent, the probe writes **512 MiB** in 1 MiB
 chunks using `CreateFile2` / `WriteFile`, flushes with `FlushFileBuffers`, closes
