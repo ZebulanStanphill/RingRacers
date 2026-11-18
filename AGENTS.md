@@ -74,6 +74,47 @@ those commits stay as they are and the merge is made again.
 - A fix to a change that has its own commit can be made with
   `git commit --fixup=<commit>`, to be squashed into it at the next rebase.
 
+# In-race behavior
+
+Never change what happens in a race relative to upstream. The physics, collision,
+items, bots, random number streams, timing, and everything else game logic
+decides must give the results upstream's code gives, in every state the game can
+reach: every map, every mode, mods (Lua and ACS scripts, custom maps), netgames,
+and replays. A difference, however small, gives some players an advantage or a
+disadvantage, and breaks replays, staff ghosts, and online play with the official
+game. This fork changes how the game is drawn, where it runs, and how fast, never
+how it plays.
+
+A change that touches game logic, such as an optimization, is only acceptable
+when identical behavior follows from how it is built, for every input, not just
+the tested ones:
+
+- The same upstream code runs on the same data in the same order, and the only
+  work removed is work whose result is provably thrown away (for example, a call
+  that would have returned at its first test with nothing changed). Keep side
+  effects, their order, and every value a script or later code can read.
+- Prefer a design in which a mismatch is impossible over one that must be kept in
+  step. Keep a value in one place rather than a copy that has to be refreshed, and
+  let the compiler find every user (remove or rename the field) rather than a
+  search.
+- Don't cache or skip anything that depends on state other code can change behind
+  it (object fields that Lua can write, for example) unless the check covers that
+  state exactly.
+- Write the argument down in the commit message: what is skipped or moved, why
+  the result is the same in every case, and what it assumes.
+
+Tests support that argument and never replace it. Such a change comes with a
+native test that compares the new code with a frozen copy of the earlier code on
+random and hand-made inputs, with negative controls that show the comparison can
+fail, and with a replay comparison: staff ghosts played with the old and the new
+build must reach the same state (every thinking object, every racer, every random
+seed) on every tic. Have an independent reviewer try to break it. Don't merge it
+without the owner's explicit approval.
+
+Changes that only draw, log, or measure are not game logic, but they must not
+feed back into it: nothing the renderer, the frame rate, or a log line does may
+change a value game logic reads.
+
 # Versioning
 
 The fork's version is on top of the Ring Racers version, as
