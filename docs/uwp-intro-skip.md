@@ -1,14 +1,14 @@
 # UWP startup intro skip timing
 
-The built-in intro runs at 35 tics/second. This change applies only under
-`_UWP`; desktop keeps its original timing. Custom cutscenes, levels, netplay,
+This change applies only under `_UWP`. Desktop keeps its original timing.
+The built-in intro runs at 35 tics/second. Custom cutscenes, levels, netplay,
 and replay processing are unchanged.
 
 ## Original behavior
 
 `F_IntroResponder` accepts Escape, Enter, Space, Backspace, mouse buttons 1/2,
 and Xbox A/X (Enter) or B (Backspace). Y maps to `n` and does not skip;
-Start, bumpers and stick movement are not ordinary skip buttons. Trigger-axis
+Start, bumpers, and stick movement are not ordinary skip buttons. Trigger-axis
 events use a separate threshold path. The mapping is hardcoded, independent of
 player control bindings or assignment. SDL controller buttons become
 `ev_keydown`/`ev_keyup` with `KEY_JOY1 + button` and their device instance ID.
@@ -16,10 +16,10 @@ player control bindings or assignment. SDL controller buttons become
 
 The responder has no minimum-time gate and no requirement for a key-up before
 another press. It latches one press until `F_IntroTicker`, which clears the
-latch every tic, including when the skip is refused. An early tap is lost;
-holding a controller button does not synthesize another button-down event.
+latch every tic, including when the skip is refused. An early tap is lost. Holding a
+controller button does not synthesize another button-down event.
 
-`F_IntroTicker` originally requires `intro_curtime > TICRATE/2`, i.e. an elapsed
+`F_IntroTicker` originally requires `intro_curtime > TICRATE/2`, an elapsed
 counter of at least 18 tics (0.514 s), for every ordinary skip. It checks the
 previous counter before updating it; a scene starting at counter zero therefore
 first acts on such a press on its 19th ticker call (0.543 s).
@@ -50,8 +50,8 @@ first acts on such a press on its 19th ticker call (0.543 s).
   then goes to the title.
 
 All ordinary skipping also requires `skippableallowed`, computed by
-`F_StartIntro` from the progression challenge/unlock state. This lock is kept.
-Quick-skip sequences are separate development/testing paths and are unchanged.
+`F_StartIntro` from the progression challenge/unlock state. The change keeps that
+lock and leaves the separate development/testing quick-skip sequences unchanged.
 
 ## Changes and retained guards
 
@@ -61,9 +61,9 @@ including the optional opening SEGA animation. The disclaimer still cannot be
 dismissed until its text has faded fully in; skipping its opening animation
 still goes through the slide and warning. This preserves upstream's deliberate
 warning visibility requirement. Natural durations and wipes are unchanged.
-The press latch and elapsed counter are reset at intro start to avoid carrying
-state from a previous UI now that no time gate masks it. Existing event-based
-controller behavior is retained; this does not add hold-to-skip or input buffering.
+With the time gate gone, the intro resets the press latch and elapsed counter
+at startup so it cannot carry state over from a previous UI. Controller input
+still uses events, with no hold-to-skip or input buffering.
 
 `I_StartupInput` initializes SDL after graphics startup, well before
 `F_StartIntro`. SDL queues controller-added events for attached pads, but the
@@ -75,29 +75,29 @@ hotplug processing to the normal event loop. `-nojoy` and initialization failure
 still return before this hook. Device registration/logging still happens later,
 when the engine processes its event queue.
 
-The reported log's connection notice about 1.1 s after entering `GS_INTRO`
-therefore does not prove that SDL enumeration itself took 1.1 s: it timestamps
-engine event processing after opening. The new hook removes the avoidable
-wait to open already-enumerated pads; it cannot accelerate actual asynchronous
-OS/SDL discovery or supply input before a controller exists.
+The connection notice in the reported log appears about 1.1 s after entering
+`GS_INTRO`. It timestamps engine event processing after opening the controller,
+so the notice cannot establish how long SDL enumeration took. The new hook
+opens already-enumerated pads sooner. It cannot speed up asynchronous OS/SDL
+discovery or supply input before a controller exists.
 
-Likewise, the reported roughly one-second palette/first-frame stalls prevent
+The reported roughly one-second palette/first-frame stalls prevent
 normal polling and drawing while the main thread is blocked. `V_SetPalette`
 synchronously invokes the renderer's palette path; it contains no intro input
 gate. The log timings supplied with the complaint cannot isolate enumeration,
-palette work and presentation costs. Those stalls and blocking wipes remain;
+palette work, and presentation costs. Those stalls and blocking wipes remain;
 Xbox profiling and a device test are required to measure the remaining latency.
 
 ## Validation
 
 `intro_uwp` and `intro_desktop` extract the full production ticker, responder,
-scene durations and disclaimer enum. They check immediate and 17/18-tic
+scene durations, and disclaimer enum. They check immediate and 17/18-tic
 boundaries, disclaimer visibility and lost early taps, the progression lock,
 Xbox/keyboard mapping, key-up rejection, the one-press latch, and unchanged
 natural durations. The UWP test fails against the pre-fix ticker on its first
 scene-zero skip assertion. `startup_gamepads` executes the production initial
 event drain and controller-open handler against SDL mocks, checking multiple
-pads, failed opens, instance IDs, preserved button events and no duplicate drain.
+pads, failed opens, instance IDs, preserved button events, and no duplicate drain.
 
-Live SDL integration, Windows/UWP linking and Xbox input/visual latency require
+Live SDL integration, Windows/UWP linking, and Xbox input/visual latency require
 platform testing.
