@@ -160,7 +160,7 @@ To help optimize future builds with a recording of your own play session, see [d
 
 To build the game for Windows, Linux, or macOS, use a toolchain that supports C++17 and C11 (GCC, MinGW, Clang, or Apple Clang), CMake, and Ninja, as for the upstream game.
 
-On Linux, install libcurl, zlib, libpng, libogg, libvorbis, libvpx, libyuv, SDL2, and libopus. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
+On Linux, install libcurl, zlib, libpng, SDL2, and libopus. WebM movie support is on by default and also needs libogg, libvorbis, libvpx, and libyuv. On Windows and macOS, install [vcpkg](https://vcpkg.io/en/) instead to build them alongside the game.
 
 `CMakePresets.json` has [CMake presets](https://cmake.org/cmake/help/latest/manual/cmake-presets.7.html), among them:
 
