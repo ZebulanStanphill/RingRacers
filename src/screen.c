@@ -14,6 +14,7 @@
 #include "doomdef.h"
 #include "doomstat.h"
 #include "screen.h"
+// [ZE]: Import menu refresh declarations for desktop builds with multiple renderer choices.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 #include "k_menu.h"
 #endif
@@ -61,6 +62,7 @@ UINT8 setrenderneeded = 0;
 
 CV_PossibleValue_t cv_renderer_t[] = {
 	{1, "Software"},
+// [ZE]: List each compiled hardware backend as a distinct renderer choice where the platform allows it.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 #ifdef HAVE_VIBERANT_D3D
 	{3, "VibeRant D3D"},
@@ -421,16 +423,20 @@ void SCR_CheckDefaultMode(void)
 		setmodeneeded = VID_GetModeForSize(cv_scr_width.value, cv_scr_height.value) + 1;
 	}
 
+	// [ZE]: Compare the configured setting to the mapped running renderer so hardware choices remain distinct.
 	if (cv_renderer.value != SCR_RendererSetting(rendermode))
 	{
+		// [ZE]: Respect an explicit startup renderer when resolving a settings mismatch.
 		if (chosenrendermode == RENDERER_UNCHOSEN) // nothing set at command line
 			SCR_ChangeRenderer();
 		else
+// [ZE]: Preserve a pending renderer choice when switching drivers requires a restart.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (!SCR_RendererNeedsRestart(cv_renderer.value))
 #endif
 		{
 			// Set cv_renderer to the current render mode
+			// [ZE]: Store the running renderer's setting value so it identifies the active driver.
 			CV_StealthSetValue(&cv_renderer, SCR_RendererSetting(rendermode));
 		}
 	}
@@ -487,8 +493,10 @@ void SCR_ChangeRenderer(void)
 #ifdef HWRENDER
 	// Check if OpenGL loaded successfully (or wasn't disabled) before switching to it.
 	if ((vid.glstate == VID_GL_LIBRARY_ERROR)
+	// [ZE]: Check the requested render mode through the setting map so every hardware choice gets the load check.
 	&& (SCR_RendererMode(cv_renderer.value) == render_opengl))
 	{
+// [ZE]: Name the relevant hardware driver in desktop renderer errors so the failure identifies the selected path.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (M_CheckParm("-nogl"))
 			CONS_Alert(CONS_ERROR, "%s rendering was disabled!\n", SCR_RendererVibeRant(cv_renderer.value) ? SCR_RendererName(cv_renderer.value) : "OpenGL");
@@ -499,6 +507,7 @@ void SCR_ChangeRenderer(void)
 			CONS_Alert(CONS_ERROR, "OpenGL rendering was disabled!\n");
 		else
 			CONS_Alert(CONS_ERROR, "OpenGL never loaded\n");
+// [ZE]: Close the driver-specific diagnostic split before returning from a failed switch.
 #endif
 		return;
 	}

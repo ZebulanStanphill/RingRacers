@@ -40,6 +40,7 @@ void *Patch_CreateGL(patch_t *patch);
 #endif
 
 #ifdef ROTSPRITE
+// [ZE]: Rotated brightmaps, which follow their sprite's rotation for the hardware renderers' sprite brightmaps.
 #ifdef HWRENDER
 patch_t *Patch_GetRotatedBrightmap(patch_t *rotated, patch_t *brightmap);
 void Patch_InvalidateRotatedBrightmaps(patch_t *patch);

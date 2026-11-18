@@ -30,6 +30,7 @@ extern fixed_t rollsinang[ROTANGLES];
 #endif
 
 #endif
+// [ZE]: Rolled sprite geometry for VibeRant, so its sprite rolling can be done on the GPU.
 
 #if defined(ROTSPRITE) && defined(HAVE_VIBERANT) && defined(HWRENDER)
 #ifdef __cplusplus

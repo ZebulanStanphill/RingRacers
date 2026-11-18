@@ -10,6 +10,7 @@
 
 #include "gl2_rhi.hpp"
 
+// [ZE]: Import string and memory operations for context detection and screenshot conversion.
 #include <cstring>
 #include <memory>
 #include <string>
@@ -605,6 +606,7 @@ constexpr GLenum map_stencil_op(rhi::StencilOp op)
 	}
 }
 
+// [ZE]: Compare all rectangle fields so unchanged viewports and scissor boxes can be reused.
 bool same_rect(const rhi::Rect& a, const rhi::Rect& b)
 {
 	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
@@ -730,6 +732,7 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 	GLenum internal_format = map_internal_texture_format(desc.format);
 	SRB2_ASSERT(internal_format != GL_ZERO);
 	GLenum format = GL_RGBA;
+	// [ZE]: Use unsized texture formats in OpenGL ES 2 to match the upload format.
 	if (gles_)
 	{
 		// OpenGL ES 2 requires an unsized internal format matching the data format
@@ -745,10 +748,12 @@ rhi::Handle<rhi::Texture> Gl2Rhi::create_texture(const rhi::TextureDesc& desc)
 
 	GLuint name = 0;
 	gl_->GenTextures(1, &name);
+// [UWP]: Count texture allocations in the periodic performance summary.
 #ifdef _UWP
 	ps_uwp_texturescreated++;
 #endif
 
+	// [ZE]: Bind new textures through the cache so later draws can skip redundant binds.
 	bind_texture(0, name);
 
 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, map_texture_filter(desc.min));
@@ -772,6 +777,7 @@ void Gl2Rhi::destroy_texture(rhi::Handle<rhi::Texture> handle)
 {
 	SRB2_ASSERT(texture_slab_.is_valid(handle) == true);
 
+	// [ZE]: Remove cached framebuffers that would otherwise reference a deleted color texture.
 	// Framebuffers are kept between frames, so delete the ones drawing to this texture
 	for (auto itr = framebuffers_.begin(); itr != framebuffers_.end();)
 	{
@@ -793,6 +799,7 @@ void Gl2Rhi::destroy_texture(rhi::Handle<rhi::Texture> handle)
 	gl_->DeleteTextures(1, &name);
 	GL_ASSERT;
 
+	// [ZE]: Clear cached texture bindings when deleting a texture because the graphics API unbinds it.
 	// Deleting a texture unbinds it
 	for (auto& bound : bound_textures_)
 	{
@@ -826,6 +833,7 @@ void Gl2Rhi::update_texture(
 	GLenum type = GL_UNSIGNED_BYTE;
 	GLuint size = 0;
 	std::tie(format, type, size) = map_pixel_data_format(data_format);
+	// [ZE]: Match uploads against the storage format, including the Xbox path that avoids single-channel conversion.
 	GLenum texture_format = map_texture_format(t.desc.format);
 #ifdef _UWP
 	if (gles_ && red_textures_)
@@ -842,12 +850,14 @@ void Gl2Rhi::update_texture(
 	}
 #endif
 	SRB2_ASSERT(format != GL_ZERO && type != GL_ZERO);
+	// [ZE]: Validate the upload after translating any single-channel formats to match the texture.
 	SRB2_ASSERT(texture_format == format);
 
 	int32_t expected_row_span = (((size * region.w) + kUnpackAlignment - 1) / kUnpackAlignment) * kUnpackAlignment;
 	SRB2_ASSERT(expected_row_span * region.h == data.size_bytes());
 	SRB2_ASSERT(region.x + region.w <= t.desc.width && region.y + region.h <= t.desc.height);
 
+// [UWP]: Count texture uploads so the periodic performance summary tracks upload frequency.
 #ifdef _UWP
 	ps_uwp_textureuploads++;
 #endif
@@ -877,6 +887,7 @@ void Gl2Rhi::update_texture_settings(
 	SRB2_ASSERT(texture_slab_.is_valid(texture) == true);
 	auto& t = texture_slab_[texture];
 
+	// [ZE]: Reuse the cached texture binding when changing sampling settings.
 	bind_texture(0, t.texture);
 	gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, map_texture_wrap(u_wrap));
 	GL_ASSERT;
@@ -900,6 +911,7 @@ rhi::Handle<rhi::Buffer> Gl2Rhi::create_buffer(const rhi::BufferDesc& desc)
 	gl_->GenBuffers(1, &name);
 	GL_ASSERT;
 
+	// [ZE]: Track the binding of a new buffer so later operations can skip redundant binds.
 	bind_buffer(target, name);
 
 	gl_->BufferData(target, desc.size, nullptr, usage);
@@ -920,6 +932,7 @@ void Gl2Rhi::destroy_buffer(rhi::Handle<rhi::Buffer> handle)
 	gl_->DeleteBuffers(1, &name);
 	GL_ASSERT;
 
+	// [ZE]: Clear cached buffer bindings when deletion unbinds the buffer.
 	// Deleting a buffer unbinds it
 	if (bound_array_buffer_ == name)
 	{
@@ -958,6 +971,7 @@ void Gl2Rhi::update_buffer(
 		break;
 	}
 
+	// [ZE]: Use the cached buffer binding to avoid repeated binds during updates.
 	bind_buffer(target, b.buffer);
 	gl_->BufferSubData(target, offset, data.size(), data.data());
 	GL_ASSERT;
@@ -999,6 +1013,7 @@ void Gl2Rhi::destroy_renderbuffer(rhi::Handle<rhi::Renderbuffer> handle)
 {
 	SRB2_ASSERT(renderbuffer_slab_.is_valid(handle) == true);
 
+	// [ZE]: Remove cached framebuffers that would otherwise reference a deleted depth-stencil buffer.
 	// Framebuffers are kept between frames, so delete the ones using this depth-stencil buffer
 	for (auto itr = framebuffers_.begin(); itr != framebuffers_.end();)
 	{
@@ -1026,6 +1041,7 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
 	SRB2_ASSERT(platform_ != nullptr);
 	Gl2Program program;
 
+// [UWP]: Log the shader name before compilation to locate startup stalls.
 #ifdef _UWP
 	I_OutputMsg("UWP: compiling program %s\n", desc.name);
 #endif
@@ -1040,6 +1056,7 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
 	srb2::Vector<const char*> frag_sources;
 	ShaderLoadContext vert_ctx;
 	ShaderLoadContext frag_ctx;
+	// [ZE]: Select the shader language version supported by the active context.
 	vert_ctx.set_version(gles_ ? "100" : "120");
 	frag_ctx.set_version(gles_ ? "100" : "120");
 	for (auto def : desc.defines)
@@ -1111,6 +1128,7 @@ rhi::Handle<rhi::Program> Gl2Rhi::create_program(const ProgramDesc& desc)
 		gl_->DeleteShader(program.vertex_shader);
 		throw std::runtime_error(fmt::format("Pipeline program link failed: {}", String(link_error.data())));
 	}
+// [UWP]: Log successful shader links to show which programs finished during startup.
 #ifdef _UWP
 	I_OutputMsg("UWP: linked program %s\n", desc.name);
 #endif
@@ -1192,17 +1210,20 @@ void Gl2Rhi::apply_default_framebuffer(bool clear)
 	GL_ASSERT;
 	gl_->Disable(GL_SCISSOR_TEST);
 	GL_ASSERT;
+	// [ZE]: Update the scissor cache when binding the default framebuffer disables scissoring.
 	if (rasterizer_state_)
 	{
 		rasterizer_state_->scissor_test = false;
 	}
 	gl_->Viewport(0, 0, fb_rect.w, fb_rect.h);
 	GL_ASSERT;
+	// [ZE]: Remember the default framebuffer viewport so a matching request can skip the graphics call.
 	viewport_ = Rect {0, 0, fb_rect.w, fb_rect.h};
 
 	if (clear)
 	{
 		gl_->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		// [ZE]: Clear depth with the entry point supported by the active context.
 		clear_depth(1.0f);
 		gl_->ClearStencil(0);
 		gl_->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -1219,6 +1240,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
 		GLuint fb_name;
 		gl_->GenFramebuffers(1, &fb_name);
 		GL_ASSERT;
+// [UWP]: Count new framebuffers to measure allocation churn in the performance summary.
 #ifdef _UWP
 		ps_uwp_framebufferscreated++;
 #endif
@@ -1261,6 +1283,7 @@ void Gl2Rhi::apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear
 
 	if (info.depth_load_op == rhi::AttachmentLoadOp::kClear)
 	{
+		// [ZE]: Use the context-specific depth clear for offscreen passes as well.
 		clear_depth(1.f);
 		clear_bits |= GL_DEPTH_BUFFER_BIT;
 	}
@@ -1323,9 +1346,11 @@ void Gl2Rhi::bind_program(Handle<Program> program)
 
 	gl_->UseProgram(prog.program);
 	current_program_ = program;
+	// [ZE]: Track enabled vertex arrays so changing programs can skip disabling unused slots.
 	// Only bind_vertex_attrib enables attribute arrays
 	for (GLuint i = 0; enabled_attribs_ != 0; i++)
 	{
+		// [ZE]: Disable only the recorded attribute slots and clear their bits as they are disabled.
 		if (enabled_attribs_ & (1u << i))
 		{
 			gl_->DisableVertexAttribArray(i);
@@ -1352,10 +1377,12 @@ void Gl2Rhi::bind_vertex_attrib(const char* name, Handle<Buffer> buffer, VertexA
 
 	GLint location = gl_->GetAttribLocation(prog.program, name);
 	GL_ASSERT;
+	// [ZE]: Check that the attribute fits the tracking mask and reuse the vertex buffer binding.
 	SRB2_ASSERT(location >= 0 && location < 32);
 	bind_buffer(GL_ARRAY_BUFFER, cast_buffer.buffer);
 	gl_->EnableVertexAttribArray(location);
 	GL_ASSERT;
+	// [ZE]: Record enabled attribute slots for the next program change.
 	if (location >= 0 && location < 32)
 	{
 		enabled_attribs_ |= 1u << location;
@@ -1382,6 +1409,7 @@ void Gl2Rhi::bind_index_buffer(Handle<Buffer> buffer)
 
 	current_index_buffer_ = buffer;
 
+	// [ZE]: Reuse the index buffer binding when it already matches the requested buffer.
 	bind_buffer(GL_ELEMENT_ARRAY_BUFFER, ib.buffer);
 }
 
@@ -1389,6 +1417,7 @@ void Gl2Rhi::set_uniform(const char* name, float value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a scalar floating-point uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1400,10 +1429,12 @@ void Gl2Rhi::set_uniform(const char* name, int value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Look up the integer uniform through the program cache and use its stored location.
 	Gl2UniformLocation& uniform = find_uniform(cast, name);
 	SRB2_ASSERT(uniform.location >= 0);
 	gl_->Uniform1i(uniform.location, value);
 	GL_ASSERT;
+	// [ZE]: Remember the integer value so a later sampler update can skip setting it again.
 	uniform.int_value = value;
 }
 
@@ -1411,6 +1442,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec2 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a two-component floating-point uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1422,6 +1454,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec3 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a three-component floating-point uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1433,6 +1466,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::vec4 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a four-component floating-point uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1444,6 +1478,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec2 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a two-component integer uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1455,6 +1490,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec3 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a three-component integer uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1466,6 +1502,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::ivec4 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a four-component integer uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1477,6 +1514,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat2 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a two-by-two matrix uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1488,6 +1526,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat3 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a three-by-three matrix uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1499,6 +1538,7 @@ void Gl2Rhi::set_uniform(const char* name, glm::mat4 value)
 {
 	SRB2_ASSERT(current_program_.has_value());
 	Gl2Program& cast = program_slab_[*current_program_];
+	// [ZE]: Reuse the cached location of a four-by-four matrix uniform.
 	GLint location = find_uniform(cast, name).location;
 	GL_ASSERT;
 	SRB2_ASSERT(location >= 0);
@@ -1514,6 +1554,7 @@ void Gl2Rhi::set_sampler(const char* name, uint32_t slot, Handle<Texture> textur
 	Gl2Program& prog = program_slab_[*current_program_];
 	SRB2_ASSERT(texture_slab_.is_valid(texture));
 	Gl2Texture& tex = texture_slab_[texture];
+	// [ZE]: Reuse cached texture bindings and set the sampler uniform only when its slot changes.
 	Gl2UniformLocation& uniform = find_uniform(prog, name);
 	SRB2_ASSERT(uniform.location >= 0);
 	bind_texture(slot, tex.texture);
@@ -1529,12 +1570,15 @@ void Gl2Rhi::set_sampler(const char* name, uint32_t slot, Handle<Texture> textur
 void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 {
 	current_primitive_type_ = desc.primitive;
+	// [ZE]: Drop the unconditional cull and color-mask calls so those settings can be checked against cached state.
 
+	// [ZE]: Compare against cached rasterizer state to avoid resending unchanged settings.
 	// Only change the GL state that differs from the last rasterizer state, unless something else changed it since
 	const std::optional<RasterizerStateDesc>& last = rasterizer_state_;
 
 	if (!last || last->cull != desc.cull)
 	{
+		// [ZE]: Apply face culling only when the requested cull mode changes or the cache is empty.
 		if (desc.cull == CullMode::kNone)
 		{
 			gl_->Disable(GL_CULL_FACE);
@@ -1545,19 +1589,25 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 			gl_->CullFace(map_cull_mode(desc.cull));
 		}
 	}
+	// [ZE]: Compare all four write-mask channels before sending an update.
 	if (!last || last->color_mask.r != desc.color_mask.r || last->color_mask.g != desc.color_mask.g
 		|| last->color_mask.b != desc.color_mask.b || last->color_mask.a != desc.color_mask.a)
 	{
+		// [ZE]: Send and check the color write mask only when the cached mask cannot be reused.
 		gl_->ColorMask(desc.color_mask.r, desc.color_mask.g, desc.color_mask.b, desc.color_mask.a);
 		GL_ASSERT;
 	}
+	// [ZE]: Update winding independently so other rasterizer changes can leave it alone.
 	if (!last || last->winding != desc.winding)
 	{
+		// [ZE]: Send and check the new front-face winding inside its change check.
 		gl_->FrontFace(map_winding(desc.winding));
 		GL_ASSERT;
 	}
+	// [ZE]: Toggle blending only when the requested enable state differs or the cache is empty.
 	if (!last || last->blend_enabled != desc.blend_enabled)
 	{
+		// [ZE]: Enable or disable blending inside its own change check.
 		if (desc.blend_enabled)
 		{
 			gl_->Enable(GL_BLEND);
@@ -1568,11 +1618,13 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 		}
 		GL_ASSERT;
 	}
+	// [ZE]: Compare the color and alpha factors so an unchanged blend function can be reused.
 	if (!last || last->blend_source_factor_color != desc.blend_source_factor_color
 		|| last->blend_dest_factor_color != desc.blend_dest_factor_color
 		|| last->blend_source_factor_alpha != desc.blend_source_factor_alpha
 		|| last->blend_dest_factor_alpha != desc.blend_dest_factor_alpha)
 	{
+		// [ZE]: Send both color and alpha blend factors together when an update is needed.
 		gl_->BlendFuncSeparate(
 			map_blend_factor(desc.blend_source_factor_color),
 			map_blend_factor(desc.blend_dest_factor_color),
@@ -1581,15 +1633,18 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 		);
 		GL_ASSERT;
 	}
+	// [ZE]: Check both blend equations before making a graphics call.
 	if (!last || last->blend_color_function != desc.blend_color_function
 		|| last->blend_alpha_function != desc.blend_alpha_function)
 	{
+		// [ZE]: Send the color and alpha equations together when either needs updating.
 		gl_->BlendEquationSeparate(
 			map_blend_function(desc.blend_color_function),
 			map_blend_function(desc.blend_alpha_function)
 		);
 		GL_ASSERT;
 	}
+	// [ZE]: Skip unchanged blend color, depth settings, and stencil enable state.
 	if (!last || last->blend_color != desc.blend_color)
 	{
 		gl_->BlendColor(desc.blend_color.r, desc.blend_color.g, desc.blend_color.b, desc.blend_color.a);
@@ -1639,8 +1694,10 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 	stencil_back_write_mask_ = 0xFF;
 	stencil_front_func_ = desc.front_stencil_compare;
 	stencil_back_func_ = desc.back_stencil_compare;
+	// [ZE]: Reuse the front stencil comparison when it still matches the requested state.
 	if (!last || last->front_stencil_compare != desc.front_stencil_compare)
 	{
+		// [ZE]: Restore the front stencil comparison with its current reference and mask when an update is needed.
 		gl_->StencilFuncSeparate(
 			GL_FRONT,
 			map_compare_func(stencil_front_func_),
@@ -1649,8 +1706,10 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 		);
 		GL_ASSERT;
 	}
+	// [ZE]: Reuse the back stencil comparison when it still matches the requested state.
 	if (!last || last->back_stencil_compare != desc.back_stencil_compare)
 	{
+		// [ZE]: Restore the back stencil comparison with its current reference and mask when an update is needed.
 		gl_->StencilFuncSeparate(
 			GL_BACK,
 			map_compare_func(stencil_back_func_),
@@ -1659,6 +1718,7 @@ void Gl2Rhi::set_rasterizer_state(const RasterizerStateDesc& desc)
 		);
 		GL_ASSERT;
 	}
+	// [ZE]: Restore stencil masks when the cache is invalid and update the remaining rasterizer settings only as needed.
 	if (!last)
 	{
 		gl_->StencilMaskSeparate(GL_FRONT, stencil_front_write_mask_);
@@ -1713,6 +1773,7 @@ void Gl2Rhi::set_viewport(const Rect& rect)
 {
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	// [ZE]: Skip the viewport call when the cached rectangle already matches.
 	if (viewport_ && same_rect(*viewport_, rect))
 	{
 		return;
@@ -1720,6 +1781,7 @@ void Gl2Rhi::set_viewport(const Rect& rect)
 
 	gl_->Viewport(rect.x, rect.y, rect.w, rect.h);
 	GL_ASSERT;
+	// [ZE]: Remember the applied viewport for the next comparison.
 	viewport_ = rect;
 }
 
@@ -1729,6 +1791,7 @@ void Gl2Rhi::draw(uint32_t vertex_count, uint32_t first_vertex)
 
 	gl_->DrawArrays(map_primitive_mode(current_primitive_type_), first_vertex, vertex_count);
 	GL_ASSERT;
+// [UWP]: Count non-indexed draws in the periodic performance summary.
 #ifdef _UWP
 	ps_uwp_draws++;
 #endif
@@ -1751,6 +1814,7 @@ void Gl2Rhi::draw_indexed(uint32_t index_count, uint32_t first_index)
 		(const void*)((size_t)first_index * 2 + index_buffer_offset_)
 	);
 	GL_ASSERT;
+// [UWP]: Count indexed draws in the periodic performance summary too.
 #ifdef _UWP
 	ps_uwp_draws++;
 #endif
@@ -1791,6 +1855,7 @@ void Gl2Rhi::read_pixels(const Rect& rect, PixelFormat format, tcb::span<std::by
 	SRB2_ASSERT(rect.x + rect.w <= src_dim.w);
 	SRB2_ASSERT(rect.y + rect.h <= src_dim.h);
 
+	// [ZE]: Omit desktop read-buffer selection on OpenGL ES and convert RGBA readback to RGB when requested.
 	if (!gles_)
 	{
 		GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
@@ -1823,6 +1888,7 @@ void Gl2Rhi::set_stencil_reference(CullMode face, uint8_t reference)
 	SRB2_ASSERT(face != CullMode::kNone);
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	// [ZE]: Invalidate cached rasterizer state after a stencil reference override so the next state bind restores its defaults.
 	// The next rasterizer state has to reset the stencil state
 	rasterizer_state_.reset();
 
@@ -1853,6 +1919,7 @@ void Gl2Rhi::set_stencil_compare_mask(CullMode face, uint8_t compare_mask)
 	SRB2_ASSERT(face != CullMode::kNone);
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	// [ZE]: Invalidate cached rasterizer state after a stencil compare-mask override so the next bind restores its defaults.
 	// The next rasterizer state has to reset the stencil state
 	rasterizer_state_.reset();
 
@@ -1883,6 +1950,7 @@ void Gl2Rhi::set_stencil_write_mask(CullMode face, uint8_t write_mask)
 	SRB2_ASSERT(face != CullMode::kNone);
 	SRB2_ASSERT(render_pass_stack_.empty() == false);
 
+	// [ZE]: Invalidate cached rasterizer state after a stencil write-mask override so the next bind restores its defaults.
 	// The next rasterizer state has to reset the stencil state
 	rasterizer_state_.reset();
 
@@ -1935,6 +2003,7 @@ uint32_t Gl2Rhi::get_buffer_size(Handle<Buffer> buffer)
 
 void Gl2Rhi::finish()
 {
+	// [ZE]: Keep framebuffers across frames to avoid recreating them every frame.
 	// Framebuffers are kept between frames, since recreating them every frame is costly through ANGLE.
 	// destroy_texture and destroy_renderbuffer delete the ones using them.
 }
@@ -1977,6 +2046,7 @@ void Gl2Rhi::copy_framebuffer_to_texture(
 	SRB2_ASSERT(src_region.x + src_region.w <= src_dim.w);
 	SRB2_ASSERT(src_region.y + src_region.h <= src_dim.h);
 
+	// [ZE]: Select the read buffer only on desktop contexts because OpenGL ES 2 lacks that call.
 	if (!gles_)
 	{
 		GLenum read_buffer = is_back ? GL_BACK_LEFT : GL_COLOR_ATTACHMENT0;
@@ -1984,6 +2054,7 @@ void Gl2Rhi::copy_framebuffer_to_texture(
 		GL_ASSERT;
 	}
 
+	// [ZE]: Reuse the cached destination texture binding for framebuffer copies.
 	bind_texture(0, tex.texture);
 	gl_->CopyTexSubImage2D(GL_TEXTURE_2D, 0, dst_region.x, dst_region.y, src_region.x, src_region.y, dst_region.w, dst_region.h);
 	GL_ASSERT;

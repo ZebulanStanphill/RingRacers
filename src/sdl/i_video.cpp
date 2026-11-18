@@ -29,6 +29,7 @@
 #pragma warning(disable : 4214 4244)
 #endif
 
+// [UWP]: libuwp's refresh rate and screen size, since the Xbox build has no SDL display to ask.
 #ifdef _UWP
 extern "C" __declspec(dllimport) float uwp_GetRefreshRate();
 extern "C" __declspec(dllimport) void  uwp_GetScreenSize(int*, int*);
@@ -38,6 +39,7 @@ extern "C" __declspec(dllimport) void  uwp_SetScreenSize(int, int);
 #ifdef HAVE_SDL
 #define _MATH_DEFINES_DEFINED
 #include "SDL.h"
+// [UWP]: Declares the device family query, which SDL's headers hide in this build, so the Fullscreen option can be hidden on Xbox consoles.
 #ifdef _UWP
 #include "SDL_system.h"
 // This build does not define __WINRT__, so SDL hides these declarations.
@@ -133,6 +135,7 @@ static INT32 numVidModes = -1;
 static char vidModeName[33][32]; // allow 33 different modes
 
 rendermode_t rendermode = render_soft;
+// [ZE]: The chosen renderer can be a VibeRant driver as well as Software or OpenGL, so it is a rendererchoice_t.
 rendererchoice_t chosenrendermode = RENDERER_UNCHOSEN; // set by command line arguments
 
 UINT8 graphics_started = 0; // Is used in console.c and screen.c
@@ -197,6 +200,7 @@ static INT32 windowedModes[MAXWINMODES][2] =
 
 static void Impl_VideoSetupBuffer(void);
 static SDL_bool Impl_CreateWindow(SDL_bool fullscreen);
+// [ZE]: Whether the game's window is still hidden, since VibeRant Vulkan and Metal present on a window of their own.
 #if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 static SDL_bool g_window_deferred = SDL_FALSE; // the game's window was made hidden and hasn't been shown yet
 #endif
@@ -248,6 +252,7 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 	realwidth = vid.width;
 	realheight = vid.height;
 
+// [UWP]: Xbox is always full screen.
 #ifdef _UWP
 	fullscreen = SDL_TRUE; // Fixes tiny loading screen
 #endif
@@ -276,6 +281,7 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 			}
 			// Reposition window only in windowed mode
 			SDL_SetWindowSize(window, width, height);
+// [ZE]: Fits the window to the video mode's shape on macOS, which cuts a window's height to the screen.
 #ifdef __APPLE__
 			FitWindowToScreen(width, height);
 #endif
@@ -295,6 +301,7 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 		{
 			SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP);
 		}
+// [ZE]: As above, for a window that wasn't resized here.
 #ifdef __APPLE__
 		else
 		{
@@ -306,6 +313,7 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
+// [ZE]: VibeRant has its own surface setup, where upstream always set up OpenGL's.
 #ifdef HAVE_VIBERANT
 		if (HWR_VibeRant())
 			VibeRant_Surface(vid.width, vid.height);
@@ -319,8 +327,10 @@ static void SDLSetMode(int width, int height, SDL_bool fullscreen, SDL_bool repo
 		SDL_GL_SetSwapInterval(cv_vidwait.value ? 1 : 0);
 	}
 
+// [UWP]: libuwp's screen size is used on Xbox, where upstream asked the SDL window.
 #ifndef _UWP
 	SDL_GetWindowSize(window, &width, &height);
+// [UWP]: The Xbox branch of the window size query.
 #else
 	// DLW: Something is breaking mesa "bridge" mode so need to always provide full screen size
 	uwp_GetScreenSize(&width, &height);
@@ -440,6 +450,7 @@ static boolean IgnoreMouse(void)
 	return false;
 }
 
+// [ZE]: Shows the game's window once the renderer that presents on it is the one running.
 #if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 void I_ShowDeferredWindow(void)
 {
@@ -1174,7 +1185,7 @@ void I_OsPolling(void)
 {
 	SDL_Keymod mod;
 
-	// Asked to quit by a signal: quit from here, like SDL_QUIT, not from inside the signal handler
+	// [ZE]: Asked to quit by a signal: quit from here, like SDL_QUIT, not from inside the signal handler
 	if (I_QuitSignaled())
 	{
 		LUA_HookBool(true, HOOK(GameQuit));
@@ -1214,6 +1225,7 @@ void I_UpdateNoBlit(void)
 #ifdef HWRENDER
 		if (rendermode == render_opengl)
 		{
+// [ZE]: VibeRant presents with its own swap chain, where upstream always presented through OpenGL.
 #ifdef HAVE_VIBERANT
 			if (HWR_VibeRant())
 			{
@@ -1521,6 +1533,7 @@ static SDL_bool Impl_CreateContext(void)
 #else
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+// [UWP]: Upstream's OpenGL 2.1 context is used on other platforms.
 #endif
 		sdlglcontext = SDL_GL_CreateContext(window);
 	}
@@ -1531,6 +1544,7 @@ static SDL_bool Impl_CreateContext(void)
 	}
 	init_imgui();
 	SDL_GL_MakeCurrent(window, sdlglcontext);
+// [UWP]: Logs the GL strings, and renders at the size of ANGLE's window surface.
 #ifdef _UWP
 	UWPLogGLStrings();
 	UWPUseSurfaceSize();
@@ -1561,6 +1575,7 @@ boolean VID_CheckRenderer(void)
 
 	if (setrenderneeded)
 	{
+// [ZE]: Starts the driver that the new renderer needs, and converts the renderer choice to a render mode.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (SCR_RendererMode(setrenderneeded) == render_opengl)
 			HWR_StartDriver(SCR_RendererVibeRant(setrenderneeded), SCR_RendererVulkan(setrenderneeded));
@@ -1568,6 +1583,7 @@ boolean VID_CheckRenderer(void)
 		rendermode = static_cast<rendermode_t>(SCR_RendererMode(setrenderneeded));
 		rendererchanged = true;
 
+// [ZE]: Releases the VibeRant driver's window when the game switches away from hardware rendering.
 #ifdef HAVE_VIBERANT
 		// The VibeRant driver presents with a swap chain of its own: on UWP on the window, which ANGLE needs back to draw
 		// Software's frames; on the desktop on a child window or a window of its own, which has to go for Software's frames
@@ -1588,7 +1604,7 @@ boolean VID_CheckRenderer(void)
 					rendererchanged = false;
 				}
 			}
-			// A game that started in a hardware renderer switches to Software in the middle of a frame whose
+			// [ZE]: A game that started in a hardware renderer switches to Software in the middle of a frame whose
 			// I_StartDisplayUpdate did nothing, and that is where the state Software's frames are shown with is made. The
 			// rest of this frame needs it.
 			if (rendermode == render_soft && !I_SoftwareDisplayStarted())
@@ -1622,6 +1638,7 @@ boolean VID_CheckRenderer(void)
 static UINT32 refresh_rate;
 static UINT32 VID_GetRefreshRate(void)
 {
+// [UWP]: The refresh rate comes from libuwp on Xbox.
 #ifndef _UWP
 	int index = SDL_GetWindowDisplayIndex(window);
 	SDL_DisplayMode m;
@@ -1639,6 +1656,7 @@ static UINT32 VID_GetRefreshRate(void)
 	}
 
 	return m.refresh_rate;
+// [UWP]: The Xbox branch of the refresh rate query.
 #else
 	return ceil(uwp_GetRefreshRate());
 #endif
@@ -1688,6 +1706,7 @@ static SDL_bool Impl_CreateWindow(SDL_bool fullscreen)
 	// RHI: always create window as OPENGL
 	flags |= SDL_WINDOW_OPENGL;
 
+// [ZE]: Hides the game's window until a renderer that presents on it is running, for VibeRant Vulkan and Metal.
 #if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 	// VibeRant Vulkan or Metal presents on a window of its own in this one's place (the presenter), so this one stays hidden until
 	// a renderer that presents on it is the one the game runs with (I_ShowDeferredWindow): starting the game then shows
@@ -1717,7 +1736,7 @@ static void Impl_SetWindowIcon(void)
 		SDL_SetWindowIcon(window, icoSurface);
 }
 
-// For a window that stands in for the game's (VibeRant Vulkan's or Metal's)
+// [ZE]: For a window that stands in for the game's (VibeRant Vulkan's or Metal's)
 void VID_SetWindowIcon(SDL_Window *target)
 {
 	if (target && icoSurface)
@@ -1780,6 +1799,7 @@ void I_StartupGraphics(void)
 		{
 			if (!stricmp(modeparm, renderer_list[i].strvalue))
 			{
+				// [ZE]: The renderer list values are renderer choices, which include the VibeRant drivers.
 				chosenrendermode = static_cast<rendererchoice_t>(renderer_list[i].value);
 				break;
 			}
@@ -1796,6 +1816,7 @@ void I_StartupGraphics(void)
 	else if (M_CheckParm("-opengl"))
 		chosenrendermode = render_opengl;
 
+// [ZE]: The command line options that choose a VibeRant driver.
 #if defined(HAVE_VIBERANT) && (defined(_UWP) || defined(HAVE_VIBERANT_D3D))
 	else if (M_CheckParm("-d3d12"))
 		chosenrendermode = static_cast<rendererchoice_t>(
@@ -1819,11 +1840,13 @@ void I_StartupGraphics(void)
 	if (M_CheckParm("-nogl"))
 	{
 		vid.glstate = VID_GL_LIBRARY_ERROR;
+		// [ZE]: Compares the render mode of the choice, which can now be a VibeRant driver.
 		if (SCR_RendererMode(chosenrendermode) == render_opengl)
 			chosenrendermode = RENDERER_UNCHOSEN;
 	}
 #endif
 
+	// [ZE]: Starts the VibeRant driver first when the choice is one.
 	if (chosenrendermode != RENDERER_UNCHOSEN)
 	{
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
@@ -1877,6 +1900,7 @@ void VID_StartupOpenGL(void)
 	if (!glstartup)
 	{
 		CONS_Printf("VID_StartupOpenGL()...\n");
+// [ZE]: Chooses the VibeRant backend and its debug options before the driver loads.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 		// -vkdebug or -d3ddebug: the backend's validation or debug layer, whose messages go to the log; -warp: a software device.
 		// -mtldebug: what Metal reports of a failed command buffer, in detail (Metal's own validation is turned on with
@@ -1942,6 +1966,7 @@ void VID_StartupOpenGL(void)
 
 	if (vid.glstate == VID_GL_LIBRARY_ERROR)
 	{
+// [ZE]: Warns when VibeRant couldn't start and the game fell back to Software.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 		if (HWR_VibeRant())
 			CONS_Alert(CONS_WARNING, "%s couldn't start (the log says why), so the game is using the Software renderer.\n",
@@ -1996,6 +2021,7 @@ rhi::Rhi* srb2::sys::get_rhi(rhi::Handle<rhi::Rhi> handle)
 
 #endif
 
+// [ZE]: Xbox consoles always display full screen, which hides the Fullscreen option in the Video menu.
 boolean I_VideoAlwaysFullscreen(void)
 {
 #ifdef _UWP

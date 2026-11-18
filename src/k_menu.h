@@ -420,6 +420,7 @@ typedef enum
 	vaopt_spacer7,
 	vaopt_spacer8,
 	vaopt_spacer9,
+// [ZE]: Reserve room for the extra line in the hardware renderer description.
 #ifdef HAVE_VIBERANT
 	// VibeRant D3D's description has one more line
 	vaopt_spacer9a,
@@ -434,6 +435,7 @@ typedef enum
 	vaopt_anisotropic,
 	vaopt_billboarding,
 	vaopt_perspective,
+// [UWP]: Put Batching after the other hardware settings because players rarely need it.
 #ifdef _UWP
 	vaopt_batching,
 #endif
@@ -477,6 +479,7 @@ extern menu_t OPTIONS_VideoModesDef;
 extern menuitem_t OPTIONS_VideoColorProfile[];
 extern menu_t OPTIONS_VideoColorProfileDef;
 
+// [ZE]: Expose the camera position menu and its per-player controls.
 extern menuitem_t OPTIONS_VideoCamera[];
 extern menu_t OPTIONS_VideoCameraDef;
 extern consvar_t cv_dummycameraposition[MAXSPLITSCREENPLAYERS];
@@ -1176,6 +1179,7 @@ void M_SoundOptions(INT32 choice);
 void M_GameplayOptions(INT32 choice);
 void M_ServerOptions(INT32 choice);
 
+// [ZE]: Expose the menu refresh so opening Video Options can hide Fullscreen on Xbox.
 void M_RefreshVideoOptions(void);
 void M_RefreshAdvancedVideoOptions(void);
 

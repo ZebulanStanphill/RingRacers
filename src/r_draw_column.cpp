@@ -31,6 +31,7 @@ enum DrawColumnType
 	DC_LIGHTLIST		= 0x0010,
 };
 
+// [ZE]: The column drawers take the draw data as const, so the sprite code can share one bundle across columns without copying it.
 template<DrawColumnType Type>
 static constexpr UINT8 R_GetColumnTranslated(const drawcolumndata_t* dc, UINT8 col)
 {
@@ -44,6 +45,7 @@ static constexpr UINT8 R_GetColumnTranslated(const drawcolumndata_t* dc, UINT8 c
 	}
 }
 
+// [ZE]: As above, const draw data.
 template<DrawColumnType Type>
 static constexpr UINT8 R_GetColumnBrightmapped(const drawcolumndata_t* dc, UINT32 bit, UINT8 col)
 {
@@ -60,6 +62,7 @@ static constexpr UINT8 R_GetColumnBrightmapped(const drawcolumndata_t* dc, UINT3
 	return dc->colormap[col];
 }
 
+// [ZE]: As above, const draw data.
 template<DrawColumnType Type>
 static constexpr UINT8 R_GetColumnTranslucent(const drawcolumndata_t* dc, UINT8 *dest, UINT32 bit, UINT8 col)
 {
@@ -75,6 +78,7 @@ static constexpr UINT8 R_GetColumnTranslucent(const drawcolumndata_t* dc, UINT8 
 	}
 }
 
+// [ZE]: As above, const draw data.
 template<DrawColumnType Type>
 static constexpr UINT8 R_DrawColumnPixel(const drawcolumndata_t* dc, UINT8 *dest, UINT32 bit)
 {
@@ -94,6 +98,7 @@ static constexpr UINT8 R_DrawColumnPixel(const drawcolumndata_t* dc, UINT8 *dest
 /**	\brief The R_DrawColumn function
 	Experiment to make software go faster. Taken from the Boom source
 */
+// [ZE]: As above, const draw data.
 template<DrawColumnType Type>
 static void R_DrawColumnTemplate(const drawcolumndata_t *dc)
 {
@@ -308,6 +313,7 @@ static void R_DrawColumnTemplate(const drawcolumndata_t *dc)
 	}
 }
 
+// [ZE]: As above, const draw data for every generated column drawer.
 #define DEFINE_COLUMN_FUNC(name, flags) \
 	void name(const drawcolumndata_t *dc) \
 	{ \
@@ -328,6 +334,7 @@ DEFINE_COLUMN_COMBO(R_DrawTranslatedTranslucentColumn, DC_COLORMAP|DC_TRANSMAP)
 DEFINE_COLUMN_COMBO(R_Draw2sMultiPatchColumn, DC_HOLES)
 DEFINE_COLUMN_COMBO(R_Draw2sMultiPatchTranslucentColumn, DC_HOLES|DC_TRANSMAP)
 
+// [ZE]: As above, const draw data.
 void R_DrawFogColumn(const drawcolumndata_t *dc)
 {
 	ZoneScoped;
@@ -360,6 +367,7 @@ void R_DrawFogColumn(const drawcolumndata_t *dc)
 	while (count--);
 }
 
+// [ZE]: As above, const draw data.
 void R_DrawDropShadowColumn(const drawcolumndata_t *dc)
 {
 	ZoneScoped;
@@ -393,6 +401,7 @@ void R_DrawDropShadowColumn(const drawcolumndata_t *dc)
 		*dest = *(transmap_offset + (*dest));
 }
 
+// [ZE]: As above, const draw data.
 void R_DrawColumn_Flat(const drawcolumndata_t *dc)
 {
 	ZoneScoped;

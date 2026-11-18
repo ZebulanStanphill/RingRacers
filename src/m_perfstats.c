@@ -25,6 +25,7 @@
 #include "hardware/hw_main.h"
 #endif
 
+// [UWP]: Import game and renderer state so the performance log can identify the workload being measured.
 #ifdef _UWP
 #include "d_clisrv.h"
 #include "g_demo.h"

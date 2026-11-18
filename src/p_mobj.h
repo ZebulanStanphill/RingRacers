@@ -531,6 +531,7 @@ struct precipmobj_t
 };
 
 // It's extremely important that all mobj_t*-reading code have access to this.
+// [UWP]: Inline the check for a removed mobj, to avoid a function call at every place that tests it.
 #ifdef _UWP
 void P_MobjThinker(mobj_t *mobj);
 FUNCINLINE static ATTRINLINE boolean P_MobjWasRemoved(const mobj_t *mobj)
@@ -539,6 +540,7 @@ FUNCINLINE static ATTRINLINE boolean P_MobjWasRemoved(const mobj_t *mobj)
 }
 #else
 boolean P_MobjWasRemoved(const mobj_t *th);
+// [UWP]: End of the inlined check; other builds call the function.
 #endif
 
 struct actioncache_t

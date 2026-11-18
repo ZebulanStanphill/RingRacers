@@ -11,6 +11,7 @@
 #include "core/hash_map.hpp"
 #include "doomdef.h" // skincolornum_t
 #include "doomtype.h"
+// [ZE]: Make the capture animation clock available to button prompts.
 #include "d_framecapture.h"
 #include "hu_stuff.h"
 #include "i_time.h"
@@ -436,6 +437,7 @@ void Chain::button_(Button type, int ver, std::optional<bool> press) const
 	}
 	else
 	{
+		// [ZE]: Use replay time during capture so button prompt animation matches across runs.
 		K_drawButtonAnim(x_, y_, flags_, get_button_patch(type, ver), FrameCapture_AnimTime());
 	}
 }
@@ -478,6 +480,7 @@ void Chain::generic_button_(GenericButton type, int ver, std::optional<bool> pre
 	}
 	else
 	{
+		// [ZE]: Use the same capture clock for generic button prompts.
 		K_drawButtonAnim(x_, y_, flags_, get_button_patch(type, ver), FrameCapture_AnimTime());
 	}
 }

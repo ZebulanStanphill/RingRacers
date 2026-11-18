@@ -43,6 +43,7 @@
 
 #include <algorithm>
 #include <cstddef>
+// [ZE]: std::optional and std::vector for the per-file name indexes, and the Xbox build's background file check headers.
 #include <optional>
 #include <vector>
 #ifdef _UWP
@@ -60,6 +61,7 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "fastcmp.h"
+// [ZE]: The index from lump name hashes to lump positions.
 #include "name_index.hpp"
 
 #include "g_game.h" // G_LoadGameData
@@ -93,6 +95,7 @@
 #include "console.h"
 #endif
 
+// [UWP]: Windows headers for the background file check.
 #ifdef _UWP
 // After the engine headers: Windows' rpcndr.h defines a "small" macro that breaks st_stuff.h's ST_getRoundPicture
 #define NOMINMAX
@@ -154,6 +157,7 @@ static lumpinfo_t *g_shaderspk3lumps;
 static void PrintMD5String(const UINT8 *md5, char *buf);
 #endif
 
+// [UWP]: The background check, and optional copy to internal storage, of the game's main files.
 #ifdef _UWP
 // Only the main thread queues main files with expected MD5s, before starting the worker, for checking and optional
 // copying to internal storage. Check results are published by the release store of the check state; copy results
@@ -451,6 +455,7 @@ void W_Shutdown(void)
 		Z_Free(wad->lumpinfo);
 		Z_Free(wad);
 	}
+	// [ZE]: Drops the per-file lump name and PK3 folder indexes with the files.
 	g_lumpNameIndex.clear();
 	g_folderStarts.clear();
 
@@ -779,6 +784,7 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
 
 		memset(lump_p->name, 0x00, 9);
 		strncpy(lump_p->name, fileinfo->name, 8);
+// [UWP]: A lump in a WAD has no zip local header to find.
 #ifdef _UWP
 		lump_p->uwplocalheader = false;
 #endif
@@ -1024,6 +1030,7 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 		lump_p->position = LONG(zentry->offset); // NOT ACCURATE YET: we still need to read the local entry to find our true position
 		lump_p->disksize = LONG(zentry->compsize);
 		lump_p->size = LONG(zentry->size);
+// [UWP]: Marks whether the lump's data start is found later from its local header, and keeps its CRC for the background check.
 #ifdef _UWP
 		lump_p->uwplocalheader = w_uwptrustlayout;
 		lump_p->uwpcrc32 = LONG(zentry->CRC32);
@@ -1140,6 +1147,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 #endif
 	UINT8 md5sum[16];
 	int important;
+// [UWP]: Times how long each file takes to load.
 #ifdef _UWP
 	const precise_t uwploadstart = I_GetPreciseTime();
 	const precise_t uwplogstart = i_uwplogtime;
@@ -1173,12 +1181,14 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	if ((handle = W_OpenWadFile(&filename, (mainfile ? NULL : "addons"), true)) == NULL)
 		return W_InitFileError(filename, startup);
 
+// [UWP]: Main files are trusted by their expected MD5 and checked in the background, so the zip layout isn't fully read.
 #ifdef _UWP
 	const boolean uwptrusted = mainfile;
 
 	w_uwptrustlayout = uwptrusted;
 #endif
 	important = W_VerifyNMUSlumps(filename, handle, startup);
+// [UWP]: Ends the layout trust set above.
 #ifdef _UWP
 	w_uwptrustlayout = false;
 #endif
@@ -1235,6 +1245,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 			else realmd5[ix>>1] = (UINT8)(n<<4);
 		}
 
+// [UWP]: Main files use their expected MD5 and are checked in the background, where upstream hashed every file here.
 #ifdef _UWP
 		if (uwptrusted)
 		{
@@ -1296,10 +1307,12 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 		lumpinfo = ResGetLumpsStandalone(handle, &numlumps, "LUA_INIT");
 		break;
 	case RET_PK3:
+// [UWP]: Reads a main PK3's directory without reading every zip entry's local header.
 #ifdef _UWP
 		w_uwptrustlayout = uwptrusted;
 #endif
 		lumpinfo = ResGetLumpsZip(handle, &numlumps);
+// [UWP]: Ends the layout trust set above.
 #ifdef _UWP
 		w_uwptrustlayout = false;
 #endif
@@ -1349,6 +1362,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	// add the wadfile
 	//
 	CONS_Printf(M_GetText("Added file %s (%u lumps)\n"), filename, numlumps);
+	// [ZE]: Builds the per-file lump name index, and the folder index for PK3s, when the file is added.
 	if (g_lumpNameIndex.size() <= numwadfiles)
 		g_lumpNameIndex.resize(numwadfiles + 1);
 	g_lumpNameIndex[numwadfiles].Clear();
@@ -1618,6 +1632,7 @@ UINT16 W_CheckNumForNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 	//
 	if (startlump < wadfiles[wad]->numlumps)
 	{
+		// [ZE]: Looks the name up in the per-file index, where upstream scanned every lump.
 		const lumpinfo_t *lumps = wadfiles[wad]->lumpinfo;
 
 		if (wad < g_lumpNameIndex.size())
@@ -1667,6 +1682,7 @@ UINT16 W_CheckNumForLongNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 	{
 		lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 
+		// [ZE]: Looks the long name up in the per-file index, where upstream scanned every lump.
 		if (wad < g_lumpNameIndex.size())
 		{
 			const lumpinfo_t *lumps = wadfiles[wad]->lumpinfo;
@@ -1709,6 +1725,7 @@ UINT16 W_CheckNumForFolderStartPK3(const char *name, UINT16 wad, UINT16 startlum
 	lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 	name_length = strlen(name);
 
+	// [ZE]: Answers a folder lookup from the per-file folder index, where upstream scanned every lump.
 	if (startlump == 0 && name_length && name[name_length - 1] == '/'
 		&& wad < g_folderStarts.size() && g_folderStarts[wad])
 	{
@@ -2269,6 +2286,7 @@ static void W_UWPSeekLumpData(UINT16 wad, lumpinfo_t *l, size_t offset)
 // [UWP]: At startup, small reads of PK3 lumps are answered from a cache (w_uwpheadercache.h) without touching the file
 static size_t W_ReadLumpHeaderPwadFile(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset);
 
+// [UWP]: Answers small reads at startup from the header cache, and otherwise reads the file as upstream does.
 size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
 {
 	size_t result;
@@ -2306,6 +2324,7 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 	// We setup the desired file handle to read the lump data.
 	l = wadfiles[wad]->lumpinfo + lump;
 	handle = wadfiles[wad]->handle;
+// [UWP]: Seeks to the start of the lump's data, which is found from its local header, when the directory didn't read it.
 #ifdef _UWP
 	if (l->uwplocalheader)
 		W_UWPSeekLumpData(wad, l, offset);
@@ -2922,6 +2941,7 @@ W_VerifyPK3 (FILE *fp, lumpchecklist_t *checklist, boolean status)
 			sizeof zlentry + SHORT(zlentry.namelen) + SHORT(zlentry.xtralen) + LONG(zlentry.compsize);
 	}
 
+// [UWP]: Skips the check for holes when the file's layout is trusted, since it would read most of the file.
 #ifdef _UWP
 	if (w_uwptrustlayout)
 		return verified;

@@ -72,6 +72,7 @@ void I_OpenStartupGamepads(void);
 
 // Needed for some WIN32 functions
 extern SDL_Window *window;
+// [ZE]: VibeRant Vulkan opens a second window, which needs the game's icon too.
 // Gives another window the game's icon
 void VID_SetWindowIcon(SDL_Window *target);
 

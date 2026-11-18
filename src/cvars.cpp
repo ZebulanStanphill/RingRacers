@@ -441,6 +441,7 @@ consvar_t cv_renderer = Player("renderer", "VibeRant D3D").flags(CV_NOLUA).value
 consvar_t cv_renderer = Player("renderer", "VibeRant Vulkan").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
 #else
 consvar_t cv_renderer = Player("renderer", "Software").flags(CV_NOLUA).values(cv_renderer_t).onchange(SCR_ChangeRenderer);
+// [ZE]: On Xbox the default renderer is VibeRant D3D, on macOS VibeRant Metal, and elsewhere the first VibeRant driver built; upstream's Software is the default only without one.
 #endif
 consvar_t cv_parallelsoftware = Player("parallelsoftware", "On").on_off();
 
@@ -452,6 +453,7 @@ consvar_t cv_scr_depth = Player("scr_depth", "16 bits").values({{8, "8 bits"}, {
 consvar_t cv_scr_width = Player("scr_width", "640").values(CV_Unsigned);
 consvar_t cv_scr_height = Player("scr_height", "400").values(CV_Unsigned);
 consvar_t cv_scr_effect = Player("scr_effect", "Sharp Bilinear").values({{0, "Nearest"}, {1, "Sharp Bilinear"}, {2, "SalCRT"}, {3, "SalCRT Sharp"}}).save();
+// [ZE]: The Screen Scaling setting, which the Video Options menu shows.
 consvar_t cv_scr_scaling = Player("scr_scaling", "Fit").values({{0, "Fit"}, {1, "Integer"}, {2, "1:1"}}).save();
 
 consvar_t cv_scr_scale = Player("scr_scale", "1.0").floating_point();
@@ -1189,7 +1191,7 @@ void ChaseCam2_OnChange(void);
 void ChaseCam3_OnChange(void);
 void ChaseCam4_OnChange(void);
 
-// Saved, unlike upstream's: Options -> Video -> Camera Position sets them.
+// [ZE]: Saved, unlike upstream's: Options -> Video -> Camera Position sets them.
 consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS] = {
 	Player("chasecam", "On").on_off().onchange(ChaseCam_OnChange),
 	Player("chasecam2", "On").on_off().onchange(ChaseCam2_OnChange),
@@ -1197,7 +1199,7 @@ consvar_t cv_chasecam[MAXSPLITSCREENPLAYERS] = {
 	Player("chasecam4", "On").on_off().onchange(ChaseCam4_OnChange),
 };
 
-// What that menu's rows show, so that chasecam keeps its On and Off values.
+// [ZE]: What that menu's rows show, so that chasecam keeps its On and Off values.
 void CameraPosition_OnChange(void);
 static CV_PossibleValue_t cameraposition_cons_t[] = {{1, "3rd Person"}, {0, "1st Person"}, {0, NULL}};
 consvar_t cv_dummycameraposition[MAXSPLITSCREENPLAYERS] = {

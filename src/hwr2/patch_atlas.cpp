@@ -185,6 +185,7 @@ bool PatchAtlasCache::need_to_reset() const
 
 void PatchAtlasCache::reset(Rhi& rhi)
 {
+// [UWP]: Count patch atlas resets for the periodic performance summary.
 #ifdef _UWP
 	ps_uwp_atlasresets++;
 #endif

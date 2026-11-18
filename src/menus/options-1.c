@@ -87,6 +87,7 @@ void M_ResetOptions(void)
 	optionsmenu.opty = 0;
 	optionsmenu.toptx = 0;
 	optionsmenu.topty = 0;
+// [UWP]: Ends any slide in progress when the menu resets.
 #ifdef _UWP
 	optionsmenu_sliding = false;
 #endif
@@ -107,6 +108,7 @@ void M_InitOptions(INT32 choice)
 {
 	(void)choice;
 
+	// [ZE]: Removes the Fullscreen option from the Video menu on Xbox, which is always full screen.
 	M_RefreshVideoOptions();
 
 	OPTIONS_MainDef.menuitems[mopt_gameplay].status = IT_STRING | IT_TRANSTEXT;
@@ -205,6 +207,7 @@ void M_OptionsTick(void)
 
 		optionsmenu.optx = optionsmenu.toptx;
 		optionsmenu.opty = optionsmenu.topty;
+// [UWP]: Ends the slide when the menu snaps to its target.
 #ifdef _UWP
 		optionsmenu_sliding = false;
 #endif
@@ -245,8 +248,10 @@ void M_OptionsTick(void)
 			{
 				optionsmenu.topt_start = I_GetTime();
 			}
+// [UWP]: Upstream's exact-tic slide end is used on other platforms.
 #endif
 		}
+// [UWP]: Stops the slide when the title isn't moving.
 #ifdef _UWP
 		else
 		{

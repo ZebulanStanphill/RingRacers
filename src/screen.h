@@ -15,6 +15,7 @@
 #define __SCREEN_H__
 
 #include "command.h"
+// [ZE]: Include the hardware driver interface, for the helpers that map renderer settings to modes and drivers.
 #include "hardware/hw_driver.h"
 
 // Settings and rendermode coincide except for the VibeRant driver on desktop: 3 is VibeRant D3D and 4 is VibeRant
@@ -198,6 +199,7 @@ extern UINT8 *scr_borderpatch; // patch used to fill the view borders
 
 extern consvar_t cv_scr_width, cv_scr_height, cv_scr_depth, cv_renderview, cv_renderer, cv_renderhitbox, cv_fullscreen;
 extern consvar_t cv_scr_effect;
+// [ZE]: The Screen Scaling setting: fit, integer, or 1:1.
 extern consvar_t cv_scr_scaling;
 extern consvar_t cv_parallelsoftware;
 extern consvar_t cv_display;

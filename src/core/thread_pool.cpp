@@ -24,6 +24,7 @@
 #include "../cxxutil.hpp"
 #include "../m_argv.h"
 
+// [UWP]: Declare what the thread pool needs to size itself from the processors Xbox gives the game.
 #ifdef _UWP
 extern "C" void I_OutputMsg(const char *error, ...);
 extern "C" unsigned int I_UWPUsableProcessors(void);
@@ -330,6 +331,7 @@ void I_ThreadPoolInit(void)
 	{
 		g_main_threadpool = std::make_unique<ThreadPool>(thread_count);
 	}
+// [UWP]: Log how many processors Xbox gave the game and how many workers the pool got.
 
 #ifdef _UWP
 	I_OutputMsg("UWP: %u hardware threads, %u marked as the game's, %zu thread pool workers\n",

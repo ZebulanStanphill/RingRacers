@@ -1273,6 +1273,7 @@ void R_Prep3DFloors(sector_t *sector)
 		}
 	}
 
+// [UWP]: Keeps a sector's light list allocation while it is big enough, instead of reallocating it on nearly every call.
 #ifdef _UWP
 	// The early return below leaves numlights smaller than the allocation, and callers zero numlights before
 	// re-preparing a moved sector, so comparing counts reallocated on nearly every call. Keep the allocation while it
@@ -1305,6 +1306,7 @@ void R_Prep3DFloors(sector_t *sector)
 	}
 	else
 		memset(sector->lightlist, 0, sizeof (lightlist_t) * count);
+// [UWP]: Upstream's reallocation when the light count changes is used on other platforms.
 #endif
 
 	heighttest = P_GetSectorCeilingZAt(sector, sector->soundorg.x, sector->soundorg.y);

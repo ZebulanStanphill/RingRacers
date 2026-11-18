@@ -10,6 +10,7 @@
 
 #include "resource_management.hpp"
 
+// [ZE]: For memcmp and memcpy, used to detect changed tables.
 #include <cstring>
 
 #include "../r_state.h"
@@ -27,6 +28,7 @@ PaletteManager& PaletteManager::operator=(PaletteManager&&) = default;
 
 constexpr std::size_t kPaletteSize = 256;
 constexpr std::size_t kLighttableRows = LIGHTLEVELS;
+// [ZE]: Unused colormap and lighttable textures are freed after this many frames, instead of every frame.
 // Frames a colormap or lighttable texture is kept after it was last drawn
 constexpr uint32_t kTableLifetime = 300;
 
@@ -54,6 +56,7 @@ void PaletteManager::update(Rhi& rhi)
 		default_colormap_ = rhi.create_texture({TextureFormat::kLuminance, kPaletteSize, 1, TextureWrapMode::kClamp, TextureWrapMode::kClamp});
 	}
 
+	// [ZE]: Upstream re-uploaded the palette every frame; this skips it unless the palette changed, which saves GL calls.
 	// Palette, uploaded only when it changes
 	{
 		std::array<byteColor_t, kPaletteSize> palette_32;
@@ -61,6 +64,7 @@ void PaletteManager::update(Rhi& rhi)
 		{
 			palette_32[i] = V_GetColor(i).s;
 		}
+		// [ZE]: Upload only when the palette's contents differ from the last upload.
 		static_assert(sizeof(palette_32) == sizeof(palette_data_));
 		if (!palette_uploaded_ || std::memcmp(palette_data_.data(), palette_32.data(), sizeof(palette_32)) != 0)
 		{
@@ -89,6 +93,7 @@ void PaletteManager::update(Rhi& rhi)
 	}
 #endif
 
+	// [ZE]: Upstream re-uploaded the default colormap every frame, but it never changes.
 	// Default colormap, which never changes
 	if (!default_colormap_uploaded_)
 	{
@@ -98,14 +103,18 @@ void PaletteManager::update(Rhi& rhi)
 			data[i] = i;
 		}
 		rhi.update_texture(default_colormap_, {0, 0, kPaletteSize, 1}, PixelFormat::kR8, tcb::as_bytes(tcb::span(data)));
+		// [ZE]: Remember that the default colormap is uploaded.
 		default_colormap_uploaded_ = true;
 	}
 }
 
+// [ZE]: Replaces destroy_per_frame_resources: unused tables are destroyed after a lifetime and not every frame.
 static void destroy_unused_tables(Rhi& rhi, srb2::HashMap<const uint8_t*, PaletteTable>& tables, uint32_t frame)
 {
+	// [ZE]: Iterates the tables with erase support, to drop expired ones.
 	for (auto itr = tables.begin(); itr != tables.end();)
 	{
+		// [ZE]: Expired tables are destroyed, and the new table cache lookup lives below.
 		if (frame - itr->second.last_used_frame > kTableLifetime)
 		{
 			rhi.destroy_texture(itr->second.texture);
@@ -150,11 +159,13 @@ Handle<Texture> PaletteManager::find_or_create_table(
 		return texture;
 	}
 
+	// [ZE]: A cached table is checked for changes the first time it is drawn in a frame, because its memory can change or be reused.
 	// The first time a table is drawn in a frame, check that it hasn't changed (or been freed and its memory reused)
 	// since it was uploaded
 	PaletteTable& cached = itr->second;
 	if (cached.last_used_frame != frame_)
 	{
+		// [ZE]: Mark the table as used this frame.
 		cached.last_used_frame = frame_;
 		if (std::memcmp(cached.data.data(), table, size) != 0)
 		{
@@ -163,16 +174,19 @@ Handle<Texture> PaletteManager::find_or_create_table(
 		}
 	}
 
+	// [ZE]: Returns the cached texture, which upstream created and uploaded on every frame.
 	return cached.texture;
 }
 
 Handle<Texture> PaletteManager::find_or_create_colormap(Rhi& rhi, srb2::NotNull<const uint8_t*> colormap)
 {
+	// [ZE]: Both lookups share find_or_create_table, which keeps textures between frames.
 	return find_or_create_table(rhi, colormaps_, colormap.get(), 1);
 }
 
 Handle<Texture> PaletteManager::find_or_create_extra_lighttable(Rhi& rhi, srb2::NotNull<const uint8_t*> lighttable)
 {
+	// [ZE]: As above, for the lighttable.
 	return find_or_create_table(rhi, lighttables_, lighttable.get(), kLighttableRows);
 }
 

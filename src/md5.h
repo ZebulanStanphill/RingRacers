@@ -82,6 +82,7 @@ extern "C" {
  * The following three functions are build up the low level used in
  * the functions `md5_stream' and `md5_buffer'.
  */
+// [UWP]: The context and its init function are declared for the background file check, which hashes a file in pieces.
 /* Structure to save state of computation between the single steps.  */
 struct md5_ctx
 {
@@ -99,6 +100,7 @@ struct md5_ctx
    (RFC 1321, 3.3: Step 3)  */
 extern void md5_init_ctx __P ((struct md5_ctx *ctx));
 
+// [UWP]: Only the block-processing declaration stays disabled, as upstream had it.
 #if 0
 /* Starting with the result of former calls of this function (or the
    initialization function update the context for the next LEN bytes
@@ -107,6 +109,7 @@ extern void md5_init_ctx __P ((struct md5_ctx *ctx));
 extern void md5_process_block __P ((const void *buffer, size_t len,
                                    struct md5_ctx *ctx));
 
+// [UWP]: End of the disabled block-processing declaration.
 #endif
 
 /* Starting with the result of former calls of this function (or the
@@ -126,6 +129,7 @@ extern void md5_process_bytes __P ((const void *buffer, size_t len,
 extern void *md5_finish_ctx __P ((struct md5_ctx *ctx, void *resbuf));
 
 
+// [UWP]: The declarations that follow stay disabled, as upstream had them.
 #if 0
 /* Put result from CTX in first 16 bytes following RESBUF.  The result is
    always in little endian byte order, so that a byte-wise output yields

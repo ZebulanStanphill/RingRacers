@@ -133,6 +133,7 @@ struct hwdriver_s
 
 	SetShaderInfo       pfnSetShaderInfo;
 	LoadCustomShader    pfnLoadCustomShader;
+// [ZE]: Driver entry points for palette rendering, from SRB2.
 
 	SetScreenPalette    pfnSetScreenPalette;
 	SetPaletteLookup    pfnSetPaletteLookup;

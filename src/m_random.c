@@ -19,6 +19,7 @@
 #include "m_cond.h" // gamedata->totalplaytime
 
 #include "m_random.h"
+// [ZE]: Make the repeatable capture random source available to the unsynced generator.
 #include "d_framecapture.h"
 #include "m_fixed.h"
 
@@ -65,6 +66,7 @@ char rng_class_names[34][30] = {
 
 ATTRINLINE static UINT32 FUNCINLINE __external_prng__(void)
 {
+	// [ZE]: Use a repeatable random sequence during capture so replay frames can be compared across runs.
 	if (g_framecapture)
 		return FrameCapture_Random(); // frame capture mode (d_framecapture.cpp): the same numbers on every run
 

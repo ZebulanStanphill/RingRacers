@@ -22,6 +22,7 @@
 extern "C" {
 #endif
 
+// [UWP]: Initialize and dump the profile data that an optimized build is captured from.
 #if defined(_UWP) && defined(SRB2_PGO_GENERATE)
 void I_UWPPgoInit(void);
 void I_UWPPgoDump(void);

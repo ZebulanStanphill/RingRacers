@@ -13,6 +13,7 @@
 #ifdef HWRENDER
 #include "hw_glob.h"
 #include "hw_batching.h"
+// [ZE]: Include the hardware driver interface, for the run-time driver checks below.
 #include "hw_driver.h"
 #include "../i_system.h"
 
@@ -148,12 +149,13 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 	}
 }
 
-// What the sort compares, copied out of polygonArray so that comparisons stay in one
+// [ZE]: What the sort compares, copied out of polygonArray so that comparisons stay in one
 // contiguous array instead of chasing large entries and texture pointers.
 // The fields are in sort order; index is the final tiebreak, which keeps the sort
 // total and deterministic.
 typedef struct
 {
+	// [ZE]: A polygon's sort key, in sort order. Shader -2 draws a masked middle texture between two skies before the sky occluders.
 	INT32 shader;// -1 for skywalls and horizon lines, which must retain their order; -2 for PF_BeforeSky, drawn before them
 	UINT32 texture;// the texture's `downloaded` name, or 0
 	UINT32 brightmap;
@@ -163,12 +165,15 @@ typedef struct
 	UINT32 index;
 } PolygonSortKey;
 
+// [ZE]: One compact key per polygon, so sorting does not chase pointers.
 static PolygonSortKey *polygonSortKeys = NULL;
 static int polygonSortKeysAllocSize = 0;
 
+// [ZE]: Compares one field of two keys, falling through to the next field when equal.
 #define COMPARE_KEY_FIELD(field) \
 	if (key1->field != key2->field) return key1->field < key2->field ? -1 : 1
 
+// [ZE]: Compares two sort keys, which replaces comparing whole polygon entries.
 static int comparePolygonKeys(const void *p1, const void *p2)
 {
 	const PolygonSortKey *key1 = (const PolygonSortKey *)p1;
@@ -189,14 +194,15 @@ static int comparePolygonKeys(const void *p1, const void *p2)
 	return 0;
 }
 
-// Sorts indices into polygonSortKeys rather than the keys themselves: qsort moves
+// [ZE]: Sorts indices into polygonSortKeys rather than the keys themselves: qsort moves
 // whole elements, and moving 64-byte keys cost more than the comparisons saved.
 static int comparePolygonIndices(const void *p1, const void *p2)
 {
+	// [ZE]: Compare through the keys that the indices point to.
 	return comparePolygonKeys(&polygonSortKeys[*(const UINT32 *)p1], &polygonSortKeys[*(const UINT32 *)p2]);
 }
 
-// Fills the sort key of every polygon. With shaders, the order is shader, texture,
+// [ZE]: Fills the sort key of every polygon. With shaders, the order is shader, texture,
 // brightmap, polyflags, colors and light; without, texture, polyflags and color.
 static void buildPolygonSortKeys(boolean shaders)
 {
@@ -207,6 +213,7 @@ static void buildPolygonSortKeys(boolean shaders)
 		PolygonSortKey *key = &polygonSortKeys[i];
 		boolean keepOrder = poly->polyFlags & PF_NoTexture || poly->horizonSpecial;
 
+		// [ZE]: Build the key from zero, then fill in only the fields that the order uses.
 		memset(key, 0, sizeof *key);
 		key->index = i;
 		if (!shaders)
@@ -285,6 +292,7 @@ void HWR_RenderBatches(void)
 	nextSurfaceInfo.LightInfo.fade_start = 0;
 	nextSurfaceInfo.LightInfo.light_level = 0;
 	nextSurfaceInfo.LightInfo.directional = false;
+	// [ZE]: Palette rendering's light table is part of the surface info too.
 	nextSurfaceInfo.LightTableId = 0;
 
 	currently_batching = false;// no longer collecting batches
@@ -297,7 +305,7 @@ void HWR_RenderBatches(void)
 	ps_hw_numpolys = polygonArraySize;
 	ps_hw_numcalls = ps_hw_numverts = 0;
 	ps_hw_numshaders = ps_hw_numtextures = ps_hw_numpolyflags = ps_hw_numcolors = 1;
-	// sort polygonIndexArray by the polygons' compact keys
+	// [ZE]: sort polygonIndexArray by the polygons' compact keys
 	ps_hw_batchsorttime = I_GetPreciseTime();
 	if (polygonSortKeysAllocSize < polygonArrayAllocSize)
 	{
@@ -310,6 +318,7 @@ void HWR_RenderBatches(void)
 	{
 		polygonIndexArray[i] = i;
 	}
+	// [ZE]: Sort the indices by their keys.
 	qsort(polygonIndexArray, polygonArraySize, sizeof(UINT32), comparePolygonIndices);
 	ps_hw_batchsorttime = I_GetPreciseTime() - ps_hw_batchsorttime;
 	// sort order
@@ -343,6 +352,7 @@ void HWR_RenderBatches(void)
 	}
 	else
 	{
+		// [ZE]: Bind the texture and brightmap, each with its own role.
 		HWR_SetBatchTextures(currentTexture, currentBrightmap);
 	}
 
@@ -429,6 +439,7 @@ void HWR_RenderBatches(void)
 				changeState = true;
 				changeTexture = true;
 			}
+// [ZE]: Under VibeRant, a change in a roll sprite's flag or roll data starts a new state and surface info.
 #ifdef HAVE_VIBERANT
 			if (HWR_VibeRant() && (((currentPolyFlags ^ nextPolyFlags) & PF_RollSprite)
 				|| ((currentPolyFlags & nextPolyFlags & PF_RollSprite)
@@ -448,6 +459,7 @@ void HWR_RenderBatches(void)
 					currentSurfaceInfo.LightInfo.light_level != nextSurfaceInfo.LightInfo.light_level ||
 					currentSurfaceInfo.LightInfo.fade_start != nextSurfaceInfo.LightInfo.fade_start ||
 					currentSurfaceInfo.LightInfo.fade_end != nextSurfaceInfo.LightInfo.fade_end ||
+					// [ZE]: Palette rendering's light table also splits a batch.
 					currentSurfaceInfo.LightInfo.directional != nextSurfaceInfo.LightInfo.directional ||
 					currentSurfaceInfo.LightTableId != nextSurfaceInfo.LightTableId)
 				{
@@ -493,7 +505,9 @@ void HWR_RenderBatches(void)
 		if (changeTexture)
 		{
 			// texture should be already ready for use from calls to SetTexture during batch collection
+			// [ZE]: Bind the texture and brightmap, each with its own role.
 			HWR_SetBatchTextures(nextTexture, nextBrightmap);
+			// [ZE]: Upstream bound the brightmap here; HWR_SetBatchTextures does that now.
 			currentTexture = nextTexture;
 			currentBrightmap = nextBrightmap;
 

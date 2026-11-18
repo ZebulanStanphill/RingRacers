@@ -11,6 +11,7 @@
 #include <optional>
 #include <utility>
 
+// [ZE]: Provides FrameCapture_AnimTime, which a frame capture needs to hold animations still.
 #include "../d_framecapture.h"
 
 #include <fmt/format.h>
@@ -201,6 +202,7 @@ void K_drawSpectatorHUD(boolean director)
 		else
 		{
 			bool press = D_LocalTiccmd(viewnum)->buttons & BT_BAIL;
+			// [ZE]: Uses the frame capture's animation time, so captures of the spectator HUD are repeatable.
 			const char* label = (press && FrameCapture_AnimTime() % 16 < 8) ? "> <" : ">< ";
 
 			list.insert({{label, press ? "<y_pressed>" : "<y>"}, {"Exit", "<c_animated>"}});

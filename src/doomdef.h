@@ -669,6 +669,7 @@ extern const char
 	*comptype;
 extern int
 	compuncommitted,
+	// [ZE]: Adds the fork release number, set up in fork_version.h.
 	compoptimized,
 	compforkrelease; // fork_version.h
 

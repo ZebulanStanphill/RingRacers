@@ -15,6 +15,7 @@
 #include "r_textures.h"
 
 #include <algorithm>
+// [ZE]: For the texture name cache below.
 #include <string>
 #include <unordered_map>
 
@@ -34,6 +35,7 @@
 #include "byteptr.h"
 #include "dehacked.h"
 #include "k_terrain.h"
+// [ZE]: Provides the hash index of texture names.
 #include "name_index.hpp"
 
 #ifdef HWRENDER
@@ -69,6 +71,7 @@ INT32 *texturebrightmaps;
 INT32 g_texturenum_dbgline;
 
 // Painfully simple texture id cacheing to make maps load faster. :3
+// [ZE]: The texture id cache is a hash map, because looking names up in a growing array was slow.
 // Keyed by the first 8 characters of the name, uppercased (what strncasecmp compares).
 static std::unordered_map<std::string, INT32> tidcache;
 
@@ -832,6 +835,7 @@ UINT8 *R_GenerateTextureBrightmap(size_t texnum)
 // This can either be texnum, the current frame for texnum's anim (if animated),
 // or 0 if not valid.
 //
+// [UWP]: Not built, because the Xbox build reads texture numbers directly instead of through this function.
 #ifndef _UWP
 INT32 R_GetTextureNum(INT32 texnum)
 {
@@ -839,6 +843,7 @@ INT32 R_GetTextureNum(INT32 texnum)
 		return 0;
 	return texturetranslation[texnum];
 }
+// [UWP]: End of the UWP only exclusion above.
 #endif
 
 //
@@ -1522,6 +1527,7 @@ static INT32 R_DefineTextures(INT32 i, UINT16 w)
 
 static void R_FinishLoadingTextures(INT32 add)
 {
+	// [ZE]: Add each new texture to the name index.
 	for (INT32 i = numtextures; i < numtextures + add; i++)
 		textureIndex.Add(textures[i]->hash, i);
 
@@ -2107,7 +2113,9 @@ lumpnum_t R_GetFlatNumForName(const char *name)
 
 void R_ClearTextureNumCache(boolean btell)
 {
+	// [ZE]: The cache is a hash map that cleans up after itself, so there's nothing to free by hand.
 	if (btell)
+		// [ZE]: Counts the hash map's entries, since the cache is no longer an array.
 		CONS_Debug(DBG_SETUP, "Fun Fact: There are %d textures used in this map.\n", static_cast<INT32>(tidcache.size()));
 	tidcache.clear();
 }
@@ -2119,6 +2127,7 @@ void R_ClearTextureNumCache(boolean btell)
 //
 INT32 R_CheckTextureNumForName(const char *name)
 {
+	// [ZE]: The loop counter isn't needed now that the index finds the texture.
 	UINT32 hash;
 
 	// "NoTexture" marker.
@@ -2127,12 +2136,14 @@ INT32 R_CheckTextureNumForName(const char *name)
 
 	hash = quickncasehash(name, 8);
 
+	// [ZE]: Look the name up in the hash map before searching the textures.
 	const std::string key = R_TextureCacheKey(name);
 	const auto cached = tidcache.find(key);
 	if (cached != tidcache.end())
 		return cached->second;
 
 	// Need to parse the list backwards, so textures loaded more recently are used in lieu of ones loaded earlier
+	// [ZE]: Search the name index, newest textures first, instead of every texture.
 	const int64_t found = textureIndex.LastBelow(hash, numtextures, [&](UINT32 i)
 	{
 		return !strncasecmp(textures[i]->name, name, 8);

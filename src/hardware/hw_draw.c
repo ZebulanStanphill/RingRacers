@@ -16,6 +16,7 @@
 #endif
 
 #include "../doomdef.h"
+// [UWP]: Make the fade trace available to hardware drawing.
 #ifdef _UWP
 #include "../sdl/i_uwptrace.h"
 #endif
@@ -24,6 +25,7 @@
 #include "hw_main.h"
 #include "hw_glob.h"
 #include "hw_drv.h"
+// [ZE]: Make batch flushing and palette fade maps available to the custom fade path.
 #ifdef HAVE_VIBERANT
 #include "hw_batching.h"
 #include "r_viberant/r_viberant.h"
@@ -624,6 +626,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
 	}
 	else // Do TRANSMAP** fade.
 	{
+		// [ZE]: Look up the menu fade color in the palette used by the hardware shader.
 		Surf.PolyColor.rgba = HWR_GetColor(color).rgba;
 		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
 	}
@@ -710,6 +713,7 @@ void HWR_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color, UINT16 ac
 	}
 	else // Do TRANSMAP** fade.
 	{
+		// [ZE]: Use the hardware palette for the fade fill so color correction can happen after drawing.
 		Surf.PolyColor.rgba = HWR_GetColor(actualcolor).rgba;
 		Surf.PolyColor.s.alpha = softwaretranstogl[strength];
 	}
@@ -745,6 +749,7 @@ void HWR_DrawConsoleBack(UINT32 color, INT32 height)
 
 void HWR_EncoreInvertScreen(void)
 {
+// [UWP]: Trace Encore inversion to diagnose fade and palette timing.
 #ifdef _UWP
 	UWPTraceFade("HWR_EncoreInvertScreen");
 #endif
@@ -767,6 +772,7 @@ void HWR_EncoreInvertScreen(void)
 	HWD.pfnDrawPolygon(&Surf, v, 4, PF_NoTexture|PF_Invert|PF_NoDepthTest);
 }
 
+// [ZE]: Apply custom palette fade tables before drawing the HUD so hardware fades match Software.
 #ifdef HAVE_VIBERANT
 // Apply the software fade table now, before subsequent HUD/2D drawing.
 void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength)
@@ -817,6 +823,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
 	v[0].t = v[1].t = 1.0f;
 	v[2].t = v[3].t = 0.0f;
 
+	// [ZE]: Use the hardware palette for the fallback fade overlay.
 	Surf.PolyColor.rgba = HWR_GetColor(color).rgba;
 
 	UINT16 workingstrength = (strength*12);
@@ -825,6 +832,7 @@ void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength)
 	else
 		Surf.PolyColor.s.alpha = workingstrength;
 
+// [UWP]: Trace the resolved overlay color and alpha to diagnose fade brightness.
 #ifdef _UWP
 	UWPTraceFade("HWR_DrawCustomFadeScreen color=%u strength=%u rgba=%08x alpha=%u", color, strength, Surf.PolyColor.rgba, Surf.PolyColor.s.alpha);
 #endif
@@ -1005,6 +1013,7 @@ void HWR_drawAMline(const fline_t *fl, INT32 color)
 	F2DCoord v1, v2;
 	RGBA_t color_rgba;
 
+	// [ZE]: Use hardware palette colors for automap lines so the final palette pass handles color correction.
 	color_rgba = HWR_GetColor(color);
 
 	v1.x = ((float)fl->a.x-(vid.width/2.0f))*(2.0f/vid.width);
@@ -1095,6 +1104,7 @@ void HWR_DrawDiag(INT32 x, INT32 y, INT32 wh, INT32 color)
 	v[0].t = v[1].t = 0.0f;
 	v[2].t = v[3].t = 1.0f;
 
+	// [ZE]: Look up the diagonal fill color in the hardware palette.
 	Surf.PolyColor = HWR_GetColor(color);
 
 	HWD.pfnDrawPolygon(&Surf, v, 4,
@@ -1187,6 +1197,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 {
 	FOutVector v[4];
 	FSurfaceInfo Surf;
+	// [ZE]: Read the requested HUD alpha and prepare flags for optional blending.
 	const UINT32 alphalevel = (color & V_ALPHAMASK) >> V_ALPHASHIFT;
 	FBITFIELD flags = PF_Modulated|PF_NoTexture|PF_NoDepthTest;
 	float fx, fy, fw, fh;
@@ -1196,6 +1207,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 //  |/ |
 //  0--1
 
+	// [ZE]: Skip fully transparent fills.
 	if (alphalevel >= 10)
 		return;
 
@@ -1211,6 +1223,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 
 		if (x == 0 && y == 0 && w == BASEVIDWIDTH && h == BASEVIDHEIGHT)
 		{
+			// [ZE]: Reserve the fullscreen clear shortcut for opaque fills and blend translucent fills over the whole surface.
 			if (alphalevel == 0)
 			{
 				RGBA_t rgbaColour = HWR_GetColor(color);
@@ -1227,6 +1240,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 			fw = (float)vid.width;
 			fh = (float)vid.height;
 		}
+		// [ZE]: Scale ordinary fills to the current HUD size outside the fullscreen shortcut.
 		else
 		{
 			fx *= dupx;
@@ -1234,6 +1248,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 			fw *= dupx;
 			fh *= dupy;
 
+			// [ZE]: Apply HUD snapping after scaling ordinary fills so they stay anchored.
 			intx = (INT32)fx;
 			inty = (INT32)fy;
 			V_AdjustXYWithSnap(&intx, &inty, color, dupx, dupy);
@@ -1279,8 +1294,10 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
 	v[0].t = v[1].t = 0.0f;
 	v[2].t = v[3].t = 1.0f;
 
+	// [ZE]: Use the hardware palette for the fill color so it follows palette rendering.
 	Surf.PolyColor = HWR_GetColor(color);
 
+	// [ZE]: Convert partial HUD transparency to hardware alpha and enable blending.
 	if (alphalevel != 0)
 	{
 		Surf.PolyColor.s.alpha = softwaretranstogl[10-alphalevel];

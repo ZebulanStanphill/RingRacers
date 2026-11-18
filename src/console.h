@@ -50,6 +50,7 @@ typedef enum
 	LOADED_IWAD,
 	LOADED_ISTARTUPGRAPHICS,
 	LOADED_HUINIT,
+// [UWP]: Upstream's order of the loading steps is used on every other platform.
 #endif
 	LOADED_PWAD,
 	LOADED_CONFIG,
@@ -66,6 +67,7 @@ typedef enum
 
 extern con_loadprogress_t con_startup_loadprogress;
 
+// [UWP]: Redraws the loading screen during long startup steps on Xbox.
 #ifdef _UWP
 void CON_UWPLoadingKeepAlive(void);
 #endif

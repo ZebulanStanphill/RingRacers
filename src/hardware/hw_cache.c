@@ -18,6 +18,7 @@
 #include "hw_glob.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
+// [ZE]: The palette rendering helpers and the driver functions are declared here.
 #include "hw_driver.h"
 #ifdef HAVE_VIBERANT
 #include "r_viberant/r_viberant.h"
@@ -128,6 +129,7 @@ static void HWR_DrawColumnInCache(const column_t *patchcol, UINT8 *block, GLMipm
 						 texelu16 = (UINT16)((alpha<<8) | texel);
 						 memcpy(dest, &texelu16, sizeof(UINT16));
 						 break;
+				// [ZE]: Looks up the color through the palette rendering aware HWR_GetColor.
 				case 3 : colortemp = HWR_GetColor(texel);
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
 						 {
@@ -137,6 +139,7 @@ static void HWR_DrawColumnInCache(const column_t *patchcol, UINT8 *block, GLMipm
 						 }
 						 memcpy(dest, &colortemp, sizeof(RGBA_t)-sizeof(UINT8));
 						 break;
+				// [ZE]: As above, for the other format.
 				case 4 : colortemp = HWR_GetColor(texel);
 						 colortemp.s.alpha = alpha;
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
@@ -238,6 +241,7 @@ static void HWR_DrawFlippedColumnInCache(const column_t *patchcol, UINT8 *block,
 						 texelu16 = (UINT16)((alpha<<8) | texel);
 						 memcpy(dest, &texelu16, sizeof(UINT16));
 						 break;
+				// [ZE]: As above, for the flipped column.
 				case 3 : colortemp = HWR_GetColor(texel);
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
 						 {
@@ -247,6 +251,7 @@ static void HWR_DrawFlippedColumnInCache(const column_t *patchcol, UINT8 *block,
 						 }
 						 memcpy(dest, &colortemp, sizeof(RGBA_t)-sizeof(UINT8));
 						 break;
+				// [ZE]: As above, for the flipped column's other format.
 				case 4 : colortemp = HWR_GetColor(texel);
 						 colortemp.s.alpha = alpha;
 						 if ((originPatch != NULL) && (originPatch->style != AST_COPY))
@@ -500,6 +505,7 @@ static void HWR_GenerateTexture(GLMapTexture_t *grtex, INT32 texnum, boolean noe
 		INT32 j;
 		RGBA_t col;
 
+		// [ZE]: As above, for the chroma key color.
 		col = HWR_GetColor(HWR_PATCHES_CHROMAKEY_COLORINDEX);
 		for (j = 0; j < blockheight; j++)
 		{
@@ -1020,6 +1026,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, INT32 basetex)
 	if (!grtex->mipmap.downloaded)
 		HWD.pfnSetTexture(&grtex->mipmap);
 	HWR_SetCurrentTexture(&grtex->mipmap);
+// [ZE]: Tell the surface probe which texture is being drawn.
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
 		VibeRant_SurfaceProbeTexture(textures[tex]->name);
@@ -1289,6 +1296,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean noencoremap)
 #endif
 	else // set no texture
 		HWR_SetCurrentTexture(NULL);
+// [ZE]: As above, for a flat.
 #ifdef HAVE_VIBERANT
 	if (HWR_VibeRant())
 		VibeRant_SurfaceProbeTexture(levelflat->type == LEVELFLAT_TEXTURE
@@ -1346,6 +1354,7 @@ void HWR_GetPatch(patch_t *patch)
 	HWR_LoadPatchMipmap(patch, ((GLPatch_t *)patch->hardware)->mipmap);
 }
 
+// [ZE]: Applies a sprite's brightmap in Legacy GL, which uses the base mipmap so the brightmap isn't color translated.
 // Sprite brightmaps use the base mipmap, without color translation.
 void HWR_GetSpriteBrightmap(patch_t *patch)
 {
@@ -1432,10 +1441,12 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
 	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
 }
 
+// [ZE]: Pictures can now be raw grayscale or RGB24 too, so this table gives each mode's source bytes per pixel, apart from the GPU format.
 // Source pixels and GPU pixels can have different widths (RGB becomes RGBA).
 static const INT32 picmode2bpp[] = {1, 1, 2, 3, 4};
 static const GLTextureFormat_t picmode2GR[] =
 {
+	// [ZE]: Grayscale and RGB24 pictures are expanded to RGBA, since the driver has no formats for them.
 	GL_TEXFMT_P_8,
 	GL_TEXFMT_RGBA, // opaque grayscale
 	GL_TEXFMT_ALPHA_INTENSITY_88,
@@ -1446,19 +1457,24 @@ static const GLTextureFormat_t picmode2GR[] =
 static void HWR_DrawPicInCache(UINT8 *block, INT32 pblockwidth, INT32 pblockheight,
 	INT32 blockmodulo, pic_t *pic, INT32 bpp)
 {
+	// [ZE]: Rewritten to sample the picture with exact integer math and to support grayscale and RGB24 pictures.
 	INT32 x, y;
 	const INT32 width = SHORT(pic->width), height = SHORT(pic->height);
 	const INT32 picbpp = picmode2bpp[pic->mode];
 
+	// [ZE]: The row loop now computes its source row from the pixel center, instead of stepping a fixed point position.
 	for (y = 0; y < pblockheight; y++)
 	{
+		// [ZE]: The source row is computed per row instead of stepped.
 		const INT32 sy = (INT32)(((INT64)y * 2 + 1) * height / ((INT64)pblockheight * 2));
 		UINT8 *dest = block + (size_t)y * blockmodulo;
 		for (x = 0; x < pblockwidth; x++, dest += bpp)
 		{
+			// [ZE]: The source column is computed per pixel instead of stepped.
 			const INT32 sx = (INT32)(((INT64)x * 2 + 1) * width / ((INT64)pblockwidth * 2));
 			const UINT8 *src = pic->data + ((size_t)sy * width + sx) * picbpp;
 			switch (pic->mode)
+			// [ZE]: Each source mode now writes straight to the destination format, including the new grayscale and RGB24 modes.
 			{
 				case PALETTE:
 					if (bpp <= 2)
@@ -1472,13 +1488,16 @@ static void HWR_DrawPicInCache(UINT8 *block, INT32 pblockwidth, INT32 pblockheig
 						memcpy(dest, &col, bpp);
 					}
 					break;
+				// [ZE]: Opaque grayscale is expanded to RGBA.
 				case INTENSITY:
 					dest[0] = dest[1] = dest[2] = src[0];
 					dest[3] = 255;
 					break;
+				// [ZE]: Grayscale with alpha is copied as is.
 				case INTENSITY_ALPHA:
 					memcpy(dest, src, 2);
 					break;
+				// [ZE]: Opaque RGB24 is expanded to RGBA.
 				case RGB24:
 					memcpy(dest, src, 3);
 					dest[3] = 255;
@@ -1486,7 +1505,9 @@ static void HWR_DrawPicInCache(UINT8 *block, INT32 pblockwidth, INT32 pblockheig
 				case RGBA32:
 					memcpy(dest, src, 4);
 					break;
+			// [ZE]: Upstream stepped the source column here, but it is now computed per pixel.
 			}
+		// [ZE]: Upstream stepped the source row here, but it is now computed per row.
 		}
 	}
 }
@@ -1506,12 +1527,14 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
 		UINT8 *block;
 		size_t len;
 
+		// [ZE]: Checks the picture's size before reading it, so a truncated lump is an error and not an overread.
 		len = W_LumpLength(lumpnum);
 		if (len < sizeof(pic_t))
 			I_Error("HWR_GetPic: truncated picture header");
 		pic = (pic_t *)W_CacheLumpNum(lumpnum, PU_CACHE);
 		patch->width = SHORT(pic->width);
 		patch->height = SHORT(pic->height);
+		// [ZE]: Rejects unknown picture modes and sizes, and sizes the picture from its source bytes per pixel.
 		if (pic->mode > RGBA32 || patch->width <= 0 || patch->height <= 0)
 			I_Error("HWR_GetPic: invalid picture mode or dimensions");
 		len = (size_t)patch->width * patch->height * picmode2bpp[pic->mode];
@@ -1522,6 +1545,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
 		grPatch->mipmap->height = (UINT16)patch->height;
 
 		if (pic->mode == PALETTE)
+			// [ZE]: Casts to the enum type, so the build doesn't warn.
 			grPatch->mipmap->format = (GLTextureFormat_t)textureformat; // can be set by driver
 		else
 			grPatch->mipmap->format = picmode2GR[pic->mode];
@@ -1533,6 +1557,7 @@ patch_t *HWR_GetPic(lumpnum_t lumpnum)
 
 		if (patch->width  == SHORT(pic->width) &&
 			patch->height == SHORT(pic->height) &&
+			// [ZE]: Compares against the picture's source bytes per pixel, since the GPU format can be wider.
 			format2bpp(grPatch->mipmap->format) == picmode2bpp[pic->mode])
 		{
 			// no conversion needed
@@ -1600,6 +1625,7 @@ static void HWR_DrawFadeMaskInCache(GLMipmap_t *mipmap, INT32 pblockwidth, INT32
 		{
 			// fademask bpp is always 1, and is used just for alpha
 			texel = src[(posx)>>FRACBITS];
+			// [ZE]: Looks up the color through the palette rendering aware HWR_GetColor.
 			col = HWR_GetColor(texel);
 			*dest = col.s.red; // take the red level of the colour and use it for alpha, as fademasks do
 

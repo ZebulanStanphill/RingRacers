@@ -7,11 +7,13 @@ set(CMAKE_CURRENT_BINARY_DIR "${BINARY_DIR}")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules/")
 
 include(GitUtilities)
+# [ZE]: Include the fork version module.
 include(ForkVersion)
 
 git_current_branch(SRB2_COMP_BRANCH)
 git_working_tree_dirty(SRB2_COMP_UNCOMMITTED)
 
+# [ZE]: Read the fork version and decide whether this is a release build.
 fork_version_read("${CMAKE_CURRENT_SOURCE_DIR}" fork_srb2version fork_forkversion)
 fork_version_is_release(SRB2_COMP_FORK_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}" "${fork_srb2version}" "${fork_forkversion}")
 

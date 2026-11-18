@@ -33,12 +33,14 @@
 #endif
 
 #include <time.h>
+// [UWP]: Standard headers for the formatting and math in the frame trace.
 #ifdef _UWP
 #include <cstdarg>
 #include <cmath>
 #endif
 
 #include "doomdef.h"
+// [ZE]: Include the fork version, which the title screen, the version command, and the log show.
 #include "fork_version.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
@@ -46,6 +48,7 @@
 #endif
 #include "am_map.h"
 #include "console.h"
+// [ZE]: Include frame capture mode, which draws and saves frames for comparing renderers.
 #include "d_framecapture.h"
 #include "d_net.h"
 #include "f_finale.h"
@@ -55,6 +58,7 @@
 #include "i_sound.h"
 #include "i_system.h"
 #include "i_time.h"
+// [UWP]: Include the schedule that paces the frame cap.
 #ifdef _UWP
 #include "d_frame_schedule.h"
 #endif
@@ -71,6 +75,7 @@
 #include "st_stuff.h"
 #include "v_video.h"
 #include "w_wad.h"
+// [UWP]: Include the cache of lump headers read at startup.
 #ifdef _UWP
 #include "w_uwpheadercache.h"
 #endif
@@ -112,6 +117,7 @@
 
 #ifdef HWRENDER
 #include "hardware/hw_main.h" // 3D View Rendering
+// [ZE]: Include the hardware driver interface and VibeRant's headers, so the renderer's behavior is decided at run time.
 #include "hardware/hw_driver.h"
 #ifdef HAVE_VIBERANT
 #include "hardware/hw_glob.h"
@@ -392,6 +398,7 @@ gamestate_t wipegamestate = GS_LEVEL;
 INT16 wipetypepre = -1;
 INT16 wipetypepost = -1;
 
+// [UWP]: Main-thread state for tracing frames, fades, and title timing.
 #ifdef _UWP
 // Main-thread diagnostics only. The clocks, counters and snapshots below are trace-owned.
 static precise_t uwp_traceOrigin, uwp_fadeStart, uwp_levelStart;
@@ -627,6 +634,7 @@ static bool D_Display(bool world)
 
 	ZoneScoped;
 
+// [UWP]: Time the 2D phase, trace gamestate changes, and reset what the frame trace tracks.
 #ifdef _UWP
 	UWPProfPhase uwpprofphase(UWPPROF_2D);
 	if (uwp_traceState != (INT32)gamestate)
@@ -690,6 +698,7 @@ static bool D_Display(bool world)
 		I_UpdateNoBlit();
 	}
 
+// [ZE]: Flush the textures when VibeRant asks, before any frame drawing or wipe capture.
 #ifdef HAVE_VIBERANT
 	// Before any frame drawing or wipe capture: no in-flight batches hold GLMipmap pointers here.
 	if (HWR_VibeRant() && rendermode == render_opengl && VibeRant_TakeTextureFlushRequest())
@@ -750,6 +759,7 @@ static bool D_Display(bool world)
 	if (dedicated) //bail out after wipe logic
 		return false;
 
+// [UWP]: Begin the frame trace and decide whether this frame's details are logged.
 #ifdef _UWP
 	UWPTraceBeginFrame();
 	const bool titleWindow = lt_ticker < lt_endtime + TICRATE;
@@ -836,6 +846,7 @@ static bool D_Display(bool world)
 		{
 			if (!automapactive && !dedicated && cv_renderview.value && (world || forcerefresh))
 			{
+// [UWP]: Note that the world was drawn this frame, for the trace.
 #ifdef _UWP
 				uwp_worldDrawn = true;
 #endif
@@ -848,6 +859,7 @@ static bool D_Display(bool world)
 				objectsdrawn = 0;
 
 				ps_rendercalltime = I_GetPreciseTime();
+// [UWP]: Time the 3D rendering phase for the performance summary.
 #ifdef _UWP
 				UWPProfPhase uwpprofphase3d(UWPPROF_3D);
 #endif
@@ -982,11 +994,13 @@ static bool D_Display(bool world)
 
 			if (rendermode == render_soft)
 			{
+// [UWP]: Time the Software screen display, and mark its start for GPU timing.
 #ifdef _UWP
 				const precise_t screenstart = I_GetPreciseTime();
 				I_UWPAngleMark(UWPANGLE_SCREEN_START);
 #endif
 				VID_DisplaySoftwareScreen();
+// [UWP]: Mark the end of the Software screen display, and add its time to the performance summary.
 #ifdef _UWP
 				I_UWPAngleMark(UWPANGLE_SCREEN_END);
 				ps_uwp_screentime += I_GetPreciseTime() - screenstart;
@@ -1139,6 +1153,7 @@ static bool D_Display(bool world)
 		ps_swaptime = I_GetPreciseTime() - ps_swaptime;
 	}
 
+// [UWP]: Finish the frame trace.
 #ifdef _UWP
 	UWPTraceFinishFrame(wipe, !wipe || ranwipe);
 #endif
@@ -1192,6 +1207,7 @@ void D_SRB2Loop(void)
 	SCR_SetMode(); // change video mode
 	SCR_Recalc();
 
+	// [ZE]: No renderer is chosen yet, because the hardware driver is selected separately from the render mode.
 	chosenrendermode = RENDERER_UNCHOSEN;
 
 	// Check and print which version is executed.
@@ -1239,11 +1255,13 @@ void D_SRB2Loop(void)
 #else
 			double budget = round((1.0 / R_GetFramerateCap()) * I_GetPrecisePrecision());
 			capbudget = (precise_t) budget;
+// [UWP]: End of the frame cap budget that cannot divide by zero.
 #endif
 		}
 
 		bool ranwipe = false;
 		bool world = false;
+// [UWP]: Track whether this loop drew a frame and whether it skipped one, for the schedule and the performance summary.
 #ifdef _UWP
 		bool displayed = false;
 		bool skippedframe = false;
@@ -1274,6 +1292,7 @@ void D_SRB2Loop(void)
 				debugload--;
 #endif
 
+		// [ZE]: Start frame capture mode's work for this loop.
 		FrameCapture_BeginLoop();
 
 		interp = R_UsingFrameInterpolation() && !dedicated;
@@ -1282,6 +1301,7 @@ void D_SRB2Loop(void)
 		renderisnewtic = (realtics > 0 || singletics);
 
 		bool timeisprogressing = (!(paused || P_AutoPause()) && !hu_stopped);
+// [UWP]: Tell the performance summary whether time is progressing in a level.
 #ifdef _UWP
 		i_uwpprofinlevel = gamestate == GS_LEVEL && timeisprogressing;
 #endif
@@ -1402,10 +1422,12 @@ void D_SRB2Loop(void)
 			}
 
 			ranwipe = D_Display(world);
+// [UWP]: Note that this loop drew a frame, for the performance summary.
 #ifdef _UWP
 			displayed = true;
 #endif
 		}
+// [UWP]: Note when a frame was skipped to catch up, so the schedule does not sleep after it.
 #ifdef _UWP
 		else if ((interp || doDisplay) && frameskip && g_fast_forward == 0)
 		{
@@ -1426,6 +1448,7 @@ void D_SRB2Loop(void)
 		if ((moviemode || takescreenshot) && rendermode == render_soft)
 			I_CaptureVideoFrame();
 
+		// [ZE]: Finish frame capture mode's work for this frame.
 		FrameCapture_EndFrame();
 
 		// consoleplayer -> displayplayers (hear sounds from viewpoint)
@@ -1494,7 +1517,7 @@ void D_SRB2Loop(void)
 		}
 
 
-		// Frame capture mode: every tic is drawn, however long that took
+		// [ZE]: Frame capture mode: every tic is drawn, however long that took
 		if (g_framecapture)
 			frameskip = 0;
 
@@ -1561,11 +1584,13 @@ void D_SRB2Loop(void)
 				I_SleepDuration(capbudget - (finishprecise - enterprecise));
 			}
 		}
+// [UWP]: End of the scheduled sleep that replaces the fixed sleep.
 #endif
 		// Capture the time once more to get the real delta time.
 		finishprecise = I_GetPreciseTime();
 		deltasecs = (double)((INT64)(finishprecise - enterprecise)) / I_GetPrecisePrecision();
 		deltatics = deltasecs * NEWTICRATE;
+// [UWP]: Add this loop's work time to the performance summary.
 
 #ifdef _UWP
 		PS_UWPAddLoop(worktime, displayed);
@@ -1816,6 +1841,7 @@ static void IdentifyVersion(void)
 			srb2waddir);
 #else
 		I_Error("\"bios.pk3\" not found! Expected in %s\n", srb2waddir);
+// [UWP]: End of the Xbox message that says to check the USB drive.
 #endif
 	}
 
@@ -1823,6 +1849,7 @@ static void IdentifyVersion(void)
 	snprintf(configfile, sizeof configfile, "%s" PATHSEP CONFIGFILENAME, srb2waddir);
 	configfile[sizeof configfile - 1] = '\0';
 
+	// [UWP]: Load main data files through D_AddDataFile, which uses their copies on internal storage when there is a usable one.
 	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","scripts.pk3"), ASSET_HASH_SCRIPTS_PK3);
 	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","gfx.pk3"), ASSET_HASH_GFX_PK3);
 	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","textures_general.pk3"), ASSET_HASH_TEXTURES_GENERAL_PK3);
@@ -1834,6 +1861,7 @@ static void IdentifyVersion(void)
 	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","unlocks.pk3"), ASSET_HASH_UNLOCKS_PK3);
 	D_AddDataFile(startupiwads, num_startupiwads++, va(spandf,srb2waddir,"data","staffghosts.pk3"), ASSET_HASH_STAFFGHOSTS_PK3);
 #ifdef USE_PATCH_FILE
+	// [UWP]: Same as above, for the patch file, and resolve music paths to the copy on internal storage.
 	D_AddDataFile(startupiwads, num_startupiwads++, va(pandf,srb2waddir,"patch.pk3"), ASSET_HASH_PATCH_PK3);
 #endif
 
@@ -1843,6 +1871,7 @@ static void IdentifyVersion(void)
 #define MUSICPATH(path) (path)
 #endif
 
+// [UWP]: The music path is resolved to the copy on internal storage.
 #define MUSICTEST(str) \
 		musicpath = MUSICPATH(va(spandf,srb2waddir,"data",str));\
 		handle = W_OpenWadFile(&musicpath, NULL, false); \
@@ -1869,6 +1898,7 @@ static void IdentifyVersion(void)
 	}
 
 #undef MUSICTEST
+// [UWP]: Drop the music path helper, then log where the game data came from.
 #undef MUSICPATH
 
 #ifdef _UWP
@@ -1955,6 +1985,7 @@ void D_SRB2Main(void)
 	"Dr. Robotnik and related characters are trademarks of SEGA.\n"
 	"We do not claim ownership of SEGA's intellectual property used\n"
 	"in this program.\n\n");
+	// [ZE]: Print the fork version in the log, below the game's own banner.
 	CONS_Printf("Ring Racers %s\n", ForkVersion_String());
 
 	// keep error messages until the final flush(stderr)
@@ -2123,6 +2154,7 @@ void D_SRB2Main(void)
 
 	// Do this up here so that WADs loaded through the command line can use ExecCfg
 	COM_Init();
+// [UWP]: Register the command that dumps the profile data captured for optimized builds.
 #if defined(_UWP) && defined(SRB2_PGO_GENERATE)
 	COM_AddCommand("pgo_dump", I_UWPPgoDump);
 #endif
@@ -2173,6 +2205,7 @@ void D_SRB2Main(void)
 	// load wad, including the main wad file
 	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
 	W_InitMultipleFiles(startupiwads, num_startupiwads, false);
+// [UWP]: Start checking the game files in the background.
 #ifdef _UWP
 	W_UWPStartAssetCheck();
 #endif
@@ -2196,6 +2229,7 @@ void D_SRB2Main(void)
 	basenumkartcupheaders = numkartcupheaders;
 
 	CON_SetLoadingProgress(LOADED_IWAD);
+// [UWP]: End of the map data loading that Xbox does later, so the loading screen shows text sooner.
 #endif
 
 	M_PasswordInit();
@@ -2232,6 +2266,7 @@ void D_SRB2Main(void)
 
 	CON_Init();
 
+// [UWP]: Read the map data here, after the loading text is shown, and log how long it takes.
 #ifdef _UWP
 	CON_SetLoadingProgress(LOADED_HUINIT);
 
@@ -2260,8 +2295,10 @@ void D_SRB2Main(void)
 
 	I_RegisterSysCommands();
 
+// [UWP]: Xbox already set this loading step above, before the map data was read.
 #ifndef _UWP
 	CON_SetLoadingProgress(LOADED_HUINIT);
+// [UWP]: End of the loading step that Xbox does earlier.
 #endif
 
 	CONS_Printf("W_InitMultipleFiles(): Adding external PWADs.\n");
@@ -2460,6 +2497,7 @@ void D_SRB2Main(void)
 		}
 	}
 
+// [UWP]: Finish the background game file check before networking can start a game.
 #ifdef _UWP
 	// Finish verification before networking can start a game.
 	W_UWPFinishAssetCheck();
@@ -2492,6 +2530,7 @@ void D_SRB2Main(void)
 	if (!autostart)
 		M_PushSpecialParameters(); // push all "+" parameters at the command buffer
 
+	// [ZE]: Start frame capture mode when it was asked for.
 	FrameCapture_Init(); // -shottics
 
 	// demo doesn't need anymore to be added with D_AddFile()
@@ -2775,6 +2814,7 @@ const char *D_Home(void)
 
 #ifdef ANDROID
 	return "/data/data/org.srb2/";
+// [UWP]: Keep game data, saves, and the log in E:\ringracers.
 #elif _UWP
 	return "E:\\ringracers";
 #endif

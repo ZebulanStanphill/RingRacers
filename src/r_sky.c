@@ -76,6 +76,7 @@ void R_SetupSkyDraw(void)
 		texpatch_t *const tex_patch = &textures[skytexture]->patches[0];
 		patch_t *patch = W_CachePatchNumPwad(tex_patch->wad, tex_patch->lump, PU_CACHE);
 
+		// [ZE]: Multiplies by FRACUNIT, where upstream shifted left, which is undefined for a negative offset.
 		skytexturemid += (patch->topoffset * FRACUNIT);
 		skytextureoffset += (patch->leftoffset * FRACUNIT);
 	}

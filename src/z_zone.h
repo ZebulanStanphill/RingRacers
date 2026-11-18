@@ -66,6 +66,7 @@ enum
 	// Tags s.t. PU_LEVEL <= tag < PU_PURGELEVEL are purged at level start
 	PU_LEVEL                 = 50, // static until level exited
 	PU_LEVSPEC               = 51, // a special thinker in a level
+// [ZE]: VibeRant keeps the geometry of rotated sprites under their own tag.
 #ifdef HAVE_VIBERANT
 	PU_ROLL_GEOMETRY         = 53, // level data, also purged with rotated patches on WAD reload
 #endif

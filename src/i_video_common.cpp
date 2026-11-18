@@ -22,6 +22,7 @@
 #include "f_finale.h"
 #include "m_fixed.h"
 #include "m_misc.h"
+// [ZE]: Include the Screen Scaling setting's placement of the frame.
 #include "screen_scaling.hpp"
 #include "hwr2/hardware_state.hpp"
 #include "hwr2/patch_atlas.hpp"
@@ -34,6 +35,7 @@
 #include "s_sound.h"  // kill
 #include "sdl/ogl_sdl.h"
 #include "st_stuff.h" // kill
+// [ZE]: Include VibeRant's headers, for presenting and for the palette rendering update.
 #ifdef HAVE_VIBERANT
 #include "hardware/r_viberant/r_viberant.h"
 #include "hardware/hw_main.h"
@@ -53,6 +55,7 @@
 #include "st_stuff.h"
 #include "v_video.h"
 
+// [UWP]: Include the profiling phases used below.
 #ifdef _UWP
 #include "i_system.h"
 #endif
@@ -114,6 +117,7 @@ static void preframe_update(Rhi& rhi)
 
 static void postframe_update(Rhi& rhi)
 {
+	// [ZE]: End the palette manager's frame, which now releases its per-frame resources with fewer GL calls.
 	g_hw_state.palette_manager->end_frame(rhi);
 }
 
@@ -269,6 +273,7 @@ void I_StartDisplayUpdate(void)
 		return;
 	}
 
+	// [UWP]: Log this step of the first few frames.
 	UWP_TRACE("start display update");
 	if (rhi_changed(rhi))
 	{
@@ -285,6 +290,7 @@ void I_StartDisplayUpdate(void)
 
 void I_FinishUpdate(void)
 {
+// [UWP]: Profile the time spent finishing the display update.
 #ifdef _UWP
 	UWPProfPhase uwpprofphase(UWPPROF_DISPLAY);
 #endif
@@ -296,6 +302,7 @@ void I_FinishUpdate(void)
 		return;
 	}
 
+// [ZE]: Show the window that Vulkan and Metal builds defer until the first frame is ready.
 #if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 	I_ShowDeferredWindow();
 #endif
@@ -309,6 +316,7 @@ void I_FinishUpdate(void)
 	}
 #endif
 
+// [UWP]: Start timing the stages of this update, and mark the start of finishing for GPU timing.
 #ifdef _UWP
 	uwp_stagestart = I_GetPreciseTime();
 	I_UWPAngleMark(UWPANGLE_FINISH_START);
@@ -324,7 +332,7 @@ void I_FinishUpdate(void)
 		return;
 	}
 
-	// A game that started in a hardware renderer has never begun a Software frame, which is what makes this state
+	// [ZE]: A game that started in a hardware renderer has never begun a Software frame, which is what makes this state
 	// (I_StartDisplayUpdate). Switching to Software presents once from SDLSetMode before the first such frame.
 	if (!g_hw_state.twodee_renderer)
 	{
@@ -336,13 +344,15 @@ void I_FinishUpdate(void)
 	// better hope the drawing code left the context in a render pass, I guess
 	g_hw_state.twodee_renderer->flush(*rhi, g_2d);
 	rhi->pop_render_pass();
+	// [UWP]: Time the 2D flush for the performance summary.
 	UWP_STAGE(ps_uwp_twodeetime);
 
+	// [UWP]: Log this step of the first few frames.
 	UWP_TRACE("push default render pass");
 	rhi->push_default_render_pass(true);
 
 	// Upscale draw the backbuffer (with postprocessing maybe?)
-	// Screen Scaling picks the area the frame goes in: all of the screen to fit it (the blit then keeps its aspect
+	// [ZE]: Screen Scaling picks the area the frame goes in: all of the screen to fit it (the blit then keeps its aspect
 	// ratio), or the rectangle of a whole-number or unscaled frame. Scale and Screen X/Y then move and size the frame
 	// within that area.
 	float base_x = 0.f;
@@ -370,6 +380,7 @@ void I_FinishUpdate(void)
 	if (cv_scr_scale.value != FRACUNIT)
 	{
 		float f = std::max(FixedToFloat(cv_scr_scale.value), 0.f);
+		// [ZE]: Scale and position the frame within the area that Screen Scaling picked, not the whole window.
 		float w = base_w * f;
 		float h = base_h * f;
 		float x = base_x + (base_w - w) * (0.5f + (FixedToFloat(cv_scr_x.value) * 0.5f));
@@ -382,6 +393,7 @@ void I_FinishUpdate(void)
 	}
 	else
 	{
+		// [ZE]: Without Scale, fill the area that Screen Scaling picked, not the whole window.
 		g_hw_state.blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
 		g_hw_state.sharp_bilinear_blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
 		g_hw_state.crt_blit_rect->set_output(base_x, base_y, base_w, base_h, true, true);
@@ -392,6 +404,7 @@ void I_FinishUpdate(void)
 	g_hw_state.crt_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
 	g_hw_state.crtsharp_blit_rect->set_texture(g_hw_state.backbuffer->color(), static_cast<uint32_t>(vid.width), static_cast<uint32_t>(vid.height));
 
+	// [UWP]: Log this step of the first few frames.
 	UWP_TRACE("blit backbuffer");
 	switch (cv_scr_effect.value)
 	{
@@ -412,29 +425,37 @@ void I_FinishUpdate(void)
 		g_hw_state.blit_rect->draw(*rhi);
 		break;
 	}
+	// [UWP]: Time the upscale for the performance summary.
 	UWP_STAGE(ps_uwp_upscaletime);
 
+	// [UWP]: Log this step of the first few frames.
 	UWP_TRACE("render imgui");
 	g_hw_state.imgui_renderer->render(*rhi);
 
 	rhi->pop_render_pass();
+	// [UWP]: Time the ImGui render for the performance summary.
 	UWP_STAGE(ps_uwp_imguitime);
 
+	// [UWP]: Log this step of the first few frames.
 	UWP_TRACE("postframe update");
 	postframe_update(*rhi);
+	// [UWP]: Time the postframe cleanup for the performance summary.
 	UWP_STAGE(ps_uwp_cleanuptime);
 
+	// [UWP]: Log this step, and mark the start of the present for GPU timing.
 	UWP_TRACE("present");
 #ifdef _UWP
 	I_UWPAngleMark(UWPANGLE_PRESENT_START);
 #endif
 	rhi->present();
+// [UWP]: Mark the end of the present, so that ANGLE's GPU work on Software's frames is timed.
 #ifdef _UWP
 	I_UWPAngleMark(UWPANGLE_PRESENT_END);
 #endif
 	UWP_STAGE(ps_uwp_presenttime);
 	UWP_TRACE("finish");
 	rhi->finish();
+	// [UWP]: Time the finish and log the last steps, and count this frame in the trace.
 	UWP_STAGE(ps_uwp_finishtime);
 	UWP_TRACE("done");
 #ifdef _UWP
@@ -445,5 +466,6 @@ void I_FinishUpdate(void)
 
 	// Immediately prepare to begin drawing the next frame
 	I_StartDisplayUpdate();
+	// [UWP]: Time the preparation of the next frame for the performance summary.
 	UWP_STAGE(ps_uwp_nextframetime);
 }

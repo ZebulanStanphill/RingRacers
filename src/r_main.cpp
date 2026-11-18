@@ -17,6 +17,7 @@
 #include <algorithm>
 
 #include "doomdef.h"
+// [UWP]: Trace header for per-frame view diagnostics.
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #endif
@@ -644,11 +645,14 @@ void R_CheckViewMorph(int s)
 	float zoomfactor, rollcos, rollsin;
 	float x1, y1, x2, y2;
 	fixed_t temp;
+	// [ZE]: The pixel map index variables are only needed by the fisheye code, which is now under WOUGHMP_WOUGHMP.
 	INT32 end, vx, vy;
 	INT32 realend;
+// [ZE]: Fisheye's full-screen pixel map variables are only kept in builds that have fisheye.
 #ifdef WOUGHMP_WOUGHMP
 	INT32 pos, usedpos;
 	INT32 usedx, usedy;
+// [ZE]: End of the fisheye only variables.
 #endif
 
 	INT32 width = vid.width;
@@ -690,10 +694,12 @@ void R_CheckViewMorph(int s)
 #ifdef WOUGHMP_WOUGHMP
 		fisheye == v->fisheye &&
 #endif
+		// [ZE]: Detects a change by the stored row start dimensions, because tilted views no longer build the full-screen pixel map.
 		v->mapwidth == width && v->mapheight == height && v->mappitch == vid.width)
 		return; // No change
 
 	v->rollangle = rollangle;
+	// [ZE]: Remember the dimensions the row starts were made for.
 	v->mapwidth = width;
 	v->mapheight = height;
 	v->mappitch = vid.width;
@@ -716,6 +722,7 @@ void R_CheckViewMorph(int s)
 		return;
 	}
 
+// [ZE]: Only fisheye still needs the full-screen pixel map, so tilted views skip building it.
 #ifdef WOUGHMP_WOUGHMP
 	if (fisheye && v->scrmapsize != width * height)
 	{
@@ -724,6 +731,7 @@ void R_CheckViewMorph(int s)
 		v->scrmap = static_cast<INT32*>(malloc(width * height * sizeof(INT32)));
 		v->scrmapsize = width * height;
 	}
+// [ZE]: End of the fisheye only pixel map allocation.
 #endif
 
 	temp = FINECOSINE(rollangle);
@@ -774,9 +782,11 @@ void R_CheckViewMorph(int s)
 		realend = ( realend << 1 ) - width;
 	}
 
+	// [ZE]: Tilted views are drawn by stepping along source rows, unless the fisheye code below says otherwise.
 	v->straight = true;
 #ifdef WOUGHMP_WOUGHMP
 	pos = 0;
+// [ZE]: End of the fisheye only position counter.
 #endif
 
 	// Pre-multiply rollcos and rollsin to use for positional stuff
@@ -840,6 +850,7 @@ void R_CheckViewMorph(int s)
 #ifdef WOUGHMP_WOUGHMP
 	if (fisheye)
 	{
+		// [ZE]: Fisheye needs the full-screen pixel map, so it can't use the row stepping.
 		v->straight = false;
 		for (vy = 0; vy < halfheight; vy++)
 		{
@@ -869,13 +880,17 @@ void R_CheckViewMorph(int s)
 #endif
 	x1 += halfwidth;
 	y1 += halfheight;
+	// [ZE]: Stores the start of each source row, and not a pixel map entry for every pixel, so tilted views step along rows when drawn.
 	for (vy = 0; vy < (height + 1) / 2; vy++)
 	{
+		// [ZE]: Store the row start.
 		v->mapx[vy] = x1;
 		v->mapy[vy] = y1;
 		x1 -= rollsin;
 		y1 += rollcos;
+	// [ZE]: Upstream filled the full-screen pixel map here, but it is now stepped along source rows when drawn.
 	}
+	// [ZE]: Store the step along a row and the mirrored lower half's offsets, used when drawing.
 	v->mapcos = rollcos;
 	v->mapsin = rollsin;
 	v->mapend = end;
@@ -894,8 +909,10 @@ void R_ApplyViewMorph(int s)
 	INT32 width = vid.width;
 	INT32 height = vid.height;
 	INT32 p;
+// [ZE]: Only fisheye uses the full-screen pixel map's size.
 #ifdef WOUGHMP_WOUGHMP
 	INT32 end;
+// [ZE]: End of the fisheye only variable.
 #endif
 
 	if (!viewmorph[s].use)
@@ -926,13 +943,17 @@ void R_ApplyViewMorph(int s)
 		}
 	}
 
+// [ZE]: Only fisheye uses the full-screen pixel map's size.
 #ifdef WOUGHMP_WOUGHMP
 	end = width * height;
+// [ZE]: End of the fisheye only size.
 #endif
 
+	// [ZE]: Draws tilted views by stepping along the stored source rows, in parallel for large views, instead of reading a pixel map.
 	const struct viewmorph *v = &viewmorph[s];
 	if (v->straight)
 	{
+		// [ZE]: The row stepping draw, which keeps the original float additions and truncation so the output is identical.
 		const INT32 pitch = vid.width;
 		auto drawrows = [v, tmpscr, srcscr, width, pitch](INT32 first, INT32 last) {
 			for (INT32 y = first; y < last; y++)
@@ -984,6 +1005,7 @@ void R_ApplyViewMorph(int s)
 			}
 		}
 	}
+// [ZE]: Fisheye still reads the full-screen pixel map.
 #ifdef WOUGHMP_WOUGHMP
 	else
 	{
@@ -1253,6 +1275,7 @@ void R_ClearPointInSubsectorCache(void)
 //
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 {
+// [UWP]: Look the point up in the cache before walking the BSP.
 #ifdef _UWP
 	PointInSubsectorCacheEntry *set =
 		g_pointinsubsector_cache[(((UINT32)x * 0x9E3779B1u) ^ ((UINT32)y * 0x85EBCA77u)) >> (32 - POINTINSUBSECTOR_CACHE_BITS)];
@@ -1273,6 +1296,7 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 	while (!(nodenum & NF_SUBSECTOR))
 		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)];
 
+// [UWP]: Store the new lookup in the cache, newest first.
 #ifdef _UWP
 	set[1] = set[0];
 	set[0].x = x;
@@ -1281,6 +1305,7 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 	return set[0].subsector;
 #else
 	return &subsectors[nodenum & ~NF_SUBSECTOR];
+// [UWP]: End of the cached lookup.
 #endif
 }
 
@@ -1369,16 +1394,19 @@ static void R_SetupAimingFrame(int s)
 	}
 	else if (!demo.playback && player->playerstate != PST_DEAD)
 	{
+		// [ZE]: Adds the slope pitch of a first-person view, so the view follows the slope under the kart.
 		newview->aim = localaiming[s] + P_FirstPersonSlopePitch(s);
 		newview->angle = localangle[s];
 	}
 	else
 	{
+		// [ZE]: As above, for the view of a player.
 		newview->aim = player->aiming + P_FirstPersonSlopePitch(s);
 		newview->angle = player->mo->angle;
 	}
 }
 
+// [ZE]: Titles and players without a kart have no kart to look out of, so such views use the camera.
 // First person looks out of the player's kart. The title screen's map has no
 // karts, so a first-person view of it read a null object and crashed; the
 // same goes for any other view whose player has no kart. Use the camera there.
@@ -1402,6 +1430,7 @@ void R_SetupFrame(int s)
 		chasecam = true;
 	}
 
+	// [ZE]: Use the camera when a first-person view has no kart to look out of.
 	if (R_ViewNeedsCamera(player))
 	{
 		chasecam = true;
@@ -1454,6 +1483,7 @@ void R_SetupFrame(int s)
 
 		R_SetupCommonFrame(player, r_viewmobj->subsector);
 	}
+// [UWP]: Trace the view setup.
 #ifdef _UWP
 	if (s == 0)
 		UWPTraceView();

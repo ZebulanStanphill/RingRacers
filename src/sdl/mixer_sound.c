@@ -191,6 +191,7 @@ void I_StartupSound(void)
 	if (sound_started)
 		return;
 
+// [UWP]: Xbox has WASAPI, not DirectSound.
 #ifdef _UWP
 	SDL_setenv("SDL_AUDIODRIVER", "wasapi", 1);
 #elif _WIN32

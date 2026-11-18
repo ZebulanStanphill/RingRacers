@@ -34,6 +34,7 @@ extern "C" {
 boolean gld_clipper_SafeCheckRange(angle_t startAngle, angle_t endAngle);
 void gld_clipper_SafeAddClipRange(angle_t startangle, angle_t endangle);
 void gld_clipper_Clear(void);
+// [ZE]: Expose clipper state save and restore so nested views can keep separate occlusion lists.
 #ifdef HAVE_VIBERANT
 // Detach the parent's angular occlusion list while a child builds its own.
 void *gld_clipper_SaveState(void);

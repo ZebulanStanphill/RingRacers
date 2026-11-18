@@ -13,6 +13,7 @@
 /// \brief Title screen, intro, game evaluation, and credits.
 
 #include "doomdef.h"
+// [ZE]: Include the fork version, which the title screen shows.
 #include "fork_version.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
@@ -834,6 +835,7 @@ void F_IntroDrawer(void)
 			V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 157);
 			return;
 		}
+// [UWP]: End of the blue fill that Xbox skips.
 #endif
 
 		V_DrawFill(0, 0, BASEVIDWIDTH, BASEVIDHEIGHT, 31);
@@ -887,8 +889,10 @@ void F_IntroTicker(void)
 	(
 		skippableallowed
 		&& keypressed
+// [UWP]: The intro logos can be skipped from the first moment, without waiting half a second.
 #ifndef _UWP
 		&& (intro_curtime > TICRATE/2)
+// [UWP]: End of the wait that Xbox skips.
 #endif
 		&& (
 #ifdef _UWP
@@ -1913,6 +1917,7 @@ void F_VersionDrawer(void)
 		}
 
 #else // Regular build
+		// [ZE]: Show the fork version, not the game's version, on the title screen.
 		addtext(trans, va("%s", ForkVersion_String()));
 #endif
 
@@ -1930,6 +1935,7 @@ void F_VersionDrawer(void)
 // (no longer) De-Demo'd Title Screen
 void F_TitleScreenDrawer(void)
 {
+// [UWP]: Trace the title background for the title timing log.
 #ifdef _UWP
 	UWPTraceTitleBackground(cache_gametrulystarted);
 #endif

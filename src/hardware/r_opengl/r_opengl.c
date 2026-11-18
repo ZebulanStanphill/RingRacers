@@ -638,6 +638,7 @@ static void Shader_SetUniforms(FSurfaceInfo *Surface, GLRGBAFloat *poly, GLRGBAF
 
 static GLRGBAFloat shader_defaultcolor = {1.0f, 1.0f, 1.0f, 1.0f};
 
+// [ZE]: The built-in GLSL sources are shared through hw_glsl.h, so other drivers can use them too.
 #include "../hw_glsl.h"
 
 #endif	// GL_SHADERS
@@ -1803,6 +1804,7 @@ EXPORT void HWRAPI(SetTexture) (GLMipmap_t *pTexInfo)
 			pglActiveTexture(pTexInfo->flags & TF_BRIGHTMAP ? GL_TEXTURE1 : GL_TEXTURE0);
 			pglBindTexture(GL_TEXTURE_2D, pTexInfo->downloaded);
 			pglActiveTexture(GL_TEXTURE0);
+			// [ZE]: A brightmap bound as a surface's brightmap is not the texture that is currently bound.
 			tex_downloaded = (pTexInfo->flags & TF_BRIGHTMAP) ? 0 : pTexInfo->downloaded;
 		}
 	}

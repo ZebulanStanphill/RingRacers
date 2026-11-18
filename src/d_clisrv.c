@@ -3126,6 +3126,7 @@ static void Got_KickCmd(const UINT8 **p, INT32 playernum)
 			kickreason = KR_KICK;
 			break;
 		case KICK_MSG_PING_HIGH:
+// [UWP]: Log the server's delay and local tic counters to diagnose delay kicks.
 #ifdef _UWP
 			if (client && pnum == consoleplayer)
 				I_OutputMsg("UWP: server delay-limit kick: delay %u tics, limit %u, game tic %u, received through %u, level tic %u\n",
@@ -6469,6 +6470,7 @@ static void CL_SendClientKeepAlive(void)
 
 	HSendPacket(servernode, false, 0, 0);
 
+// [UWP]: Acknowledge buffered tics during slow Legacy GL loads so the server can track client progress.
 #if defined(_UWP) && defined(HWRENDER)
 	// BASICKEEPALIVE resets the connection timeout, but GetLag on the server
 	// still measures from the last acknowledged tic. During a slow Legacy GL
@@ -6819,6 +6821,7 @@ static void SV_Maketic(void)
 		if (K_PlayerUsesBotMovement(&players[i]))
 		{
 			const precise_t t = I_GetPreciseTime();
+// [UWP]: Attribute samples taken while building bot commands to game logic.
 #ifdef _UWP
 			const INT32 uwpprofphase = i_uwpprofphase;
 
@@ -6826,6 +6829,7 @@ static void SV_Maketic(void)
 #endif
 
 			K_BuildBotTiccmd(&players[i], &netcmds[maketic%BACKUPTICS][i]);
+// [UWP]: Restore the previous profiling phase after generating bot commands.
 #ifdef _UWP
 			i_uwpprofphase = uwpprofphase;
 #endif
@@ -6992,12 +6996,14 @@ boolean TryRunTics(tic_t realtics)
 					tickInterp = false; // do not update again in sped-up tics
 				}
 
+// [UWP]: Attribute samples taken during the game ticker to game logic.
 #ifdef _UWP
 				const INT32 uwpprofphase = i_uwpprofphase;
 
 				i_uwpprofphase = UWPPROF_LOGIC;
 #endif
 				G_Ticker(run);
+// [UWP]: Restore the previous profiling phase after the game ticker.
 #ifdef _UWP
 				i_uwpprofphase = uwpprofphase;
 #endif
@@ -7017,6 +7023,7 @@ boolean TryRunTics(tic_t realtics)
 			consistancy[gametic % BACKUPTICS] = Consistancy();
 
 			ps_tictime = I_GetPreciseTime() - ps_tictime;
+// [UWP]: Add each simulated tic to the periodic performance summary.
 #ifdef _UWP
 			PS_UWPAddTic();
 #endif

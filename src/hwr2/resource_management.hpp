@@ -11,6 +11,7 @@
 #ifndef __SRB2_HWR2_RESOURCE_MANAGEMENT_HPP__
 #define __SRB2_HWR2_RESOURCE_MANAGEMENT_HPP__
 
+// [ZE]: std::array holds the last uploaded palette.
 #include <array>
 
 #include "../core/hash_map.hpp"
@@ -20,6 +21,7 @@
 namespace srb2::hwr2
 {
 
+// [ZE]: Keeps colormap and lighttable textures between frames, where upstream recreated them each frame.
 /// @brief A colormap or lighttable uploaded as a texture. These are kept between frames and reuploaded only when
 /// their contents change, since creating textures every frame is costly through ANGLE.
 struct PaletteTable
@@ -38,6 +40,7 @@ class PaletteManager
 #endif
 	rhi::Handle<rhi::Texture> default_colormap_;
 
+	// [ZE]: The tables are stored with their data and last use, so unchanged ones can be kept and uploaded only when needed.
 	srb2::HashMap<const uint8_t*, PaletteTable> colormaps_;
 	srb2::HashMap<const uint8_t*, PaletteTable> lighttables_;
 	uint32_t frame_ = 0;
@@ -70,6 +73,7 @@ public:
 	rhi::Handle<rhi::Texture> default_colormap() const noexcept { return default_colormap_; }
 
 	void update(rhi::Rhi& rhi);
+	// [ZE]: Replaces upstream's per-frame destruction, since textures now outlive a frame and only unused ones are destroyed.
 	/// @brief Destroys the colormap and lighttable textures that haven't been drawn in a while.
 	void end_frame(rhi::Rhi& rhi);
 

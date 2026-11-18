@@ -24,15 +24,18 @@ const char *comprevision = SRB2_COMP_REVISION;
 const char *compnote = SRB2_COMP_NOTE;
 const char *comptype = CMAKE_BUILD_TYPE;
 const int compoptimized = SRB2_COMP_OPTIMIZED;
+// [ZE]: Record the configured release status for the displayed fork version.
 const int compforkrelease = SRB2_COMP_FORK_RELEASE;
 
 #elif (defined(COMPVERSION))
 #include "comptime.h"
+// [ZE]: Treat builds without generated version metadata as development builds.
 const int compforkrelease = 0;
 
 #else
 const char *compbranch = "Unknown";
 const char *comprevision = "illegal";
+// [ZE]: Default to a development build when version metadata is unavailable.
 const int compforkrelease = 0;
 
 #endif

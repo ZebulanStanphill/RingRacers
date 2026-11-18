@@ -1389,11 +1389,14 @@ static void R_DrawWallColumn(drawcolumndata_t* dc, INT32 yl, INT32 yh, fixed_t m
 	dc->sourcelength = dc->texheight;
 	R_SetColumnFunc(colfunctype, dc->brightmap != NULL);
 	coldrawfunc_t* colfunccopy = colfunc;
+	// [ZE]: Without a remap, draw from dc as it is, without making a copy.
 	if (!remap)
 	{
+		// [ZE]: The column drawers take const data, so no cast or copy is needed.
 		colfunccopy(dc);
 		return;
 	}
+	// [ZE]: Copy only when the remap offset has to be applied.
 	drawcolumndata_t dc_copy = *dc;
 	dc_copy.colormap += COLORMAP_REMAPOFFSET;
 	dc_copy.fullbright += COLORMAP_REMAPOFFSET;
@@ -2036,7 +2039,7 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 
 	numbackffloors = 0;
 
-	// Only [0, numthicksides) is read; those entries are assigned below.
+	// [ZE]: Only [0, numthicksides) is read; those entries are assigned below.
 
 	if (numffloors)
 	{

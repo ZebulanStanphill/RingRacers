@@ -483,6 +483,7 @@ visplane_t *R_FindPlane(fixed_t height, INT32 picnum, INT32 lightlevel,
 	check->ripple = ripple;
 	check->damage = damage;
 
+	// [ZE]: Clear only the columns that can be on screen, not all of them.
 	R_ClearVisplaneColumns(check);
 
 	return check;
@@ -563,6 +564,7 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
 		pl = new_pl;
 		pl->minx = start;
 		pl->maxx = stop;
+		// [ZE]: Clear only the columns that can be on screen, not all of them.
 		R_ClearVisplaneColumns(pl);
 	}
 	return pl;
@@ -695,6 +697,7 @@ void R_DrawPlanes(void)
 // Draws the sky within the plane's top/bottom bounds
 // Note: this uses column drawers instead of span drawers, since the sky is always a texture
 //
+// [ZE]: The column drawers take their data as const, so callers need no copy.
 static void R_DrawSkyPlane(visplane_t *pl, void(*colfunc)(const drawcolumndata_t*), boolean allow_parallel)
 {
 	INT32 x;

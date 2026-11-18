@@ -51,6 +51,7 @@
 #include "m_argv.h"
 #include "i_system.h"
 #include "command.h" // cv_execversion
+// [UWP]: Headers for logging the camera position with each screenshot.
 #ifdef _UWP
 #include "r_main.h" // R_FOV
 #include "p_tick.h" // leveltime
@@ -65,6 +66,7 @@
 
 // So that the screenshot menu auto-updates...
 #include "k_menu.h"
+// [ZE]: Include frame capture mode, which names and takes its own screenshots.
 #include "d_framecapture.h"
 
 #ifdef HWRENDER
@@ -933,10 +935,12 @@ static void M_PNGText(png_structp png_ptr, png_infop png_info_ptr, PNG_CONST png
 #else
 	 "Unknown";
 #endif
+// [ZE]: VibeRant's driver names are longer than the other render mode names.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 	char rendermodetxt[16];
 #else
 	char rendermodetxt[9];
+// [ZE]: End of the longer render mode name buffer.
 #endif
 	char maptext[MAXMAPLUMPNAME];
 	char lvlttltext[48];
@@ -951,10 +955,12 @@ static void M_PNGText(png_structp png_ptr, png_infop png_info_ptr, PNG_CONST png
 			strcpy(rendermodetxt, "Software");
 			break;
 		case render_opengl:
+// [ZE]: Show VibeRant's driver name, not just OpenGL, when VibeRant is running.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 			strcpy(rendermodetxt, HWR_VibeRant() ? HWR_VIBERANT_NAME(HWR_Vulkan()) : "OpenGL");
 #else
 			strcpy(rendermodetxt, "OpenGL");
+// [ZE]: End of the VibeRant driver name.
 #endif
 			break;
 		default: // Just in case
@@ -1846,7 +1852,7 @@ void M_DoScreenShot(UINT32 width, UINT32 height, tcb::span<const std::byte> data
 	M_MkdirEach(pathname, M_PathParts(pathname) - 2, 0755);
 
 #ifdef USE_PNG
-	freename = FrameCapture_ShotName(pathname, sizeof pathname); // frame capture mode names it by map and tic
+	freename = FrameCapture_ShotName(pathname, sizeof pathname); // [ZE]: frame capture mode names it by map and tic
 	if (!freename)
 		freename = Newsnapshotfile(pathname,"png");
 #else
@@ -1877,7 +1883,7 @@ void M_DoScreenShot(UINT32 width, UINT32 height, tcb::span<const std::byte> data
 failure:
 	if (ret)
 	{
-		if (moviemode != MM_SCREENSHOT && !g_framecapture) // capture mode keeps the console out of the next frame
+		if (moviemode != MM_SCREENSHOT && !g_framecapture) // [ZE]: capture mode keeps the console out of the next frame
 			CONS_Printf(M_GetText("Screen shot %s saved in %s\n"), freename, pathname);
 #ifdef _UWP
 		// [UWP]: Log where the last view drawn was, so a screenshot of a rendering bug can be rendered again on a PC

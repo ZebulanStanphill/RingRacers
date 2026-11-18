@@ -1,7 +1,9 @@
 include(CheckCXXCompilerFlag)
 
+# [UWP]: The sources go in a variable so the UWP build can make a static library from them instead of an executable.
 set(SRB2_MAIN_SOURCES
 	comptime.c
+	# [ZE]: The fork's version string, shown on the title screen, in the version command, and in the log.
 	fork_version.c
 	fork_version.h
 	cxxutil.hpp
@@ -9,6 +11,7 @@ set(SRB2_MAIN_SOURCES
 	config.h.in
 	string.c
 	d_main.cpp
+	# [ZE]: The frame capture mode, used to compare renderers.
 	d_framecapture.cpp
 	d_clisrv.c
 	d_net.cpp
@@ -61,6 +64,7 @@ set(SRB2_MAIN_SOURCES
 	p_link.cpp
 	p_loop.c
 	p_map.c
+	# [ZE]: The cache for map thumbnails, minimaps, and staff ghost briefs.
 	p_mapcache.cpp
 	p_mapthing.cpp
 	p_maputl.c
@@ -105,6 +109,7 @@ set(SRB2_MAIN_SOURCES
 	v_video.cpp
 	s_sound.c
 	sounds.c
+	# [UWP]: The cache for lump header reads made at startup.
 	w_uwpheadercache.cpp
 	w_wad.cpp
 	filesrch.c
@@ -184,6 +189,7 @@ set(SRB2_MAIN_SOURCES
 	p_deepcopy.cpp
 )
 
+# [UWP]: The UWP launcher links the game as a static library, so only other builds make an executable.
 if (NOT SRB2_CONFIG_UWP)
 	add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32 ${SRB2_MAIN_SOURCES})
 else()
@@ -275,6 +281,7 @@ endif()
 
 if(MSVC OR CMAKE_CXX_LINK_EXECUTABLE MATCHES "lld-link\\.exe")
 	target_link_options(SRB2SDL2 PRIVATE /MANIFEST:NO)
+	# [UWP]: The UWP build doesn't link dbghelp.
 	if(NOT SRB2_CONFIG_UWP)
 		target_link_libraries(SRB2SDL2 PRIVATE "dbghelp")
 	endif()
@@ -366,6 +373,7 @@ target_link_libraries(SRB2SDL2 PRIVATE ZLIB::ZLIB)
 target_link_libraries(SRB2SDL2 PRIVATE PNG::PNG)
 target_link_libraries(SRB2SDL2 PRIVATE CURL::libcurl)
 target_link_libraries(SRB2SDL2 PRIVATE Opus::opus)
+# [UWP]: The UWP build has no cpptrace.
 if(WIN32 AND NOT MINGW AND NOT SRB2_CONFIG_UWP)
 	target_link_libraries(SRB2SDL2 PRIVATE cpptrace::cpptrace)
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_CPPTRACE)
@@ -407,6 +415,7 @@ if(SRB2_CONFIG_ENABLE_WEBM_MOVIES)
 	target_compile_definitions(SRB2SDL2 PRIVATE -DSRB2_CONFIG_ENABLE_WEBM_MOVIES)
 endif()
 
+# [UWP]: Settings for the UWP build: libuwp, the Xbox One CPU target, and the optional profile-guided optimization (PGO) options.
 if(SRB2_CONFIG_UWP)
 	target_link_libraries(SRB2SDL2 PRIVATE LIBUWP)
 
@@ -979,12 +988,14 @@ if("${CMAKE_SYSTEM_NAME}" STREQUAL Windows AND NOT "${SRB2_CONFIG_INTERNAL_LIBRA
 
 		#message(STATUS ADDITIONAL_DLLS="${ADDITIONAL_DLLS}")
 	endif()
+	# [UWP]: The UWP build has no executable to copy DLLs next to.
 	if(NOT SRB2_CONFIG_UWP)
 		add_custom_command(TARGET SRB2SDL2 POST_BUILD
 			COMMAND ${CMAKE_COMMAND} -E copy_if_different
 				$<TARGET_RUNTIME_DLLS:SRB2SDL2>
 				${ADDITIONAL_DLLS}
 
+				# [UWP]: Part of the same UWP guard around the DLL copy, which only re-indents these lines.
 				$<TARGET_FILE_DIR:SRB2SDL2>
 			COMMAND_EXPAND_LISTS
 			COMMENT "Copying runtime DLLs"

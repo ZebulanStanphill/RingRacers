@@ -25,6 +25,7 @@
 #include "r_state.h"
 #include "z_zone.h"
 #include "i_time.h"
+// [ZE]: Include frame capture mode, which turns interpolation off.
 #include "d_framecapture.h"
 
 UINT32 R_GetFramerateCap(void)
@@ -53,7 +54,7 @@ UINT32 R_GetFramerateCap(void)
 
 boolean R_UsingFrameInterpolation(void)
 {
-	// Frame capture mode draws each tic once, exactly as it is
+	// [ZE]: Frame capture mode draws each tic once, exactly as it is
 	if (g_framecapture)
 		return false;
 
@@ -68,7 +69,7 @@ static viewvars_t skyview_new[MAXSPLITSCREENPLAYERS];
 static viewvars_t *oldview = &pview_old[0];
 static tic_t last_view_update;
 static int oldview_invalid[MAXSPLITSCREENPLAYERS] = {0, 0, 0, 0};
-// Set by a reset, cleared by the next R_InterpolateView. Tics that run before any
+// [ZE]: Set by a reset, cleared by the next R_InterpolateView. Tics that run before any
 // frame is drawn (a slow level load skips frames) must not age the reset or copy
 // pview_new, which still holds the previous level's last view, into pview_old.
 static boolean oldview_undrawn[MAXSPLITSCREENPLAYERS] = {false, false, false, false};
@@ -142,12 +143,14 @@ void R_InterpolateView(fixed_t frac)
 
 	i = R_GetViewNumber();
 
+	// [ZE]: A view that has not been drawn since a reset is not interpolated either.
 	if (oldview_invalid[i] != 0 || oldview_undrawn[i])
 	{
 		// interpolate from newview to newview
 		prevview = newview;
 	}
 
+	// [ZE]: A frame is being drawn now, so later updates may copy the view again.
 	oldview_undrawn[i] = false;
 
 	viewx = R_LerpFixed(prevview->x, newview->x, frac);
@@ -173,6 +176,7 @@ void R_UpdateViewInterpolation(void)
 
 	for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 	{
+		// [ZE]: Skip a view that has not been drawn since a reset, because its new view is stale.
 		if (oldview_undrawn[i])
 		{
 			// No frame has been drawn since the reset, so pview_new is stale.
@@ -199,12 +203,14 @@ void R_ResetViewInterpolation(UINT8 p)
 		for (i = 0; i < MAXSPLITSCREENPLAYERS; i++)
 		{
 			oldview_invalid[i] = t;
+			// [ZE]: Mark the views as not drawn since the reset.
 			oldview_undrawn[i] = true;
 		}
 	}
 	else
 	{
 		oldview_invalid[p - 1] = t;
+		// [ZE]: Mark this view as not drawn since the reset.
 		oldview_undrawn[p - 1] = true;
 	}
 }
@@ -627,6 +633,7 @@ static std::vector<mobj_t*> interpolated_mobjs;
 void R_AddMobjInterpolator(mobj_t *mobj)
 {
 	interpolated_mobjs.push_back(mobj);
+	// [ZE]: Record the mobj's slot in the list, so that removing it does not need a search.
 	mobj->interpolatorslot = interpolated_mobjs.size();
 
 	R_ResetMobjInterpolationState(mobj);
@@ -641,6 +648,7 @@ void R_RemoveMobjInterpolator(mobj_t *mobj)
 
 	if (i >= interpolated_mobjs.size() || interpolated_mobjs[i] != mobj)
 	{
+		// [ZE]: As upstream did, search the whole list when the recorded slot is out of date.
 		for (i = 0; i < interpolated_mobjs.size(); i++)
 		{
 			if (interpolated_mobjs[i] == mobj)
@@ -649,12 +657,14 @@ void R_RemoveMobjInterpolator(mobj_t *mobj)
 			}
 		}
 
+		// [ZE]: Upstream moved the last entry into the found slot here; that is done below, once the slot is known.
 		if (i == interpolated_mobjs.size())
 		{
 			return;
 		}
 	}
 
+	// [ZE]: Move the last entry into the removed slot, and record its new slot.
 	mobj_t *last = *interpolated_mobjs.rbegin();
 	interpolated_mobjs[i] = last;
 	last->interpolatorslot = i + 1;

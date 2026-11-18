@@ -650,6 +650,7 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
 
 	R_SetColumnFunc(colfunctype, brightmap != NULL);
 	dc->brightmap = NULL;
+	// [ZE]: Returns early for a column with no posts, and works out the clipping limits and the drawer once for all of its posts.
 	if (column->topdelta == 0xff)
 		return;
 
@@ -677,14 +678,18 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
 		dc->yl = (topscreen+FRACUNIT-1)>>FRACBITS;
 		dc->yh = (bottomscreen-1)>>FRACBITS;
 
+		// [ZE]: Uses the window test worked out once above.
 		if (clipwindow)
 		{
 			if (windowtop > topscreen)
+				// [ZE]: Uses the window limit worked out once above.
 				dc->yl = windowyl;
 			if (windowbottom < bottomscreen)
+				// [ZE]: Uses the window limit worked out once above.
 				dc->yh = windowyh;
 		}
 
+		// [ZE]: Applies the clipping limits worked out once above, which replace upstream's per-post checks and give the same result.
 		dc->yl = std::max(dc->yl, cliptop);
 		dc->yh = std::min(dc->yh, clipbottom);
 
@@ -699,9 +704,10 @@ void R_DrawMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t *bright
 
 			dc->texturemid = basetexturemid - (topdelta<<FRACBITS);
 
-			// Column drawers read the bundle; shadowed drawers copy it internally.
+			// [ZE]: Column drawers read the bundle; shadowed drawers copy it internally.
 			if (ylookup[dc->yl])
 			{
+				// [ZE]: Calls the drawer chosen above directly on the column data, where upstream drew from a copy of it.
 				drawer(dc);
 			}
 #ifdef PARANOIA
@@ -731,6 +737,7 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 
 	R_SetColumnFunc(colfunctype, brightmap != NULL);
 	dc->brightmap = NULL;
+	// [ZE]: As above, for a flipped column: returns early for a column with no posts, and works out the clipping limits and the drawer once for all of its posts.
 	if (column->topdelta == 0xff)
 		return;
 
@@ -760,14 +767,18 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 		dc->yl = (topscreen+FRACUNIT-1)>>FRACBITS;
 		dc->yh = (bottomscreen-1)>>FRACBITS;
 
+		// [ZE]: As above, uses the window test worked out once.
 		if (clipwindow)
 		{
 			if (windowtop > topscreen)
+				// [ZE]: As above, uses the window limit worked out once.
 				dc->yl = windowyl;
 			if (windowbottom < bottomscreen)
+				// [ZE]: As above, uses the window limit worked out once.
 				dc->yh = windowyh;
 		}
 
+		// [ZE]: As above, applies the clipping limits worked out once, which replace upstream's per-post checks.
 		dc->yl = std::max(dc->yl, cliptop);
 		dc->yh = std::min(dc->yh, clipbottom);
 
@@ -790,6 +801,7 @@ void R_DrawFlippedMaskedColumn(drawcolumndata_t* dc, column_t *column, column_t 
 			// Still drawn by R_DrawColumn.
 			if (ylookup[dc->yl])
 			{
+				// [ZE]: As above, calls the drawer chosen earlier directly on the column data, where upstream drew from a copy of it.
 				drawer(dc);
 			}
 #ifdef PARANOIA
@@ -1287,6 +1299,7 @@ static void R_SplitSprite(vissprite_t *sprite)
 	}
 }
 
+// [ZE]: Not static, so the Legacy GL sprite code can apply sprite brightmaps too.
 patch_t *R_CacheSpriteBrightMap(const spriteinfo_t *sprinfo, UINT8 frame)
 {
 	const char *name = sprinfo->bright[frame];
@@ -3143,6 +3156,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				entry = R_CreateDrawNode(head);
 				entry->thickseg = ds;
 				entry->ffloor = ds->thicksides[i];
+				// [ZE]: Records the columns this node covers, so sorting can skip it for sprites that share none.
 				R_SetDrawNodeColumns(entry);
 			}
 		}
@@ -3158,6 +3172,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				entry = R_CreateDrawNode(head);
 				entry->plane = plane;
 				entry->seg = ds;
+				// [ZE]: As above, for a polyobject plane node.
 				R_SetDrawNodeColumns(entry);
 			}
 			ds->curline->polyseg->visplane = NULL;
@@ -3166,11 +3181,12 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		{
 			entry = R_CreateDrawNode(head);
 			entry->seg = ds;
+			// [ZE]: As above, for a masked seg node.
 			R_SetDrawNodeColumns(entry);
 		}
 		if (ds->numffloorplanes)
 		{
-			// Scan the columns once per plane, rather than on each sorting pass.
+			// [ZE]: Scan the columns once per plane, rather than on each sorting pass.
 			for (p = 0; p < ds->numffloorplanes; p++)
 			{
 				plane = ds->ffloorplanes[p];
@@ -3189,6 +3205,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					if (!ds->ffloorplanes[p])
 						continue;
 					plane = ds->ffloorplanes[p];
+					// [ZE]: R_PlaneBounds and the check that dropped unusable planes now run once per plane, in the loop before the sorting passes.
 					delta = abs(plane->height - viewz);
 					if (delta > bestdelta)
 					{
@@ -3201,6 +3218,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					entry = R_CreateDrawNode(head);
 					entry->plane = ds->ffloorplanes[best];
 					entry->seg = ds;
+					// [ZE]: As above, for a 3D floor plane node.
 					R_SetDrawNodeColumns(entry);
 					ds->ffloorplanes[best] = NULL;
 				}
@@ -3231,6 +3249,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		entry = R_CreateDrawNode(head);
 		entry->plane = plane;
 		// note: no seg is set, for what should be obvious reasons
+		// [ZE]: As above, for a polyobject plane node.
 		R_SetDrawNodeColumns(entry);
 		PolyObjects[i].visplane = NULL;
 	}
@@ -3330,6 +3349,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				(entry->prev = r2->prev)->next = entry;
 				(entry->next = r2)->prev = entry;
 				entry->sprite = rover;
+				// [ZE]: As above, for a sprite node.
 				R_SetDrawNodeColumns(entry);
 				break;
 			}
@@ -3365,6 +3385,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					(entry->prev = r2->prev)->next = entry;
 					(entry->next = r2)->prev = entry;
 					entry->sprite = rover;
+					// [ZE]: As above, for a sprite node.
 					R_SetDrawNodeColumns(entry);
 					break;
 				}
@@ -3385,6 +3406,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					(entry->prev = r2->prev)->next = entry;
 					(entry->next = r2)->prev = entry;
 					entry->sprite = rover;
+					// [ZE]: As above, for a sprite node.
 					R_SetDrawNodeColumns(entry);
 					break;
 				}
@@ -3435,6 +3457,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 					(entry->prev = r2->prev)->next = entry;
 					(entry->next = r2)->prev = entry;
 					entry->sprite = rover;
+					// [ZE]: As above, for a sprite node.
 					R_SetDrawNodeColumns(entry);
 					break;
 				}
@@ -3444,6 +3467,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		{
 			entry = R_CreateDrawNode(head);
 			entry->sprite = rover;
+			// [ZE]: As above, for a sprite node.
 			R_SetDrawNodeColumns(entry);
 		}
 	}
@@ -3475,6 +3499,7 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link)
 	node->thickseg = NULL;
 	node->ffloor = NULL;
 	node->sprite = NULL;
+	// [ZE]: A new node's columns are unknown until R_SetDrawNodeColumns records them, so it is always checked.
 	node->columncheck = DRAWNODE_ALWAYSCHECK;
 
 	ps_numdrawnodes++;

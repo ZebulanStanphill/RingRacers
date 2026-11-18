@@ -12,6 +12,7 @@
 /// \file  p_saveg.cpp
 /// \brief Archiving: SaveGame I/O
 
+// [ZE]: Import the horizon cache hook so save restoration can report line special changes.
 #include "hardware/hw_horizon.h"
 #include "d_think.h"
 #include "doomdef.h"
@@ -2846,9 +2847,11 @@ static void UnArchiveLines(savebuffer_t *save)
 		if (diff & LD_FLAG)
 			li->flags = READUINT32(save->p);
 		if (diff & LD_SPECIAL)
+		// [ZE]: Keep the old line special so restoration can detect a change in horizon eligibility.
 		{
 			const INT16 before = li->special;
 			li->special = READINT16(save->p);
+			// [ZE]: Notify the horizon cache after reading the saved line special.
 			HWR_LineSpecialChanged(before, li->special);
 		}
 		if (diff & LD_TAG)
@@ -7206,6 +7209,7 @@ static boolean P_NetUnArchiveMisc(savebuffer_t *save, boolean reloading)
 		for (i = 0; i < numlines; i++, spawnli++, li++)
 		{
 			li->flags = spawnli->flags;
+			// [ZE]: Check horizon eligibility before resetting the line special to its map value.
 			HWR_LineSpecialChanged(li->special, spawnli->special);
 			li->special = spawnli->special;
 			li->callcount = 0;

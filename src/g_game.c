@@ -13,6 +13,7 @@
 /// \brief game loop functions, events handling
 
 #include "doomdef.h"
+// [UWP]: Trace header for gamestate diagnostics.
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #endif
@@ -1295,6 +1296,7 @@ void G_StartTitleCard(void)
 void G_PreLevelTitleCard(void)
 {
 #ifndef NOWIPE
+// [UWP]: Legacy GL's level loading takes long enough that an online client would time out, so the title card runs in the HUD while it catches up.
 #if defined(_UWP) && defined(HWRENDER)
 	// The server keeps simulating while we load. Do not add a second of
 	// paused simulation after Legacy GL's precache: ST_Ticker/ST_Drawer will
@@ -1313,6 +1315,7 @@ void G_PreLevelTitleCard(void)
 	tic_t endtime = strtime + (PRELEVELTIME*NEWTICRATERATIO);
 	tic_t nowtime = strtime;
 	tic_t lasttime = strtime;
+// [UWP]: Level loading leaves the cached clock stale, so refresh it before timing the title card.
 #ifdef _UWP
 	// Log the animation's rendered frames and drawing/presentation time.
 	const precise_t uwp_title_start = I_GetPreciseTime();
@@ -1323,15 +1326,18 @@ void G_PreLevelTitleCard(void)
 	while (nowtime < endtime)
 	{
 		// draw loop
+// [UWP]: Counters for logging the title card's frames and drawing and presentation time.
 #ifdef _UWP
 		const precise_t uwp_draw_start = I_GetPreciseTime();
 #endif
 		ST_runTitleCard();
 		ST_preLevelTitleCardDrawer();
+// [UWP]: Time the start of this frame's drawing.
 #ifdef _UWP
 		const precise_t uwp_present_start = I_GetPreciseTime();
 #endif
 		I_FinishUpdate(); 	// page flip or blit buffer
+// [UWP]: Time the start of this frame's presentation.
 #ifdef _UWP
 		const precise_t uwp_draw_time = uwp_present_start - uwp_draw_start;
 		const precise_t uwp_present_time = I_GetPreciseTime() - uwp_present_start;
@@ -1360,6 +1366,7 @@ void G_PreLevelTitleCard(void)
 		}
 		lasttime = nowtime;
 	}
+// [UWP]: Accumulate and track the worst drawing and presentation times of the frame.
 #ifdef _UWP
 	{
 		const double uwp_ms = 1000.0 / I_GetPrecisePrecision();
@@ -6042,6 +6049,7 @@ INT32 G_FindMapByNameOrCode(const char *mapname, char **realmapnamep)
 //
 void G_SetGamestate(gamestate_t newstate)
 {
+// [UWP]: Log how long the title card took, per frame and in the worst case.
 #ifdef _UWP
 	UWPTraceGamestate((INT32)gamestate, (INT32)newstate);
 #endif

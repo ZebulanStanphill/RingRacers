@@ -15,6 +15,7 @@
 #include "../i_video.h"
 
 rendermode_t rendermode = render_none;
+// [ZE]: The chosen renderer is a rendererchoice_t, which can be unchosen, as in the SDL video code.
 rendererchoice_t chosenrendermode = RENDERER_UNCHOSEN;
 
 boolean highcolor = false;
@@ -89,6 +90,7 @@ void I_BeginRead(void){}
 
 void I_EndRead(void){}
 
+// [ZE]: This is the Xbox build's Fullscreen option query, which the dummy video code answers with false.
 // Only Xbox consoles always display full screen.
 boolean I_VideoAlwaysFullscreen(void)
 {

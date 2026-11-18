@@ -48,9 +48,11 @@
 /* This array contains the bytes used to pad the buffer to the next
    64-byte boundary.  (RFC 1321, 3.1: Step 1)  */
 static const unsigned char fillbuf[64] = { 0x80, 0 /*, 0, 0, ...  */ };
+/* [ZE]: The md5_ctx structure moved to md5.h, so the incremental interface can be used by the background game file check. */
 
 /* Initialize structure containing state of computation.
    (RFC 1321, 3.3: Step 3)  */
+/* [UWP]: Not static, so the background game file check can hash incrementally. */
 void md5_init_ctx (struct md5_ctx *ctx)
 {
   ctx->A = 0x67452301;
@@ -244,6 +246,7 @@ static void md5_process_block (const void *buffer, size_t len, struct md5_ctx *c
 }
 
 
+/* [UWP]: Not static, as above. */
 void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
 {
   /* When we already have some bits in our internal buffer concatenate
@@ -291,6 +294,7 @@ void md5_process_bytes (const void *buffer, size_t len, struct md5_ctx *ctx)
 
    IMPORTANT: On some systems it is required that RESBUF is correctly
    aligned for a 32 bits value.  */
+/* [UWP]: Not static, as above. */
 void *md5_finish_ctx (struct md5_ctx *ctx, void *resbuf)
 {
   /* Take yet unprocessed bytes into account.  */

@@ -9,9 +9,11 @@
 //-----------------------------------------------------------------------------
 
 #include <algorithm>
+// [UWP]: For timing the sound preload.
 #include <chrono>
 #include <cmath>
 #include <memory>
+// [UWP]: For holding the sound bytes.
 #include <vector>
 
 #include <SDL.h>
@@ -33,6 +35,7 @@
 
 #include "../doomdef.h"
 #include "../i_sound.h"
+// [UWP]: For I_OutputMsg in the sound preload.
 #include "../i_system.h"
 #include "../m_misc.h"
 #include "../s_sound.h"

@@ -595,6 +595,7 @@ void LUA_ClearState(void)
 	if (gL)
 		lua_close(gL);
 	gL = NULL;
+	// [ZE]: Forgets the pointers kept for userdata along with the Lua state.
 	ValidUserdata_Clear();
 
 	CONS_Printf(M_GetText("Pardon me while I initialize the Lua scripting interface...\n"));
@@ -878,6 +879,7 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 		lua_pushlightuserdata(L, data); // k (store the userdata via the data's pointer)
 		lua_pushvalue(L, -2); // v (copy of the userdata)
 		lua_rawset(L, -4);
+		// [ZE]: Records that this pointer now has userdata.
 		ValidUserdata_Add(data);
 
 		// stack is left with the userdata on top, as if getting it had originally succeeded.

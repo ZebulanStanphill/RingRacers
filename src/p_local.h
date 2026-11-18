@@ -162,6 +162,7 @@ void P_ResetCamera(player_t *player, camera_t *thiscam);
 boolean P_TryCameraMove(fixed_t x, fixed_t y, camera_t *thiscam);
 void P_SlideCameraMove(camera_t *thiscam);
 void P_DemoCameraMovement(camera_t *cam, UINT8 num);
+// [ZE]: First-person camera helpers, which keep the view angle and pitch following the kart and the slope under it.
 void P_FirstPersonFollowKart(player_t *player, camera_t *thiscam);
 void P_FirstPersonFollowSlope(player_t *player, camera_t *thiscam);
 angle_t P_FirstPersonSlopePitch(UINT8 num);

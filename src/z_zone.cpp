@@ -111,6 +111,7 @@ void Z_Init(void)
 
 	memfree = I_GetFreeMem(&total)>>20;
 	CONS_Printf("System memory: %uMB - Free: %uMB\n", total>>20, memfree);
+// [UWP]: Install crash logging and report the memory budget and CPU sets to diagnose Xbox startup.
 #ifdef _UWP
 	I_UWPInstallCrashHandler();
 	I_UWPLogMemoryLimit();

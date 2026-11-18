@@ -137,6 +137,7 @@ void ST_doPaletteStuff(void)
 	{
 		st_palette = palette;
 
+		// [ZE]: Flash palettes also apply with Legacy GL's palette rendering, which draws with Software's palette.
 		if (rendermode == render_soft
 #ifdef HWRENDER
 			|| (rendermode == render_opengl && HWR_ShouldUsePaletteRendering())

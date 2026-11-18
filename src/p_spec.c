@@ -16,6 +16,7 @@
 ///        utility functions, etc.
 ///        Line Tag handling. Line and Sector triggers.
 
+// [ZE]: Include the horizon line tracking that is told when a line's special changes.
 #include "hardware/hw_horizon.h"
 #include "d_think.h"
 #include "dehacked.h"
@@ -2287,8 +2288,10 @@ static void P_LineSpecialWasActivated(line_t *line)
 {
 	if (!(line->activation & SPAC_REPEATSPECIAL))
 	{
+		// [ZE]: Remember the special, so the horizon scan can tell whether a horizon line was removed.
 		const INT16 before = line->special;
 		line->special = 0;
+		// [ZE]: Tell the hardware renderer that the special changed, so subsectors with no horizon lines skip the horizon scan.
 		HWR_LineSpecialChanged(before, 0);
 	}
 }
@@ -8003,8 +8006,10 @@ void P_SpawnSpecialsThatRequireObjects(boolean fromnetsave)
 		if (P_IsLineDisabled(&lines[i]))
 		{
 			/* remove the special so it can't even be found during the level */
+			// [ZE]: Remember the special, so the horizon scan can tell whether a horizon line was removed.
 			const INT16 before = lines[i].special;
 			lines[i].special = 0;
+			// [ZE]: Tell the hardware renderer that the special changed, so subsectors with no horizon lines skip the horizon scan.
 			HWR_LineSpecialChanged(before, 0);
 		}
 

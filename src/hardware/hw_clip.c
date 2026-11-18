@@ -320,6 +320,7 @@ void gld_clipper_Clear(void)
 	cliphead = NULL;
 }
 
+// [ZE]: Lets the VibeRant driver set aside the clipper's state and restore it, so it can run its own clip pass.
 #ifdef HAVE_VIBERANT
 void *gld_clipper_SaveState(void)
 {

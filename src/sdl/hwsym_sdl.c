@@ -19,6 +19,7 @@
 
 #include "hwsym_sdl.h"
 #include "../doomdef.h"
+// [ZE]: HWR_VibeRant, to tell whether the hardware driver is VibeRant.
 #include "../hardware/hw_driver.h"
 
 #ifdef _MSC_VER
@@ -42,6 +43,7 @@
 #ifdef HWRENDER
 #include "../hardware/hw_drv.h"
 #include "ogl_sdl.h"
+// [ZE]: The VibeRant driver's functions.
 #ifdef HAVE_VIBERANT
 #include "../hardware/r_viberant/r_viberant.h"
 #endif

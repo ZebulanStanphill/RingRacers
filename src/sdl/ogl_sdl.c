@@ -15,6 +15,7 @@
 #pragma warning(disable : 4214 4244)
 #endif
 
+// [UWP]: libuwp's screen size, since there is no SDL window to ask on Xbox.
 #ifdef _UWP
 extern __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
 #endif
@@ -228,8 +229,10 @@ void OglSdlFinishUpdate(boolean waitvbl)
 
 	oldwaitvbl = waitvbl;
 
+// [UWP]: Asks libuwp for the display size instead of the SDL window.
 #ifndef _UWP
 	SDL_GetWindowSize(window, &sdlw, &sdlh);
+// [UWP]: The Xbox branch of the display size query.
 #else
 	uwp_GetScreenSize(&sdlw, &sdlh);
 #endif

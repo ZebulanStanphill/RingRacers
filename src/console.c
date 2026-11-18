@@ -34,6 +34,7 @@
 #include "d_main.h"
 #include "k_menu.h"
 #include "filesrch.h"
+// [UWP]: The Xbox build polls the background game file check from here, so it needs the WAD header.
 #ifdef _UWP
 #include "w_wad.h"
 #endif
@@ -607,6 +608,7 @@ static precise_t con_movetime;
 static void CON_MoveConsole(void)
 {
 	static fixed_t fracmovement = 0;
+	// [ZE]: Locals for sliding the console by the time since it last moved.
 	precise_t now;
 	fixed_t deltatics;
 
@@ -1943,6 +1945,7 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
 {
 	"Init zone memory...", //LOADED_ZINIT
 	"Init game timing...", //LOADED_ISTARTUPTIMER
+// [UWP]: On Xbox, graphics and fonts start before the map data is read, so the loading strings follow that order.
 #ifdef _UWP
 	"Loading main assets...", //LOADED_ISTARTUPGRAPHICS
 	"Cache fonts...", //LOADED_HUINIT
@@ -1951,6 +1954,7 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
 	"Loading main assets...", //LOADED_IWAD
 	"Init graphics subsystem...", //LOADED_ISTARTUPGRAPHICS
 	"Cache fonts...", //LOADED_HUINIT
+// [UWP]: Upstream's order of the loading strings is used on every other platform.
 #endif
 	"Loading add-ons...", //LOADED_PWAD
 	"Load settings...", //LOADED_CONFIG
@@ -1971,6 +1975,7 @@ static const char *CON_LoadingStrings[LOADED_ALLDONE+1] =
 void CON_SetLoadingProgress(con_loadprogress_t newStep)
 {
 	const con_loadprogress_t expectedStep = con_startup_loadprogress + 1;
+// [UWP]: Logs the result of the background game file check as soon as it finishes.
 #ifdef _UWP
 	W_UWPPollAssetCheck();
 #endif
@@ -2001,6 +2006,7 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
 			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
 #else
 		CONS_Printf("LOADING UPDATE - %s\n", CON_LoadingStrings[con_startup_loadprogress]);
+// [UWP]: The Xbox build logs how long each loading step took, and the other platforms print only the step name as upstream does.
 #endif
 	}
 

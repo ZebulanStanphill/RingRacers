@@ -42,6 +42,7 @@
 //#define SDLMAIN
 #endif
 
+// [UWP]: Uses SDL's main wrapper, which the UWP launcher's SDL needs to start the game.
 #ifdef _UWP
 #define SDLMAIN
 #endif
@@ -160,6 +161,7 @@ static void InitLogging(void)
 #if defined(_WIN32) && !defined(_MSC_VER)
 static void init_exchndl()
 {
+// [UWP]: The Xbox build has no exchndl.dll crash handler to load.
 #ifndef _UWP
 	HMODULE exchndl_module = LoadLibraryA("exchndl.dll");
 
@@ -174,6 +176,7 @@ static void init_exchndl()
 		GetProcAddress(exchndl_module, "ExcHndlInit"));
 	if (pfnExcHndlInit != NULL)
 		(pfnExcHndlInit)();
+// [UWP]: Ends the exchndl guard above.
 #endif
 }
 #endif
@@ -300,6 +303,7 @@ int main(int argc, char **argv)
 	return 0;
 }
 
+// [UWP]: The UWP build is a static library, so the launcher supplies WinMain.
 #if defined(_MSC_VER) && !defined(_UWP)
 int WINAPI WinMain(HINSTANCE pInstance, HINSTANCE pPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {

@@ -81,6 +81,7 @@ extern "C" {
 	#undef ECONNREFUSED
 	#endif
 	#define ECONNREFUSED WSAECONNREFUSED
+	// [ZE]: Maps the unreachable-route errors to their Winsock codes like the other socket errors, so they count as dropped packets.
 	#ifdef EHOSTUNREACH
 	#undef EHOSTUNREACH
 	#endif

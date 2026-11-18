@@ -10,6 +10,7 @@
 /// \brief Video Options
 
 #include "../k_menu.h"
+// [ZE]: I_VideoAlwaysFullscreen, for removing the Fullscreen option on Xbox.
 #include "../i_video.h"
 #include "../v_video.h" // cv_globalgamma
 #include "../r_fps.h" // fps cvars
@@ -29,6 +30,7 @@ menuitem_t OPTIONS_Video[] =
 		NULL, {.cvar = &cv_fullscreen}, 0, 0},
 #endif
 
+	// [ZE]: The Screen Scaling setting, which fits, uses whole pixel multiples, or shows pixels at 1:1.
 	{IT_STRING | IT_CVAR, "Screen Scaling", "Fit fills the screen. Integer keeps pixels even. 1:1 shows them at their real size.",
 		NULL, {.cvar = &cv_scr_scaling}, 0, 0},
 
@@ -44,6 +46,7 @@ menuitem_t OPTIONS_Video[] =
 	{IT_STRING | IT_SUBMENU, "Color Profile...", "Adjust the color profile of the game's display.",
 		NULL, {.submenu = &OPTIONS_VideoColorProfileDef}, 0, 0},
 
+	// [ZE]: Replaces a spacer row with the Camera Position submenu, since the camera setting is saved per player.
 	{IT_STRING | IT_SUBMENU, "Camera Position...", "Give each local player a 3rd person or 1st person view.",
 		NULL, {.submenu = &OPTIONS_VideoCameraDef}, 0, 0},
 
@@ -73,7 +76,7 @@ menu_t OPTIONS_VideoDef = {
 	NULL,
 };
 
-// Compact the live items so removing a setting leaves no empty menu row.
+// [ZE]: Compact the live items so removing a setting leaves no empty menu row.
 static INT16 M_RemoveVideoCvar(menuitem_t *items, INT16 count, const consvar_t *cvar)
 {
 	INT16 i, j;

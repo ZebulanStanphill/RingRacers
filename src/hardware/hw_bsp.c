@@ -15,6 +15,7 @@
 #include "../doomstat.h"
 #ifdef HWRENDER
 #include "hw_glob.h"
+// [ZE]: HWR_VibeRant, to tell whether the driver is VibeRant, and the Xbox keep-alive for long loading.
 #include "hw_driver.h"
 #ifdef _UWP
 #include "hw_main.h" // HWR_UWPLoadKeepAlive
@@ -254,6 +255,7 @@ static boolean SameVertice (polyvertex_t *p1, polyvertex_t *p2)
 }
 
 
+// [ZE]: Puts a polygon the partition line doesn't split on the side its vertices lie on, where upstream always made it the front one.
 // a polygon the partition line doesn't split goes to the side
 // of the vertex farthest from the line, since float error can leave
 // a polygon that only touches the line a fraction of a unit across it
@@ -381,6 +383,7 @@ static void SplitPoly (fdivline_t *bsp,         //splitting parametric line
 		// linedefs where each side point the same sector, that is:
 		// the deep water effect with the original Doom
 
+		// [ZE]: As above, with the same side rule instead of always the front.
 		UnsplitPoly(bsp, poly, frontpoly, backpoly);
 		return;
 	}
@@ -388,6 +391,7 @@ static void SplitPoly (fdivline_t *bsp,         //splitting parametric line
 	if (pe < 0)
 	{
 		//I_Error("SplitPoly: only one point for split line (%d %d)", ps, pe);
+		// [ZE]: As above, with the same side rule instead of always the front.
 		UnsplitPoly(bsp, poly, frontpoly, backpoly);
 		return;
 	}
@@ -699,6 +703,7 @@ static void loading_status(void)
 	V_DrawRightAlignedString(x+50, y, V_YELLOWMAP, s);
 
 	// Is this really necessary at this point..?
+	// [ZE]: The incomplete-renderer warning is for Legacy GL only, since VibeRant has close to Software's features.
 	if (!HWR_VibeRant()) // No warning; VibeRant has close to Software's features
 	{
 		V_DrawCenteredString(BASEVIDWIDTH/2, 40, V_YELLOWMAP, "LEGACY GL IS INCOMPLETE AND MANY");
@@ -707,6 +712,7 @@ static void loading_status(void)
 	}
 
 	I_UpdateNoVsync();
+// [UWP]: Keeps the netgame connection alive while Legacy GL loads a level.
 #ifdef _UWP
 	HWR_UWPLoadKeepAlive();
 #endif
@@ -780,9 +786,11 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
 		nobackpoly++;
 
 	// Recursively divide front space.
+	// [ZE]: Upstream raised an error for a front child without a polygon, but now one keeps its box from the nodes lump, since the seg loops cover every subsector.
 	if (frontpoly)
 		WalkBSPNode(bsp->children[0], frontpoly, &bsp->children[0],bsp->bbox[0]);
 
+	// [ZE]: Copies the front child's box whether or not it got a polygon, where upstream did this only inside the polygon check.
 	// copy child bbox
 	// (a child without a polygon keeps its bbox from the nodes lump)
 	M_Memcpy(bbox, bsp->bbox[0], 4*sizeof (fixed_t));
@@ -792,8 +800,10 @@ static void WalkBSPNode(INT32 bspnum, poly_t *poly, UINT16 *leafnode, fixed_t *b
 	{
 		// Correct back bbox to include floor/ceiling convex polygon
 		WalkBSPNode(bsp->children[1], backpoly, &bsp->children[1], bsp->bbox[1]);
+	// [ZE]: This block now ends before the box code, which runs for a back child without a polygon too.
 	}
 
+	// [ZE]: Takes the second child's box whether or not the back child got a polygon, where upstream did this inside the block above.
 	// enlarge bbox with second child
 	M_AddToBox(bbox, bsp->bbox[1][BOXLEFT  ],
 	                 bsp->bbox[1][BOXTOP   ]);
@@ -1169,6 +1179,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	// number of the first new subsector that might be added
 	addsubsector = numsubsectors;
 
+	// [ZE]: Records each subsector's first seg, which the seg loop polygons need.
 	subsecfirstseg = malloc((numsubsectors + 1) * sizeof (*subsecfirstseg));
 	if (subsecfirstseg == NULL)
 		I_Error("couldn't malloc subsecfirstseg numsubsectors %s\n", sizeu1(numsubsectors));
@@ -1193,6 +1204,7 @@ void HWR_CreatePlanePolygons(INT32 bspnum)
 	rootpv++;
 
 	WalkBSPNode(bspnum, rootp, NULL,rootbbox);
+	// [ZE]: Builds polygons from the seg loops for subsectors the BSP walk left without one.
 	HWR_SegLoopPolys();
 	free(subsecfirstseg);
 	subsecfirstseg = NULL;

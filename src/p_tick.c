@@ -644,6 +644,7 @@ void P_RunChaseCameras(void)
 
 			P_MoveChaseCamera(p, cam, false);
 		}
+		// [ZE]: A first-person camera follows its kart's angle and slope each tic, where upstream had only the chase camera.
 		else
 		{
 			P_FirstPersonFollowKart(&players[displayplayers[i]], &camera[i]);

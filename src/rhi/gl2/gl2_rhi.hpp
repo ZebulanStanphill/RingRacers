@@ -11,6 +11,7 @@
 #ifndef __SRB2_RHI_GL2_RHI_HPP__
 #define __SRB2_RHI_GL2_RHI_HPP__
 
+// [ZE]: For the bound texture list.
 #include <array>
 #include <functional>
 #include <memory>
@@ -94,6 +95,7 @@ struct Gl2Renderbuffer : public rhi::Renderbuffer
 	rhi::RenderbufferDesc desc;
 };
 
+// [ZE]: Caches a uniform's location and last integer value, so repeated uniform sets can be skipped.
 struct Gl2UniformLocation
 {
 	srb2::String name;
@@ -109,6 +111,7 @@ struct Gl2Program : public rhi::Program
 	uint32_t program = 0;
 	srb2::HashMap<srb2::String, uint32_t> attrib_locations;
 	srb2::HashMap<srb2::String, uint32_t> uniform_locations;
+	// [ZE]: The cache of uniforms by name.
 	// Uniform locations by name, searched without allocating
 	srb2::Vector<Gl2UniformLocation> uniform_cache;
 };
@@ -162,6 +165,7 @@ class Gl2Rhi final : public Rhi
 	CompareFunc stencil_front_func_;
 	CompareFunc stencil_back_func_;
 
+	// [ZE]: Tracks the GL state this backend set, so redundant GL calls can be skipped.
 	// GL state set by this backend, so calls that wouldn't change it can be skipped. Each GL call is expensive
 	// through ANGLE, and the 2D renderer sets its whole state for every batch.
 	// The last rasterizer state set; empty when something else has changed that GL state
@@ -177,6 +181,7 @@ class Gl2Rhi final : public Rhi
 	void apply_default_framebuffer(bool clear);
 	void apply_framebuffer(const RenderPassBeginInfo& info, bool allow_clear);
 
+	// [ZE]: Helpers that skip redundant uniform, texture, and buffer binds.
 	Gl2UniformLocation& find_uniform(Gl2Program& program, const char* name);
 	void bind_texture(uint32_t slot, uint32_t texture);
 	void bind_buffer(uint32_t target, uint32_t buffer);

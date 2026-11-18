@@ -27,6 +27,7 @@ extern "C" {
 
 // Startup & Shutdown the hardware mode renderer
 void HWR_Startup(void);
+// [UWP]: Precache a level's Legacy GL resources, and keep the game loading alive while doing so.
 #ifdef _UWP
 void HWR_UWPPrecacheLevel(boolean players_only);
 void HWR_UWPLoadKeepAlive(void);
@@ -39,6 +40,7 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength);
 void HWR_DrawConsoleBack(UINT32 color, INT32 height);
 void HWR_EncoreInvertScreen(void);
 void HWR_DrawCustomFadeScreen(UINT8 color, UINT8 strength);
+// [ZE]: VibeRant draws a fade map from a lump.
 #ifdef HAVE_VIBERANT
 void HWR_DrawCustomFadeMap(const char *lump, UINT8 strength);
 #endif
@@ -86,6 +88,7 @@ UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap); // Let's see if
 
 UINT8 HWR_GetTranstableAlpha(INT32 transtablenum);
 FBITFIELD HWR_GetBlendModeFlag(INT32 ast);
+// [ZE]: Blend with an explicit alpha, for translucent overlay sprites.
 FBITFIELD HWR_GetBlendModeFlagWithAlpha(INT32 style, INT32 alpha);
 FBITFIELD HWR_SurfaceBlend(INT32 style, INT32 transtablenum, FSurfaceInfo *pSurf);
 FBITFIELD HWR_TranstableToAlpha(INT32 transtablenum, FSurfaceInfo *pSurf);
@@ -146,6 +149,7 @@ extern float gl_viewsin, gl_viewcos;
 
 
 // Render stats
+// [UWP]: Time and count the portals that are drawn, for the performance log.
 #ifdef _UWP
 extern precise_t ps_hw_portaltime;
 extern INT32 ps_hw_portals;

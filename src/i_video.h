@@ -53,6 +53,7 @@ extern rendermode_t rendermode;
 
 /**	\brief render mode set by command line arguments
 */
+// [ZE]: The renderer choice is a setting value of its own type, because VibeRant's driver adds a choice that isn't a rendermode.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 typedef INT32 rendererchoice_t;
 #define RENDERER_UNCHOSEN 0
@@ -141,6 +142,7 @@ void I_UpdateNoBlit(void);
 /** \brief Start a display update.
 */
 void I_StartDisplayUpdate(void);
+// [ZE]: VibeRant Vulkan and Metal present on a window of their own, so the game's window stays hidden until needed.
 #if defined(HAVE_VIBERANT_VULKAN) || defined(HAVE_VIBERANT_METAL)
 // Shows the game's own (OpenGL) window once a renderer that presents on it is the one the game runs with. It starts
 // hidden where VibeRant Vulkan or Metal, which presents on a window of its own, may be that renderer.
@@ -181,6 +183,7 @@ void I_BeginRead(void);
 */
 void I_EndRead(void);
 
+// [ZE]: Query for the Fullscreen video option, which Xbox consoles always run.
 // Whether the system always shows the game full screen regardless of the
 // Fullscreen setting. True only on Xbox consoles; other UWP devices and all
 // other platforms return false.

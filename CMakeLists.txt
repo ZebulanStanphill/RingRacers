@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
+# [UWP]: Enable fetching the Xbox build's dependencies.
 include(FetchContent)
 
 if("${CMAKE_CURRENT_BINARY_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -91,6 +92,7 @@ option(SRB2_CONFIG_FORCE_NO_MS_BITFIELDS "Compile without -mno-ms-bitfields comp
 option(SRB2_CONFIG_PROFILEMODE "Compile for profiling (GCC only)." OFF)
 option(SRB2_CONFIG_TRACY "Compile with Tracy profiling enabled" OFF)
 option(SRB2_CONFIG_ASAN "Compile with AddressSanitizer (libasan)." OFF)
+# [ZE]: Expose the Xbox library build and choose which hardware backends each platform builds by default.
 option(SRB2_CONFIG_UWP "Compile in UWP compatibility mode (static lib for external launch)." OFF)
 # VibeRant D3D, the Direct3D 12 backend of the VibeRant driver (src/hardware/r_viberant), the hardware renderer's driver.
 # It presents with a swap chain of its own: on a CoreWindow taken from ANGLE in UWP builds, and on a child window of the
@@ -162,12 +164,15 @@ endif()
 
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
+# [UWP]: Move the package lookup so the Xbox build can supply its own SDL2.
 find_package(CURL REQUIRED)
 find_package(Opus REQUIRED)
+# [UWP]: Skip the desktop stack trace dependency inside the Xbox app container.
 if(WIN32 AND NOT MINGW AND NOT SRB2_CONFIG_UWP)
 	find_package(cpptrace CONFIG REQUIRED)
 endif()
 
+# [UWP]: Use the Xbox dependency bundle for SDL2 and the platform library.
 if(NOT SRB2_CONFIG_UWP)
 	find_package(SDL2 CONFIG REQUIRED)
 else()
@@ -253,6 +258,7 @@ if(NOT "${SRB2_GIT_DIR}" STREQUAL "" AND "${SRB2_SDL2_EXE_NAME}" STREQUAL "")
 
 	list(APPEND EXE_NAME_PARTS "ringracers")
 
+	# [UWP]: Keep the library name stable for the Xbox launcher.
 	if(NOT "${SRB2_GIT_REVISION}" STREQUAL "master" AND NOT SRB2_CONFIG_UWP)
 		# substitute path-unsafe characters
 		string(REGEX REPLACE "[\\\/\^\$]" "_" SAFE_REVISION "${SRB2_GIT_REVISION}")

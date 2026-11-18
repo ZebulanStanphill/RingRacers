@@ -289,7 +289,7 @@ static void write_backtrace(INT32 signal)
 #endif // UNIXBACKTRACE
 
 #ifdef _UWP
-// Describes which drives the app can see and where ringracers folders are, for the crash dialog
+// [UWP]: Describes which drives the app can see and where ringracers folders are, for the crash dialog
 static void UWPDescribeDrives(char *out, size_t outsize)
 {
 	size_t len = 0;
@@ -723,7 +723,7 @@ static ATTRNORETURN void signal_handler(INT32 num)
 LPTOP_LEVEL_EXCEPTION_FILTER g_prevtoplevelexceptionfilter;
 #endif
 
-// A signal that asks the game to quit: Ctrl+C, kill, the session ending. The handler only notes it, and I_OsPolling
+// [ZE]: A signal that asks the game to quit: Ctrl+C, kill, the session ending. The handler only notes it, and I_OsPolling
 // quits when it sees the note. Quitting from inside the handler ran the whole shutdown wherever the signal happened to
 // interrupt the game (inside malloc, or with a graphics driver's lock held), which could hang or crash. A second
 // signal means the game isn't getting back to its event loop, and ends the process at once.
@@ -731,6 +731,7 @@ static volatile sig_atomic_t g_quit_signal = 0;
 
 static void quit_handler(int num)
 {
+	// [ZE]: The handler only notes the signal and I_OsPolling does the quitting, where upstream quit from inside the handler.
 	if (g_quit_signal)
 	{
 		_Exit(128 + num);
@@ -1169,6 +1170,7 @@ void I_OutputMsg(const char *fmt, ...)
 	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
 #endif
 
+// [UWP]: Times the time spent logging, to see how much of startup it takes on Xbox.
 #ifdef _UWP
 	const precise_t logstart = I_GetPreciseTime();
 #endif
@@ -1188,6 +1190,7 @@ void I_OutputMsg(const char *fmt, ...)
 	}
 #endif
 
+// [UWP]: Adds the time spent logging to the total.
 #ifdef _UWP
 	i_uwplogtime += I_GetPreciseTime() - logstart;
 #endif
@@ -1949,6 +1952,7 @@ INT32 I_StartupSystem(void)
 
 	if (SDL_Init(0) < 0)
 		I_Error("Dr. Robotnik's Ring Racers: SDL System Error: %s", SDL_GetError()); //Alam: Oh no....
+// [UWP]: Starts the optional profile-guided optimization (PGO) capture for profile-generating builds.
 #if defined(_UWP) && defined(SRB2_PGO_GENERATE)
 	I_UWPPgoInit();
 #endif
@@ -1995,6 +1999,7 @@ FUNCNORETURN void ATTRNORETURN I_Quit(void)
 	// use this for 1.28 19990220 by Kin
 	I_ShutdownGraphics();
 	I_ShutdownInput();
+// [UWP]: Writes out the optional PGO capture before shutting down.
 #if defined(_UWP) && defined(SRB2_PGO_GENERATE)
 	I_UWPPgoDump();
 #endif
@@ -2490,6 +2495,7 @@ static const char *locateWad(void)
 	const char *envstr;
 	const char *WadPath;
 
+// [UWP]: The Xbox build keeps the game data on the E: drive.
 #ifdef _UWP
 	return "E:\\ringracers";
 #endif

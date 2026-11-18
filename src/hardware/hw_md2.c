@@ -40,6 +40,7 @@
 #include "../r_things.h"
 #include "../r_draw.h"
 #include "../p_tick.h"
+// [UWP]: Precaching inspects mobjs, so it needs their definitions.
 #ifdef _UWP
 #include "../p_mobj.h"
 #endif
@@ -85,6 +86,7 @@
 
 md2_t md2_models[NUMSPRITES];
 md2_t md2_playermodels[MAXSKINS];
+// [UWP]: Counters for how many models and model textures were loaded, and how many only when first drawn.
 #ifdef _UWP
 static UINT32 uwp_models_loaded;
 static UINT32 uwp_model_textures_loaded;
@@ -443,10 +445,12 @@ static void md2_loadTexture(md2_t *model)
 		}
 	}
 
+// [UWP]: Note whether this call uploads the texture, so precached uploads can be counted.
 #ifdef _UWP
 	const boolean uploading = !grPatch->mipmap->downloaded;
 #endif
 	HWD.pfnSetTexture(grPatch->mipmap);
+// [UWP]: Count the model texture upload.
 #ifdef _UWP
 	if (uploading && grPatch->mipmap->downloaded)
 		uwp_model_textures_loaded++;
@@ -505,10 +509,12 @@ static void md2_loadBlendTexture(md2_t *model)
 		grPatch->mipmap->height = (UINT16)h;
 	}
 
+// [UWP]: As above, for the blend texture.
 #ifdef _UWP
 	const boolean uploading = !grPatch->mipmap->downloaded;
 #endif
 	HWD.pfnSetTexture(grPatch->mipmap); // We do need to do this so that it can be cleared and knows to recreate it when necessary
+// [UWP]: As above, for the blend texture's upload.
 #ifdef _UWP
 	if (uploading && grPatch->mipmap->downloaded)
 		uwp_model_textures_loaded++;
@@ -755,6 +761,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 	UINT8 colorbrightnesses[17];
 	UINT8 color_match_lookup[256]; // optimization attempt
 
+	// [ZE]: Looks up the color through the palette rendering aware HWR_GetColor.
 	blendcolor = HWR_GetColor(0); // initialize
 	memset(translation, 0, sizeof(translation));
 	memset(cutoff, 0, sizeof(cutoff));
@@ -835,6 +842,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 
 		for (i = 0; i < translen; i++) // moved from inside the loop to here
 		{
+			// [ZE]: As above, for each translation entry.
 			RGBA_t tempc = HWR_GetColor(translation[i]);
 			colorbrightnesses[i] = BlendLuminance(tempc.s.red, tempc.s.green, tempc.s.blue); // store brightnesses for comparison
 		}
@@ -864,6 +872,7 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 	}
 
 	if (skinnum == TC_BLINK)
+		// [ZE]: As above, for the blink color.
 		blendcolor = HWR_GetColor(skincolors[color].ramp[3]);
 
 	while (size--)
@@ -1062,10 +1071,12 @@ static void HWR_CreateBlendedTexture(patch_t *gpatch, patch_t *blendgpatch, GLMi
 						mul = cutoff[firsti] - brightness;
 					}
 
+					// [ZE]: As above, for the first gradient color.
 					blendcolor = HWR_GetColor(translation[firsti]);
 
 					if (mul > 0) // If it's 0, then we only need the first color.
 					{
+						// [ZE]: As above, for the next gradient color.
 						nextcolor = HWR_GetColor(translation[secondi]);
 
 						// Find difference between points
@@ -1221,6 +1232,7 @@ static void HWR_GetBlendedTexture(patch_t *patch, patch_t *blendpatch, INT32 ski
 	HWR_CreateBlendedTexture(patch, blendpatch, newMipmap, skinnum, color);
 
 	HWD.pfnSetTexture(newMipmap);
+// [UWP]: Count blended texture uploads for the precache log.
 #ifdef _UWP
 	if (newMipmap->downloaded)
 		uwp_model_textures_loaded++;
@@ -1360,6 +1372,7 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
 }
 
 //
+// [UWP]: Resource loading shared by drawing and the level precache, split out of HWR_DrawModel so both run the same code.
 // Both drawing and UWP precaching use exactly the same resource initialization.
 // A NULL sprite patch permits external-textured models only: sprite textures need
 // the view-selected (possibly rotated) patch to adjust UVs before creating VBOs.
@@ -1529,6 +1542,7 @@ void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures_
 boolean HWR_DrawModel(gl_vissprite_t *spr)
 {
 	md2_t *md2;
+// [UWP]: Upstream's filename buffer moved into HWR_LoadModelResources with the code that uses it.
 
 	INT32 frame = 0;
 	INT32 nextFrame = -1;
@@ -1581,7 +1595,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			HWR_ObjectLightLevelPost(spr, sector, &lightlevel, true);
 
 		HWR_Lighting(&Surf, lightlevel, colormap, P_SectorUsesDirectionalLighting(sector) && !R_ThingIsFullBright(spr->mobj) && R_ThingModelUsesDirectionalLighting(spr->mobj));
-		HWR_SemiBrightLight(&Surf, spr->mobj);
+		HWR_SemiBrightLight(&Surf, spr->mobj); // [ZE]: Lights semibright sprites by Software's rule in Direct3D 12.
 	}
 	else
 		Surf.PolyColor.rgba = 0xFFFFFFFF;
@@ -1589,6 +1603,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 	// Look at HWR_ProjectSprite for more
 	{
 		patch_t *gpatch, *blendgpatch;
+		// [UWP]: The blend patch pointer moved into HWR_LoadModelResources along with the code that used it.
 		GLPatch_t *hwrPatch = NULL;
 		float durs = (float)spr->mobj->state->tics;
 		float tics = (float)spr->mobj->tics;
@@ -1671,6 +1686,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			md2 = &md2_models[spr->mobj->sprite];
 		}
 
+// [UWP]: Load the model through the shared function and count models first loaded while drawing, which the precache should have caught.
 #ifdef _UWP
 		const boolean lazy = !md2->model;
 #endif
@@ -1680,8 +1696,10 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 		if (lazy)
 			uwp_models_loaded_lazily++;
 #endif
+		// [UWP]: The loading code upstream had here is now HWR_LoadModelResources.
 		gpatch = md2->grpatch;
 		blendgpatch = md2->blendgrpatch;
+		// [UWP]: Reads the patch pointer back once the shared loader has run.
 		if (gpatch)
 			hwrPatch = gpatch->hardware;
 		//HWD.pfnSetBlend(blend); // This seems to actually break translucency?
@@ -1725,6 +1743,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			// dimensions exist.
 			GLPatch_t *spritePatch;
 			HWR_GetMappedPatch(spr->gpatch, spr->colormap);
+			// [ZE]: Reads the sprite's own prepared patch, as described above.
 			spritePatch = spr->gpatch->hardware;
 			if (spritePatch && (memcmp(&(spritePatch->max_s), &(md2->model->max_s), sizeof(md2->model->max_s)) != 0 ||
 				memcmp(&(spritePatch->max_t), &(md2->model->max_t), sizeof(md2->model->max_t)) != 0))

@@ -11,6 +11,7 @@
 /// \file  call-funcs.cpp
 /// \brief Action Code Script: CallFunc instructions
 
+// [ZE]: Provides HWR_LineSpecialChanged, which keeps the horizon line bookkeeping current.
 #include "../hardware/hw_horizon.h"
 #include <algorithm>
 #include <cctype>
@@ -845,8 +846,10 @@ bool CallFunc_ClearLineSpecial(ACSVM::Thread *thread, const ACSVM::Word *argV, A
 	if (info->line != NULL)
 	{
 		// One time only.
+		// [ZE]: Remember the old special so the hardware renderer can tell whether horizon lines changed.
 		const INT16 before = info->line->special;
 		info->line->special = 0;
+		// [ZE]: Tell the hardware renderer that the special changed, so subsectors with horizon lines are tracked.
 		HWR_LineSpecialChanged(before, 0);
 	}
 
@@ -1211,8 +1214,10 @@ bool CallFunc_SetLineSpecial(ACSVM::Thread *thread, const ACSVM::Word *argV, ACS
 			continue;
 		}
 
+		// [ZE]: Remember the old special so the hardware renderer can tell whether horizon lines changed.
 		const INT16 before = line->special;
 		line->special = spec;
+		// [ZE]: Tell the hardware renderer that the special changed, so subsectors with horizon lines are tracked.
 		HWR_LineSpecialChanged(before, line->special);
 
 		for (i = 0; i < numArgs; i++)
@@ -2713,6 +2718,7 @@ bool CallFunc_SetLineProperty(ACSVM::Thread *thread, const ACSVM::Word *argV, AC
 			PROP_INT(LINE_PROP_ALPHA, alpha)
 			PROP_INT(LINE_PROP_BLENDMODE, blendmode)
 			PROP_INT(LINE_PROP_ACTIVATION, activation)
+			// [ZE]: The action property gets its own case so the hardware renderer is told when the special changes, as in the other special setters.
 			case LINE_PROP_ACTION:
 			{
 				const INT16 before = line->special;

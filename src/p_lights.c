@@ -14,6 +14,7 @@
 ///        Fire flicker, light flash, strobe flash, lightning flash, glow, and fade.
 
 #include "doomdef.h"
+// [UWP]: Make the title-light trace available to sector lighting.
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #endif
@@ -404,6 +405,7 @@ void T_LightFade(lightlevel_t *ll)
 	if (--ll->timer <= 0)
 	{
 		ll->sector->lightlevel = ll->destlevel; // set to dest lightlevel
+// [UWP]: Record the final light level to diagnose title fade brightness.
 #ifdef _UWP
 		UWPTraceTitleLightFade((INT32)(ll->sector - sectors), ll->sector->lightlevel, ll->sourcelevel, ll->destlevel, ll->timer, ll->fixedpertic);
 #endif
@@ -413,6 +415,7 @@ void T_LightFade(lightlevel_t *ll)
 
 	ll->fixedcurlevel = ll->fixedcurlevel + ll->fixedpertic;
 	ll->sector->lightlevel = (ll->fixedcurlevel)>>FRACBITS;
+// [UWP]: Sample the light level as the fade progresses to diagnose title brightness.
 #ifdef _UWP
 	UWPTraceTitleLightFade((INT32)(ll->sector - sectors), ll->sector->lightlevel, ll->sourcelevel, ll->destlevel, ll->timer, ll->fixedpertic);
 #endif

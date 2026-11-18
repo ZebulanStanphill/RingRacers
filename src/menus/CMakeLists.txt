@@ -28,6 +28,7 @@ target_sources(SRB2SDL2 PRIVATE
 	options-sound.cpp
 	options-video-1.c
 	options-video-advanced.c
+	# [ZE]: The Camera Position menu, which sets 3rd or 1st person per player.
 	options-video-camera.c
 	options-video-colorprofile.c
 	options-video-modes.c

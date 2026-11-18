@@ -19,6 +19,7 @@
 #include "utils/Log.h"
 
 rendermode_t rendermode = render_soft;
+// [ZE]: The renderer choice has its own type, so the hardware driver can be picked in builds with both OpenGL and Direct3D 12.
 rendererchoice_t chosenrendermode = RENDERER_UNCHOSEN;
 
 boolean highcolor = false;
@@ -100,6 +101,7 @@ void I_ReadScreen(UINT8 *scr)
 void I_BeginRead(void){}
 
 void I_EndRead(void){}
+// [ZE]: Stub for the new query that hides the Fullscreen video option on Xbox consoles.
 
 // Only Xbox consoles always display full screen.
 boolean I_VideoAlwaysFullscreen(void)

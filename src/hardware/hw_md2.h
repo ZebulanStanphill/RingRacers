@@ -48,6 +48,7 @@ void HWR_InitModels(void);
 void HWR_AddPlayerModel(INT32 skin);
 void HWR_AddSpriteModel(size_t spritenum);
 boolean HWR_DrawModel(gl_vissprite_t *spr);
+// [UWP]: Precaches models and textures while a level loads on Xbox, and reports the ones still loaded lazily.
 #ifdef _UWP
 void HWR_UWPPrecacheModels(boolean players_only, INT32 *models, INT32 *textures);
 UINT32 HWR_UWPTakeLazyModelLoads(void);

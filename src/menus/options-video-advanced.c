@@ -41,6 +41,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_HEADER, "Rendering Backend...", "Watch people get confused anyway!!",
 		NULL, {NULL}, 0, 0},
 
+// [ZE]: VibeRant builds describe VibeRant D3D here, not Legacy GL.
 #ifdef HAVE_VIBERANT
 	{IT_STRING | IT_SPACE, "VibeRant D3D is an enhanced port of", "",
 		NULL, {NULL}, 0, 0},
@@ -62,11 +63,13 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 	{IT_STRING | IT_SPACE, "are missing/broken.", "",
 		NULL, {NULL}, 0, 0},
+// [ZE]: End of the Legacy GL description that VibeRant builds replace.
 #endif
 
 	{IT_SPACE | IT_NOTHING, NULL, NULL,
 		NULL, {NULL}, 0, 0},
 
+// [ZE]: VibeRant builds point bug reports at the fork.
 #ifdef HAVE_VIBERANT
 	{IT_STRING | IT_SPACE, "\x85Report visual bugs to GitHub.com/", "",
 		NULL, {NULL}, 0, 0},
@@ -79,6 +82,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 	{IT_STRING | IT_SPACE, "\x85Please don't report visual bugs!", "",
 		NULL, {NULL}, 0, 0}, // Unless you've got an MR to fix them.
+// [ZE]: End of the bug report text that VibeRant builds replace.
 #endif
 
 	{IT_SPACE | IT_NOTHING, NULL, NULL,
@@ -87,10 +91,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Renderer", "If you don't know why you're changing this, leave it on Software!",
 		NULL, {.cvar = &cv_renderer}, 0, 0},
 
+// [ZE]: VibeRant builds name these options after VibeRant D3D.
 #ifdef HAVE_VIBERANT
 	{IT_HEADER, "VibeRant D3D Options...", "Watch people get confused anyway!!",
 #else
 	{IT_HEADER, "Legacy GL Options...", "Watch people get confused anyway!!",
+// [ZE]: End of the Legacy GL header that VibeRant builds replace.
 #endif
 		NULL, {NULL}, 0, 0},
 
@@ -100,6 +106,7 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Shaders", "Use GLSL Shaders. Turning them off increases performance at the expanse of visual quality.",
 		NULL, {.cvar = &cv_glshaders}, 0, 0},
 
+	// [ZE]: Palette rendering replaces a spacer here, as a setting of the hardware renderers.
 	{IT_STRING | IT_CVAR, "Palette Rendering", "Limit colors to the palette, and light with its colormaps, like Software. Needs shaders.",
 		NULL, {.cvar = &cv_glpaletterendering}, 0, 0},
 
@@ -116,10 +123,12 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	{IT_STRING | IT_CVAR, "Texture Filter", "Texture Filter. Nearest is recommended.",
 		NULL, {.cvar = &cv_glfiltermode}, 0, 0},
 	*/
+// [ZE]: End of the Texture Quality row that VibeRant builds replace with Texture Filter.
 #endif
 
 	{IT_STRING | IT_CVAR, "Anisotropic", "Lower values will improve performance at a minor quality loss.",
 		NULL, {.cvar = &cv_glanisotropicmode}, 0, 0},
+// [ZE]: Upstream had a spacer row here; the fork dropped it to make room for the added rows.
 
 	{IT_STRING | IT_CVAR, "Sprite Billboarding", "Adjusts sprites when viewed from above or below to not make them appear flat.",
 		NULL, {.cvar = &cv_glspritebillboarding}, 0, 0},
@@ -154,6 +163,7 @@ menu_t OPTIONS_VideoAdvancedDef = {
 
 void M_RefreshAdvancedVideoOptions(void)
 {
+// [ZE]: Describe the renderer the setting names, and show the running driver's options, in VibeRant builds.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 	// The description is of the VibeRant renderer the setting names. Software names none, so with it the description
 	// is of the first one this build lists (cv_renderer_t), which is the one a new config uses.

@@ -71,6 +71,7 @@ extern lumpnum_t viewborderlump[8];
 
 #define BASEDRAWFUNC 0
 
+// [ZE]: Column drawers take their per-frame setup as a const argument, which cuts repeated setup in the Software column drawers.
 typedef void (coldrawfunc_t)(const drawcolumndata_t*);
 typedef void (spandrawfunc_t)(drawspandata_t*);
 
@@ -199,6 +200,7 @@ void R_DrawViewBorder(void);
 // 8bpp DRAWING CODE
 // -----------------
 
+// [ZE]: As above, the column drawers take a const drawcolumndata_t pointer.
 void R_DrawColumn(const drawcolumndata_t* dc);
 void R_DrawTranslucentColumn(const drawcolumndata_t* dc);
 void R_DrawDropShadowColumn(const drawcolumndata_t* dc);
@@ -209,6 +211,7 @@ void R_Draw2sMultiPatchTranslucentColumn(const drawcolumndata_t* dc);
 void R_DrawFogColumn(const drawcolumndata_t* dc);
 void R_DrawColumnShadowed(const drawcolumndata_t* dc);
 
+// [ZE]: As above, for the brightmap column drawers.
 void R_DrawColumn_Brightmap(const drawcolumndata_t* dc);
 void R_DrawTranslucentColumn_Brightmap(const drawcolumndata_t* dc);
 void R_DrawTranslatedColumn_Brightmap(const drawcolumndata_t* dc);
@@ -284,6 +287,7 @@ void R_DrawTranslucentFloorSprite_Tilted_Brightmap_NPO2(drawspandata_t* ds);
 void R_DrawTranslucentWaterSpan_Tilted_Brightmap_NPO2(drawspandata_t* ds);
 
 // Debugging - highlight surfaces in flat colors
+// [ZE]: As above, for the flat debugging column drawer.
 void R_DrawColumn_Flat(const drawcolumndata_t* dc);
 void R_DrawSpan_Flat(drawspandata_t* ds);
 void R_DrawTiltedSpan_Flat(drawspandata_t* ds);

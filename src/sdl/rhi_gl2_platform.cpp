@@ -23,6 +23,7 @@
 #include "../w_wad.h"
 #include "../z_zone.h"
 
+// [UWP]: Declare the surface-size query so the framebuffer can match the Xbox window surface.
 #ifdef _UWP
 extern "C" __declspec(dllimport) void uwp_GetScreenSize(int*, int*);
 #endif
@@ -127,6 +128,7 @@ rhi::Rect SdlGl2Platform::get_default_framebuffer_dimensions()
 	uwp_GetScreenSize(&w, &h);
 #else
 	SDL_GL_GetDrawableSize(window, &w, &h);
+// [UWP]: Use the platform-specific size above so both paths return the dimensions of the actual drawable.
 #endif
 	return {0, 0, static_cast<uint32_t>(w), static_cast<uint32_t>(h)};
 }

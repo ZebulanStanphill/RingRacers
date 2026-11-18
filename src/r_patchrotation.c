@@ -308,7 +308,7 @@ static void RotatedPatch_CalculateDimensions(
 	*newheight = max(height, max(h1, h2));
 }
 
-// Both rasters use this exact inverse mapping; the brightmap's own header
+// [ZE]: Both rasters use this exact inverse mapping; the brightmap's own header
 // offsets and opaque bounds must never influence its sampling or output crop.
 static void *RotatedPatch_Sample(patch_t *patch, INT32 dx, INT32 dy,
 	INT32 canvaswidth, INT32 canvasheight, fixed_t ca, fixed_t sa,
@@ -513,10 +513,12 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 	fixed_t ca = rollcosang[angle];
 	fixed_t sa = rollsinang[angle];
 	fixed_t xcenter, ycenter;
+	// [ZE]: Upstream declared x and y here; the shared sampling function has them now.
 	INT32 idx = angle;
 	INT32 dx, dy;
 	INT32 ox, oy;
 	INT32 minx, miny, maxx, maxy;
+	// [ZE]: Where the visible part starts, which a brightmap is cropped by in the same way.
 	INT32 cropx = 0, cropy = 0;
 
 	// Don't cache angle = 0
@@ -560,10 +562,12 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 	{
 		for (dx = 0; dx < newwidth; dx++)
 		{
+			// [ZE]: Sample through the inverse mapping that the brightmap uses too.
 			UINT8 *input = (UINT8 *)RotatedPatch_Sample(patch, dx, dy, newwidth, newheight,
 				ca, sa, xcenter, ycenter, bflip);
 			if (input != NULL)
 			{
+				// [ZE]: Store the sampled color.
 				rawdst[(dy * newwidth) + dx] = (0xFF00 | *input);
 				if (dx < minx) minx = dx;
 				if (dy < miny) miny = dy;
@@ -596,6 +600,7 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 			src += newwidth;
 		}
 
+		// [ZE]: Remember the crop, so that a brightmap is cropped the same way.
 		cropx = minx;
 		cropy = miny;
 		ox -= minx;
@@ -619,6 +624,7 @@ void RotatedPatch_DoRotation(rotsprite_t *rotsprite, patch_t *patch, INT32 angle
 
 	rotated->leftoffset = ox;
 	rotated->topoffset = oy;
+// [ZE]: Keep the rotation's parameters, so that a brightmap can be rotated with the same mapping.
 #ifdef HWRENDER
 	rotated->rotation.ca = ca;
 	rotated->rotation.sa = sa;

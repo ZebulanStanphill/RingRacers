@@ -64,6 +64,7 @@ patch_t *Patch_Create(softwarepatch_t *source, size_t srcsize, void *dest)
 }
 
 static boolean g_patch_was_freed_this_frame = false;
+// [ZE]: Tracks nested patch frees, so rotated brightmaps are released once, after the outermost free.
 #if defined(ROTSPRITE) && defined(HWRENDER)
 static INT32 patch_free_depth;
 #endif
@@ -75,6 +76,7 @@ static INT32 patch_free_depth;
 static void Patch_FreeData(patch_t *patch)
 {
 	INT32 i;
+// [ZE]: Mark this patch's rotated brightmaps as stale, because Legacy GL keeps brightmap copies of rotated sprites.
 #if defined(ROTSPRITE) && defined(HWRENDER)
 	Patch_InvalidateRotatedBrightmaps(patch);
 #endif
@@ -101,6 +103,7 @@ static void Patch_FreeData(patch_t *patch)
 		}
 
 		Z_Free(rotsprite->patches);
+// [ZE]: Free the rotated sprite's cached geometry too, which VibeRant draws rolled sprites from.
 #ifdef HAVE_VIBERANT
 		Z_Free(rotsprite->geometry);
 #endif
@@ -119,11 +122,13 @@ void Patch_Free(patch_t *patch)
 	if (!patch || patch == missingpat)
 		return;
 
+// [ZE]: Begin a free, as described above.
 #if defined(ROTSPRITE) && defined(HWRENDER)
 	++patch_free_depth;
 #endif
 	Patch_FreeData(patch);
 	Z_Free(patch);
+// [ZE]: Release the stale rotated brightmaps once the outermost free finishes.
 #if defined(ROTSPRITE) && defined(HWRENDER)
 	if (--patch_free_depth == 0)
 		Patch_FreeInvalidatedBrightmaps();
@@ -153,6 +158,7 @@ static boolean Patch_FreeTagsCallback(void *mem)
 
 void Patch_FreeTags(INT32 lowtag, INT32 hightag)
 {
+// [ZE]: Rolled sprite geometry isn't a patch object, so purge it separately with the rotated patches.
 #if defined(ROTSPRITE) && defined(HWRENDER) && defined(HAVE_VIBERANT)
 	// Geometry isn't a patch object. Purge it separately, including WAD reloads.
 	if (lowtag <= PU_PATCH_ROTATED && hightag >= PU_PATCH_ROTATED)
@@ -162,6 +168,7 @@ void Patch_FreeTags(INT32 lowtag, INT32 hightag)
 	++patch_free_depth;
 #endif
 	Z_IterateTags(lowtag, hightag, Patch_FreeTagsCallback);
+// [ZE]: As in Patch_Free, free the stale rotated brightmaps after the outermost free.
 #if defined(ROTSPRITE) && defined(HWRENDER)
 	if (--patch_free_depth == 0)
 		Patch_FreeInvalidatedBrightmaps();

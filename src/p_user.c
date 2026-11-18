@@ -3254,6 +3254,7 @@ void P_ResetCamera(player_t *player, camera_t *thiscam)
 	while (!P_MoveChaseCamera(player,thiscam,true) && ++tries < 2*TICRATE);
 }
 
+// [ZE]: Keep first-person aim with game-steered karts and ease view pitch over slopes.
 // First person shows the local angle, which only the player's own steering moves.
 // P_RunChaseCameras syncs it each tic when the game steers the kart instead
 // (finish, podium or Lua). First-person cameras do not run P_MoveChaseCamera

@@ -100,15 +100,18 @@ typedef struct gl_vissprite_s
 	UINT8 *colormap;
 	INT32 dispoffset; // copy of info->dispoffset, affects ordering but not drawing
 
+// [ZE]: Carry rolled sprite geometry so the shader can rotate the original texture.
 #ifdef HAVE_VIBERANT
 	const void *rollgeometry;
 #endif
 	patch_t *gpatch;
+	// [ZE]: Keep the sprite brightmap with its base patch so Legacy GL can light both together.
 	patch_t *gbright; // NULL without a compatible sprite brightmap
 	mobj_t *mobj; // NOTE: This is a precipmobj_t if precip is true !!! Watch out.
 } gl_vissprite_t;
 
 void HWR_ObjectLightLevelPost(gl_vissprite_t *spr, const sector_t *sector, INT32 *lightlevel, boolean model);
+// [ZE]: Expose shared semibright lighting so sprites can use Software's distance rule where supported.
 void HWR_SemiBrightLight(FSurfaceInfo *surface, mobj_t *thing);
 
 // --------
@@ -133,6 +136,7 @@ patch_t *HWR_GetCachedGLPatchPwad(UINT16 wad, UINT16 lump);
 patch_t *HWR_GetCachedGLPatch(lumpnum_t lumpnum);
 
 void HWR_GetPatch(patch_t *patch);
+// [ZE]: Expose the sprite brightmap upload for Legacy GL drawing.
 void HWR_GetSpriteBrightmap(patch_t *patch);
 void HWR_GetMappedPatch(patch_t *patch, const UINT8 *colormap);
 void HWR_GetFadeMask(lumpnum_t fademasklumpnum);

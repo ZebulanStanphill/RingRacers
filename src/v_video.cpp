@@ -20,6 +20,7 @@
 #include <tracy/tracy/Tracy.hpp>
 
 #include "doomdef.h"
+// [ZE]: Make the capture animation clock available to video drawing.
 #include "d_framecapture.h"
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
@@ -45,6 +46,7 @@
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h"
+// [ZE]: Import the active-driver query so custom fades can pick the supported drawing path.
 #include "hardware/hw_driver.h"
 #endif
 
@@ -429,6 +431,7 @@ void V_ReloadPalette(void)
 // -------------+
 void V_SetPalette(INT32 palettenum)
 {
+// [UWP]: Trace palette selection to diagnose brightness changes during fades.
 #ifdef _UWP
 	UWPTraceFade("V_SetPalette palnum=%d configured=%d", palettenum, cv_palettenum.value);
 #endif
@@ -461,6 +464,7 @@ void V_SetPalette(INT32 palettenum)
 
 void V_SetPaletteLump(const char *pal)
 {
+// [UWP]: Trace which palette lump is selected to diagnose fade colors.
 #ifdef _UWP
 	UWPTraceFade("V_SetPaletteLump name=%s", pal ? pal : "NULL");
 #endif
@@ -1027,10 +1031,12 @@ void V_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c)
 	if (rendermode == render_none)
 		return;
 
+	// [ZE]: Remove the early hardware fill so HUD alpha can be resolved before dispatch.
 	UINT32 alphalevel;
 	if ((alphalevel = V_GetAlphaLevel(c)) >= 10)
 		return;
 
+// [ZE]: Pass resolved HUD alpha to the hardware fill so translucent overlays fade correctly.
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
@@ -1533,6 +1539,7 @@ void V_DrawVhsEffect(boolean rewind)
 //
 void V_DrawFadeScreen(UINT16 color, UINT8 strength)
 {
+// [UWP]: Trace the fade color and strength to diagnose screen brightness.
 #ifdef _UWP
 	UWPTraceFade("V_DrawFadeScreen color=%u strength=%u", color, strength);
 #endif
@@ -1614,12 +1621,14 @@ const UINT8 *V_OffsetIntoFadeMap(const lighttable_t *clm, UINT8 strength)
 //
 void V_DrawCustomFadeScreen(const char *lump, UINT8 strength)
 {
+// [UWP]: Trace requested custom fades to diagnose palette changes.
 #ifdef _UWP
 	UWPTraceFade("V_DrawCustomFadeScreen lump=%s strength=%u", lump ? lump : "NULL", strength);
 #endif
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
+// [ZE]: Use the active driver's palette fade map when supported so custom fades match Software.
 #ifdef HAVE_VIBERANT
 		if (HWR_VibeRant())
 			HWR_DrawCustomFadeMap(lump, strength);
@@ -1686,6 +1695,7 @@ void V_DrawFadeConsBack(INT32 plines)
 //
 void V_EncoreInvertScreen(void)
 {
+// [UWP]: Trace Encore inversion to diagnose its timing alongside other palette changes.
 #ifdef _UWP
 	UWPTraceFade("V_EncoreInvertScreen");
 #endif
@@ -1795,6 +1805,7 @@ UINT8 *V_GetStringColormap(INT32 colorflags)
 INT32 V_DanceYOffset(INT32 counter)
 {
 	const INT32 duration = 16;
+	// [ZE]: Use the capture clock to keep dancing text aligned across replay runs.
 	const INT32 step = (FrameCapture_AnimTime() + counter) % duration;
 
 	return abs(step - (duration / 2)) - (duration / 4);
@@ -2764,6 +2775,7 @@ void V_DrawStringScaled(
 				if (c == '\xEC') // Pressed
 					anim = 1;
 				else if (c != '\xEE') // Not lifted..?
+					// [ZE]: Use the capture clock to keep blinking text in phase across replay runs.
 					anim = ((FrameCapture_AnimTime() % (anim_duration * 2)) < anim_duration) ? 1 : 0;
 
 				// For bullshit text outlining reasons, we cannot draw this background character-by-character.

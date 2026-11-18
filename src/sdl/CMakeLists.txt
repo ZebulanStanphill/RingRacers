@@ -58,11 +58,13 @@ if("${CMAKE_SYSTEM_NAME}" MATCHES Darwin)
 	)
 endif()
 
+# [UWP]: The UWP build links SDL2 only and adds its own sources below.
 if(NOT SRB2_CONFIG_UWP)
 target_link_libraries(SRB2SDL2
 	PRIVATE
 	$<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
 )
+# [UWP]: UWP build's own link and source list.
 else()
 	target_link_libraries(SRB2SDL2 PRIVATE SDL2) # TODO: I should cleanup uwp-dep namespaces
 	target_sources(SRB2SDL2 PRIVATE i_uwpprofile.cpp i_uwpd3d12.cpp i_uwpangle.cpp i_uwpdata.cpp)

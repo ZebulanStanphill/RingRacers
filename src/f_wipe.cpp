@@ -14,6 +14,7 @@
 /// \brief SRB2 2.1 custom fade mask "wipe" behavior.
 
 #include "f_finale.h"
+// [UWP]: Trace header for fade diagnostics.
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #endif
@@ -466,6 +467,7 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 	if (staffsync)
 		return;
 
+// [UWP]: Trace the start of the wipe and count its frames.
 #ifdef _UWP
 	const precise_t traceStart = I_GetPreciseTime();
 	UINT32 traceFrames = 0;
@@ -501,6 +503,7 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		if (!fmask)
 			break;
 
+// [UWP]: Trace the start of each wipe frame.
 #ifdef _UWP
 		UWPTraceBeginFrame();
 		++traceFrames;
@@ -528,6 +531,7 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 
 		if (rendermode != render_none) //this allows F_RunWipe to be called in dedicated servers
 		{
+			// [ZE]: The wipe state is set up above for every renderer, so it is no longer repeated inside the HWRENDER branch.
 			// F_DoWipe(fmask, fcolor, reverse);
 			rhi::Rhi* rhi = srb2::sys::get_rhi(srb2::sys::g_current_rhi);
 			hwr2::HardwareState* hw_state = srb2::sys::main_hardware_state();
@@ -580,6 +584,7 @@ void F_RunWipe(UINT8 wipemode, UINT8 wipetype, boolean drawMenu, const char *col
 		NetKeepAlive(); // Update the network so we don't cause timeouts
 	}
 
+// [UWP]: Trace the end of the wipe with its frame count and duration.
 #ifdef _UWP
 	UWPTraceFade("F_RunWipe end mode=%u type=%u frames=%u ms=%.1f reverse=%d", wipemode, wipetype, traceFrames, (I_GetPreciseTime() - traceStart) * 1000.0 / I_GetPrecisePrecision(), reverse);
 #endif

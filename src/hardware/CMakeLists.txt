@@ -11,10 +11,12 @@ target_sources(SRB2SDL2 PRIVATE
 	hw_model.c
 	u_list.c
 	hw_batching.c
+	# [ZE]: Build the runtime driver query so shared rendering code can follow the active backend.
 	hw_driver.c
 	r_opengl/r_opengl.c
 )
 
+# [ZE]: Build the enabled hardware backends with shared driver sources and backend-specific shaders.
 set(viberant_shader_entries VSPoly VSPolyClip VSSky VSModel VSModelLight VSWipe VSFullscreen VSPostImage
 	PSFixed PSDefault PSSoftware PSSoftwareModelLight PSWater PSWaterRefraction PSFog PSFogRemap PSSky PSWipe PSWipeFull PSPalettePostprocess PSFadeMap PSPostImage)
 

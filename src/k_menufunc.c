@@ -16,6 +16,7 @@
 #endif
 
 #include "k_menu.h"
+// [ZE]: Import renderer setting queries for menu changes.
 #include "screen.h"
 
 #include "doomdef.h"
@@ -181,6 +182,7 @@ void M_ChangeCvarDirect(INT32 choice, consvar_t *cv)
 
 		CV_AddValue(cv, choice);
 	}
+// [ZE]: Tell players when a renderer change will take effect on the next launch.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 	if (cv == &cv_renderer && SCR_RendererNeedsRestart(cv->value))
 		M_StartMessage("Renderer", va("%s will be used the next time the game starts.",
@@ -188,6 +190,7 @@ void M_ChangeCvarDirect(INT32 choice, consvar_t *cv)
 #endif
 }
 
+// [ZE]: Keep the selected cycling direction until the player answers the renderer prompt.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 static INT32 renderer_menu_choice;
 #endif
@@ -198,6 +201,7 @@ static void M_ChangeCvarResponse(INT32 choice)
 		return;
 
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
+// [ZE]: Apply the original renderer choice after the player confirms the warning.
 #if defined(HAVE_VIBERANT) && !defined(_UWP)
 	if (cvar == &cv_renderer)
 		choice = renderer_menu_choice;
@@ -209,6 +213,7 @@ static void M_ChangeCvar(INT32 choice)
 {
 	consvar_t *cvar = currentMenu->menuitems[itemOn].itemaction.cvar;
 
+// [ZE]: Find Legacy GL in the renderer list so the warning appears when the player selects it.
 #if defined(HWRENDER) && !defined(_UWP)
 #if defined(HAVE_VIBERANT)
 	renderer_menu_choice = choice;
@@ -228,6 +233,7 @@ static void M_ChangeCvar(INT32 choice)
 		cv_renderer.value == 1 &&
 		// Not setting to default (ie changing the value)
 		choice != -1)
+// [ZE]: End the renderer-list split so both desktop paths can share the confirmation prompt.
 #endif
 	{
 		M_StartMessage(
