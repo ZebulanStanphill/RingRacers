@@ -1280,13 +1280,13 @@ differ:
 
 ## Metal frames (the game on a macOS runner)
 
-There is no Mac among the machines this fork is developed on, so the macOS game with
-VibeRant Metal is run where there always is one: on GitHub's `macos-15` runners (Apple
-silicon, with the virtual GPU "Apple Paravirtual device"), by the workflow
-`.github/workflows/metal-frames.yml`. It takes about three runner-hours, so it runs
-only when asked: from the Actions page (**Metal frames** → Run workflow, once the
-workflow is on the default branch), or by pushing a commit to a branch named
-`frames/<anything>` (delete the branch afterwards).
+`.github/workflows/metal-frames.yml` checks that the macOS game captures frames
+and presents them with VibeRant Metal. The fork has no development Mac, so the
+workflow uses GitHub's `macos-15` runners (Apple silicon with the virtual GPU
+"Apple Paravirtual device"). It takes about three runner-hours and runs only on
+request. From Actions, select Metal frames → Run workflow once the workflow is
+on the default branch, or push a commit to `frames/<anything>` and delete the
+branch afterward.
 
 - The `build` job builds the game as the `macos` job of `tests.yml` does (with
   ccache between runs), uploads the app, and fetches the official assets of Ring
@@ -1294,8 +1294,8 @@ workflow is on the default branch), or by pushing a commit to a branch named
   checked against a SHA-256 the workflow pins (`RR_ASSETS_SHA256`) before it is
   unpacked, and the cache's key carries that hash's first digits, so another file
   under the same name fails the job instead of being kept for every later run.
-  What is typed into the Run workflow form (shards, ghosts, level times) reaches
-  the scripts as environment variables, not as part of their text.
+  The workflow passes form inputs (shards, ghosts, and level times) to the scripts
+  through environment variables, not as part of the scripts' text.
 - The `sweep` jobs (five side by side by default, about 35 minutes each) play the
   staff ghosts of `tests/metal-frames/ghosts.txt`, the first one of each of the 213
   maps, in the frame capture mode (`-shotghost`, `-shottics 70,350,700,1400,2100`;
@@ -1303,7 +1303,7 @@ workflow is on the default branch), or by pushing a commit to a branch named
   per ghost, and upload the frames and each run's log as `metal-frames-<n>`.
 - The `scenes` job runs what the ghosts don't reach and uploads `metal-scenes`:
   screenshots the game takes itself and pictures of the screen (`screencapture`),
-  the latter taken when the log says the game has reached the moment. The scenes:
+  with screen captures timed to the log. The scenes:
   the game started without naming a renderer; the title screen and a menu, with keys
   sent through the system (CoreGraphics events from `osascript`, which reach whatever
   window has the keyboard); quitting through that menu (`menu-quit`: the same keys
@@ -1320,25 +1320,23 @@ workflow is on the default branch), or by pushing a commit to a branch named
   layer must never be without a drawable, and two pictures of the middle of the
   screen taken two seconds apart must not be the same file.
 
-`tests/metal-frames/capture.py` (Python's standard library only) does the running, on
-a Mac as well ("On a Mac", below): `capture.py sweep --game <the binary in the .app>
+`tests/metal-frames/capture.py` (Python's standard library only) runs the tests, including locally ("On a Mac", below). Use `capture.py sweep --game <the binary in the .app>
 --data <game data> --out results [--only AERIAL,MARBLE] [--shard 0/5]`, or
 `capture.py scenes ...`.
-Every run of the game gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
+Each run gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
 `MTL_SHADER_VALIDATION=1`. A run fails, and with it the job, if the game doesn't exit
-with 0 in time (a game that stops at its error dialog is killed after five seconds),
+with status 0 before the timeout (a game that stops at its error dialog is killed after five seconds),
 if the log doesn't say that the backend is Metal with both kinds of validation on, if
 a frame the capture mode announced is missing, if the presenter didn't present
 the frames it was given (below), if the game's OpenGL window wasn't
 still hidden when the game quit with VibeRant Metal (the presenter's last line says
 what SDL says of it), if the log doesn't say that the Metal layer has its window's
 color space, or if the log has a validation
-message, a failed command buffer, a "not implemented" line, an error of the driver's,
-a wait for the GPU that the driver gave up on, or a fallback to Software. `summary.json` in each artifact has every run's result.
+message, a failed command buffer, a "not implemented" line, a driver error,
+a GPU wait timeout, or a fallback to Software. `summary.json` in each artifact has every run's result.
 
-**What a run says about the window.** The frames a sweep collects are read back from
-the driver's screen, before the presenter has anything to do with them, so by
-themselves they say nothing of the window. Three things are checked beside them:
+A sweep reads frames from the driver before presentation. Window checks use
+presenter logs and drawable readback.
 
 - *That frames were presented.* The presenter counts, in its last line of the log,
   the frames it presented, the frames it didn't because the system called the window
@@ -1348,7 +1346,7 @@ themselves they say nothing of the window. Three things are checked beside them:
   visible for its first frames: runs on the runners skipped at most six.) This holds
   for sweeps too, which used to print the count and pass whatever it was. Behind a
   locked screen, or with several games' windows on top of each other, the game needs
-  `-mtlunseen`, and the failure says so. The two exceptions are `capture.py hardware`'s
+  `-mtlunseen`, and the failure says so. Exceptions are `capture.py hardware`'s
   `speed-metal` on a Mac whose screen is locked, which is the game as it runs there,
   and the `blind` scenes.
 - *That a drawable holds the frame* (`-mtlcheck`). The presenter reads a window's
@@ -1360,22 +1358,19 @@ themselves they say nothing of the window. Three things are checked beside them:
   scenes that have it are the three Screen Scaling ones, `default-title`, and
   `switch-renderer` on the runner, and `fullscreen`, `fullscreen-no-space`,
   `video-mode`, and `metal-software-metal` on a Mac; a sweep has it when the game is
-  given `-mtlcheck` after `--`. It is a test's path: a drawable that can be read back
-  is made with the layer's `framebufferOnly` off, which a player's never is, so the
-  runner's sweep and the other scenes run without it.
-- *Not checked: that the display showed it.* Nothing here reads the screen. On the
-  runner the `scenes` job takes pictures of the screen, which a person has to look at;
-  on a Mac reached over SSH there are none. So "the frame is in the drawable that was
-  presented" is as far as an unattended run goes.
+  given `-mtlcheck` after `--`. Readback requires turning the layer's `framebufferOnly` off. Normal play keeps
+  it on, as do the runner's sweep and the other scenes.
+- *Not checked: that the display showed it.* An unattended run verifies only that "the frame is in the drawable that was
+  presented". Inspect the runner's `scenes` screen captures by hand. The tests take
+  none on a Mac over SSH.
 
 `tests/metal-frames/test_capture.py` (the test `metal_capture_judging`, which runs
-with the native tests) holds `capture.py` to this with logs made up from the
-presenter's own lines: logs that must pass, and for each reason to fail a log that
-must fail for it and for nothing else.
+with the native tests) feeds `capture.py` logs made from the presenter's own lines. It checks passing
+logs and one log for each failure reason, which must fail only for that reason.
 
-What the jobs can't judge is whether the pictures are right. For the frames, compare
-them with another renderer's frames of the same game logic, such as VibeRant Vulkan's
-from a PC (the same ghosts and level times with the Linux build and `-vulkan`):
+To check the images, compare frames from the same game logic with another
+renderer, such as VibeRant Vulkan on a PC (the same ghosts and level times with
+the Linux build and `-vulkan`).
 
 ```sh
 gh run download <run id> -R ZebulanStanphill/RingRacers -p 'metal-frames-*' -D metal
@@ -1389,8 +1384,7 @@ color within a pixel of it), prints the medians and the frames that stand out, a
 writes side-by-side sheets of the latter. One level on a blended surface and the other
 texel on a texel edge are the differences two GPUs have; `docs/metal-backend.md`
 ("What was tested, and what wasn't") has the figures of the first such comparison and
-what each of its outliers was. The pictures of the screen have to be looked at.
-
+what each of its outliers was.
 The runners' display is 1024x768, so the game's 1280x720 window doesn't fit it: the
 system cuts the window to the display's height, and the frame is fitted into what is
 left, which the pictures of the screen show. The capture mode's screenshots are read
@@ -1398,8 +1392,7 @@ back from the driver and are 1280x720 regardless.
 
 ## On a Mac
 
-The driver test and the game run on a Mac as they do on the runner, and a Mac has what the runner lacks: a real GPU
-and a real display. `tests/run-metal.sh` needs CMake and Apple's command line tools. The game needs SDL2, libpng, and
+Run the driver test and the game on a Mac to check a real GPU and display. `tests/run-metal.sh` needs CMake and Apple's command line tools. The game needs SDL2, libpng, and
 Opus besides (built from source into a prefix of their own they need no Homebrew: `-DCMAKE_PREFIX_PATH=<prefix>` and
 `PKG_CONFIG_PATH=<prefix>/lib/pkgconfig`), and the official assets unpacked somewhere. Then:
 
@@ -1421,9 +1414,9 @@ its frames to have been presented. `-mtlcheck` has the presenter read drawables 
 it placed in them ("Metal frames", above, has what the two do and don't show). The frames the sweep collects are read
 back from the driver either way.
 
-`capture.py hardware` is for what only a Mac with a display can show and a log can tell. It takes no pictures of
-the screen and sends no keys, so it needs no screen-recording or accessibility permission, and it works on a locked
-screen. Each scene is a run of the game (or two), judged like the sweep's, and by what it is there for:
+`capture.py hardware` checks a Mac with a display using game logs. It works on a locked screen and needs no
+screen-recording or accessibility permission because it takes no screen captures and sends no keys. Each scene runs
+the game once or twice and checks the sweep criteria plus the scene's own.
 
 - `speed-metal`, `speed-software`, `speed-legacy-gl`: a replay in the capture mode, which draws one frame per tic
   of game logic as fast as it can, with `vid_wait` off and without Metal's validation; the time per frame is the
@@ -1456,9 +1449,9 @@ screen. Each scene is a run of the game (or two), judged like the sweep's, and b
 - `metal-then-legacy-gl`: between the two hardware renderers the setting takes effect at the next start, so the
   first game must go on with VibeRant Metal and the second, started without naming a renderer, must be Legacy GL's.
 
-What these gave on a Mac mini with an M4 Pro and on a MacBook Pro with an Intel Iris Plus 645 is in
-`docs/metal-backend.md` ("What was tested, and what wasn't"). What the mode can't tell is what the screen looks like. For that someone has to look, or `capture.py scenes` has to run
-on a Mac whose screen is unlocked and where the terminal may record the screen and send keys.
+Results for a Mac mini with an M4 Pro and a MacBook Pro with an Intel Iris Plus 645 are in
+`docs/metal-backend.md` ("What was tested, and what wasn't"). To check what appears on screen, inspect it directly or
+run `capture.py scenes` on an unlocked Mac with terminal permission to record the screen and send keys.
 
 ## CI and adding cases
 
@@ -1467,7 +1460,7 @@ on a Mac whose screen is unlocked and where the terminal may record the screen a
 requests run on `pull_request`; same-repository PR events skip the jobs because
 push already covers those commits, including `master` and branches without a PR.
 The native job caches the pinned glslang/SPIRV-Cross build and ZDBSP executable
-by runner image, pins and build definitions. A hit keeps FetchContent disconnected
+by runner image, pins, and build definitions. A hit keeps FetchContent disconnected
 and skips the ZDBSP build; a miss fetches and builds them normally.
 The Windows `warp` job, which compiles the translated add-on shader fixtures and runs
 the Direct3D 12 WARP regressions, depends on it passing. CTest's JUnit report and
@@ -1490,14 +1483,13 @@ in its default configuration, which has the driver beside OpenGL (`SRB2_CONFIG_V
 default for MSVC and clang-cl): it checks that `compile_commands.json` has `HAVE_VIBERANT` and compiles
 `d3d_present_win32.cpp`, the desktop presenter, and not `d3d_present_uwp.cpp`, UWP's. It builds with
 the `ninja-x64_windows_vcpkg-release` preset, `clang-cl`
-from Visual Studio and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
-vcpkg's binary cache stored by runner image, triplet and the hash of `vcpkg.json` and
+from Visual Studio, and a full vcpkg clone (`vcpkg.json` pins a `builtin-baseline`), with
+vcpkg's binary cache stored by runner image, triplet, and the hash of `vcpkg.json` and
 the overlay ports. `fxc`, which compiles the driver's shaders, comes from the developer shell
 (it is on `PATH` and in `WindowsSdkVerBinPath`, which CMake searches), whose environment
-the job exports to its later steps; the job's first step fails if `fxc` isn't found.
-It uploads the executable and the DLLs the build copies next to it as
-`windows-desktop`, a game build without assets for testing, which offers Software, VibeRant D3D, VibeRant Vulkan, and Legacy GL. The build is only
-compiled and linked: nothing runs the game, so what it draws on a display is untested.
+the job exports to later steps. The first step fails if it cannot find `fxc`.
+It uploads the executable and adjacent DLLs as
+`windows-desktop`, a game build without assets for testing, which offers Software, VibeRant D3D, VibeRant Vulkan, and Legacy GL. The job compiles and links the game without running it or testing its display output.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its
 observable result. Test the relevant platform variants and important boundaries.
@@ -1507,7 +1499,7 @@ wrong input in the same executable and assert the specific mismatch; do not add 
 second executable or a `WILL_FAIL` test, which passes on any failure (a sanitizer
 abort, a stale source anchor, a crash). Avoid tests that only assert a source
 spelling or duplicate the implementation. Keep randomized cases seeded and retain failing seeds as cases.
-To add a group, add its stubs/cases in `templates/`, extract its production code
+For a new test group, put its stubs and cases in `templates/`, extract its production code
 in `generate.py`, and register its executable in `CMakeLists.txt`. Register extracted production and reference source files as configure dependencies too, so editing Software's ripple calculation regenerates its water-refraction oracle.
 
 - **Water refraction:** extract Software's production fixed-point ripple
