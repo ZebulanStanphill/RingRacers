@@ -347,29 +347,27 @@ It ran on three GPUs, each under Metal's API validation and shader validation (`
 | a Mac mini | Apple M4 Pro | macOS 27.0.1 | 1920x1080 at 60 Hz, one pixel per point |
 | a MacBook Pro | Intel Iris Plus Graphics 645 (Core i5-8257U) | macOS 15.8.3 | its own 2560x1600 Retina panel at 60 Hz, set to look like 1440x900 |
 
-The two Macs were reached over SSH and nobody sat at them. The Mac mini's screen was locked the whole time; the
-MacBook's was locked with its display asleep at first, and later unlocked by someone there and left alone, which is when
-the scenes that need a visible screen ran there. Nobody looked at either screen, and no picture of one could be
-taken: `screencapture` from an SSH session gets the desktop picture and no windows, for want of the screen-recording
-permission. So what follows about the Macs comes from the game's logs and from frames read back from the driver.
-`tests/README.md` has how to run all of it again ("Metal driver harness", "Metal frames", "On a Mac").
+Both Macs ran unattended over SSH. The Mac mini stayed locked. The MacBook started locked with its display asleep,
+then someone unlocked it and left it unattended for the visible-screen scenes. Nobody looked at either screen.
+Without screen-recording permission, `screencapture` over SSH returned the desktop picture without windows.
+The Mac results therefore come from logs and frames read back from the driver. To repeat the tests, see
+`tests/README.md` ("Metal driver harness", "Metal frames", "On a Mac").
 
 ### The driver test
 
-`tests/run-metal.sh` passes on all three: the 118 scenes, the checks beside them (the shader cache, null views, the
-sprite shader's pole, the presenter's hooks), the five runs that fail a command buffer on purpose, the six negative
-controls, and no object autoreleased without a pool on the test's thread. Shader validation is `MTLGPUDebugDevice`
-on the M4 Pro and the older `MTLLegacySVDevice` on the runner and on the Intel GPU.
+All three GPUs pass `tests/run-metal.sh`: 118 scenes, checks for the shader cache, null views, the sprite shader's
+pole, and the presenter's hooks, five injected command buffer failures, and six negative controls. The test thread
+autoreleased no objects without a pool. Shader validation uses `MTLGPUDebugDevice` on the M4 Pro and the older
+`MTLLegacySVDevice` on the runner and Intel GPU.
 
 ### Replays on every map
 
-`capture.py sweep` plays the first staff ghost of each of the 213 maps with `-metal` in the frame capture mode (five
-level times each; 1,002 frames, as some replays are shorter), one game per map, and a run fails on anything but an
-exit with 0, every frame written, all but a few frames presented to the window by the presenter's own count, and a
-log without a validation message, a failed command buffer, a "not implemented" line, an error of the driver's, or a
-wait for the GPU that the driver gave up on. (The sweeps counted below ran before the presenter's count was a
-condition; their counts are given with them. `tests/README.md`, "Metal frames", has what a run does and doesn't show
-about the window.)
+`capture.py sweep` runs a separate game with `-metal` for the first staff ghost on each of 213 maps in frame
+capture mode. It samples five level times per map, yielding 1,002 frames because some replays end earlier.
+A run requires exit status 0, every frame written, and all but a few frames presented by the presenter's count.
+Validation messages, failed command buffers, "not implemented" lines, driver errors, and GPU waits the driver gave
+up on fail the run. The sweeps below predate the presentation count requirement, but include the counts.
+See `tests/README.md` ("Metal frames") for what a run checks about the window.
 
 - **The runner**: all 213 clean, twice, with 436,000 frames presented to the window on the way.
 - **The M4 Pro**, four games at a time, presenting with `-mtlunseen`: all 213 exited with 0 and wrote their 1,002
@@ -390,7 +388,7 @@ name `AGXG16SDevice` and `MTLIGAccelDevice`, and no log has the line that announ
 
 ### What the M4 Pro's validation found
 
-Three things, none of them Metal's, all in code that every hardware renderer of the game runs:
+Validation found three faults in code shared by every hardware renderer.
 
 - **The sky dome's caps had no texture coordinates.** `HWR_SkyDomeVertex` never wrote them, so the two fans that
   close the dome sampled the sky texture at whatever `malloc` had left in the vertex array: infinities and
@@ -401,19 +399,19 @@ Three things, none of them Metal's, all in code that every hardware renderer of 
   of the frame at 650. The caps now get the middle of the texture's first texel. Ten more replays of Neon Resort to
   700 on the M4 Pro gave ten identical frames, and seven on the Intel GPU seven.
 - **A sprite two near planes from the camera** has a clip-space z of exactly zero, where the sprite shader's
-  clipping hack (`80 / z`) is infinite. One replay had one for a frame (Gust Planet), another one too (Malign Egg
-  Shrine). The shader now divides zero like a tiny positive number.
+  clipping hack (`80 / z`) is infinite. The Gust Planet and Malign Egg Shrine replays each had one for a frame.
+  The shader now treats a zero divisor as a tiny positive number.
 - **A sprite without height**, in a sector whose light changes at 3D floors, got texture coordinates divided by its
-  height. Seven maps' replays have one. It isn't drawn any more.
+  height. Seven maps' replays have one. The renderer now skips it.
 
 None of the three changed a pixel of the 1,002 frames on the M4 Pro: a sprite at the pole or without height shows
 nothing either way, and no captured frame of that build had a cap in view with anything but zeros behind it.
 
 ### The frames
 
-Compared pixel by pixel with `compare.py`. "Beyond texel edges" counts a pixel only if neither frame has its color
-within a pixel of it: a pixel whose texture coordinate falls on the edge between two texels can take either, and two
-GPUs disagree about that more often than two backends on one GPU.
+`compare.py` compares frames pixel by pixel. "Beyond texel edges" counts pixels whose color appears nowhere
+within one pixel in either frame. A texture coordinate on an edge can sample either texel. Two GPUs disagree on
+that choice more often than two backends on one GPU.
 
 | Frames of | against | differ: median, 95% of frames under, worst | more than one level apart | beyond texel edges: frames at most 0.02%, above 0.1% |
 | --- | --- | --- | --- | --- |
@@ -424,10 +422,9 @@ GPUs disagree about that more often than two backends on one GPU.
 | the Intel GPU (424) | the runner | 0.093%, 0.226%, 6.84% | 0.087%, 0.214%, 1.23% | 387, 7 |
 | the Intel GPU (424) | the Radeon | 0.208%, 1.435%, 19.8% | 0.085%, 0.215%, 3.28% | 389, 11 |
 
-The M4 Pro draws what the runner's virtual GPU draws, which is no surprise if the runner's host is Apple silicon
-too: the frame that differs most (0.1%) is fine textures far away, and the one with the most pixels beyond texel
-edges (171) is the runner's Neon Resort with its cap. The Intel GPU's frames are a tenth of a percent from both, nearly
-all of it texel edges. Its eight frames with more than 0.1% of the pixels beyond them, against the M4 Pro, are fine
+The M4 Pro closely matches the runner's virtual GPU, as expected if its host is also Apple silicon. The largest
+difference (0.1%) is in distant fine textures. The runner's Neon Resort frame with the cap has the most pixels
+beyond texel edges (171). The Intel GPU differs from both by a tenth of a percent, almost entirely at texel edges. Its eight frames with more than 0.1% of the pixels beyond them, against the M4 Pro, are fine
 textures far away (Daytona Speedway and Blizzard Peaks Classic), two effects that come out differently on the Intel
 Mac than on the ARM ones, as they do between other systems (Test Track's puff of dust at 350, Haunted Ship's effect
 at 70), and Vermilion Vessel's wall (below). Its frame that differs most, Dragonspire Sewer 1 at 70 with 6.8%, is
@@ -465,8 +462,8 @@ The frames that stand out in each comparison were looked at, with a sample of or
 
 ### Beyond replays, on the runner
 
-Each as a run of the game on a runner (`capture.py scenes`), with screenshots the game took itself and pictures of
-the screen (`screencapture`), which were looked at:
+`capture.py scenes` ran each scenario on a runner. Both the game's screenshots and the screen pictures from
+`screencapture` were inspected.
 
 - started without naming a renderer: the log says the Metal backend, the intro and the title screen show in the
   window;
@@ -488,9 +485,9 @@ the screen (`screencapture`), which were looked at:
 
 ### The window, on the Macs
 
-`capture.py hardware` runs these and judges them by the log and the game's own screenshots. All of its fourteen runs
-pass on the MacBook with its screen unlocked. On the Mac mini, whose screen was locked, all pass but `fullscreen`,
-which can't: the system makes no fullscreen Space behind a locked screen.
+All fourteen `capture.py hardware` runs passed on the unlocked MacBook. On the locked Mac mini, all passed
+except `fullscreen` because macOS creates no fullscreen Space behind a locked screen. The script uses the log
+and the game's screenshots to judge the runs.
 
 - **Presenting.** Every frame of a replay is presented, none without a drawable, with the screen unlocked, locked,
   or locked with the display asleep (the latter two with `-mtlunseen`). Without it, behind a locked screen, only
@@ -510,17 +507,16 @@ which can't: the system makes no fullscreen Space behind a locked screen.
 
 ### Speed
 
-The time per frame of a replay (Aerial Highlands, level times 350 to 1400) in the capture mode, which draws one
-frame per tic of game logic as fast as it can, at 1280x720 with `vid_wait` off and no validation:
+These frame times come from one run per renderer of Aerial Highlands (level times 350 to 1400). Capture mode
+draws one frame per game tic as fast as possible, here at 1280x720 with `vid_wait` off and validation disabled.
 
 | | VibeRant Metal | Software | Legacy GL |
 | --- | --- | --- | --- |
 | M4 Pro | 2.3 ms (the screen was locked, so nothing was presented) | 4.0 ms | 4.3 ms |
 | Intel Iris Plus 645 | 7.5 ms (presenting to the visible screen) | 9.3 ms | 8.4 ms |
 
-One run each, of one replay, so these say which way it goes and not much more. Presenting to a window behind the
-Mac mini's locked screen took 8.4 ms per frame, which is the system's pace for a window nobody sees and not the
-renderer's. The driver's own time counters are logged on Xbox only.
+One replay shows only the direction of the difference. Presenting behind the Mac mini's locked screen took
+8.4 ms per frame, paced by the system. The driver logs its own timing counters only on Xbox.
 
 Three games at a time under validation were too much for the Intel GPU: it fell more than half a second behind,
 which is where the driver stops waiting for it (for a readback, a command allocator, room in the upload ring), in 124
@@ -529,23 +525,23 @@ nor had one at a time.
 
 ### The second round: on master's renderer changes, and after a review of the presenter
 
-A day later the branch was rebased onto a `master` that had gained the driver's texture atlas, plane polygons with
-polyobjects, the shading of sloped 3D floors, and floor sprites' depth, and a code review of the presenter and of the
-backend's place in the game was worked through (the quit, the menu's wording, the workflow, the build flag, the
-color space, a window wrongly called out of sight, what a sweep proves about the window; each has its commit).
-Everything was then run again. Both Macs' screens were locked throughout, the MacBook's with its display asleep.
+All tests ran again a day later after the rebase and code review changes. Both Macs stayed locked, and the
+MacBook's display was asleep. `master` had gained the driver's texture atlas, plane polygons with polyobjects,
+shading for sloped 3D floors, and floor sprite depth. The review produced one commit each for quitting, menu
+wording, the workflow, the build flag, color space, incorrect occlusion reports, and what sweeps verify about the
+window.
 
 **The driver test** passes on the M4 Pro with master's atlas scene: 119 scenes, the six negative controls, the five
 failed command buffers.
 
 **Replays on every map, M4 Pro**, four games at a time, with `-mtlunseen -mtlcheck`: 213 replays, 1,002 frames,
 436,371 frames presented (the earlier sweeps' number to the frame), none withheld, no validation message, and 7,816
-drawables read back and compared with the frames placed in them, none different. Run four times, at four commits
-of this round. Three of the runs wrote the same 1,002 frames to the pixel. The other one, the third, differs from
-them in one pixel in each of two frames (Astral Dimension at 350, Autumn Ring at 1400): a texel at a sprite's edge
-that took its neighbor's color. That wasn't looked into; where the atlas puts a sprite depends on
-when rectangles freed earlier come back from the GPU, which would do it, and it would mean that frames are no
-longer the same from run to run to the last pixel on this GPU, as they were in the first round.
+drawables read back and compared with the frames placed in them, none different. Four runs at four commits
+produced these counts. Three runs matched pixel for pixel across all 1,002 frames. The third differed by one
+pixel in each of two frames (Astral Dimension at 350, Autumn Ring at 1400): a texel at a sprite's edge
+that took its neighbor's color. The cause wasn't investigated. Atlas placement depends
+on when the GPU returns freed rectangles, which could explain the differences. If so, runs on this GPU no longer
+match to the last pixel as they did in the first round.
 
 **Those frames against the first round's**, same Mac, same replays:
 
@@ -583,11 +579,10 @@ So the time per frame of VibeRant Metal behind a locked screen is no longer the 
 has it from before, 2.3 ms, when nothing was presented there): 8.4 ms now, against Software's 3.9 and Legacy GL's
 3.9, is the system handing drawables back to a window nobody sees.
 
-**The MacBook (Intel Iris Plus 645)** was a poor witness for most of this round, for a reason that has nothing to do
-with the renderer: behind its locked screen it was in dark wake or asleep. Its power log has twenty entries of going
-to sleep or into dark wake that day. In dark wake a game runs on, slowly and unevenly (and macOS's own
-`mediaanalysisd` was at 15% to 60% of a processor through those hours); asleep, it stands still until the Mac wakes,
-and `capture.py` then finds its time used up. So of the replays of every third map (71, one game at a time, with
+**The MacBook (Intel Iris Plus 645)** spent most of this round in dark wake or asleep behind its locked screen.
+The power log recorded twenty transitions to those states that day. Games ran slowly and unevenly in dark wake
+while macOS's `mediaanalysisd` used 15% to 60% of a processor. Sleep stopped the game until wake, when
+`capture.py` found it had timed out. Of the replays of every third map (71, one game at a time, with
 `-mtlunseen -mtlcheck`, over four hours), 44 were clean: 206 frames, 90,078 frames presented, 1,614 drawables
 compared, none different. 25 had a wait for the GPU that the driver gave up on after half a second (41 waits: 36
 for a screenshot's readback, five for the drawable check's), which fails a run because such a screenshot isn't to
@@ -644,8 +639,8 @@ it.
 
 ### What a person at a Mac should look at
 
-Ten minutes at a Mac with its screen unlocked would settle most of what the logs can't. Start the game from a
-terminal so that its log can be kept (`<home>/ringracers/latest-log.txt` has it too).
+With the Mac unlocked, start the game from a terminal to keep the log (`<home>/ringracers/latest-log.txt` has it
+too). Allow ten minutes for most of the checks the logs alone can't settle.
 
 1. **Start it as it comes** (fullscreen, VibeRant Metal). Right: the intro and the title screen fill the screen,
    letterboxed if the screen isn't 16:10. Wrong: a window, a black screen, or a picture in a corner.
