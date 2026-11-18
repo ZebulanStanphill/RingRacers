@@ -1834,7 +1834,8 @@ gh workflow run map-sweep.yml --ref master -f ref=my-branch -f renderers=vulkan,
 `ref` is the branch, tag, or commit to build; the workflow file is always master's. Do this for a branch that changes
 rendering before merging it (`AGENTS.md`). `renderers` is a comma-separated subset of `software`, `gl`, `vulkan`, `d3d`;
 `maps` are `RR_` names (a game's internal map names, as in `tests/map-sweep/ghosts.txt`); `baseline_run` compares with a
-named run instead of master's. A run with a few maps takes a few minutes and compares only those maps.
+named run instead of master's and bypasses the automatic baseline filters for health, completeness, eligibility,
+and size. A run with a few maps takes a few minutes and compares only those maps.
 
 The nightly run (05:37 UTC) is for a `master` that has moved: it first checks whether a complete sweep of the same
 commit already exists and ends if it does. Only one sweep runs at a time in the repository, and at most six capture jobs
@@ -1855,7 +1856,7 @@ checks each PNG's size against the size it asked for. The choices are:
 At 640x400 the sweep loses what needs more pixels to show: seams of a pixel or two between walls, thin textures far away,
 the widescreen HUD and field of view, filtering of distant geometry. What it keeps is anything that changes an object,
 a wall, a plane, the lighting, or the HUD. Run `size=1280x720` for the review of a change to how geometry is clipped or
-filtered. A baseline is only used by a sweep at its own size.
+filtered. Automatic baseline selection uses only sweeps at the requested size.
 
 ### What is played
 
