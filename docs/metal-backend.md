@@ -108,50 +108,46 @@ prewarming builds pipeline states on a worker thread.
 
 ## The window
 
-The game's window is made for OpenGL, which shows the Software renderer's frames. As with Vulkan
-([vulkan-backend.md](vulkan-backend.md), "The window"), the presenter (`metal/mtl_present.mm`) makes a second
-window like the first for Metal (`SDL_WINDOW_METAL`, with SDL's Metal view and its `CAMetalLayer`), hides the first,
-and makes the second the game's window (`sdlmain.h`'s `window`), which is what the video code sizes, makes
-fullscreen, and takes input from. When Software takes over, the first window comes back as the second one was. The
-OpenGL window is made hidden and only shown once a renderer that presents on it is the one the game runs with
-(`I_ShowDeferredWindow`), so starting the game shows one window. Quitting shows none: when the game ends with
-VibeRant Metal, the presenter closes the Metal window and leaves the OpenGL window as it is, hidden, for the video
-system to destroy a moment later. (It used to bring it back as for Software: a window nothing had drawn into, shown
-for the moment before it went, and from fullscreen on its way into a Space of its own.) The log's last line of the
-presenter says what SDL says of that window then: "closed the Metal window as the game quits; the game's OpenGL
-window is hidden".
+The Metal presenter (`metal/mtl_present.mm`) replaces the game's OpenGL window with a similar Metal window, as
+Vulkan does ([vulkan-backend.md](vulkan-backend.md), "The window"). It creates the second window with
+`SDL_WINDOW_METAL`, SDL's Metal view, and its `CAMetalLayer`, hides the first, and sets `sdlmain.h`'s `window`
+to the second. The video code uses that window for sizing, fullscreen, and input. When Software takes over, the
+OpenGL window returns in the Metal window's state and shows Software's frames.
+
+Startup shows only one window. The OpenGL window starts hidden and `I_ShowDeferredWindow` shows it only when a
+renderer that uses it takes over. On quit with VibeRant Metal, the presenter closes the Metal window and leaves
+the OpenGL window hidden for the video system to destroy. Previously it restored the OpenGL window as for
+Software, briefly showing an empty window that, in fullscreen, could be on its way into its own Space. The
+presenter's last log line reports SDL's state for the OpenGL window. It reads "closed the Metal window as the game quits; the
+game's OpenGL window is hidden".
 
 - **Size.** The layer's drawables are the size of the window's content in points, not in the display's pixels: the
   game's window isn't a high-resolution one (it is made without `SDL_WINDOW_ALLOW_HIGHDPI`), so on a Retina display
   the system scales the frame up, as it does Software's and Legacy GL's. SDL's view keeps the drawable size at the
   window's as the window changes, and the presenter takes each drawable's own size as the size to place the frame in.
-  The log says so with each new size: "1280x720 drawables for a window of 1280x720 points on a display with 2 pixels
-  per point (the system scales the frame up) and 60 frames per second". That line is from a MacBook Pro whose
-  2560x1600 panel is set, as it comes, to look like 1440x900: fullscreen there is a 1440x900 drawable, which the
-  system doubles to its 2880x1800 backing and then fits to the panel. So on that display the picture isn't
-  pixel-sharp, and couldn't be made so by drawables in pixels either, since nothing on it is; on a display of one
-  pixel per point (a Mac mini's 1920x1080 monitor) the drawable is the screen's pixels. That is the size Software's
-  frames have there too: the game's OpenGL window isn't a high-resolution one either (SDL turns
-  `wantsBestResolutionOpenGLSurface` off without `SDL_WINDOW_ALLOW_HIGHDPI`), and Apple's documentation of that
-  property says that such a view "uses a 1 pixel per point framebuffer regardless of the backing scale factor" and
-  that "the rendered surface contents are also magnified". So both renderers hand the system a frame in points and
-  the system magnifies it, and VibeRant Metal is not sharper than Software, which is the aim. What the documentation
-  doesn't say is with what filter the system magnifies an OpenGL surface; a layer's default is linear
-  (`magnificationFilter`), which the presenter leaves. Whether the two look exactly alike on a Retina display is
-  therefore something only a look at one can tell.
-- **Placement.** The driver's placement draws each frame into the drawable, as on the other desktop presenters: at
-  Screen Scaling's Integer or 1:1 rectangle, or scaled with linear filtering to the largest rectangle of the
-  frame's aspect ratio. A drawable is BGRA8 and only a render target (`framebufferOnly`), which a draw suits and a
-  copy from the RGBA8 screen wouldn't.
-- **Colors.** `BGRA8Unorm`, not an sRGB format, so the frame's values go into the drawable as they are. What the
-  display makes of them is a matter of color spaces, and the aim is that it makes of them what it makes of
-  Software's frames in the game's OpenGL window. SDL gives every window it makes the sRGB color space (since SDL
-  2.26; the commit that did it says OpenGL "was getting a much more saturated colorspace" before), and the system
-  matches what OpenGL draws in such a window from sRGB to the display. A `CAMetalLayer` has no color space unless it
-  is given one, and Apple's documentation of the property says that its content then "isn't color-matched": on a
-  display of a wider gamut than sRGB, such as a MacBook's P3 panel, the same frame would look more saturated from
-  VibeRant Metal than from Software. So the presenter sees to it that the layer has its window's color space
-  (`MatchWindowColors`), which is the OpenGL window's, since the same SDL makes both. On both Macs the system had
+  The presenter logs each new size: "1280x720 drawables for a window of 1280x720 points on a display with 2 pixels
+  per point (the system scales the frame up) and 60 frames per second". On that MacBook Pro, the 2560x1600 panel
+  defaults to looking like 1440x900. In fullscreen the system doubles the 1440x900 drawable to its 2880x1800
+  backing, then fits it to the panel. Even drawables sized in pixels couldn't make the picture pixel-sharp on
+  that scaled display. At one pixel per point, as on the Mac mini's 1920x1080 monitor, the drawable matches the
+  screen's pixels.
+
+  Software's frames there are the same size. Without `SDL_WINDOW_ALLOW_HIGHDPI`, SDL disables
+  `wantsBestResolutionOpenGLSurface`. Apple says this view "uses a 1 pixel per point framebuffer regardless of
+  the backing scale factor" and that "the rendered surface contents are also magnified". Both renderers supply
+  frames in points for the system to magnify, so VibeRant Metal is no sharper than Software, as intended.
+  The presenter leaves the layer's default linear `magnificationFilter`. Apple's documentation doesn't specify
+  the filter for OpenGL surfaces, so check a Retina display to see whether they look identical.
+- **Placement.** As on other desktop presenters, the driver draws into Screen Scaling's Integer or 1:1
+  rectangle, or uses linear filtering to fill the largest rectangle of the frame's aspect ratio. The BGRA8 drawable
+  is render-target-only (`framebufferOnly`), so the driver draws into it. A copy from the RGBA8 screen wouldn't work.
+- **Colors.** The drawable uses `BGRA8Unorm`, which stores the frame values without an sRGB conversion.
+  `MatchWindowColors` ensures the `CAMetalLayer` has its window's color space so the display treats the frame like
+  Software's OpenGL frame. Since SDL 2.26, SDL gives every window it creates sRGB (the SDL commit says OpenGL
+  "was getting a much more saturated colorspace" before). The system matches OpenGL output from sRGB to the display.
+  Apple says content on a layer without a color space "isn't color-matched", so the same Metal frame would look
+  more saturated than Software's on a display wider than sRGB, such as a MacBook's P3 panel.
+  On both Macs the system had
   already given the layer the window's color space when the presenter looked (macOS 27 and macOS 15.8, SDL 2.30.9),
   so nothing changed there, and the log says which it was: "colors are matched to the display as the OpenGL window's
   are: the layer has its window's color space, "sRGB IEC61966-2.1" (the system gave it), and the display's is "Color
@@ -169,91 +165,79 @@ window is hidden".
   locked, so there the game stays in its window; with SDL's hint against Spaces
   (`SDL_VIDEO_MAC_FULLSCREEN_SPACES=0`) the window covers the screen as it is. Both ways the layer's drawables follow
   the window to the display's size and back.
-- **Changing the renderer in fullscreen** trades two windows, each of which wants a Space of its own, and a review
-  feared two animations at once, a Space left over, or a game that ends up in a window. The presenter now writes each
-  window's way into and out of a Space to the log (`WatchSpaces`, from AppKit's notifications), and on a runner
-  (macOS 15, where the screen isn't locked) the order was this. Software to VibeRant Metal: the Metal window goes into
-  a Space, in 0.55 to 0.67 s, and hiding the OpenGL window afterwards, which is then on a Space that isn't showing,
-  is no transition at all. VibeRant Metal to Software: the OpenGL window goes into a Space (0.6 s), and then the
-  Metal window leaves its own as it is destroyed (0.7 to 1.1 s). So two transitions that way, but one after the
-  other, because SDL waits for each to end. After every change the pictures of the runner's screen show the game
-  on the whole screen with the renderer that was asked for, no frame was withheld from a window out of sight, and
-  the game went on.
+- **Changing the renderer in fullscreen** now takes the OpenGL window out of its Space and hides it before
+  creating the Metal window. On a MacBook Pro (macOS 15.8, SDL 2.30.9), the OpenGL window left its Space in
+  0.56 s, then the Metal window entered its Space in 0.6 s and remained on the display. The transitions ran in
+  sequence, as in the other direction. `capture.py` fails a run if its log shows the OpenGL window leaving a
+  Space while the Metal window is in one. A locked Mac has no Spaces to test this with.
 
-  A person at a MacBook Pro (macOS 15.8, SDL 2.30.9) then saw what the runner hadn't shown. VibeRant Metal to
-  Software was fine. Software to VibeRant Metal left fullscreen, went back and forth, and ended with the game on a
-  Space other than the one on the display. The log had the reason: hiding the OpenGL window (`SDL_HideWindow`) while
-  it is fullscreen makes SDL take it out of its Space (0.7 s), show it again as that ends, put it back into a Space
-  for being fullscreen and shown (0.6 s), and only then hide it, which takes it out once more (1.7 s). Each of those
-  takes the display along, away from the Metal window's Space. So the presenter now takes a fullscreen OpenGL window
-  out of its Space and hides it before it makes the Metal window: the OpenGL window leaves its Space (0.56 s), then
-  the Metal window goes into one (0.6 s), and the Metal window is on the Space that shows. Two transitions, one
-  after the other, as in the other direction. `capture.py` fails a run in whose log the OpenGL window leaves a Space
-  while the Metal window is in one. On a Mac whose screen is locked there are no Spaces to try any of this with.
-- **A window nobody sees.** A layer's drawables only come back from the display, so asking the layer of a window
-  that is minimized, hidden, on another Space, or covered for its next drawable waits a second and gives nothing.
-  The presenter asks AppKit whether any of the window is on screen (`NSWindow`'s occlusion state) and doesn't present
-  every frame while none is; the frame is still drawn and submitted, so the game runs on. A locked screen and a
-  sleeping display count as out of sight too.
-- **In case the system is wrong about that.** If AppKit ever called a window out of sight that a player is looking
-  at, presenting nothing would freeze the picture while the race goes on. So a window the system calls out of sight
-  still gets frames, as long as asking for a drawable can't be expected to wait (`mtl_present_seen.h`, plain C++ so
-  that a test can run it). Such a frame is a probe, and there are two things that hold one back:
+  The earlier MacBook Pro test showed that switching from Software to VibeRant Metal left fullscreen, went back
+  and forth, and ended on a Space other than the one on the display. VibeRant Metal to Software worked. The log
+  showed that hiding the fullscreen OpenGL window (`SDL_HideWindow`) made SDL take it out of its Space (0.7 s),
+  show it again when the transition ended, put it back into a Space because it was fullscreen and visible (0.6 s),
+  and finally hide it, taking it out again (1.7 s). Each transition took the display away from the Metal Space.
 
-  - *The count of drawables out.* Metal reports for each presented drawable when the system is done with it
-    (`addPresentedHandler`, macOS 10.15.4), and the layer has three drawables: with one on screen and at most one
-    more unaccounted for, a third is free. So a probe goes out while at most one earlier drawable is unreported.
-    While the system takes what it is given, a probe follows each report, and a window that is in fact on screen
-    keeps its picture at up to a frame per refresh. When the system takes nothing, two probes go out and no more,
-    and the game never waits. That is how it goes where reports are prompt, which they were on both Macs' own GPUs
-    (every one within a quarter of a second, behind a locked screen).
-  - *A pause after a slow drawable.* A probe that waited more than a quarter of a second for its drawable, or got
-    none, is followed by a pause of a second, then two, doubling to five minutes, until thirty probes in a row are
-    quick or the window is in sight.
+  The review had raised the possibility of overlapping animations, a leftover Space, or the game ending up in a
+  window. The presenter logs each window entering and leaving a Space (`WatchSpaces`, from AppKit notifications).
+  The earlier test on an unlocked macOS 15 runner had shown only the Metal window entering a Space (0.55 to
+  0.67 s) on the switch from Software. Hiding the OpenGL window on its inactive Space caused no transition. On
+  the reverse switch, the OpenGL window entered a Space (0.6 s), then the Metal window left its Space as it was
+  destroyed (0.7 to 1.1 s). SDL waited for each transition. Screen pictures showed the requested renderer
+  fullscreen after every change, no frames were withheld from an out-of-sight window, and the game kept running.
+- **A window nobody sees.** The presenter checks `NSWindow`'s occlusion state and skips regular presentation
+  while none of the window is on screen. The game still draws and submits the frame. The display returns
+  drawables, so asking for one from a minimized, hidden, covered, or off-Space window waits a second and returns
+  none. A locked screen or sleeping display also counts as out of sight.
+- **In case the system is wrong about that.** To keep the picture moving if AppKit incorrectly reports a visible
+  window as out of sight, the presenter still presents probes when it expects a drawable without waiting.
+  `mtl_present_seen.h` implements the decision in plain C++ so it can be tested. Two limits apply:
 
-  Where reports come late too often (three at least, and more than one in twenty: `ReportsLate`), the count is not
-  asked and only the pause holds probes back. That is for a virtual machine's display (GitHub's runners), where
-  reports came about a second after their drawable was presented, in one run nearly all of them and in others a
-  quarter, for a window in plain sight too, while the layer went on giving drawables at once: going by the count
-  there left the picture standing for a second at every late report. The price is that a window that really is out
-  of sight on such a system makes the game wait a second for a drawable, at intervals that double to five minutes.
+  - *The count of drawables out.* Metal reports when the system is done with each drawable (`addPresentedHandler`,
+    macOS 10.15.4). Of three drawables, one can be on screen and one outstanding with a third still free. A probe
+    goes out when at most one earlier drawable is unreported. With prompt reports, a visible window can get a
+    probe after each report, up to a frame per refresh. If the system accepts none, two probes go out and the
+    game avoids waiting. Both Macs' own GPUs reported within a quarter of a second behind locked screens.
+  - *A pause after a slow drawable.* If a probe waits more than a quarter of a second for a drawable or gets none,
+    probes pause for a second, then two, doubling to five minutes until thirty probes in a row are quick or the
+    window is in sight.
 
-  A window the game itself minimized or hid, or one without a size, gets nothing. A new window's first frames go
-  out as probes, since a window doesn't count as visible until the system has put it on screen. On a system older
-  than 10.15.4, which has no reports, only a window's first frame goes out regardless, as before.
+  If at least three reports are late and they account for more than one in twenty (`ReportsLate`), only the
+  pause limits probes. On GitHub's virtual displays, reports came about a second late even for a visible window,
+  in nearly all cases in one run and in a quarter in others. Drawables were available immediately, but counting
+  outstanding drawables stalled the picture for a second with each late report. On such a system, a truly
+  out-of-sight window makes the game wait a second for a drawable at intervals that double to five minutes.
 
-  It took five tries, and the runner's display decided each, being the only screen there was to try it on that
-  wasn't locked. The first waited a second after a probe that Metal reported without a time shown, taking that for
-  a dropped frame: but on the runner every report of every frame has no time. The second presented a probe only
-  when nothing was unreported, and the third when at most one thing was: but the runner's reports can be a second
-  late, so both left a picture that two pictures of the screen, two seconds apart, showed standing still. The
-  fourth left the count aside where most reports had been late: but in the next run a quarter were, and the
-  picture stood still for that quarter's seconds.
-  `-mtlblind` acts a wrong report out (the presenter takes its window for out of sight whatever AppKit says), for
-  `capture.py`'s `blind` scenes, and the test `metal_present_seen` runs the decision against a model of the layer
-  and the display with prompt and late reports (`tests/README.md`). What the scenes showed where is under "What was
-  tested, and what wasn't".
-- **A layer without a drawable.** If the layer of a window in sight gives no drawable, that frame isn't shown and
-  the layer isn't asked again for a quarter of a second, doubling up to four seconds while it keeps giving none; if
-  it has none for a probe, probes pause as above. The log says when presenting stops
-  and starts again, and, when the window is given back or closed, how many frames were presented, skipped, and left
-  without a drawable, how many of those presented were probes, shown or dropped, and how long the layer took to
-  give a drawable, on average and at worst.
-- **`-mtlunseen`** presents every frame regardless of what AppKit says, for tests on a Mac nobody sits at: on both
-  Macs this was tried on, the layer went on giving drawables with the screen locked (and, on the MacBook, the
-  display asleep).
-- **`-mtlcheck`** has the presenter read drawables back: a window's first three and every sixtieth after, each with
-  the frame that was placed in it, compared once the copies are done (`mtl_present_check.h`, plain C++ with a test of
-  its own). The frame must be at the rectangle it was placed at, pixel for pixel where it is at its own size and by
-  the mean colors of 8 by 8 blocks where it is scaled, and the rest of the drawable must be black; the log has a line
-  per drawable, and "FAILED" in it where one differs. It is there because the game's screenshots and the capture
-  mode's frames are read from the driver's screen, before the presenter, and so can't tell a window that shows the
-  frame from one that shows black, or the frame with red and blue swapped. It is a test's path, not a player's: a
-  layer's drawables can only be read with `framebufferOnly` off. And it reads the texture that was presented, not the
-  screen: what the display did with it is still something only a look at the screen can tell.
-- **The game's headers.** `mtl_present.mm` is Objective-C++, and the game's headers don't go into one file with
-  Apple's, so what the presenter needs of the game (the window, the icon, the Screen Scaling setting, the log, and
-  `I_Error`) comes through `mtl_present_game.h`, which a C++ file implements.
+  A window the game minimized or hid, or one without a size, gets no frames. A new window gets probes until the
+  system puts it on screen and reports it visible. Before 10.15.4, Metal provides no such reports, so only the
+  first frame goes out regardless, as before.
+
+  The runner was the only unlocked display available for the five attempts. The first treated a report with no
+  presentation time as a drop and waited a second, but every runner report lacked a time. The second allowed a
+  probe only with no outstanding drawable, and the third allowed one outstanding. Reports could be a second late,
+  and screen pictures two seconds apart showed a stalled picture with both rules. The fourth bypassed the count
+  when most reports were late. In the next run a quarter were late, and the picture stalled for that quarter's
+  seconds.
+
+  `-mtlblind` makes the presenter treat the window as out of sight regardless of AppKit for `capture.py`'s
+  `blind` scenes. `metal_present_seen` tests the decision with a model of the layer and display with prompt and
+  late reports (`tests/README.md`). See "What was tested, and what wasn't" for scene results.
+- **A layer without a drawable.** If a visible window gets no drawable, the frame goes unshown and the presenter
+  retries after a quarter of a second, doubling up to four seconds if the layer still gives none. Failed probes
+  pause as above. The log reports when presentation stops and resumes. When the window is returned or closed, it
+  counts presented frames, skipped frames, frames without a drawable, and probes, including which were shown or
+  dropped. It also reports average and worst drawable wait times.
+- **`-mtlunseen`** presents every frame regardless of AppKit's occlusion report for unattended tests. Both Macs
+  kept supplying drawables with the screen locked, including with the MacBook's display asleep.
+- **`-mtlcheck`** reads back the first three drawables for each window and every sixtieth thereafter, along with
+  their source frames. Once the copies finish, `mtl_present_check.h` checks placement pixel for pixel at the
+  frame's own size, by the mean colors of 8 by 8 blocks when scaled, and requires black outside the rectangle.
+  It is plain C++ with its own test. The log records each drawable and marks a mismatch "FAILED". Game screenshots
+  and capture-mode frames read the driver's screen before presentation, so they miss a black window or swapped red
+  and blue. Readback requires turning off `framebufferOnly` and is for tests. It checks the presented texture.
+  Inspect the screen to see what the display did with it.
+- **The game's headers.** Keep the game's headers out of `mtl_present.mm` because they conflict with Apple's.
+  A C++ file implements `mtl_present_game.h` to supply the window, icon, Screen Scaling setting, log, and
+  `I_Error`.
 
 What the presenter uses of mtl12 (`mtl12.h`):
 
