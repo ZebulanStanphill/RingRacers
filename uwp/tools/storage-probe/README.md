@@ -1,9 +1,9 @@
 # Xbox storage probe
 
-A separate, tiny x64 UWP app for Xbox Dev Mode. It does not use the engine, SDL,
-assets or package identity of Ring Racers. Its identity/publisher is
+The storage probe is a standalone x64 UWP app for Xbox Dev Mode. It uses none
+of Ring Racers' engine, SDL, assets, or package identity. Its identity/publisher is
 `RingRacersStorageProbe` / `CN=RingRacersStorageProbe`, so both apps can coexist.
-Like the game it targets `Windows.Universal` (including Xbox).
+Like the game, it targets `Windows.Universal` (including Xbox).
 
 ## Install and run
 
@@ -12,7 +12,7 @@ Like the game it targets `Windows.Universal` (including Xbox).
 2. Install the `.msix` through Xbox Device Portal / Dev Home, as with the game.
    Every run's package has the same version, 1.0.0.0, so uninstall a previous
    probe build before installing a different run. Uninstalling deletes its local
-   logs, counter and ballast. Do not uninstall Ring Racers for this experiment.
+   logs, counter, and ballast. Do not uninstall Ring Racers for this experiment.
 3. Connect the USB media drive as `E:` with an existing writable `E:\ringracers`
    folder. Use the repository README's ALL APPLICATION PACKAGES and user ACL
    instructions. The probe does not create or prepare that folder.
@@ -21,7 +21,7 @@ Like the game it targets `Windows.Universal` (including Xbox).
    with errors; inspect the log**. It stays open until closed. Close it fully
    before launching again; resuming the existing process is not a new launch.
 5. Read `E:\ringracers\storage-probe.txt` on a PC. Each launch appends a UTC
-   timestamp, persistent launch counter, before/after measurements and operation
+   timestamp, persistent launch counter, before/after measurements, and operation
    results. It also appends a copy to its own LocalState `storage-probe.txt`,
    accessible via Device Portal's app file explorer if USB logging fails.
    USB append errors appear in the local copy; local append errors appear in
@@ -40,21 +40,21 @@ Before and after the ballast operation, the probe measures its LocalState
   `GetFileInformationByHandleEx(FileIdInfo).VolumeSerialNumber` (hex) and
   `GetFinalPathNameByHandleW` with `VOLUME_NAME_NT` and `VOLUME_NAME_GUID`.
 - Every failed Win32 operation records `GetLastError`; WinRT path lookup failures
-  record HRESULT. Even optional GUID/identity failures turn the screen red;
-  the other measurements and ballast experiment still continue.
+  record HRESULT. Even optional GUID/identity failures turn the screen red.
+  The remaining measurements and the ballast operation continue.
 
 If `LocalState\ballast.bin` is absent, the probe writes **512 MiB** in 1 MiB
 chunks using `CreateFile2` / `WriteFile`, flushes with `FlushFileBuffers`, closes
-it and remeasures. It uses actual nonzero writes, not a sparse file or merely a
-file-length change. On failure it stops writing and reports completed chunks;
-a partial file remains for cleanup. If the file already exists (including a
-partial file), the next launch deletes it with `DeleteFileW` and remeasures.
+it, and remeasures. It writes real nonzero data, not a sparse file or a file-length change. On failure,
+it stops writing, reports completed chunks, and leaves a partial file for
+cleanup. If the file already exists (including a partial file), the next
+launch deletes it with `DeleteFileW` and remeasures.
 The before/after volume measurements bracket the operation with its handle closed.
 
-Use this protocol:
+Use this protocol to check whether the two apps share storage:
 
 1. Run the probe once (writes ballast). Compare its **before** LocalState volume
-   serial, NT device path, total and free space with Ring Racers' prior
+   serial, NT device path, total space, and free space with Ring Racers' prior
    `UWP: data: internal storage: ...` line (about **1842 MiB free of 3071 MiB**
    after copying game data). A matching serial / NT device and free space near
    1842 MiB before and **1842 minus 512 MiB** after suggests shared storage.
@@ -66,12 +66,13 @@ Use this protocol:
    its previous launch, the apps share the space. Preserve the game log before
    launching it again. Account for any other app activity and log growth.
 3. Close the game and run the probe again. It deletes ballast and should show
-   about 512 MiB reclaimed. Compare **LocalState**, not the installed location
-   (the game installs under `S:\Program Files\WindowsApps\...`) or USB volume.
+   about 512 MiB reclaimed. Compare **LocalState** rather than the installed
+   location (the game installs under `S:\Program Files\WindowsApps\...`) or
+   the USB volume.
 
 Xbox runtime behavior is not validated by a Windows build: sandbox restrictions
-may deny directory handles, FileIdInfo or NT/GUID final paths, and GUID paths may
-be unavailable on virtual storage. Those errors are evidence, not omitted data.
+may deny directory handles, FileIdInfo, or NT/GUID final paths, and GUID paths may
+be unavailable on virtual storage. The probe logs those errors so they can inform the comparison.
 Free-space changes across the two apps are useful even if identities are denied.
 Caller quotas/virtualization may also make one identity alone inconclusive.
 Do not change Dev Mode storage allocation or install/uninstall other apps during
@@ -88,6 +89,6 @@ PowerShell with UWP C++ tools and Windows SDK 10.0.19041.0:
 ```
 
 The standalone CMake project uses C++17, SDK C++/WinRT headers, WindowsApp,
-Direct3D 11 and DXGI. `build.ps1` uses the same signing and MSBuild sideload
+Direct3D 11, and DXGI. `build.ps1` uses the same signing and MSBuild sideload
 packaging procedure as the game's CI, with its own publisher and certificate.
 The separate path-filtered workflow does not depend on the game build.
