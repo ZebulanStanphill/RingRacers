@@ -24,8 +24,8 @@ uv run $F compare results sw d3d          # writes results/compare-sw-vs-d3d/ind
 
 `uv run $F list` shows the default replays, `--quick` runs two of them, `--replays a,b` picks some,
 `--tics 70,210` replaces their tics, and `--resume` skips runs that finished already.
-`compare ... --fail-on-diff` exits 1 if any frame differs, for scripts; `--threshold N` counts a pixel
-only when a channel differs by more than N.
+`compare ... --fail-on-diff` exits 1 if any frame differs, is missing on one side, or has a size
+mismatch. `--threshold N` counts a pixel only when a channel differs by more than N.
 
 A **side** is `NAME=KIND:TARGET [renderer arguments]`:
 
@@ -105,7 +105,9 @@ also uses an unsynced random number.
   `bbox` of the differences, and the paths of both frames and of the side-by-side image.
 - `sheets/`: the side-by-side images.
 
-Frame identity compares decoded RGB pixels and ignores PNG encoding.
+At the default threshold of 0, frame identity compares decoded RGB pixels and ignores PNG
+encoding. With a positive threshold, the report marks same-size frames identical if no channel
+difference exceeds that threshold.
 
 ## The default replays
 
