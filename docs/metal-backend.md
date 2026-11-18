@@ -11,9 +11,10 @@ shader validation enabled, the game played a replay on every map on the first tw
 without validation reports. The captured frames matched VibeRant Vulkan within the differences between GPUs
 ("What was tested, and what wasn't").
 
-Nobody has played it or looked at a Mac's screen during these tests. The two Macs ran unattended over the
-network, with both screens locked except for part of the first day. Screen pictures come from a runner. See "What
-a person at a Mac should look at" for the remaining visual checks.
+Nobody was at the Macs during these tests: they ran unattended over the network, with both screens locked except
+for part of the first day, and the screen pictures come from a runner. The owner has since played it by hand on the
+MacBook Pro ("Not tested" says what that covered). See "What a person at a Mac should look at" for the remaining
+visual checks.
 
 ## How
 
@@ -509,7 +510,8 @@ and the game's screenshots to judge the runs.
   and does.
 - **Quitting**: every one of the runs above, and of the sweeps, exited with 0.
 - **A Retina display**: the drawables are the window's size in points, as designed, and the MacBook's display has
-  two pixels per point, so the system scales the frame up ("The window", above). Nobody saw what that looks like.
+  two pixels per point, so the system scales the frame up ("The window", above). The owner has played on that
+  display, but nobody has compared its sharpness with Software's there.
 
 ### Speed
 
@@ -634,18 +636,23 @@ window's color space, given by the system, and the display's is "Color LCD", the
 
 ### Not tested
 
-Because it takes a person at the Mac: what the screen looks like (on either Mac, and on the Retina display above
-all), fullscreen in a Space of its own on either Mac since the first day, `vid_wait` on a visible screen on the M4
-Pro, more than one display, resizing or minimizing the window by hand and switching Spaces, the menu's own Renderer
-row and anything else done with a keyboard or a controller (the runner had keys sent to it; the Macs didn't, since
-that takes the accessibility permission), the look of colors on a wide-gamut display, split-screen (a staff ghost is
-one player), netgames, and add-on shaders and screen effects in the game (the driver test covers them). Not tested
-for want of the hardware: an AMD GPU, a Mac with two GPUs, and an Apple GPU older than the M4. And nobody has played
-it.
+On 2026-11-16 the owner played it by hand on the MacBook Pro, with its screen on: started in fullscreen,
+switched between Software and VibeRant Metal in fullscreen (which found the Space fault in "The window", since
+fixed), minimized it, hid it with Command-H, switched Spaces, locked the screen, closed the lid, turned `vid_wait` on,
+and quit through the menu. Apart from that fault, all of it worked, and they said it looks good. They also found windows wider than their picture where macOS cuts a
+video mode's height, fixed for every renderer in `57583e9e5`. What follows is what nobody has tried on that Mac, and
+all of it is still untried on the M4 Pro.
+
+Because it takes a person at the Mac: sharpness and colors compared side by side with Software (on the Retina,
+wide-gamut display above all), more than one display, resizing the window by hand, the Advanced menu's lines about
+the renderer, split-screen (a staff ghost is one player), netgames, and add-on shaders and screen effects in the
+game (the driver test covers them). Not tested
+for want of the hardware: an AMD GPU, a Mac with two GPUs, and an Apple GPU older than the M4.
 
 ### What a person at a Mac should look at
 
-With the Mac unlocked, start the game from a terminal to keep the log (`<home>/ringracers/latest-log.txt` has it
+Checks 1 and 4 to 7 were done on the MacBook Pro ("Not tested"); the rest are open there, and all of them on the
+M4 Pro. With the Mac unlocked, start the game from a terminal to keep the log (`<home>/ringracers/latest-log.txt` has it
 too). Allow ten minutes for most of the checks the logs alone can't settle.
 
 1. **Start it as it comes** (fullscreen, VibeRant Metal). Right: the intro and the title screen fill the screen,
