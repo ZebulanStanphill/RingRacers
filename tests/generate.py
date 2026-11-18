@@ -697,10 +697,22 @@ def generate(engine, output):
             f"\t\t\t\t\tHWR_GetLevelFlat(&levelflats[*rover->{pic}]") not in subsector:
             raise ValueError(f"the opaque 3D floor {pic} plane must be recorded for spring clipping")
     routes += hardware.function("HWR_AddSpringFOFPlane")
+    quick_reject = hardware.function("HWR_SpringQuickReject")
+    plain_depth = ": nearest > view->depth"
+    if quick_reject.count(plain_depth) != 1:
+        raise ValueError("expected one plain spring side depth test")
+    strict_depth = (
+        quick_reject.replace(plain_depth, ": nearest >= view->depth")
+        + hardware.function("HWR_SpringWallApplies")
+        + hardware.function("HWR_SpringSubtract")
+    )
+    for name in ("SpringQuickReject", "SpringWallApplies", "SpringSubtract"):
+        strict_depth = strict_depth.replace(f"HWR_{name}", f"StrictDepth{name}")
     render(templates / "spring_clip.cpp.in", {
         "HELPERS": hardware.section("// [ZE]: Software hides a spring that sits inside a wall.",
             "// End [ZE] spring silhouette geometry."),
         "REFERENCE": (templates.parent / "fixtures" / "spring-clip-reference.inc").read_text(encoding="utf-8"),
+        "STRICT_DEPTH": strict_depth,
         "DRAW_SPRITE": hardware.function("HWR_SpriteUV") + draw_sprite,
         "ROUTES": routes,
         "MODEL": hardware.section("// How a spring's 3D model is to be drawn, from what Software leaves of the spring's sprite.",

@@ -724,12 +724,15 @@ Use the CTest filter under Running to select the cases below by name.
   from a random slot (or after a zone purge), and others are added past the 256 a first
   allocation holds. `memcmp` compares the pieces, their count, the return value, the
   marked sides (the driver's calls and the list kept for clearing them), the peak piece count, and
-  the probe's log lines; in the default run all of the roughly 24,000 comparisons must be identical. The
-  oracle must be able to fail, so two negative controls run the same scenes with a cache
-  made stale on purpose and must report mismatches: entries changed in place without being recorded
-  again, and a camera change hidden from the cache by overwriting the camera it remembers. The
-  controls only touch the test's own copy of the code's state; nothing in production is
-  switched on for them.
+  the probe's log lines. The roughly 24,000 comparisons must be identical. Two negative controls
+  must report mismatches when entries change in place without being recorded again or when a test
+  hides a camera change by overwriting the camera the cache remembers.
+  Directed scenes check reuse across several springs and both sprite and model passes with 388
+  entries in one camera, then force the camera stamp to wrap. They compare a plane clipped to
+  zero corners, sides that reach or cross the near plane, equal side and spring depths, touching
+  screen columns and rows, and two 3D floor sides that both apply. A third negative control uses
+  `generate.py` to change the plain side's depth comparison to `>=`. The same-depth wall must
+  then fail to cut the spring, which the comparison with the frozen copy catches.
 - **Shared brightmap textures:** `shared_brightmap_texture`, `shared_brightmap_flat`
   and `shared_brightmap_patch` execute production texture/texture-flat and patch
   collection after the same mipmap was used as a brightmap. Its flag must be clear

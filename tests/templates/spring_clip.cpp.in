@@ -66,6 +66,7 @@ boolean VibeRant_DrawSpringMask(const FOutVector *v,INT32 n,boolean set){
 }
 @@HELPERS@@
 @@REFERENCE@@
+@@STRICT_DEPTH@@
 
 // Dependencies of the entire production draw entry. Geometry is supplied as a
 // pitched billboard fixture; texture and lighting stubs leave draw routing real.
@@ -391,7 +392,7 @@ static void Retention(){
     // must be updated exactly as z_zone's user-pointer realloc API requires.
     Begin();for(int i=0;i<300;++i)HWR_AddSpringWall(edge.data(),nullptr);assert(hwr_numspringwalls==300);
     DrawEntry();assert(Samples(fixture,{edge})==0);
-    PurgeLevel();assert(!hwr_springwalls&&!hwr_springpieces[0]&&!hwr_springpieces[1]);
+    PurgeLevel();assert(!hwr_springwalls&&!hwr_springcache&&!hwr_springrejects&&!hwr_springpieces[0]&&!hwr_springpieces[1]);
     Begin();HWR_AddSpringWall(edge.data(),nullptr);DrawEntry();assert(Samples(fixture,{edge})==0);
     Begin();DrawEntry();assert(Samples(fixture,{})==0);PurgeLevel();
 }
@@ -900,11 +901,12 @@ static bool SameOutcome(const Outcome &a,const Outcome &b){
     }
     return true;
 }
-static Outcome Subtract(bool reference,const FOutVector *quad,const FOutVector *area,FBITFIELD fl,bool mask,bool probe){
+static Outcome Subtract(bool reference,const FOutVector *quad,const FOutVector *area,FBITFIELD fl,bool mask,bool probe,
+    decltype(&HWR_SpringSubtract) production=HWR_SpringSubtract){
     Outcome o;marks.clear();hwr_springprobe=probe;probeCapture=&o.log;
     INT32 buffer=-1;size_t count=SIZE_MAX;
     if(reference){refNumMasks=0;refPeakPieces=0;o.changed=RefSubtract(quad,area,fl,&spr,mask,&buffer,&count);}
-    else{hwr_numspringmasks=0;hwr_springpeakpieces=0;o.changed=HWR_SpringSubtract(quad,area,fl,&spr,mask,&buffer,&count);}
+    else{hwr_numspringmasks=0;hwr_springpeakpieces=0;o.changed=production(quad,area,fl,&spr,mask,&buffer,&count);}
     probeCapture=nullptr;hwr_springprobe=false;
     o.left=buffer<0;o.count=count;
     o.peak=reference?refPeakPieces:hwr_springpeakpieces;
@@ -1006,6 +1008,97 @@ static Quad Doubled(const Quad &quad){
     for(int i=0;i<4;++i){area[i]=quad[i];area[i].x=x+(quad[i].x-x)*2;area[i].y=y+(quad[i].y-y)*2;area[i].z=z+(quad[i].z-z)*2;}
     return area;
 }
+static Outcome CompareSubtraction(const Quad &quad,bool mask){
+    const Quad area=mask?Doubled(quad):quad;
+    const Outcome want=Subtract(true,quad.data(),area.data(),0,mask,!mask);
+    const Outcome got=Subtract(false,quad.data(),area.data(),0,mask,!mask);
+    assert(SameOutcome(got,want));
+    return got;
+}
+static void QuickRejectBoundaries(){
+    ResetView();
+    Begin();
+    Quad quad;
+    SpringAt(16,0,0,4,quad);
+    const auto equalDepth=Wall(16,-2,16,2);
+    HWR_AddSpringWall(equalDepth.data(),nullptr);
+    const Outcome equal=CompareSubtraction(quad,false);
+    assert(equal.changed&&equal.count>0);
+    const Outcome strict=Subtract(false,quad.data(),quad.data(),0,false,true,StrictDepthSpringSubtract);
+    assert(!strict.changed&&!SameOutcome(strict,equal));
+
+    Begin();
+    SpringAt(16,0,0,4,quad);
+    const auto touching=Wall(8,2,8,5); // right column -2/8 equals the spring's left column -4/16
+    HWR_AddSpringWall(touching.data(),nullptr);
+    const Outcome beside=CompareSubtraction(quad,false);
+    assert(beside.log.find("w=0 kind=side applies=1 subtracted=1")!=std::string::npos);
+
+    for(bool onNear:{true,false}){
+        Begin();
+        // At the near plane, these float coordinates give x + z * sin exactly equal to the double 0.01.
+        gl_viewsin=onNear?0x1.ap-21f:0.f;
+        SpringAt(16,5,0,4,quad);
+        const auto crossing=Wall(onNear?0x1.47ae14p-7f:-1.f,onNear?0x1.2e794ep-12f:0.f,8,4);
+        HWR_AddSpringWall(crossing.data(),nullptr);
+        // The cached columns are zero, but the actual silhouette reaches into the off-center spring.
+        assert(CompareSubtraction(quad,false).changed);
+        assert(hwr_springrejects[0].bounds.side.nearest==(onNear?HWR_SPRINGNEAR:-1));
+    }
+
+    auto fof=Solid();
+    Begin();
+    gl_viewz=8;
+    SpringAt(16,0,-7,4,quad);
+    const auto plane=Slab(4,8,12); // lowest row (4-8)/8 equals the spring's top row (0-8)/16
+    HWR_AddSpringPlane(plane.data(),4,&fof);
+    const Outcome below=CompareSubtraction(quad,false);
+    assert(below.log.find("farthestthick=0")!=std::string::npos);
+    ResetView();
+}
+static void QuickRejectSharedCamera(){
+    Begin();
+    // Populate records with stamp 1, then force another wrap so that stale stamp-1 records could look current.
+    hwr_springstamp=UINT32_MAX;hwr_springcameraset=false;
+    auto fof=Solid();
+    const auto first=Wall(8,-2,8,-.5f);
+    const auto last=Wall(10,.5f,10,2);
+    const auto equalDepth=Wall(16,-8,16,8);
+    const auto empty=Slab(2,-8,-4);
+    HWR_AddSpringWall(first.data(),&fof);
+    HWR_AddSpringWall(last.data(),&fof);
+    HWR_AddSpringWall(equalDepth.data(),&fof);
+    HWR_AddSpringPlane(empty.data(),4,&fof);
+    for(int i=0;i<384;++i){
+        const auto outside=Wall(12,30+i,12,31+i);
+        HWR_AddSpringWall(outside.data(),i%2?&fof:nullptr);
+    }
+    assert(hwr_numspringwalls==388);
+    Quad quad;
+    SpringAt(16,0,0,4,quad);
+    const Outcome marked=CompareSubtraction(quad,true);
+    assert((marked.masks==std::vector<size_t>{0,1}));
+    assert(hwr_springstamp==1&&hwr_springrejects[0].stamp==0); // the reverse scan stopped at entry 1
+    assert(hwr_springcache[3].corners==0&&hwr_springrejects[3].stamp==1);
+    assert(hwr_springrejects[4].stamp==1&&hwr_springrejects[5].stamp==1);
+    const Outcome probed=CompareSubtraction(quad,false);
+    assert(probed.log.find("farthestthick=1")!=std::string::npos);
+    assert(probed.log.find("w=0 kind=fofside applies=1 subtracted=1")!=std::string::npos);
+    assert(probed.log.find("w=1 kind=fofside applies=1 subtracted=1")!=std::string::npos);
+    assert(probed.log.find("w=2 kind=fofside applies=0 subtracted=0")!=std::string::npos);
+    for(float y:{-2.f,1.f,4.f}){
+        SpringAt(16,y,0,4,quad);
+        CompareSubtraction(quad,false);
+        CompareSubtraction(quad,true);
+    }
+    hwr_springstamp=UINT32_MAX;
+    gl_viewx=-1;
+    HWR_SpringSyncCamera();
+    assert(hwr_springstamp==1&&hwr_springrejects[3].stamp==0&&hwr_springrejects[4].stamp==0);
+    CompareSubtraction(quad,false);
+    CompareSubtraction(quad,true);
+    ResetView();
+}
 struct DiffStats { int scenes=0,springs=0,changed=0,hidden=0,partial=0,pieces=0,marked=0,logged=0,mismatches=0;size_t entries=0; };
 // stale 0: production as it is. 1: entries are changed behind the cache's back (without recording them again). 2: the
 // camera is changed and the camera the caches were found with is overwritten to match. A cache that was kept past
@@ -1081,5 +1174,6 @@ int main(int argc,char **argv){
     if(argc>1&&std::string(argv[1])=="--metropolis"){int f=Metropolis(true);PurgeLevel();return f?1:0;}
     if(argc>1)return 2;
     RunCases();ObliqueCamera();FlatSlopeSeam();OracleRejectsInjectedErrors();Routes();Retention();Models();BeamSide();assert(Metropolis(false)==0);PurgeLevel();Planes();Painter();Slivers();PurgeLevel();Bounds();Overrun();Sweep(3000);CachedSubtractionMatchesReference();
+    QuickRejectBoundaries();QuickRejectSharedCamera();PurgeLevel();
     std::puts("spring silhouette geometry, ordering, interpolation and lifetime passed");return 0;
 }

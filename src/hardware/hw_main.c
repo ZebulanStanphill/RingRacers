@@ -339,6 +339,8 @@ typedef struct
 	double rayx, rayy; // ray through the sprite's middle screen column
 	double left, right; // screen extent of the quad, as lateral/depth
 	double bottom, top; // world height of the quad's lowest and highest corners
+	// [ZE]: The bottom and top as screen rows, which the quick reject compares with every plane's rows.
+	double bottomrow, toprow;
 } hwr_springview_t;
 
 // Most of what a spring's pass over the recorded entries works out depends on the entry and the camera alone, not on
@@ -383,6 +385,20 @@ typedef struct
 
 static hwr_springcache_t *hwr_springcache; // one for each hwr_springwalls entry
 static size_t hwr_springcachecapacity;
+
+// [ZE]: The bounds each spring tests while scanning entries, kept apart from the full cache.
+typedef struct
+{
+	union
+	{
+		struct { double nearest, sa, sb; } side;
+		struct { double left, right, low, high; } plane;
+	} bounds;
+	UINT32 stamp;
+	UINT8 kind;
+} hwr_springreject_t;
+
+static hwr_springreject_t *hwr_springrejects;
 static UINT32 hwr_springstamp = 1;
 static float hwr_springcamera[5]; // gl_viewx, gl_viewy, gl_viewz, gl_viewsin, gl_viewcos the caches were found with
 static boolean hwr_springcameraset;
@@ -405,7 +421,7 @@ static hwr_springwall_t *HWR_SpringNewWall(void)
 {
 	if (!hwr_springwalls)
 		hwr_springwallcapacity = 0; // PU_LEVEL was released.
-	if (!hwr_springcache)
+	if (!hwr_springcache || !hwr_springrejects)
 		hwr_springcachecapacity = 0;
 	if (hwr_numspringwalls == hwr_springwallcapacity)
 	{
@@ -416,18 +432,21 @@ static hwr_springwall_t *HWR_SpringNewWall(void)
 	{
 		hwr_springcachecapacity = hwr_springwallcapacity;
 		Z_Realloc(hwr_springcache, hwr_springcachecapacity * sizeof(hwr_springcache_t), PU_LEVEL, &hwr_springcache);
+		Z_Realloc(hwr_springrejects, hwr_springcachecapacity * sizeof(hwr_springreject_t), PU_LEVEL, &hwr_springrejects);
 	}
 	if (!hwr_numspringwalls) // A new recording: nothing cached describes an entry of it.
 		hwr_springcornerused = hwr_springedgeused = 0;
 	memset(&hwr_springcache[hwr_numspringwalls], 0, offsetof(hwr_springcache_t, info));
+	hwr_springrejects[hwr_numspringwalls].stamp = 0;
 	return &hwr_springwalls[hwr_numspringwalls++];
 }
 
 // Notes what kind of entry the recording just made, which the caches read without going through the entry.
 static void HWR_SpringRecorded(const hwr_springwall_t *entry)
 {
-	hwr_springcache[entry - hwr_springwalls].kind = (entry->thick ? HWR_SPRINGKIND_THICK : 0)
-		| (entry->plane ? HWR_SPRINGKIND_PLANE : 0);
+	const size_t w = entry - hwr_springwalls;
+	const UINT8 kind = (entry->thick ? HWR_SPRINGKIND_THICK : 0) | (entry->plane ? HWR_SPRINGKIND_PLANE : 0);
+	hwr_springcache[w].kind = hwr_springrejects[w].kind = kind;
 }
 
 // Software draws a column of a wall only where the wall's top is above its bottom. A sector whose ceiling is below its
@@ -645,6 +664,9 @@ static boolean HWR_SpringSetView(hwr_springview_t *view, const FOutVector *quad,
 		view->left = fmin(view->left, screen);
 		view->right = fmax(view->right, screen);
 	}
+	// [ZE]: The same expressions the plane test used to compute per entry.
+	view->bottomrow = (view->bottom - gl_viewz) / view->depth;
+	view->toprow = (view->top - gl_viewz) / view->depth;
 	mid = (view->left + view->right) * 0.5;
 	view->rayx = gl_viewcos + mid * gl_viewsin;
 	view->rayy = gl_viewsin - mid * gl_viewcos;
@@ -720,7 +742,7 @@ static void HWR_SpringSyncCamera(void)
 	{
 		size_t w;
 		for (w = 0; w < hwr_numspringwalls; w++)
-			hwr_springcache[w].stamp = 0;
+			hwr_springcache[w].stamp = hwr_springrejects[w].stamp = 0;
 		hwr_springstamp = 1;
 	}
 }
@@ -805,6 +827,51 @@ static const hwr_springsideinfo_t *HWR_SpringSideInfo(size_t w, hwr_springcache_
 	return info;
 }
 
+// [ZE]: Copy the exact cached doubles on first use for this camera.
+static const hwr_springreject_t *HWR_SpringRejectInfo(size_t w)
+{
+	hwr_springreject_t *r = &hwr_springrejects[w];
+	if (r->stamp != hwr_springstamp)
+	{
+		hwr_springcache_t *cache = HWR_SpringCache(w);
+		if (r->kind & HWR_SPRINGKIND_PLANE)
+		{
+			const hwr_springplaneinfo_t *plane = HWR_SpringPlaneInfo(w, cache);
+			r->bounds.plane.left = plane->left;
+			r->bounds.plane.right = plane->right;
+			r->bounds.plane.low = plane->low;
+			r->bounds.plane.high = plane->high;
+		}
+		else
+		{
+			const hwr_springsideinfo_t *side = HWR_SpringSideInfo(w, cache);
+			r->bounds.side.nearest = side->nearest;
+			r->bounds.side.sa = side->sa;
+			r->bounds.side.sb = side->sb;
+		}
+		r->stamp = hwr_springstamp;
+	}
+	return r;
+}
+
+static boolean HWR_SpringQuickReject(const hwr_springreject_t *r, const hwr_springview_t *view)
+{
+	double nearest, sa, sb;
+	if (r->kind & HWR_SPRINGKIND_PLANE)
+		return r->bounds.plane.right < view->left || r->bounds.plane.left > view->right
+			|| view->bottomrow > r->bounds.plane.high || view->toprow < r->bounds.plane.low;
+
+	// Scale of the whole side is below the sprite's: it's entirely behind it.
+	nearest = r->bounds.side.nearest;
+	if ((r->kind & HWR_SPRINGKIND_THICK) ? nearest >= view->depth : nearest > view->depth)
+		return true;
+
+	// The silhouette has to share a screen column with the sprite.
+	sa = r->bounds.side.sa;
+	sb = r->bounds.side.sb;
+	return nearest > HWR_SPRINGNEAR && (fmax(sa, sb) < view->left || fmin(sa, sb) > view->right);
+}
+
 // Whether R_CreateDrawNodes sorts the spring behind this 3D floor plane (its r2->plane test).
 static boolean HWR_SpringPlaneApplies(size_t w, hwr_springcache_t *cache, const hwr_springview_t *view)
 {
@@ -830,11 +897,6 @@ static boolean HWR_SpringPlaneApplies(size_t w, hwr_springcache_t *cache, const 
 
 	v = HWR_SpringCorners(w, cache, &n);
 	if (n < 3)
-		return false;
-
-	// The plane shares screen columns and rows with the sprite.
-	if (plane->right < view->left || plane->left > view->right
-		|| (view->bottom - gl_viewz) / view->depth > plane->high || (view->top - gl_viewz) / view->depth < plane->low)
 		return false;
 
 	// Part of the plane is nearer than the sprite's origin in the sprite's own screen columns: Software looks for
@@ -863,27 +925,18 @@ static boolean HWR_SpringPlaneApplies(size_t w, hwr_springcache_t *cache, const 
 // Whether Software draws this side over the spring, rather than the spring over it.
 static boolean HWR_SpringWallApplies(size_t w, const hwr_springview_t *view)
 {
-	hwr_springcache_t *cache = HWR_SpringCache(w);
+	hwr_springcache_t *cache;
 	const hwr_springsideinfo_t *side;
-	const boolean thick = (cache->kind & HWR_SPRINGKIND_THICK) != 0;
 
+	if (HWR_SpringQuickReject(HWR_SpringRejectInfo(w), view))
+		return false;
+
+	cache = HWR_SpringCache(w);
 	if (cache->kind & HWR_SPRINGKIND_PLANE)
 		return HWR_SpringPlaneApplies(w, cache, view);
 
 	side = HWR_SpringSideInfo(w, cache);
-
-	// Scale of the whole side is below the sprite's: it's entirely behind it.
-	if (thick ? side->nearest >= view->depth : side->nearest > view->depth)
-		return false;
-
-	// The silhouette has to share a screen column with the sprite.
-	if (side->nearest > HWR_SPRINGNEAR)
-	{
-		if (fmax(side->sa, side->sb) < view->left || fmin(side->sa, side->sb) > view->right)
-			return false;
-	}
-
-	if (thick)
+	if (cache->kind & HWR_SPRINGKIND_THICK)
 	{
 		// R_CreateDrawNodes compares scale at the sprite's middle screen column,
 		// extending the side's line past its ends, not each pixel's depth.
@@ -1189,9 +1242,16 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 	// R_CreateDrawNodes inserts the sprite before the farthest 3D floor side or plane it sorts behind, so every
 	// one drawn after that (nearer in the BSP order, recorded earlier here) paints over it as well.
 	farthestthick = SIZE_MAX;
-	for (w = 0; w < hwr_numspringwalls; w++)
-		if ((hwr_springcache[w].kind & HWR_SPRINGKIND_THICK) && HWR_SpringWallApplies(w, &view))
+	for (w = hwr_numspringwalls; w > 0; )
+	{
+		--w;
+		if ((hwr_springrejects[w].kind & HWR_SPRINGKIND_THICK)
+			&& !HWR_SpringQuickReject(HWR_SpringRejectInfo(w), &view) && HWR_SpringWallApplies(w, &view))
+		{
 			farthestthick = w;
+			break;
+		}
+	}
 	if (probe)
 		I_OutputMsg("Spring probe: type=%d at (%.1f,%.1f,%.1f) gz=%.1f gzt=%.1f quad=(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f)(%.1f,%.1f,%.1f) depth=%.2f entries=%u farthestthick=%ld\n",
 			(int)spr->mobj->type, FIXED_TO_FLOAT(spr->mobj->x), FIXED_TO_FLOAT(spr->mobj->y), FIXED_TO_FLOAT(spr->mobj->z), spr->gz, spr->gzt,
@@ -1202,8 +1262,8 @@ static boolean HWR_SpringSubtract(const FOutVector *quad, const FOutVector *area
 		const hwr_springplane_t *planes;
 		INT32 edges, e;
 		size_t nextcount = 0;
-		boolean subtracted = (hwr_springcache[w].kind & HWR_SPRINGKIND_THICK) ? (farthestthick != SIZE_MAX && w <= farthestthick)
-			: HWR_SpringWallApplies(w, &view), cut = false;
+		boolean subtracted = (hwr_springrejects[w].kind & HWR_SPRINGKIND_THICK) ? (farthestthick != SIZE_MAX && w <= farthestthick)
+			: !HWR_SpringQuickReject(HWR_SpringRejectInfo(w), &view) && HWR_SpringWallApplies(w, &view), cut = false;
 		if (!subtracted || !(edges = HWR_SpringEdges(w, &planes)))
 		{
 			if (probe && HWR_SpringProbeOverlaps(w, &view))
