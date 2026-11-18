@@ -49,7 +49,7 @@ The arena's largest class is 4 MB, so a texture whose reported size plus the gua
 
 `CreateCommittedResource` is unsafe as an oversized-texture fallback. In the diagnostic app, a committed 256×256 RGBA8 texture read `0` at texel (255,255) after any state transition, while every other texel kept its data: the same state word, inside the resource this time, over its last texel. A large committed texture would come back with its bottom-right texel zeroed after its first use.
 
-The driver uses committed textures only when creating a heap fails. It logs the first one.
+The driver tries a committed texture only if shared and dedicated placement both fail. It logs the first one.
 
 `VibeRant D3D: committed texture: 1024x1024 could not be placed; its last texel is unreliable on Xbox One`
 
