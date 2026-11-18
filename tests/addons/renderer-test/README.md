@@ -3,8 +3,8 @@
 [D_RenderTest_v1.pk3](D_RenderTest_v1.pk3) is an add-on for Ring Racers
 2.4. Use its hidden race map, **Render Test**, to check fog, overlapping water, heat haze, polyobject ripples,
 wall light slices, translucent sorting, brightmaps, a skybox with rain, and a
-sprite-textured 3D model. It ships every texture, flat, and sprite it uses and
-needs no other assets. The map has loaded on Xbox. Its original rooms and
+sprite-textured 3D model. It ships its textures, flats, and sprites, and uses the base game's
+`F_SKY1`. It needs no other add-on assets. The map has loaded on Xbox. Its original rooms and
 effects still need gameplay validation. The parity wing was also checked with
 the local macOS offscreen harness. Offline generation checks cannot verify
 that every test looks or behaves correctly.
