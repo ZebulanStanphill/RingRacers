@@ -1500,7 +1500,7 @@ the overlay ports. `fxc`, which compiles the driver's shaders, comes from the de
 (it is on `PATH` and in `WindowsSdkVerBinPath`, which CMake searches), whose environment
 the job exports to its later steps; the job's first step fails if `fxc` isn't found.
 It uploads the executable and the DLLs the build copies next to it as
-`windows-desktop`, a game build without assets for testing, which offers Software, VibeRant D3D and Legacy GL. The build is only
+`windows-desktop`, a game build without assets for testing, which offers Software, VibeRant D3D, VibeRant Vulkan, and Legacy GL. The build is only
 compiled and linked: nothing runs the game, so what it draws on a display is untested.
 
 When fixing a bug, add the smallest reproducible input and an assertion about its
