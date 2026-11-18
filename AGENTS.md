@@ -30,9 +30,12 @@ those commits stay as they are and the merge is made again.
 
 - Prefer new files and small, contained hooks over edits spread through upstream
   code. Don't reformat, rename, or reorder upstream code you aren't changing.
-- Mark a change inside upstream code with a comment that starts `[ZE]:` (for
-  Zebulan Edition, this fork), or `[UWP]:` when the code is only compiled for or
-  only applies to the Xbox (UWP) build. Names and log lines follow the same rule:
+- Mark every change inside a file upstream also has with a comment that starts
+  `[ZE]:` (for Zebulan Edition, this fork), or `[UWP]:` when the code is only
+  compiled for or only applies to the Xbox (UWP) build, in the changed lines or
+  at most three lines above them; for a removal, say there what upstream had and
+  why it went. `tests/check-change-markers.py` lists any change without one, and
+  CI runs it. Names and log lines follow the same rule:
   `UWP` and `uwp_` are for what only the Xbox build has.
 - Gate platform-specific code so every platform keeps building: `_UWP` for the
   UWP build, and `HAVE_VIBERANT` for builds that contain the VibeRant driver
@@ -178,7 +181,9 @@ and the same scenes on VibeRant Vulkan (Linux) and VibeRant Metal (macOS).
 only its Vulkan backend, that macOS builds it with only its Metal backend, and that
 Windows desktop (not UWP) builds with it by default (beside OpenGL, using the desktop presenter).
 It also runs `tests/check-retired-names.py`, which fails on a name the driver had before it
-was called VibeRant; the script lists the old and new names.
+was called VibeRant; the script lists the old and new names. A separate job
+runs `tests/check-change-markers.py` against upstream's `maintenance-2.4`, which
+fails on a change inside an upstream file that has no `[ZE]` or `[UWP]` marker.
 `.github/workflows/build.yml` builds the UWP app with `uwp/build.ps1` and uploads
 the package that is tested on Xbox; there is no local UWP build outside Windows.
 

@@ -6,6 +6,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  markers:
+    # Same-repository commits run on push; fork commits run on pull_request.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    name: Fork changes in upstream files are marked
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      # The whole history without file contents, so the upstream commit the fork is based on can be found; git
+      # fetches the contents of the files it compares on demand
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch upstream's branch
+        run: git fetch --no-tags --filter=blob:none https://github.com/KartKrewDev/RingRacers.git maintenance-2.4
+
+      # AGENTS.md, "Staying rebaseable": every change inside a file upstream also has carries a [ZE] or [UWP] comment
+      - name: Check for unmarked changes
+        run: python3 tests/check-change-markers.py
+
   regressions:
     # Same-repository commits run on push; fork commits run on pull_request.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
