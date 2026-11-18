@@ -1,24 +1,22 @@
 # VibeRant Vulkan
 
-VibeRant Vulkan is the VibeRant driver (`src/hardware/r_viberant`) running on Vulkan instead of Direct3D 12: the
-hardware renderer for platforms without Direct3D 12 (Linux), and a second choice on Windows. It is the same driver
-code. Nothing above the device knows which API is underneath, so the two renderers draw the same picture by
-construction, and a fix to the driver is a fix to both.
+VibeRant Vulkan runs the shared VibeRant driver (`src/hardware/r_viberant`) on Vulkan. It provides hardware
+rendering on platforms without Direct3D 12 (Linux) and a second choice on Windows. Code above the device is
+API-independent, so both renderers draw the same picture by design and share driver fixes.
 
 ## How
 
-The driver uses a small part of Direct3D 12: about 70 methods of a dozen interfaces. `src/hardware/r_viberant/vulkan/`
+The driver uses about 70 methods across a dozen Direct3D 12 interfaces. `src/hardware/r_viberant/vulkan/`
 ("vk12") implements those interfaces (`ID3D12Device`, `ID3D12GraphicsCommandList`, `ID3D12Resource`, ...) on Vulkan.
-`Core_Init` makes either a real Direct3D 12 device or a vk12 one; everything else in the driver calls the same
-interfaces either way. `vk12_bases.h`, generated from Microsoft's header by `gen_bases.py`, defines every method of
-those interfaces as "not implemented", and vk12's classes override the ones the driver calls. A method the driver
-starts to use and vk12 lacks says so in the log.
+`Core_Init` makes either a Direct3D 12 or vk12 device. The rest of the driver calls the same interfaces. `vk12_bases.h`, generated from Microsoft's header by `gen_bases.py`, defines every method of
+those interfaces as "not implemented". vk12 overrides the methods the driver calls and logs calls to
+unimplemented methods.
 
-What differs per backend, and where the driver asks (`Core_Vulkan()`):
+The driver uses `Core_Vulkan()` for the backend differences below.
 
 - **Device creation** (`viberant_core.cpp`): `rr_vk12::CreateDevice` instead of `D3D12CreateDevice`. Vulkan is loaded at
-  run time (volk), so a system without it only makes the renderer fail to start, and the game falls back to Software.
-- **Waiting for the GPU** (`Core_Wait`): vk12's fence waits on Vulkan's own; it has no Win32 event to set.
+  run time (volk). Without Vulkan, the renderer fails to start and the game falls back to Software.
+- **Waiting for the GPU** (`Core_Wait`): vk12 waits on its Vulkan fence and has no Win32 event to set.
 - **Shaders** (`viberant_pipeline.cpp`): the same `shaders.hlsl`, compiled to SPIR-V by glslang's HLSL front end at build
   time (`r_vulkan_shaders/*.h`, arrays named `g_<entry>_spv`) instead of to DXBC by fxc. Add-on shaders and the CRT
   screen effects take the existing GLSL to SPIR-V to HLSL path and then HLSL to SPIR-V with glslang at run time
@@ -31,7 +29,7 @@ What differs per backend, and where the driver asks (`Core_Vulkan()`):
   DirectX-Headers (the same declarations) and `vulkan/vk12_win.h`, which stands in for the few Win32 calls the driver
   makes and for `D3DCompile`.
 
-Engine code keeps asking `HWR_VibeRant()`: it means "the VibeRant driver is drawing", on either backend. `HAVE_VIBERANT`
+Engine code uses `HWR_VibeRant()` to check whether VibeRant is drawing, on either backend. `HAVE_VIBERANT`
 is defined whenever the driver is built; `HAVE_VIBERANT_D3D` and `HAVE_VIBERANT_VULKAN` say which backends are. A Windows
 desktop build has both in one program, and the Renderer setting (or `-d3d12` and `-vulkan`) picks one per run.
 
@@ -59,10 +57,9 @@ desktop build has both in one program, and the Renderer setting (or `-d3d12` and
 
 ## The window
 
-The game's window is made for OpenGL, which shows the Software renderer's frames, and a window can't be both
-OpenGL's and Vulkan's. So the presenter makes a second window like the first for Vulkan, hides the first, and makes
-the second the game's window (`sdlmain.h`'s `window`), which is what the video code sizes, makes fullscreen, and
-takes input from. When Software takes over, the first window comes back as the second one was. Where VibeRant
+The Vulkan presenter creates a matching second window because the OpenGL window that presents Software frames
+cannot also present Vulkan frames. It hides the first window and sets `sdlmain.h`'s `window` to the second. The
+video code sizes that window, makes it fullscreen, and takes input from it. When Software takes over, the first window comes back as the second one was. Where VibeRant
 Vulkan may be the renderer, the OpenGL window is made hidden and only shown once a renderer that presents on it is
 the one the game runs with (`I_ShowDeferredWindow`), so starting the game shows one window.
 
@@ -73,13 +70,13 @@ ratio, as the Direct3D 12 desktop presenter does.
 ## What can differ from VibeRant D3D
 
 The driver's logic, shaders, textures, and states are the same, and so is everything the engine does around them.
-What is left is arithmetic: the two backends' shader compilers don't round the same way in the last bit, and a
-device without 24-bit depth uses 32-bit float depth here. A pixel whose texture coordinate falls on the boundary
+The shader compilers can round the last bit differently, and Vulkan uses 32-bit float depth on devices without
+24-bit depth. A pixel whose texture coordinate falls on the boundary
 between two texels can therefore take the other texel. Two Direct3D 12 devices differ from each other the same way.
 
 Where two surfaces lie in exactly the same plane, the same rounding decides which of them shows, so such a place can
-look different on the two backends, as it can on two Direct3D 12 devices. Neither is right: Software draws those
-surfaces in an order, and the hardware renderers leave it to the depth buffer.
+look different on the two backends, as it can on two Direct3D 12 devices. Neither result is definitive. Software draws those surfaces in order, while the hardware renderers rely on the
+depth buffer.
 
 Measured on one PC (Radeon Vega 10, with the Windows build's two backends under Wine, where Direct3D 12 is itself
 translated to Vulkan): of 1,002 frames from the 213 maps, the median frame differs in 0.08% of its pixels and the
