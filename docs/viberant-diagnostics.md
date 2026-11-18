@@ -1,20 +1,19 @@
 # VibeRant diagnostics
 
-The VibeRant driver provides pixel history, presentation diagnostics and
-GPU-hang reports. The presentation and GPU-hang sections are about VibeRant D3D, the Direct3D 12
-backend.
+Use VibeRant diagnostics for pixel history, presentation, and GPU hangs. Presentation diagnostics
+and GPU-hang reports here apply to VibeRant D3D, the Direct3D 12 backend.
 
 ## Camera position in screenshots (UWP)
 
-Every screenshot taken in a level also writes one line to the log, in any renderer:
+On UWP, an in-level screenshot logs the camera position with any renderer.
 
 ```
 UWP screenshot camera: ringracers0028.png map=N lt=N renderer=hardware camera=(x,y,z) yaw=Y pitch=P roll=R fov=F sector=N
 ```
 
-The values are those of the last view drawn (the last player's in split-screen), so a screenshot of a rendering
-bug can be drawn again from the same spot on a PC. Unlike `gr_surfaceprobe`, this needs no console, which matters
-when the kart can't be kept still while it is open.
+Use the last drawn view's values (the last player's in split-screen) to reproduce a rendering bug from
+the same spot on a PC. A screenshot needs no console, so it works even when opening the console makes
+it impractical to keep the kart still.
 
 ## Pixel history: `gr_surfaceprobe`
 
@@ -30,27 +29,27 @@ surface probe: end draws=N color_changes=N rows_omitted=N overflow=0
 `raw` is the pixel as a little-endian RGBA8 DWORD. A `sample=` row appears for each draw that changed the
 pixel's color (the first 256), with up to eight `v` rows for polygon and batch draws.
 
-The driver takes its samples as follows:
+The driver samples the pixel during the world pass.
 
-- After each polygon, indexed batch, sky loop, model mesh or color clear, it transitions the screen to
+- After each polygon, indexed batch, sky loop, model mesh, or color clear, it transitions the screen to
   `COPY_SOURCE`, copies the one pixel into slot *i* of a single readback buffer with `CopyTextureRegion`, and
   transitions back. A slot is 512 bytes, the placed-footprint alignment, with a 256-byte row pitch, so
   8,192 slots take a 4 MB buffer.
 - At the end of the world pass it submits (counted as a `readback` submission), waits up to two
   seconds, maps the used slots once, logs, and releases the buffer through `Core_Retire`.
-- While no probe is requested, nothing is copied, allocated or mapped.
+- While no probe is requested, nothing is copied, allocated, or mapped.
 - The requested frame stalls on the GPU. Don't read its timings as a benchmark.
 
 ## Presenting: the swap chain
 
-This section is about UWP (`d3d_present_uwp.cpp`); Windows desktop builds present with `d3d_present_win32.cpp`,
-and VibeRant Vulkan with `vulkan/vk_present.cpp`. On UWP the driver presents with a swap chain of its own on the window, with no ANGLE in between. A CoreWindow takes
+On UWP, VibeRant D3D presents directly on the window with its own swap chain (`d3d_present_uwp.cpp`).
+Windows desktop builds use `d3d_present_win32.cpp`, and VibeRant Vulkan uses `vulkan/vk_present.cpp`.
+A CoreWindow takes
 one swap chain at a time, so the driver takes the window from ANGLE: ANGLE draws to a 1x1 pbuffer, so that it
 lets go of the window's back buffer, and its window surface is destroyed (SDL's `SDL_WinRTReleaseGLSurface`,
 from `uwp/patches/sdl-egl-surface-handoff.patch`). Then each frame is copied into the next of three
 back buffers and presented, with `vid_wait` as the sync interval, and the swap chain's frame latency (2)
-enforced by waiting on its waitable object before the copy. Frames whose aspect ratio isn't the window's are
-letterboxed with black bars. There is nothing to configure.
+enforced by waiting on its waitable object before the copy. Frames whose aspect ratio isn't the window's get black letterbox bars. This needs no configuration.
 
 ### When the window is taken
 
@@ -64,9 +63,8 @@ letterboxed with black bars. There is nothing to configure.
   (`SDL_WinRTRestoreGLSurface`, retried up to three more times 50 ms apart, since DXGI can take a moment to
   release the CoreWindow), and ANGLE's context is made current again.
 
-While the swap chain has the window, ANGLE has no window surface and no context current, so no GL call is
-made; ANGLE's swap interval doesn't matter, as `Present`'s sync interval is the vsync. The calls ANGLE sees are
-the pbuffer, a clear, a flush and the surface hand-off when taking or giving back the window, and a flush of its
+While the swap chain has the window, ANGLE has no window surface and no current context and makes no GL calls. `Present`'s sync interval controls vsync. The calls ANGLE sees are
+the pbuffer, a clear, a flush, and the surface hand-off when taking or giving back the window, and a flush of its
 Direct3D 11 context after the take.
 
 ### Log lines
@@ -93,28 +91,27 @@ waited X ms for the frame latency object; presented with sync interval S (0x...,
 
 ### When taking the window fails
 
-If a step of taking the window fails, the log names it:
+The log names the step that failed during window takeover.
 
 ```
 VibeRant D3D: couldn't take the window from ANGLE (<step> failed: 0x...); VibeRant D3D can't present, so the game falls back to Software
 ```
 
-ANGLE gets the window and its context back, and the driver fails to start (`VibeRant_Init` returns false), so
-the engine's existing handling of a Legacy GL library error switches to the Software renderer. Switching to
+ANGLE gets the window and its context back, and `VibeRant_Init` returns false.
+The engine handles the Legacy GL library error by switching to Software. Switching to
 VibeRant D3D again tries to take the window again. If the take only happens with the first frame (the `-opengl`
 launch above), there is nothing to fall back from, and the game stops with `Direct3D 12 couldn't take the game
 window from ANGLE (<step>)`, naming the same step, and a suggestion to set Renderer to Software.
 
-Two failures later on also stop the game with an error, since there is no other way to show frames: the swap
-chain can't be resized (`Direct3D 12 couldn't resize its swap chain to WxH`), or ANGLE can't have the window back
-even after the retries (`Direct3D 12 couldn't give the game window back to ANGLE`, which asks for a restart).
+The game also stops if it can't show frames after a swap-chain resize fails (`Direct3D 12 couldn't resize its swap chain to WxH`), or if ANGLE can't get the window back
+after the retries (`Direct3D 12 couldn't give the game window back to ANGLE`, which asks for a restart).
 
 The WARP harness stubs presentation and has no ANGLE or window, so no scene covers this.
 
 ## GPU wait timeouts
 
-When the GPU doesn't reach a fence in time (and the device wasn't removed), the driver already logs
-`gave up waiting for <what> ...`. The first such timeout in a run now follows it with
+When the GPU doesn't reach a fence in time (and the device wasn't removed), the driver logs
+`gave up waiting for <what> ...`. The first such timeout in a run also logs DRED breadcrumbs, when available.
 
 ```
 VibeRant D3D: GPU wait for <what> timed out after N ms; breadcrumbs:
@@ -122,14 +119,14 @@ VibeRant D3D: DRED: list '...' on '...' stopped after N of M operations
 ...
 ```
 
-using the same DRED auto-breadcrumb dump as a device removal, so a hang that never removes the device
-still shows which command list and operation the GPU stopped on. Later timeouts log only the stall
-warning. The dump needs DRED, which Xbox may not provide; then nothing extra is logged.
+The driver uses the same DRED auto-breadcrumb dump as for device removal to show where the GPU stopped,
+even if the device survives the hang. Later timeouts log only the stall warning. Without DRED, which
+Xbox may not provide, the first timeout also logs only the warning.
 
 ## Running without a GPU: `-warp` and `-d3ddebug` (desktop builds)
 
-Two startup options exist for running a desktop build where there is no GPU to draw on, such as a CI runner. Neither
-is in any menu, and neither changes anything when it isn't on the command line. UWP builds ignore both.
+Pass these startup options on the command line when running desktop builds without a GPU, such as on CI.
+Neither option appears in a menu. Each takes effect only when passed. UWP builds ignore both.
 
 - `-warp` makes the driver use a software device in place of the first hardware one: Windows' WARP adapter for
   VibeRant D3D (the log says `using WARP for testing`), a CPU Vulkan device (lavapipe) for VibeRant Vulkan. If there is
