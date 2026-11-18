@@ -1,15 +1,13 @@
 # Renderer test map
 
 [D_RenderTest_v1.pk3](D_RenderTest_v1.pk3) is an add-on for Ring Racers
-2.4 with one hidden race map, **Render Test**, that puts the fork's renderer
-features side by side: fog, overlapping water, heat haze, polyobject ripples,
-wall light slices, translucent sorting, brightmaps, a skybox with rain and a
-sprite-textured 3D model. It ships every texture, flat and sprite it uses, so it
-needs no other assets. The map has been loaded on Xbox, but its
-original rooms and effects still need gameplay validation. The parity wing
-was also checked with the local macOS offscreen harness (see below). Offline
-generation checks (see the end) do not establish that every test looks or
-behaves correctly.
+2.4. Use its hidden race map, **Render Test**, to check fog, overlapping water, heat haze, polyobject ripples,
+wall light slices, translucent sorting, brightmaps, a skybox with rain, and a
+sprite-textured 3D model. It ships every texture, flat, and sprite it uses and
+needs no other assets. The map has loaded on Xbox. Its original rooms and
+effects still need gameplay validation. The parity wing was also checked with
+the local macOS offscreen harness. Offline generation checks cannot verify
+that every test looks or behaves correctly.
 
 ## Install and open
 
@@ -35,8 +33,8 @@ behaves correctly.
 4. Open the console and run `cheats on`, then `map RR_RENDERTEST`, or
    `map RR_RENDERTEST -e` for Encore. For the split-screen
    variants, start the game with two local players first. The map has no music
-   and nothing to finish: it is a Race map with no finish line, checkpoint or
-   waypoints, for driving around freely. Loading it prints three errors about
+   and nothing to finish: it is a Race map with no finish line, checkpoint, or
+   waypoints, so you can drive freely. Loading it prints three errors about
    the missing waypoints and finish line, which are expected (see Hall).
 
 The add-on removes AI racers when this map loads and during play, so you can
@@ -46,14 +44,14 @@ are unaffected; restarting this map also keeps it free of bots.
 
 The hall runs west to east. You start at its west end, facing east, in light
 rain. There are three doorways on the left (north) side, west to east: **Fog**,
-**Water**, **Polyobjects**, and three on the right (south): **Light slices**,
-**Transparency**, **Brightmaps**. A doorway in the middle of the east wall, at
+**Water**, and **Polyobjects**. The three on the right (south) are **Light slices**,
+**Transparency**, and **Brightmaps**. A doorway in the middle of the east wall, at
 the far end, leads to the **Sky pit** (see Hall). Item boxes sit near the start
 and far down the hall.
 
-A new **parity wing** leaves the south wall of Brightmaps (between x=576 and
-1088). Follow its corridor east, y=-1920. Numbered coloured wall panels identify
-rooms 1 through 9; 0 marks the entrance/corridor. Rooms 1 to 6 open off the
+The **parity wing** opens off the south wall of Brightmaps (between x=576 and
+1088). Follow its corridor east, y=-1920. Colored wall panels number the rooms 1 through 9 and mark the
+entrance/corridor with 0. Rooms 1 to 6 open off the
 corridor's south wall, room 7 is at its east end, and rooms 8 and 9 open off its
 north wall (east of x=3400). Every room returns to this corridor.
 
@@ -64,15 +62,14 @@ Sprite-textured models, 3D models and mipmaps).* The hall's sky ceiling lets
 **RAIN** fall around you; that rain is expected, and says nothing about the
 skybox. The sky shows the skybox, a separate enclosed room far west of the hall
 that nothing connects to. It is lit at full brightness, with magenta tiled
-walls, a teal checkered floor and four orange glowing orbs, and has a sky
+walls, a teal checkered floor, and four orange glowing orbs, and has a sky
 ceiling of its own, so it rains inside it. The skybox camera hangs in the
-middle of that room at about kart-camera height. It has no centre point, so it
-stays there and only turns as you turn.
+middle of that room at about kart-camera height. With no center point, it
+stays there and turns with you.
 
-The hall's rain falls between you and the sky, so the sky above the hall cannot
-show whether the skybox picture itself contains rain. The **sky pit** can. Drive
-to the **east end** of the hall (straight ahead from the start, about 2400
-units) and through the doorway in the middle of the east wall. It leads into a
+Check the **sky pit** for rain in the skybox image. Rain between you and the
+sky in the hall masks that result. Drive straight ahead from the start about
+2400 units to the east end, then through the middle doorway. It leads into a
 covered area with an ordinary ceiling, so no rain falls there. At its far side,
 a blocked edge (karts cannot cross it, and it is a 32-unit drop) borders the
 pit, a wide shallow sector (1408 units long, 896 wide) whose **floor is sky**
@@ -82,15 +79,15 @@ hall's east end you can also see it through the doorway. Because nothing in the
 pit or the covered area can rain, every raindrop in the sky picture is a
 skybox-rendering failure.
 
-Pass: the pit shows the skybox room (the teal checkered floor, with the magenta
-walls and orange orbs toward the far end of the pit) with no rain streaks in it,
-while rain still falls around your kart in the hall (Legacy GL and VibeRant D3D
-exclude precipitation from skybox views, and Software does too). Fail: rain
-streaks in front of the room's floor or walls in the pit. If the pit instead
-shows the hall, or nothing but a plain sky texture, the skybox is not being
-drawn, and the check tells you nothing.
+The check passes if the pit shows the skybox room without rain streaks while
+rain still falls around your kart in the hall. Look for the teal checkered
+floor, magenta walls, and orange orbs toward the far end of the pit. Legacy GL,
+VibeRant D3D, and Software exclude precipitation from skybox views. Rain
+streaks in front of the room's floor or walls in the pit indicate failure. If
+the pit shows the hall or only a plain sky texture, the skybox is missing and
+the rain check is inconclusive.
 
-The map has no finish line, checkpoint or waypoints, so the round never ends
+The map has no finish line, checkpoint, or waypoints, so the round never ends
 and you can drive anywhere in any order. Without waypoints the engine shows the
 six item boxes from the start (in a race with waypoints it hides them until a
 first checkpoint is crossed), never judges your direction, so the pointing hand
@@ -99,17 +96,15 @@ It also logs three errors each time the map loads, all expected: `No waypoints
 in map.`, `Waypoints were not able to be setup! Player positions will not work
 correctly.` and `No valid finish line beam setup could be found.`
 
-The boxes turn into a plain textured box when `models.dat` is installed: a 3D
-model that borrows its sprite
-for a texture, so it also checks the sprite-patch preparation and the mipmaps
-at near and far range. Without the files they stay the usual sprites. Toggle
-**Models**.
+Toggle **Models** and check sprite-patch preparation and mipmaps at near and
+far range. With `models.dat` installed, the plain 3D box uses the sprite as its
+texture. Without the files, the boxes stay sprites.
 
-**Fog** *(Fog).* Two fog blocks, red then blue, each cover two thirds of the
-room and overlap in the middle third, 0 to 128 units high, with pillars to see
-through them. Look at it from the doorway, then walk in and through all three
-parts, with **Shaders** On and Off. Software is the reference; the Shaders Off
-path is the older approximation.
+**Fog** *(Fog).* Compare **Shaders** On and Off from the doorway and through
+all three parts of the room. Software is the reference. Shaders Off uses the
+older approximation. The red and blue fog blocks each cover two thirds of
+the room, overlap in the middle third, and span 0 to 128 units in height.
+Use the pillars to see through the fog.
 
 **Water** *(Water (overlapping volumes); Underwater and heat distortion).* The
 chamber is 768 units wide and 4,096 units long, with a 1,536-unit-long flat pool
@@ -122,8 +117,8 @@ the hall and ledge; you can drive back along the same route.
 
 The main translucent rippled water spans both ramps and the pool. A smaller
 volume of a different tint overlaps it in the east corner, with its surface at
-48 over the same flat floor at -512. Three raised blocks rise out of the pool, and a
-translucent wall crosses its deep section. Check that the refraction shows
+48 over the same flat floor at -512. Three raised blocks protrude from the pool, and
+a translucent wall crosses its deep section. Check that the refraction shows
 submerged geometry, that no extra boundary shows where one volume lies inside
 the other, and the underwater distortion once your camera is in the water.
 **Reduce Effects** On turns both distortions and the refraction off.
@@ -136,8 +131,8 @@ it from above: its top face should ripple, and the opaque block's should not.
 the polyobject's first line, which is where the engine reads them.
 
 **Light slices** *(Wall light slices).* A 512-unit room, taller than the others,
-with three invisible light blocks (white, orange and blue, at 64 to 96, 192 to
-224 and 320 to 352) that cut the tall walls into lit and dim bands, and a
+with three invisible light blocks (white, orange, and blue, at 64 to 96, 192 to
+224, and 320 to 352) that cut the tall walls into lit and dim bands, and a
 translucent platform at 128 to 160 with its own light level. Look for clean
 bands with no inverted or missing slices, and for sprites and the platform
 taking the bands. Split-screen is the case that remains untested.
@@ -145,15 +140,15 @@ taking the bands. Split-screen is the case that remains untested.
 **Transparency** *(transparency ordering; **not** Fill transparency).*
 Three stacked translucent solids on a platform (translucent, additive,
 subtractive), two translucent walls across the room, and six translucent
-sprites in front of, behind and between them, plus two item boxes (model
+sprites in front of, behind, and between them, plus two item boxes (model
 included). Look from several angles: the hardware renderers should order
-sprites, models and planes correctly, with none popping in front of or behind
+sprites, models, and planes correctly, with none popping in front of or behind
 the wrong plane, as Software does. Fill transparency (HUD fills) is not
 covered here.
 
 **Brightmaps** *(Brightmaps).* A dim blue room (light level 32) whose walls are
 all one sign texture with a bright glyph band, and four dark orbs with a glowing
-core and ring. The glyphs, core and ring should stay full-bright, untinted by
+core and ring. The glyphs, core, and ring should stay full-bright, untinted by
 the room's blue, and the rest of each surface should be dark. Compare **Palette
 Rendering** On and Off, and Encore, where the texel remap should persist on the
 brightmapped pixels: in Encore the sign's yellow glyphs turn cyan and its cyan
@@ -170,33 +165,30 @@ should show that texture over the checks. Software is **not a reference for
 this line style**: at this pose its fog opening shows untreated checks, while
 the ordinary window shows the red-tinted diagonal texture. `R_CheckBlendMode`
 in `r_segs.cpp` assigns world floor/ceiling heights to screen clipping bounds;
-its inconsistent fog result changes with the view. This was rendered, not
-inferred from the desired hardware result.
+its inconsistent fog result changes with the view. The Software result was rendered.
 
 **2: Fullbright sprite fading** *(CHANGES: `colormapfadesprites`).* Two
 long blue rooms, west x=2560..3200 and east x=3328..3968, y=-2048..-5632. The
 west room sets `colormapfadesprites`; the east does not. Both have seven tall
 fullbright striped posts and a light block between z=80 and 96. Look south
 along a row from (2640, -2160, 120), or (3408, -2160, 120) in the east room,
-keeping off the centre so the nearest post does not hide the others.
+keeping off the center so the nearest post does not hide the others.
 Software darkens the **lower pieces** of the west posts with distance below
 the light-list boundary; all pieces in the east stay bright. The upper west
 pieces also stay bright: upstream Software only tests this flag in
 `R_SplitSprite`, and `R_DrawVisSprite` excludes fullbright sprites from the
-extra-colormap tint. Thus the lower pieces darken rather than becoming blue
-like the walls; expecting the entire sprite to fade blue would be wrong.
+extra-colormap tint. The lower pieces darken without taking on the walls' blue tint.
 VibeRant should reproduce this split-piece reference. On the pre-sprite-fix
 hardware build both rows stayed fully bright, even below the boundary.
 
 **3: Shadow-drawn sprites** *(CHANGES: `RF_SHADOWDRAW` sprites).* Yellow panels, x=4096..5120,
-y=-2048..-3072. The near pair is on flat ground; the far pair is on a ramp
+y=-2048..-3072. The near pair is on flat ground. The far pair is on a ramp
 rising from 0 to 128. In each pair the west/right striped post has
 `RF_SHADOWDRAW`, the east/left post does not. Look south from
 (4608, -1940, 220), pitch -10, or drive in and look down. Software draws the
-flagged posts as flat little ground shapes, as wide as the upright posts and
+flagged posts flat on the ground, as wide as the upright posts and
 as tall as the object's 48-unit radius and the camera's height make them,
-beside the tall 192-unit reference posts. The ramp version
-also takes the slope. Lua calls `P_TryMove` at the same position after settling
+beside the tall 192-unit reference posts. The ramp version follows the slope. Lua calls `P_TryMove` at the same position after settling
 the object on its floor: `p_map.c` assigns `standingslope` on that successful
 grounded move, even for static scenery. VibeRant should match; the supplied
 hardware build leaves all four upright.
@@ -240,7 +232,7 @@ green silhouette are expected instead of Municipal Meadow's sky artwork.
 
 **7: View-width ruler** *(CHANGES: Two-player view width).* At the east
 end of the corridor, take the passage south (x=9216..9472) to the large ruler
-room, x=4352..9472, y=-5888..-8448. Centre the camera above the numbered 7 floor
+room, x=4352..9472, y=-5888..-8448. Center the camera above the numbered 7 floor
 spot at **(6912, -7424)** and face exactly south (yaw 270, pitch 0), with
 `fov 100`, stationary and without a speed FOV effect. The wall is **1024 units**
 away; its **40 bands are 128 units wide**, numbered 0..39 from west to east.
@@ -263,14 +255,13 @@ z=100 works.
 sprite brightness by distance).* Two bays open off the corridor's north wall,
 each 768 wide and 1280 deep, 128 apart: bay A at x=3456..4224 with sector light
 128, bay B at x=4352..5120 with sector light 96 (y=-1792..-512 in both; no
-colormaps). Each holds nine striped posts in three rows (1024, 640 and 256
-units from the corridor, so y=-768, -1152 and -1536) and three columns, 128, 384
+colormaps). Each holds nine striped posts in three rows (1024, 640, and 256
+units from the corridor, so y=-768, -1152, and -1536) and three columns, 128, 384,
 and 640 units from the bay's west wall. The west column is lit like an ordinary
 sprite, the middle column is semibright (`RF_SEMIBRIGHT`), and the east column
 is fullbright. Look at bay A from (3736, -2000, 100) and at bay B from
 (4632, -2000, 100), both facing north turned 10 degrees east (yaw 80). The near
-posts hide parts of the far ones from there; walk in and move sideways to see
-the rest.
+posts hide parts of the far ones from there. Walk in and move sideways to see the rest.
 
 In bay A the east posts are fullbright. The middle (semibright) posts should be
 about half as bright, and the west (ordinary) posts clearly darker again, in all
@@ -322,9 +313,8 @@ outside but unchanged from inside, and the fog rooms keep their red and blue.
 | Palette Rendering | `gr_paletterendering` |
 | Models | `gr_models` |
 
-To switch renderer quickly, bind a key in the console:
-`bind f5 "add renderer 1"` toggles between Software and VibeRant D3D (confirmed
-on Xbox). Binds aren't saved in the config, so to keep it, put that line in
+Run `bind f5 "add renderer 1"` in the console to toggle between Software and
+VibeRant D3D (confirmed on Xbox). Binds aren't saved in the config, so to keep it, put that line in
 `ringexec.cfg` in the home folder (`E:\ringracers\ringracers\ringexec.cfg`),
 which the game runs at every launch. Binds don't fire while a menu or the
 console is open.
@@ -332,7 +322,7 @@ console is open.
 ## Build and validation
 
 `build.py` generates the UDMF map, every
-texture, flat and sprite as PNG (except the sign's brightmap, a Doom patch; see
+texture, flat, and sprite as PNG (except the sign's brightmap, a Doom patch; see
 below), the SOC level header, the `BRIGHT` and
 `SPRTINFO` lumps, and the model files, and packages the map-local scripts
 [`quiet.lua`](quiet.lua) (bot removal) and [`scenery.lua`](scenery.lua) (see
@@ -352,10 +342,10 @@ validates the committed files. The one exception is the map's `ZNODES`, which
 node builds on different machines may order differently, so it is validated
 instead. `--validate` (also run by the others, and needing no ZDBSP) re-parses
 the TEXTMAP and checks what the engine requires: the namespace and version
-first, valid vertex, line and sidedef references, closed sector boundaries with
+first, valid vertex, line, and sidedef references, closed sector boundaries with
 no lines crossing or touching mid-line, 3D-floor specials aimed at sectors that
 exist, polyobject loops with their anchor and spawn things, four player starts
-and no waypoint, checkpoint or finish line, every texture shipped, the skybox
+and no waypoint, checkpoint, or finish line, every texture shipped, the skybox
 viewpoint inside a sector with a sky
 ceiling, the sky pit's sky floors under non-sky ceilings with every line into
 them blocking karts, and in the nodes the original vertex count, seg line
@@ -368,7 +358,7 @@ colormap, matching fade-room/control colormaps with sprite-cutting light
 blocks, all eight scenery variants (0 to 7, with `scenery.lua` making variant 6
 ordinary-lit and variant 7 semibright), the darkness pad's tag matching Lua,
 room 8's two bays (light 128 and 96, no colormap, nine posts each, in rows of
-ordinary, semibright and fullbright), the two zero-height two-sky sectors
+ordinary, semibright, and fullbright), the two zero-height two-sky sectors
 (rooms 6 and 9) and their blocked `midpeg` edges, room 9's three tree-line
 edges (all two-sided, blocking, `midpeg`, RTTREE, with sky ceilings at 224 or
 the zero-height sky sector behind, and RTTREE's tips above 224), all forty ruler
@@ -418,9 +408,9 @@ How the map is built for the engine:
   room showed large dark trees where the orbs belong. The numbers can't be
   checked against the game's assets, so `scenery.lua` handles the collision.
   When Render Test loads, after the engine has spawned the map's things, it
-  finds each thing numbered 3900, 3901 or 3902 whose object isn't the add-on's,
+  finds each thing numbered 3900, 3901, or 3902 whose object isn't the add-on's,
   removes that object, if any, and spawns the add-on's object at the thing's
-  position (the floor under it plus its height), angle and scale. If it replaced
+  position (the floor under it plus its height), angle, and scale. If it replaced
   anything, it prints one console line naming each number, the object that had
   taken it and how many things it replaced, for example `Render Test: the game
   uses the add-on's editor numbers; spawned the add-on's own objects instead:
@@ -437,9 +427,9 @@ two sprites (`RBOX`, the ring box, and `RNDM`, the random item) at scale 2.0.
 Raise or lower that scale if the box looks too small or large.
 
 The offline checks do not verify the effects in gameplay. In particular the
-SOC, `BRIGHT` and `SPRTINFO` text and the polyobject rotation trigger (crossing
-the doorway line) still need gameplay validation; their definitions were checked
-against the engine source.
+SOC, `BRIGHT`, and `SPRTINFO` text and the polyobject rotation trigger (crossing
+the doorway line) still need gameplay validation. Their definitions were checked against the
+engine source.
 
 Parity rooms 1 to 7 were rendered in Software and in the UWP hardware paths
 using the local invisible-window macOS harness, with the `sw-parity-walls`
@@ -447,8 +437,8 @@ binary (walls fixes present, sprite/view fixes absent). The observations above
 for those rooms refer to that build. Rooms 8 and 9 were added later and
 rendered in Software with the same harness, and room 9 also in the hardware
 path with its fix. Room 8's hardware expectation rests on the VibeRant
-shader, which the harness doesn't run. The pad/command were also exercised with a temporary
-harness-only Lua probe; this add-on ships no probe or forced camera logic.
+shader, which the harness doesn't run. A temporary harness-only Lua probe also exercised the pad and command. The
+add-on ships no probe or forced camera logic.
 The harness loads the map with `-warp RR_RENDERTEST -file
 /path/to/D_RenderTest_v1.pk3`; its first argument is `RR_RENDERTEST`, not MAP01.
 For the ruler, append `-splitscreen 2` to start two local players. Harness
