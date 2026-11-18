@@ -2,7 +2,7 @@
 
 VibeRant packs small, clamped RGBA8 uploads into shared 2048×2048 pages instead
 of creating a resource for every translated sprite frame. On Xbox One X at
-31af14d, resource creation cost roughly 1.3–1.8 ms per texture; cycling rainbow
+31af14d, resource creation cost roughly 1.3–1.8 ms per texture. Cycling rainbow
 translations created 300–1000 textures per five seconds. Sharing pages removes
 those resource creations after pages have enough reusable space.
 
@@ -20,25 +20,25 @@ Allocation failure also falls back to standalone storage.
 Each page has 16-pixel shelf height classes and four-pixel width granularity.
 Freed intervals coalesce after the pending GPU fence completes. Once all its
 rectangles retire, a page discards its shelves, allowing different height classes.
-A page whose rectangles have all retired is released, except one kept for the
-next upload: a long level can fill dozens of pages with sprite translations,
-which the level change then empties. Views name their page by index, so a
-released page's slot is filled again before the list grows.
+The driver keeps one empty page for the next upload and releases the rest. A
+long level can fill dozens of pages with sprite translations that empty at the
+level change. Views reference pages by index, so the driver reuses released
+slots before growing the list.
 A same-size eligible reupload keeps its rectangle. Uploads use the staging ring,
-region copies, and page-wide transitions; page resource state is tracked centrally.
+region copies, and page-wide transitions. The driver tracks state per page.
 
 Built-in shaders transform each texture unit's UV independently, then clamp to
 the rectangle's texel centers. This preserves point and bilinear CLAMP behavior
-without gutters. A texture of its own gets zero constants, which the shaders
-read as no transform; that is also what fullscreen passes see, since they bind a
-zeroed b0 while sampling screen textures. Screen-only integer Load operations stay unchanged. The appended C++ constants
-and HLSL float4 arrays match, retaining the old constants' offsets and fitting the
-existing 512-byte draw allocation. Vulkan already honors region copy offsets.
+without gutters. Zero constants tell shaders to skip the transform for standalone textures.
+Fullscreen passes bind a zeroed b0 while sampling screen textures. Screen-only
+integer Load operations stay unchanged. The appended C++ constants match the
+HLSL float4 arrays, keep the old offsets, and fit the existing 512-byte draw
+allocation. Vulkan already honors region copy offsets.
 
 The `VibeRant perf: atlas:` line reports live views, retained pages, occupied shelf
-area (including fence-pending frees), period placements, frees, and released
-pages, and standalone admission reasons. `textures: ... created` still counts actual GPU resources,
-including pages, rather than atlas views. Page memory is counted once. Only the
+area (including fence-pending frees), placements, frees, and page releases for the period, plus standalone admission
+reasons. `textures: ... created` counts only GPU resources, including pages.
+The driver counts each page's memory once. Only the
 UWP build logs these lines.
 
 `viberant_texture_atlas` tests allocation, rounding, full pages, deferred reuse,
@@ -67,16 +67,15 @@ also had zero messages. All 40 runs of the main sweep exited normally.
 
 Aerial Highlands logged 604 atlas textures in three pages at 89.0% occupancy.
 One warm five-second period placed 234 views with 34 resource creations; another
-placed 42 with eight creations. The Off run instead logged periods with 337 and
-64 resource creations. These are wall-clock windows, not synchronized benchmark
-intervals, and are evidence of resource sharing rather than an Xbox FPS claim.
+placed 42 with eight creations. The Off run logged periods with 337 and 64 resource creations. These
+unsynchronized wall-clock windows show resource sharing and do not measure
+Xbox FPS.
 
-**Precision limitation:** the normalized-page transform has rare rounding
-changes. Nearest differences are isolated texel selections. Bilinear also has
+The normalized-page transform rarely changes rounding. Nearest differences are isolated texel selections. Bilinear also has
 small color-rounding differences (mostly one channel level, up to 25 levels
 in these captures), so it does not strictly meet a point-sampling-only exception
-to pixel identity. This implementation follows the normalized transform design;
-bit-identical bilinear results would require further sampling work.
+to pixel identity. Bit-identical bilinear results would require further sampling work with this
+normalized transform design.
 
 ## Xbox result (2026-11-15)
 
@@ -91,14 +90,14 @@ session at 31af14d (7 maps, 232 windows):
 | Windows below 50 frames per second | 56% | 37% |
 | Windows below 40 frames per second | 40% | 20% |
 
-The sessions differ in maps and player counts, so the frame rates are not a
-controlled comparison; the resource creations are the direct measure. A window
+Resource creations are the direct measure. The different maps and player counts
+make the frame-rate comparison uncontrolled. A window
 placed 97 textures in pages at the median and 2,347 at most. The textures left
 standalone were wrapped ones (8,593 over the session) and ones over the size
 limit (1,561). The player reported no visual problems.
 
 A level kept every translation it had drawn until the level change, up to
 9,826 textures in 35 pages at 97% occupancy, and b04dbef never released a
-page: the session ended with 35 pages (560 MB) holding about 130 textures.
+page. The session ended with 35 pages (560 MB) holding about 130 textures.
 Empty pages are released since the following commit, which this session did
 not test.
