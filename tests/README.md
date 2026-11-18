@@ -49,9 +49,9 @@ compiled without it (below).
 
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
-builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop`, `front_bbox_desktop` and `semibright_light_desktop`.
+builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop`, `front_bbox_desktop`, and `semibright_light_desktop`.
 Driver selection at run time also has `_both` variants: `transparency_both`, `front_bbox_both`,
-`semibright_light_both`, `sky_claim_both` and `horizon_cache_both`.
+`semibright_light_both`, `sky_claim_both`, and `horizon_cache_both`.
 Where the preprocessed code is identical, one executable tests every runtime
 setting (for example, both renderers).
 
@@ -215,7 +215,7 @@ Use the CTest filter under Running to select the cases below by name.
   desktop build) execute the production `M_RefreshAdvancedVideoOptions` with the
   production `vaopt_e` for every renderer setting the build has, while Software, Legacy
   GL, or a VibeRant renderer runs. The lines above the Renderer row must describe the
-  renderer the setting names, and with Software, which names none, the VibeRant renderer
+  renderer the setting names, and with Software, which names no hardware renderer, the VibeRant renderer
   the build lists first: never VibeRant D3D in a build without it, which is what a Linux
   or macOS build said. The options heading must name the renderer that runs. Menu drawing
   is not covered.
@@ -243,7 +243,7 @@ Use the CTest filter under Running to select the cases below by name.
   reports submitted shader/CPU rolled sprites and geometry computations.
   Windows WARP's `roll-sprite` scene compares every target pixel with a CPU
   inverse-mapped patch uploaded through the ordinary masked path, including a
-  brightmap, both flips, an off-centre pivot and 5/45/90/135/265/355-degree angles.
+  brightmap, both flips, an off-center pivot, and 5/45/90/135/265/355-degree angles.
   WARP, Xbox visuals and the performance improvement must be checked on Windows
   and the device; native tests do not measure those.
 
@@ -261,7 +261,7 @@ Use the CTest filter under Running to select the cases below by name.
   and `P_CalcPostImg` with real engine headers, plus chase water/heat helpers.
   Check heat, water, no distortion and water priority with and without Encore,
   independent mirroring, first-person gravity flip, FOF bounds/eligibility
-  (including views below, at and above a heat FOF), awayview selection (with the
+  (including views below, at, and above a heat FOF), awayview selection (with the
   awayview object and the player's own eyes on opposite sides of the water, so the
   awayview height is checked in first person and chase), matching split views and
   untouched unrelated views.
@@ -319,7 +319,7 @@ Use the CTest filter under Running to select the cases below by name.
   cleaner and shader selection with translation, shader compilation and pipeline
   creation stubbed. With no add-on loaded nothing is translated or created and
   the built-ins are selected. A fragment-only replacement gets the real built-in
-  vertex stage for the polygon, sky and model layouts and is selected per layout;
+  vertex stage for the polygon, sky, and model layouts and is selected per layout;
   recompiling without a change translates nothing. A replacement that fails to
   translate, to compile either stage on any one layout, or to create a pipeline
   on any one layout is discarded whole, with its pipelines, leaving the built-ins
@@ -371,7 +371,7 @@ Use the CTest filter under Running to select the cases below by name.
   lighting, preserved UVs and no outside geometry, with the light plane evaluated
   in double precision from the slope's own origin, direction and gradient rather
   than by the engine's `P_GetLightZAt`; every submitted piece must have height; draw stubs check opaque/queued/fog
-  dispatch, texture IDs, colormaps and alpha. These tests verify submitted
+  dispatch, texture IDs, colormaps, and alpha. These tests verify submitted
   geometry, not Xbox visuals or performance.
 - **First-person view after the finish:** `first_person_angle` runs the extracted
   `P_FirstPersonFollowKart` and full `P_RunChaseCameras` loop. First-person
@@ -456,7 +456,7 @@ Use the CTest filter under Running to select the cases below by name.
   put the title camera outside its map). Check eight undrawn tics, resets on and
   after the last update's tic, plain interpolation, one view's reset leaving the
   others interpolating, and the sky view. The pre-fix implementation fails the
-  undrawn-tics case. The clock, BSP lookup and freelook setup are stubs; this is
+  undrawn-tics case. The clock, BSP lookup, and freelook setup are stubs; this is
   render-only state, and the Xbox title screen after EXIT GAME is untested.
 - **Wipe math:** translate the production `PSWipeFull` HLSL function to native
   Clang vector arithmetic, with CPU texture sampling stubs. Compare against an
@@ -467,10 +467,10 @@ Use the CTest filter under Running to select the cases below by name.
 - **Fill transparency:** execute production `V_DrawFill`, HUD alpha resolution,
   coordinate snapping and `HWR_DrawFill`. The test compares
   2,968 Software/Legacy GL cases across explicit alpha levels, all three HUD alpha
-  flavors, HUD settings/fades, slide overrides and split-view layouts. The actual
+  flavors, HUD settings/fades, slide overrides, and split-view layouts. The actual
   fully faded Watching underline must submit no quad. Check partial alpha and
   blend flags, opaque geometry/colors, no-scale rectangles, opaque fullscreen
-  clears and translucent fullscreen coverage at 320×200, 1280×720 and 853×480;
+  clears and translucent fullscreen coverage at 320×200, 1280×720, and 853×480;
   six direct hardware calls with fully transparent/unsupported alpha levels must
   return safely. Replacing either fill implementation with the pre-fix version
   fails the parity checks. Recording stubs stop at the Software quad and hardware
@@ -485,7 +485,16 @@ Use the CTest filter under Running to select the cases below by name.
   submitted shader, blend flags, alpha, and translated polygon geometry; invalid
   polygons must submit no draw. Replacing either changed renderer function with
   its pre-feature implementation fails the corresponding behavior assertion.
-- **Underwater/heat distortion:** production postprocess dispatch, D3D fullscreen vertices and pixel-shader sampling. Compare more than 14 million UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl` fixture, including full-frame wave amplitude, tic timing (heat is swept every 7 tics to tic 2100 so both of its waves are active on some rows), paused frames, texture padding, viewport edges and all screen layouts at nine resolutions. Check viewport selection/reset, intermission captures, Reduce VFX suppression and unaffected views. The fixture comes from release `data/shaders.pk3` (GPLv2, as the engine); it is the independent Software reference. GPU shader compilation is covered by Windows CI.
+- **Underwater/heat distortion:** check production postprocess dispatch, D3D
+  fullscreen vertices, and pixel-shader sampling. Compare more than 14 million
+  UV samples against the unmodified vanilla 2.4 `rhi_glsl_fragment_postimg.glsl`
+  fixture. Cover full-frame wave amplitude, tic timing, paused frames, texture
+  padding, viewport edges, and all screen layouts at nine resolutions. Sweep
+  heat every 7 tics to tic 2100 so both waves are active on some rows. Check
+  viewport selection/reset, intermission captures, Reduce VFX suppression, and
+  unaffected views. The independent Software reference comes from release
+  `data/shaders.pk3` (GPLv2, as the engine). Windows CI covers GPU shader
+  compilation.
 - **Transparency ordering:** extract the production node builder, object pass,
   model/sprite dispatcher, linkdraw gating, shared sprite geometry, view transform,
   and slope helpers. Each UWP/desktop executable checks 220 scenes and cases,
@@ -525,7 +534,7 @@ Use the CTest filter under Running to select the cases below by name.
   checks stay in `fog_boundaries`. `fog_capture_viberant` checks capture copies,
   failure, resizing, bindings and constants against literal expected boxes (including fractional vertices, which
   pin the floor/ceil edge rounding) and literal constant bytes for each viewport,
-  poly flag, light level and view width. Wall-slice tests reject directional light
+  poly flag, light level, and view width. Wall-slice tests reject directional light
   adjustment on fog. Windows WARP executes the shipped SM5.1 path and rejects
   a reciprocal-depth fog shader with the `fog-palette` oracle. Complete fog
   volumes, overlapping visuals and Xbox performance still need device testing.
@@ -535,7 +544,7 @@ Use the CTest filter under Running to select the cases below by name.
   It checks the driver's surface classification and viewport light ratio.
   Sprites and walls in dim sectors were darker than Software's, found comparing
   Xbox screenshots of the renderer test map. WARP's `surface-light` scene reads
-  distinct row colors for a plane, wall and sprite at the same known depth.
+  distinct row colors for a plane, wall, and sprite at the same known depth.
   Semibright sprites get the same checks. Software keeps the sector's light for them and squeezes the
   distance into the nearer half of its table; Legacy GL had raised the light level instead, which
   is far brighter in a dim sector (light 64: rows 0 to 6 against Software's 22 to 31). With
@@ -544,7 +553,7 @@ Use the CTest filter under Running to select the cases below by name.
   light levels, the same distances and both view widths, and a few literal rows pin the numbers
   (light 160 at 200.125: plain row 10, semibright row 4). The driver lines that strip
   `HWR_LIGHT_SEMIBRIGHT` from the light level and choose `lightPlane` 2 are extracted too: only a
-  wall, sprite or model with the bit gets 2, and planes, water and fog keep 1 even with it set.
+  wall, sprite, or model with the bit gets 2, and planes, water, and fog keep 1 even with it set.
   `semibright_light_uwp` and `semibright_light_desktop` extract `HWR_SemiBrightLight`, `HWR_UseShader`,
   `R_ThingIsSemiBright` and the end of `HWR_ObjectLightLevelPost`. With the VibeRant driver and shaders the
   level is left alone and only the bit is added (level 0 to 255 kept); without shaders, and in the
@@ -554,8 +563,57 @@ Use the CTest filter under Running to select the cases below by name.
   and a renderer to run: `HWR_SplitSprite` (both pieces), `HWR_DrawSprite` and `HWR_DrawModel` call it right after each
   `HWR_Lighting`, and `HWR_DrawPrecipitationSprite` and `HWR_DrawDropShadow` do not. WARP's
   `surface-light-semibright` scene draws a semibright sprite at that depth and expects row 4.
-- **Batch sort keys:** extract the production batching code from `hw_batching.c` (the sort-key struct, key builder, comparator, collection and the `HWR_RenderBatches` draw loop, with a recording driver) and check the Legacy GL batch order: skywalls and horizon lines first in submission order, then shader, texture, brightmap, polyflags, colors and light fields (including colors above and below `0x80000000`), identical states in submission order, and the shaderless order. It checks `PF_BeforeSky`, the flag of a masked wall texture between two sky-ceilinged (or two sky-floored) sectors. Software shows that texture against the sky, but in hardware the invisible sky polygons, which batching draws first, wrote depth over the part of the texture above the nearer sky ceiling and cut it off flat (found on the renderer test map). Flagged polygons must sort before the untextured group and before every ordinary textured polygon, with and without shaders and in every submission order. Among themselves they keep the normal order (texture, brightmap, polyflags, colors, light, submission index; the shader no longer takes part). The order of all other polygons, the untextured group above all, is unchanged by flagged polygons. A polygon that is both untextured and flagged stays in the untextured group. The draw loop test submits a flagged wall, a sky occluder and an ordinary wall in all six orders, and a larger scene, and checks the draw calls come out flagged wall, occluder, ordinary wall, and that an unflagged wall is still drawn after the occluder. These fail if the key builder stops giving flagged polygons their own group. Run with `ctest -R '^batch_sort_keys'`.
-- **Sprite brightmaps:** execute the shared Software brightmap lookup, real patch converters/pixel reader, production sprite rotation and companion cache, patch destruction, hardware sprite/precipitation admission, draw texture-selection blocks, mipmap loaders, batch replay and Direct3D texture binding. The original 13 admission cases cover frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2, unknown-frame fallback, missing names, absent maps and independent width/height mismatches. Rotation checks cover 852 transforms: all 71 nonzero angles, horizontal flips, two asymmetric source shapes, explicit/default/implicit noncentral pivots, differing source/map header offsets, asymmetric holes, different opaque bounds and fully transparent maps. An independent coordinate oracle checks 2,925,912 pixels in both vertical orientations; a pinned v2.4 raster snapshot checks that base/Software pixels and headers stay identical. Shared brightmaps across distinct base offsets/pivots must not alias; cached lookups must allocate nothing. Rotated-patch purge/rebuild, source-only tag purge and 144 dynamic brightmap reloads exercise real patch cleanup and check stable live allocation counts and released GPU cache entries. Ordinary and light-split paths bind rotated pairs with Batching on/off (72 cases), alongside 3,408 production horizontal/vertical UV orientations, the existing eight ordinary/precipitation path/mode transitions and resident-data upload check. For every rotated case the coordinate oracle must also reject a missing map, a blank map of the right size and the right map moved one pixel in each direction (the previous dropped-map behavior and a one-pixel transform error), so it cannot go blind unnoticed. Zone allocation/WAD lookup, color translation and GPU allocation/upload are dependency mocks; rotation/conversion/cache/destruction and extracted projection/binding blocks are production code. Vertical orientation checks execute production texture-coordinate assignment and compare shared pixel coordinates, without running full billboard geometry or GPU rasterization. These tests do not validate Xbox visuals. Run with `ctest -R '^sprite_brightmap'`.
+- **Batch sort keys:** run `ctest -R '^batch_sort_keys'` to check Legacy GL
+  batch order and `PF_BeforeSky`. The test extracts the production sort-key
+  struct, key builder, comparator, collection, and `HWR_RenderBatches` draw loop
+  from `hw_batching.c`, with a recording driver. Skywalls and horizon lines sort
+  first in submission order, then shader, texture, brightmap, polyflags, colors,
+  and light fields (including colors above and below `0x80000000`). The test
+  checks submission order for identical states and the shaderless order.
+  `PF_BeforeSky` marks a masked wall texture between two sky-ceilinged or two
+  sky-floored sectors. Software shows it against the sky. Hardware drew the
+  invisible sky polygons first, writing depth over the texture above the nearer
+  sky ceiling and cutting it off flat on the renderer test map. With and without
+  shaders and in every submission order, flagged polygons must sort before the
+  untextured group and every ordinary textured polygon. Flagged polygons keep
+  their normal relative order by texture, brightmap, polyflags, colors, light,
+  and submission index. The shader no longer affects that order. All other
+  polygons keep their order, especially the untextured group, which still holds
+  any untextured polygon with the flag. The draw loop submits a flagged wall, a
+  sky occluder, and an ordinary wall in all six orders, and also checks a larger
+  scene. The calls must draw the flagged wall, occluder, and ordinary wall in
+  that order. An unflagged wall must still draw after the occluder. The checks
+  fail if the key builder drops the flagged group.
+- **Sprite brightmaps:** run `ctest -R '^sprite_brightmap'` to check brightmap
+  admission, rotation, cache lifetime, and binding. The test runs the shared
+  Software lookup, real patch converters and pixel reader, production sprite
+  rotation and companion cache, patch destruction, hardware sprite and
+  precipitation admission, draw texture selection, mipmap loaders, batch replay,
+  and Direct3D texture binding. The original 13 admission cases cover
+  frame/default names (including Ark Arrow `SYM0` / `SYMBXXB`), skin sprite2,
+  unknown-frame fallback, missing names, absent maps, and independent width and
+  height mismatches. The 852 transforms cover all 71 nonzero angles, horizontal
+  flips, two asymmetric source shapes, explicit/default/implicit noncentral
+  pivots, differing source and map header offsets, asymmetric holes, different
+  opaque bounds, and fully transparent maps. An independent coordinate oracle
+  checks 2,925,912 pixels in both vertical orientations. A pinned v2.4 raster
+  snapshot checks that base/Software pixels and headers stay identical. Shared
+  brightmaps at distinct base offsets or pivots must never alias, and cached
+  lookups must allocate nothing. Rotated-patch purge and rebuild, source-only
+  tag purge, and 144 dynamic brightmap reloads exercise real patch cleanup and
+  check stable live allocation counts and released GPU cache entries. Ordinary
+  and light-split paths bind rotated pairs with Batching on and off (72 cases).
+  The test also checks 3,408 production horizontal/vertical UV orientations,
+  the existing eight ordinary/precipitation path and mode transitions, and
+  resident-data upload. For every rotated case, the oracle must reject a missing
+  map, a blank map of the right size, and the right map moved one pixel in each
+  direction (the previous dropped-map behavior and a one-pixel transform error).
+  Zone allocation and WAD lookup, color translation, and GPU allocation and
+  upload are mocked. Rotation, conversion, cache, destruction, and the
+  extracted projection and binding blocks are production code. Vertical
+  orientation checks run production texture-coordinate assignment and compare
+  shared pixel coordinates without full billboard geometry or GPU rasterization.
+  Xbox visuals remain untested.
 - **Encore brightmap colors:** run production sprite colormap selection, Software
   full-bright selection, mapped-cache lookup/update, column conversion and light-table
   conversion. Check 12,288 combinations covering all 256 indices, 1/2/3/4-byte
@@ -709,11 +767,11 @@ Use the CTest filter under Running to select the cases below by name.
 repack used for the palette lookup table is checked for row pitch, slice order and
 untouched padding.
 - **Screen Scaling placement:** `screen_scaling` compiles the production `src/screen_scaling.hpp`, which both renderers
-  use to place the frame, under ASan and UBSan with no GPU or engine. Check Fit, Integer at exact fits and k of 1, 2, 3 and 5
+  use to place the frame, under ASan and UBSan with no GPU or engine. Check Fit, Integer at exact fits and k of 1, 2, 3, and 5
   (limited by the width or the height), odd remainders (the extra pixel is at the right and the bottom), wider and taller
   screens, 1:1, and the fallbacks to Fit when the frame is larger than the screen in either dimension, for an unlisted mode
   and for sizes that are not positive. A sweep of 9 frame sizes over about 12,000 screens checks the rectangle,
-  centering, maximal k and the fallbacks. `FitRect`, the rectangle a renderer that draws Fit itself (the desktop
+  centering, maximal k, and the fallbacks. `FitRect`, the rectangle a renderer that draws Fit itself (the desktop
   Direct3D 12 presenter) uses, is checked the same way: wider and taller screens, exact fits, a frame larger than the
   screen, odd remainders, the side that is rounded down, a side held at 1, the sizes that are not positive (which give
   what `Compute` gives), and a sweep of 10 frame sizes over the same screens that checks it spans the screen along one
@@ -737,21 +795,21 @@ untouched padding.
   copy of a game data file in the app's internal storage can be loaded instead of the file on the USB drive, under ASan and
   UBSan with no engine. Check the one-line sidecar's round trip (including an empty file, the largest size and times, and a
   file with no expected MD5), and that other magic or versions, missing fields, signs, overflowing numbers, uppercase or
-  short MD5s, extra lines, trailing text, embedded NULs and every truncation are rejected. Check the usability decision: a
+  short MD5s, extra lines, trailing text, embedded NULs, and every truncation are rejected. Check the usability decision: a
   matching copy is usable, and a missing source or copy, a missing or invalid sidecar, a source whose size or last-write
   time changed, an expected MD5 that changed (or appeared for a file recorded without one), and a copy of the wrong size
   each give their own verdict, in a fixed order. Check which files are never copied (music, alternate music, sounds and
   staff ghosts, by name without regard to case), what the data folder keeps (a copied file's copy and sidecar, a kept file
   with an expected MD5's `.verified` record, nothing else), and when a kept file's verified record spares its check (the
-  file's size, last-write time and expected MD5 unchanged). Copying, renaming, deleting and loading on Xbox are untested
+  file's size, last-write time, and expected MD5 unchanged). Copying, renaming, deleting, and loading on Xbox are untested
   here. The worker only copies files with an expected MD5 while checking them; the checksum-free music and sound
   packs stay on USB. Legacy no-MD5 sidecar parsing remains covered for existing records.
 - **Name indexes:** `name_index` compiles the production `src/name_index.hpp`, the hash indexes that replace the linear
-  lump-name, PK3 folder and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
+  lump-name, PK3 folder, and texture-name scans at startup, under ASan and UBSan with no engine. Randomized differential tests compare
   `HashPositions::FirstFrom` and `LastBelow` with the original forward (`W_CheckNumForNamePwad`) and backward
   (`R_CheckTextureNumForName`) scans over the same hash and `strncasecmp` predicate: real and forced-colliding hashes,
   entries whose stored hash is not that of their name, case variations, names shorter than, exactly and longer than 8
-  characters, high-bit bytes, nonzero start positions and misses. `FirstFrom` is also compared with
+  characters, high-bit bytes, nonzero start positions, and misses. `FirstFrom` is also compared with
   `W_CheckNumForLongNamePwad`'s forward scan, whose predicate is a full-string `strcasecmp` of names that can be longer
   than the 8 hashed characters (shared 8-char prefixes, forced collisions, case, past-the-end starts). `FolderStarts` is compared with the original
   `W_CheckNumForFolderStartPK3` prefix scan, including its SLADE single-directory-entry rule and the
@@ -759,7 +817,7 @@ untouched padding.
   `maps/`) and high-bit bytes. The texture-id memo's key (the first 8 characters, uppercased) is checked to match
   exactly when the old memo scan's `strncasecmp` over 8 characters matched.
 - **Fork version text:** `fork_version` compiles the production `src/fork_version.h`, which formats the version shown on
-  the title screen, in `version` and in the startup log, under ASan and UBSan with no engine. Check a release (`v2.4_z1`,
+  the title screen, in `version`, and in the startup log, under ASan and UBSan with no engine. Check a release (`v2.4_z1`,
   `v2.4_z1.1`, `v2.4.1_z1`, whatever the revision), a development build (`v2.4_z1-dev (1a2b3c4d)`, also before any release
   as `_z0`, with a longer hash cut to 8 characters, a shorter one kept as is and either case), a revision that is empty,
   null or not a hash (upstream's `illegal` and `Unknown`), which leaves out the parentheses, and truncation into a small
@@ -835,15 +893,15 @@ triangles, 2D lines, and a tiny-ring stress test. A quad is two triangles and th
 lies in only one of them, so the blend, depth, indexed, and model scenes also sample a pixel in the
 other. The ring stress draws a 32×32 grid of 2×2-pixel tiles per frame for four frames, each tile
 a color of its own, through rings of 1,024, 512, and 2,048 bytes, and checks every pixel, so a ring
-overwrite, stale constant or corrupt vertex in any draw shows, not only in the last.
+overwrite, stale constant, or corrupt vertex in any draw shows, not only in the last.
 Before the scenes, an in-process self-test gives each comparison (a screen pixel, a pixel of the
 palette step, of an image read earlier or of a probed pixel, a line's rows, a plain verdict, and
 the capture-count deltas) a wrong expectation, off by two levels in each channel in turn where that
 applies, and requires its specific rejection. A correct expectation or one a level off
 must pass. A hit registry then requires every listed scene's oracle to run at least once in
 the full run and rejects unlisted oracles. Skipped, renamed, or misspelled scenes
-fail the run. Six negative controls change the code under test. The correct oracle must reject
-each one. shader mutants of `water-refraction` and `fog-palette`
+fail the run. Six negative controls change the code under test. The correct
+oracles must reject the shader mutants of `water-refraction` and `fog-palette`
 (reciprocal depth), of `brightmap-palette` (the surface row instead of the full-bright row), of
 `surface-light` (the planes' table for every surface) and of `surface-light-semibright` (the semibright
 branch made unreachable), which
@@ -917,18 +975,18 @@ A second frame builds nothing again, and the palette step's texture is read when
 (`screen-effect-palette`). SalCRT Sharp's fragment doesn't translate, so it must present the plain frame and log once
 (`screen-effect-fallback`). The native translator test checks the same sources' registers, semantics and constant
 offsets and the rejected cases. The game's own shaders, the screen effect's look, and Xbox are untested here.
-Screen Scaling scenes (`scaling-integer`, `scaling-1to1`, `scaling-fallback` and `scaling-effect`) place the same frame of four
+Screen Scaling scenes (`scaling-integer`, `scaling-1to1`, `scaling-fallback`, and `scaling-effect`) place the same frame of four
 colored quarters, through the driver's `PlaceFrame` and a test-only entry point, on screen-sized targets filled with magenta
-first. At 128×128, 201×151, 200×200, 400×130, 64×64, 70×64 and 64×130 for Integer (k of 2, 2, 3, 2, 1, 1 and 1) and 101×90, 400×300
+first. At 128×128, 201×151, 200×200, 400×130, 64×64, 70×64, and 64×130 for Integer (k of 2, 2, 3, 2, 1, 1, and 1) and 101×90, 400×300,
 and 64×64 for 1:1, every pixel of the rectangle must be the frame's pixel k times smaller and every other pixel black, with
 the rectangle's position worked out by hand (including the odd remainders). Integer and 1:1 on screens the frame doesn't fit
 (and Fit) must place nothing. With SalCRT on, the placed pixels are the effect's output. The harness stubs `Present_Frame`, so the swap chain
-(its size, buffer states and render target views) is not exercised, nor is the black border of a real swap chain's
+(its size, buffer states, and render target views) is not exercised, nor is the black border of a real swap chain's
 buffers on Xbox.
 `scaling-fit` draws Fit as the desktop presenter does, in a swap chain the size of the window: `FitRect`'s rectangle,
 scaled with the second, linear-filtered sampler (`k` of 0). The frame has 64 columns shading from red to green and a top
 half with less blue than its bottom half, so there is a boundary to blend along both axes. At 100×100, 200×100, 101×200,
-130×70, 55×55, 40×30 and 64×64 (a factor of 1.5625, bars at the sides, bars above and below with an odd remainder, 70/64, a frame
+130×70, 55×55, 40×30, and 64×64 (a factor of 1.5625, bars at the sides, bars above and below with an odd remainder, 70/64, a frame
 scaled down by a little and by more than half, and the frame's own size), the oracle compares every pixel of a magenta-filled target: black outside the
 rectangle, worked out by hand, and inside it a bilinear sample of the frame read earlier at each pixel's center, clamped at the
 frame's edges. Direct3D filters with fixed-point weights, so a pixel between texels of different colors may be two levels
@@ -949,7 +1007,7 @@ buffer of the swap chain's size and format, and clears it, so what's checked is 
 taking before the game's window exists succeeds and makes nothing (the driver starts first; the first frame takes it); taking succeeds and makes exactly one child window (visible, disabled, `WS_EX_NOACTIVATE`, `HTTRANSPARENT` for
 `WM_NCHITTEST`, 1 for `WM_ERASEBKGND`) as large as the parent's client area, with a swap chain of that size
 (`Present_SwapChainBytes`); frames are presented with and without vsync at Fit, Integer and 1:1, and the rectangle and `k`
-the presenter asks the driver for are those worked out by hand at 320×200, 500×300 and 160×100 (a 64×48 frame), and for a
+the presenter asks the driver for are those worked out by hand at 320×200, 500×300, and 160×100 (a 64×48 frame), and for a
 640×480 frame larger than the window, which Integer and 1:1 fit; the child and the swap chain follow the parent's client
 size, resized once each time; a window with no client area (0×0) places and presents nothing and keeps its swap chain; releasing
 destroys the child and the swap chain, twice without harm; a second and a third take work, the first at the window's current
@@ -987,7 +1045,7 @@ The `surface-probe` scene requests the VibeRant driver's pixel history at 50%,50
 the 64×64 target), draws three flat quads of different colors, labels one with
 `SurfaceProbeSource("wall", 7)` and ends the probe. It checks the logged `begin` pixel, each draw's
 `raw=` value (RGBA8 as a little-endian DWORD, alpha `0xFF`, each color channel within one like the
-other scenes) in order, `kind=wall source=7` on the labelled draw and `kind=polygon source=-1` on the
+other scenes) in order, `kind=wall source=7` on the labeled draw and `kind=polygon source=-1` on the
 others, and the `end draws=3 color_changes=3` line. The screen must still show the last color
 afterwards, a repeated request while one is pending must be refused, and a second frame without a
 request must neither begin a probe nor log `surface probe:`. The harness stubs presentation
@@ -1002,7 +1060,7 @@ refraction against the fixed-point sine and independent blend math; grouped surf
 original captured background while later pieces draw. The `fog-palette` and `water-refraction`
 shader mutants (above) must fail their oracles, and capture counters check the grouping under GPU-based validation. Native VibeRant
 capture tests mock the texture, copy, binding and constant helpers, checking literal expected bounds (including fractional vertices) and
-constant bytes, split views, clipping, failures, resizing and disjoint water growth. A growing water
+constant bytes, split views, clipping, failures, resizing, and disjoint water growth. A growing water
 capture uses one batched transition round trip around up to four strips; an unchanged grouped
 rectangle uses none. `capture-mixed` requires fog and water in the same command list;
 `capture-recreate` checks capture replacement after flushing resources still referenced by
@@ -1195,8 +1253,8 @@ differ:
   the program where it happens (an abort, exit status 134), which fails the script,
   and the script's `MTL_DEBUG_LAYER_WARNING_MODE=assert` makes the debug layer's
   warnings (a state set twice, a buffer bound and never used) do the same. mtl12 logs and counts shader validation errors from the completed command
-  buffer. `rr_mtl12::ValidationErrors()` fails the
-  run at the next check, as does a command buffer that failed for any other reason.
+  buffer. A nonzero `rr_mtl12::ValidationErrors()` count fails the run at the
+  next check, as does a command buffer failure for any other reason.
   `Core_Errors` must stay zero, as on WARP. Both kinds were tried once on the
   runner with mtl12 broken on purpose (not kept in the tree): a scissor rectangle
   larger than its target stopped the program in `setScissorRect:`, and textures
@@ -1303,8 +1361,8 @@ branch afterward.
   per ghost, and upload the frames and each run's log as `metal-frames-<n>`.
 - The `scenes` job runs what the ghosts don't reach and uploads `metal-scenes`:
   screenshots the game takes itself and pictures of the screen (`screencapture`),
-  with screen captures timed to the log. The scenes:
-  the game started without naming a renderer; the title screen and a menu, with keys
+  with screen captures timed to the log. The scenes cover
+  startup without naming a renderer; the title screen and a menu, with keys
   sent through the system (CoreGraphics events from `osascript`, which reach whatever
   window has the keyboard); quitting through that menu (`menu-quit`: the same keys
   and then yes to Exit Program's question, with a command line that would only end
@@ -1386,6 +1444,7 @@ writes side-by-side sheets of the latter. One level on a blended surface and the
 texel on a texel edge are the differences two GPUs have; `docs/metal-backend.md`
 ("What was tested, and what wasn't") has the figures of the first such comparison and
 what each of its outliers was.
+
 The runners' display is 1024x768, so the game's 1280x720 window doesn't fit it: the
 system cuts the window to the display's height, and the frame is fitted into what is
 left, which the pictures of the screen show. The capture mode's screenshots are read
@@ -1509,7 +1568,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   composites across blend modes, alpha values, distances, times and split-view
   edges. `water_capture_viberant` extracts projected bounds from
   `r_viberant/viberant_captures.inc` and checks bounded copies, disjoint rectangle
-  growth, grouping, allocation failures, resize and clipped faces. Its expected bounds
+  growth, grouping, allocation failures, resize, and clipped faces. Its expected bounds
   (including fractional vertices), constant bytes, scene and sine texture bindings
   are literal values, and the growth strips must cover exactly the union of the
   pieces' bounds. Engine-side water-plane continuation and transparent-node dispatch
@@ -1519,7 +1578,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Sky plane claims:** `sky_claim` extracts the VibeRant gate from `HWR_Subsector`.
   Check floors from above and ceilings from below, rejection from the far side
-  and at equality, non-sky flats, both planes together and the validcount guard.
+  and at equality, non-sky flats, both planes together, and the validcount guard.
   Cull heights represent the plane at the camera's x,y, independently of the
   submitted local heights (including slopes). The old unconditional claims fail.
   `sky_claim_both` also checks that with OpenGL as the driver nothing is claimed,
@@ -1535,12 +1594,12 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 - **Untextured step flat bleeding:** `flat_bleed` runs the production VibeRant decision,
   UV and draw helpers. Cover the Green Hills Zone linedef 757 slope-rounding sliver,
   textured steps, reversed/equal heights, either sky flat, camera visibility (including
-  equality), polyobjects, mirrored ceilings and steps at only one endpoint. Compare
+  equality), polyobjects, mirrored ceilings, and steps at only one endpoint. Compare
   288 flat/texture/patch/PNG UV cases with a separate SETUP3DVERT model, including
-  negative map coordinates, scrolling and rotation. Submission stubs check exact
+  negative map coordinates, scrolling, and rotation. Submission stubs check exact
   front-plane edges, degenerate endpoints, back-flat binding, paired UVs, ordinary,
   absolute, transferred and light-list lighting, midpoint plane height, slope-light
-  inputs, shader flags and probe attribution. Visibility and step-direction mutations
+  inputs, shader flags, and probe attribution. Visibility and step-direction mutations
   must fail. The title replay stubs these draws because it records walls and does not
   model camera height. These tests check geometry submission, not rendered pixels;
   D3D12 compilation belongs to Windows CI and Xbox visuals remain untested.
@@ -1618,7 +1677,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   floor sky, a wall top still on screen, the mirrored ceiling case and the Xbox Green Hills regression
   (FOV 100, pitch -28 degrees, roll 19.33 degrees, camera below the front floor with the lower wall top
   still on screen). Sweeps vary distance, wall height, pitch (including beyond ±80 degrees), yaw,
-  roll (0, 19.33, 45 and -27 degrees), FOV, split-screen, segs reaching past the screen's edges and a sloped back floor, and must decide
+  roll (0, 19.33, 45, and -27 degrees), FOV, split-screen, segs reaching past the screen's edges, and a sloped back floor, and must decide
   like the model in every case, lower and upper walls apart. Flipping the pitch term or dropping the below-the-floor
   condition fails it. The test also runs the rule's own branch of `HWR_AddLine`: an accepted seg gets its black wall
   (none during the portal search, and nothing at all behind a portal exit or for a seg the rule rejects) and is never
@@ -1640,7 +1699,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **UWP frame schedule:** `frame_schedule` executes the production pure pacing
   helper with fast 60 Hz loops, alternating 30/10 ms loops, a three-second load,
-  Unlimited, singletics, skipped catch-up frames and a wrapping precise clock.
+  Unlimited, singletics, skipped catch-up frames, and a wrapping precise clock.
   Only render sleep changes; simulation remains untouched. Xbox pacing and actual
   scheduler wake-up precision require device testing.
   The alternating case stays within the four-frame debt limit: a sustained
@@ -1673,7 +1732,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Midtextures between skies:** `midtexture_sky` executes the production cut
   helper for Municipal Meadow's MIDPEG trees, one matching sky plane, ordinary
-  openings, polyobjects and the sloped second endpoint. Generation checks both
+  openings, polyobjects, and the sloped second endpoint. Generation checks both
   endpoint computations call it. It also executes the production
   `HWR_MidtextureBeforeSky` and the `HWR_ProcessSeg` statement that adds its result
   to the blend mode. Where both sectors have sky ceilings, or both have sky floors,
@@ -1692,7 +1751,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Level darkness:** `level_darkness` executes Software's `R_AdjustLightLevel`
   and the hardware adapter for no darkness, bright/dark weighting, all fine
-  fractions, separate views, map darkness and contrast/highlight cheats. Generation
+  fractions, separate views, map darkness, and contrast/highlight cheats. Generation
   checks all five wall/plane lighting sinks and excludes all other lighting sinks.
   Plane, polyobject/FOF plane, opaque/split wall, flat-bleed and sorted translucent
   wall paths adjust after their existing slope/seg contrast. Sprites, models,
@@ -1704,7 +1763,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Fog-style linedefs:** `midtexture_fog` executes the production fog-midtexture
   helper and Software's alpha-table selection for 192 combinations of all blend
-  modes, polyobjects, tripwires and alpha boundaries. Submission mocks require
+  modes, polyobjects, tripwires, and alpha boundaries. Submission mocks require
   one untextured fog wall, the original quad, front-sector fog-alpha inputs and
   preserved wall lighting, or no draw for invisible fog. Other modes, plain
   masked walls, polyobjects and tripwires retain the textured path. Generation
@@ -1727,7 +1786,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 
 - **Software perspective shear:** `software_shear` compares the production hardware
   aiming setup and VibeRant projection translation against Software's rounded view
-  centre, within one pixel. Checks 1920x1080, two-player 1920x540 (with the 1.7x
+  center, within one pixel. Checks 1920x1080, two-player 1920x540 (with the 1.7x
   FOV tangent), three/four-player 960x540 and 1280x800, three FOVs, pitches up
   and down including -17.3 degrees, flip, and Off/On/Third-person selection.
   Also checks zero pitch while shearing, preserved aim and pitch when off, and
@@ -1747,7 +1806,7 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
 - **RF_SHADOWDRAW:** `shadow_draw` compares production hardware scale, flattening,
   slope adjustment and position with Software's extracted projection block and
   `R_SkewShadowSprite` in 960 cases (flat/sloped, five directions, four camera
-  heights, two depths, gravity flips, stretching and object scaling). Check literal flat numbers,
+  heights, two depths, gravity flips, stretching, and object scaling). Check literal flat numbers,
   paper/floor exclusions, non-positive depth/height, unchanged unflagged inputs and zero-shear vertices,
   and that the flat shape keeps the sprite's own width, as Software does by
   stretching the whole patch over its original columns (27 width/radius/scale cases),
@@ -1811,7 +1870,7 @@ is the official v2.4 asset archive, downloaded once, checked against the SHA-256
 
 ### Running it
 
-The workflow runs on manual dispatch and nightly. Pushes do not trigger it. To dispatch from the command line:
+The workflow runs nightly and when dispatched, not on pushes. Dispatch it from Actions > Map sweep > Run workflow, or
 
 ```sh
 gh workflow run map-sweep.yml --ref master -f ref=my-branch                      # everything, at 640x400
@@ -1825,7 +1884,7 @@ rendering before merging it (`AGENTS.md`). `renderers` is a comma-separated subs
 named run instead of master's and bypasses the automatic baseline filters for health, completeness, eligibility,
 and size. A run with a few maps takes a few minutes and compares only those maps.
 
-At 05:37 UTC, the nightly run skips commits that already have a complete sweep. The repository runs one sweep at
+At 05:37 UTC, the nightly run skips `master` commits that already have a complete sweep. The repository runs one sweep at
 a time, with at most six concurrent capture jobs to leave runners for other workflows.
 
 ### Frame size
@@ -1840,20 +1899,23 @@ draws 320x200, as it did in the first sweep. The sweep checks each PNG against t
   layout, at about twice the cost of 640x400 on the hardware renderers.
 
 At 640x400, the sweep can miss one- or two-pixel seams between walls, thin distant textures, the widescreen HUD and
-field of view, and filtering of distant geometry. It still captures changes to objects, walls, planes, lighting, or the HUD. Run `size=1280x720` to review changes to geometry clipping or filtering. Automatic baseline selection uses only sweeps at the requested size.
+field of view, and filtering of distant geometry. It still captures changes to objects, walls, planes, lighting, or the
+HUD. Run `size=1280x720` to review changes to geometry clipping or filtering. Automatic baseline selection uses only
+sweeps at the requested size.
 
 ### What is played
 
 For each map's first staff ghost in the official `staffghosts.pk3` (`tests/map-sweep/ghosts.txt`), level times 70, 350,
 700, 1400, and 2100 yield five frames per map and 1,065 per renderer. Fifty of the ghosts end before tic 2,135; those maps
-(`tests/map-sweep/schedules.json`) use 70, 210, 350, 525, and 700 instead. The list predates the sweeps. A replay that ends before a requested tic fails the health check on either schedule.
+(`tests/map-sweep/schedules.json`) use 70, 210, 350, 525, and 700 instead. The list was made before any sweep ran, not after a failure. A replay that ends before a
+requested tic fails the health check on either schedule.
 
 ### Health: what makes a sweep red
 
 Any of the following fails the map and the sweep.
 
 - a crash, a nonzero exit, or the game's error dialog (the game prints the error and waits for a button; the run
-  notices and stops it after a few seconds), `I_Error`, a signal;
+  notices and stops it after a few seconds), `I_Error`, or a signal;
 - no new frame for five minutes (the whole map has 25 minutes);
 - fewer frames than asked for, a file that is not a PNG of the asked-for size, or no `done; N of N screenshots taken` line;
 - a "not implemented" line from a backend, a lost or removed device, or a driver error line such as `failed: 0x...`;
