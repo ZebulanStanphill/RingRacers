@@ -123,10 +123,15 @@ depends on the compiler and on where things lie in memory, and no change, not
 even adding a field to a structure, can keep that the same. Known cases:
 
 - Invalid map data. A map can ship its own `BLOCKMAP` lump, which the game
-  loads without checking it (`P_ReadBlockMapLump`). An entry that names a line
-  number at or past the map's number of lines makes the blockmap walks read and
-  write outside the level's arrays, in upstream and here, with different
-  memory behind them.
+  loads without checking it (`P_ReadBlockMapLump`), and a Doom-format seg's
+  linedef number isn't checked either (`P_LoadSegs`). An entry that names a
+  line number at or past the map's number of lines makes the blockmap and sight
+  walks read and write outside the level's arrays, in upstream and here, with
+  different memory behind them.
+- A value upstream reads before setting it. `P_SlideMove` builds a line on the
+  stack without its `angle`, which `P_HitSlideLine` would read. What it finds
+  depends on the stack's layout, which changes with the size of any structure
+  nearby. (That path needs `g_tm.floorthing`, which only disabled code sets.)
 - A script that leaves the game in a state upstream's code doesn't handle, so
   that it reads through a null or freed pointer. A `MobjLineCollide` hook, for
   example, can remove the moving object and leave `g_tm.thing` null in the
