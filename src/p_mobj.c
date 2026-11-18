@@ -829,9 +829,10 @@ fixed_t P_MobjFloorZ(const mobj_t *mobj, const sector_t *sector, const sector_t 
 			bbox[BOXBOTTOM] = y-mobj->radius;
 			for (i = 0; i < boundsec->linecount; i++) {
 				ld = boundsec->lines[i];
+				const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
-				if (bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || bbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-				|| bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+				if (bbox[BOXRIGHT] <= linebox[BOXLEFT] || bbox[BOXLEFT] >= linebox[BOXRIGHT]
+				|| bbox[BOXTOP] <= linebox[BOXBOTTOM] || bbox[BOXBOTTOM] >= linebox[BOXTOP])
 					continue;
 
 				if (P_BoxOnLineSide(bbox, ld) != -1)
@@ -906,9 +907,10 @@ fixed_t P_MobjCeilingZ(const mobj_t *mobj, const sector_t *sector, const sector_
 			bbox[BOXBOTTOM] = y-mobj->radius;
 			for (i = 0; i < boundsec->linecount; i++) {
 				ld = boundsec->lines[i];
+				const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
-				if (bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || bbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-				|| bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+				if (bbox[BOXRIGHT] <= linebox[BOXLEFT] || bbox[BOXLEFT] >= linebox[BOXRIGHT]
+				|| bbox[BOXTOP] <= linebox[BOXBOTTOM] || bbox[BOXBOTTOM] >= linebox[BOXTOP])
 					continue;
 
 				if (P_BoxOnLineSide(bbox, ld) != -1)
@@ -984,9 +986,10 @@ fixed_t P_CameraFloorZ(camera_t *mobj, sector_t *sector, sector_t *boundsec, fix
 			bbox[BOXBOTTOM] = y-mobj->radius;
 			for (i = 0; i < boundsec->linecount; i++) {
 				ld = boundsec->lines[i];
+				const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
-				if (bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || bbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-				|| bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+				if (bbox[BOXRIGHT] <= linebox[BOXLEFT] || bbox[BOXLEFT] >= linebox[BOXRIGHT]
+				|| bbox[BOXTOP] <= linebox[BOXBOTTOM] || bbox[BOXBOTTOM] >= linebox[BOXTOP])
 					continue;
 
 				if (P_BoxOnLineSide(bbox, ld) != -1)
@@ -1061,9 +1064,10 @@ fixed_t P_CameraCeilingZ(camera_t *mobj, sector_t *sector, sector_t *boundsec, f
 			bbox[BOXBOTTOM] = y-mobj->radius;
 			for (i = 0; i < boundsec->linecount; i++) {
 				ld = boundsec->lines[i];
+				const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
-				if (bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || bbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-				|| bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+				if (bbox[BOXRIGHT] <= linebox[BOXLEFT] || bbox[BOXLEFT] >= linebox[BOXRIGHT]
+				|| bbox[BOXTOP] <= linebox[BOXBOTTOM] || bbox[BOXBOTTOM] >= linebox[BOXTOP])
 					continue;
 
 				if (P_BoxOnLineSide(bbox, ld) != -1)

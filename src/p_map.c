@@ -1766,8 +1766,9 @@ static BlockItReturn_t PIT_CheckCameraLine(line_t *ld)
 	if (ld->polyobj && !(ld->polyobj->flags & POF_SOLID))
 		return BMIT_CONTINUE;
 
-	if (g_tm.bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || g_tm.bbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-		|| g_tm.bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || g_tm.bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+	const fixed_t *linebox = P_LineBox(ld); // [ZE]
+	if (g_tm.bbox[BOXRIGHT] <= linebox[BOXLEFT] || g_tm.bbox[BOXLEFT] >= linebox[BOXRIGHT]
+		|| g_tm.bbox[BOXTOP] <= linebox[BOXBOTTOM] || g_tm.bbox[BOXBOTTOM] >= linebox[BOXTOP])
 	{
 		return BMIT_CONTINUE;
 	}
@@ -1886,8 +1887,9 @@ static BlockItReturn_t PIT_CheckLine(line_t *ld)
 	if (ld->polyobj && !(ld->polyobj->flags & POF_SOLID))
 		return BMIT_CONTINUE;
 
-	if (g_tm.bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || g_tm.bbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-	|| g_tm.bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || g_tm.bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+	const fixed_t *linebox = P_LineBox(ld); // [ZE]
+	if (g_tm.bbox[BOXRIGHT] <= linebox[BOXLEFT] || g_tm.bbox[BOXLEFT] >= linebox[BOXRIGHT]
+	|| g_tm.bbox[BOXTOP] <= linebox[BOXBOTTOM] || g_tm.bbox[BOXBOTTOM] >= linebox[BOXTOP])
 		return BMIT_CONTINUE;
 
 	if (P_BoxOnLineSide(g_tm.bbox, ld) != -1)
@@ -2399,7 +2401,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y, TryMoveResult_t *re
 	{
 		for (by = yl; by <= yh; by++)
 		{
-			P_BlockLinesIterator(bx, by, PIT_CheckLine);
+			P_BlockLinesIteratorBox(bx, by, g_tm.bbox, &g_tm.thing, PIT_CheckLine); // [ZE]: Skip side-effect-free box rejections, while there is a g_tm.thing for PIT_CheckLine to read.
 		}
 	}
 
@@ -4933,10 +4935,11 @@ void P_DelPrecipSeclist(mprecipsecnode_t *node)
 
 static inline BlockItReturn_t PIT_GetSectors(line_t *ld)
 {
-	if (g_tm.bbox[BOXRIGHT] <= ld->bbox[BOXLEFT] ||
-		g_tm.bbox[BOXLEFT] >= ld->bbox[BOXRIGHT] ||
-		g_tm.bbox[BOXTOP] <= ld->bbox[BOXBOTTOM] ||
-		g_tm.bbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+	const fixed_t *linebox = P_LineBox(ld); // [ZE]
+	if (g_tm.bbox[BOXRIGHT] <= linebox[BOXLEFT] ||
+		g_tm.bbox[BOXLEFT] >= linebox[BOXRIGHT] ||
+		g_tm.bbox[BOXTOP] <= linebox[BOXBOTTOM] ||
+		g_tm.bbox[BOXBOTTOM] >= linebox[BOXTOP])
 	return BMIT_CONTINUE;
 
 	if (P_BoxOnLineSide(g_tm.bbox, ld) != -1)
@@ -4968,10 +4971,11 @@ static inline BlockItReturn_t PIT_GetSectors(line_t *ld)
 // Tails 08-25-2002
 static inline BlockItReturn_t PIT_GetPrecipSectors(line_t *ld)
 {
-	if (g_tm.precipbbox[BOXRIGHT] <= ld->bbox[BOXLEFT] ||
-		g_tm.precipbbox[BOXLEFT] >= ld->bbox[BOXRIGHT] ||
-		g_tm.precipbbox[BOXTOP] <= ld->bbox[BOXBOTTOM] ||
-		g_tm.precipbbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+	const fixed_t *linebox = P_LineBox(ld); // [ZE]
+	if (g_tm.precipbbox[BOXRIGHT] <= linebox[BOXLEFT] ||
+		g_tm.precipbbox[BOXLEFT] >= linebox[BOXRIGHT] ||
+		g_tm.precipbbox[BOXTOP] <= linebox[BOXBOTTOM] ||
+		g_tm.precipbbox[BOXBOTTOM] >= linebox[BOXTOP])
 	return BMIT_CONTINUE;
 
 	if (P_BoxOnLineSide(g_tm.precipbbox, ld) != -1)
@@ -5042,7 +5046,7 @@ void P_CreateSecNodeList(mobj_t *thing, fixed_t x, fixed_t y)
 
 	for (bx = xl; bx <= xh; bx++)
 		for (by = yl; by <= yh; by++)
-			P_BlockLinesIterator(bx, by, PIT_GetSectors);
+			P_BlockLinesIteratorBox(bx, by, g_tm.bbox, NULL, PIT_GetSectors); // [ZE]: Skip side-effect-free box rejections.
 
 	// Add the sector of the (x, y) point to sector_list.
 	sector_list = P_AddSecnode(thing->subsector->sector, thing, sector_list);
@@ -5109,7 +5113,7 @@ void P_CreatePrecipSecNodeList(precipmobj_t *thing,fixed_t x,fixed_t y)
 
 	for (bx = xl; bx <= xh; bx++)
 		for (by = yl; by <= yh; by++)
-			P_BlockLinesIterator(bx, by, PIT_GetPrecipSectors);
+			P_BlockLinesIteratorBox(bx, by, g_tm.precipbbox, NULL, PIT_GetPrecipSectors); // [ZE]: Skip side-effect-free box rejections.
 
 	// Add the sector of the (x, y) point to sector_list.
 	precipsector_list = P_AddPrecipSecnode(thing->subsector->sector, thing, precipsector_list);

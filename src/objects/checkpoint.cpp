@@ -33,6 +33,7 @@
 #include "../p_tick.h"
 #include "../r_defs.h"
 #include "../r_main.h"
+#include "../r_state.h"
 #include "../s_sound.h"
 #include "../sounds.h"
 #include "../tables.h"
@@ -61,6 +62,7 @@ struct LineOnDemand : line_t
 {
 private:
 	vertex_t v1_data_;
+	fixed_t bbox[4]; // [ZE]: Bounds of a synthetic line.
 
 public:
 	LineOnDemand(const line_t* line) {}
@@ -94,8 +96,9 @@ public:
 
 	bool overlaps(const line_t& other) const
 	{
-		return bbox[BOXTOP] >= other.bbox[BOXBOTTOM] && bbox[BOXBOTTOM] <= other.bbox[BOXTOP] &&
-			bbox[BOXLEFT] <= other.bbox[BOXRIGHT] && bbox[BOXRIGHT] >= other.bbox[BOXLEFT];
+		const fixed_t *linebox = P_LineBox(&other); // [ZE]
+		return bbox[BOXTOP] >= linebox[BOXBOTTOM] && bbox[BOXBOTTOM] <= linebox[BOXTOP] &&
+			bbox[BOXLEFT] <= linebox[BOXRIGHT] && bbox[BOXRIGHT] >= linebox[BOXLEFT];
 	}
 };
 

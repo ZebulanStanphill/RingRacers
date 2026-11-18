@@ -161,6 +161,7 @@ sector_t *sectors;
 subsector_t *subsectors;
 node_t *nodes;
 line_t *lines;
+linecheck_t *linechecks; // [ZE]: Level-local linedef iteration data.
 side_t *sides;
 mapthing_t *mapthings;
 sector_t *spawnsectors;
@@ -1090,10 +1091,11 @@ static void P_InitializeLinedef(line_t *ld)
 
 	ld->angle = R_PointToAngle2(0, 0, ld->dx, ld->dy);
 
-	ld->bbox[BOXLEFT] = std::min(v1->x, v2->x);
-	ld->bbox[BOXRIGHT] = std::max(v1->x, v2->x);
-	ld->bbox[BOXBOTTOM] = std::min(v1->y, v2->y);
-	ld->bbox[BOXTOP] = std::max(v1->y, v2->y);
+	fixed_t *bbox = P_LineBox(ld); // [ZE]
+	bbox[BOXLEFT] = std::min(v1->x, v2->x);
+	bbox[BOXRIGHT] = std::max(v1->x, v2->x);
+	bbox[BOXBOTTOM] = std::min(v1->y, v2->y);
+	bbox[BOXTOP] = std::max(v1->y, v2->y);
 
 	if (!ld->dx)
 		ld->slopetype = ST_VERTICAL;
@@ -1106,7 +1108,7 @@ static void P_InitializeLinedef(line_t *ld)
 
 	ld->frontsector = ld->backsector = NULL;
 
-	ld->validcount = 0;
+	linechecks[ld - lines].validcount = 0; // [ZE]: Clear the visit stamp.
 	ld->polyobj = NULL;
 
 	ld->tripwire = false;
@@ -3573,6 +3575,7 @@ static boolean P_LoadMapData(const virtres_t *virt)
 	sectors   = static_cast<sector_t*>(Z_Calloc(numsectors * sizeof (*sectors), PU_LEVEL, NULL));
 	sides     = static_cast<side_t*>(Z_Calloc(numsides * sizeof (*sides), PU_LEVEL, NULL));
 	lines     = static_cast<line_t*>(Z_Calloc(numlines * sizeof (*lines), PU_LEVEL, NULL));
+	linechecks = static_cast<linecheck_t*>(Z_Calloc(numlines * sizeof (*linechecks), PU_LEVEL, NULL)); // [ZE]: Lives and dies with lines.
 	mapthings = static_cast<mapthing_t*>(Z_Calloc(nummapthings * sizeof (*mapthings), PU_LEVEL, NULL));
 
 	// Allocate a big chunk of memory as big as our MAXLEVELFLATS limit.

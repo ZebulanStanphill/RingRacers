@@ -610,8 +610,6 @@ struct line_t
 	UINT8 blendmode; // blendmode
 	INT32 executordelay;
 
-	fixed_t bbox[4]; // bounding box for the extent of the linedef
-
 	// To aid move clipping.
 	slopetype_t slopetype;
 
@@ -620,7 +618,6 @@ struct line_t
 	sector_t *frontsector;
 	sector_t *backsector;
 
-	size_t validcount; // if == validcount, already checked
 	polyobj_t *polyobj; // Belongs to a polyobject?
 
 	boolean tripwire;

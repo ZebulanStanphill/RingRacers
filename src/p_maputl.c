@@ -1269,12 +1269,23 @@ void P_SetPrecipitationThingPosition(precipmobj_t *thing)
 // to P_BlockLinesIterator, then make one or more calls
 // to it.
 //
-boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(line_t *))
+// [ZE]: Reject distant lines from the compact table without touching the linedefs.
+// A walk with a mover only skips while there is one: see P_BlockLinesIteratorBox.
+FUNCINLINE static ATTRINLINE boolean P_SkipLineBox(size_t index, const fixed_t *bbox, mobj_t *const *mover)
+{
+	const fixed_t *linebox = linechecks[index].bbox;
+
+	return bbox && (!mover || *mover) && (bbox[BOXRIGHT] <= linebox[BOXLEFT] || bbox[BOXLEFT] >= linebox[BOXRIGHT]
+		|| bbox[BOXTOP] <= linebox[BOXBOTTOM] || bbox[BOXBOTTOM] >= linebox[BOXTOP]);
+}
+
+// [ZE]: Both walks share visit order and stamp updates. Keep reading the live
+// validcount and query box because a callback can change either during the walk.
+FUNCINLINE static ATTRINLINE boolean P_BlockLinesIteratorInternal(INT32 x, INT32 y, const fixed_t *bbox, mobj_t *const *mover, BlockItReturn_t (*func)(line_t *))
 {
 	INT32 offset;
 	const INT32 *list; // Big blockmap
 	polymaplink_t *plink; // haleyjd 02/22/06
-	line_t *ld;
 
 	if (x < 0 || y < 0 || x >= bmapwidth || y >= bmapheight)
 		return true;
@@ -1295,12 +1306,16 @@ boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(line_t *)
 
 			for (i = 0; i < po->numLines; ++i)
 			{
-				BlockItReturn_t ret = BMIT_CONTINUE;
+				const size_t index = po->lines[i] - lines;
+				BlockItReturn_t ret;
 
-				if (po->lines[i]->validcount == validcount) // line has been checked
+				if (linechecks[index].validcount == validcount) // line has been checked
 					continue;
 
-				po->lines[i]->validcount = validcount;
+				linechecks[index].validcount = validcount;
+				if (P_SkipLineBox(index, bbox, mover))
+					continue;
+
 				ret = func(po->lines[i]);
 
 				if (ret == BMIT_ABORT)
@@ -1321,15 +1336,17 @@ boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(line_t *)
 	// First index is really empty, so +1 it.
 	for (list = blockmaplump + offset + 1; *list != -1; list++)
 	{
-		BlockItReturn_t ret = BMIT_CONTINUE;
+		const size_t index = *list;
+		BlockItReturn_t ret;
 
-		ld = &lines[*list];
-
-		if (ld->validcount == validcount)
+		if (linechecks[index].validcount == validcount)
 			continue; // Line has already been checked.
 
-		ld->validcount = validcount;
-		ret = func(ld);
+		linechecks[index].validcount = validcount;
+		if (P_SkipLineBox(index, bbox, mover))
+			continue;
+
+		ret = func(&lines[index]);
 
 		if (ret == BMIT_ABORT)
 		{
@@ -1341,6 +1358,16 @@ boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(line_t *)
 		}
 	}
 	return true; // Everything was checked.
+}
+
+boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(line_t *))
+{
+	return P_BlockLinesIteratorInternal(x, y, NULL, NULL, func);
+}
+
+boolean P_BlockLinesIteratorBox(INT32 x, INT32 y, const fixed_t *bbox, mobj_t *const *mover, BlockItReturn_t (*func)(line_t *))
+{
+	return P_BlockLinesIteratorInternal(x, y, bbox, mover, func);
 }
 
 

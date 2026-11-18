@@ -595,7 +595,7 @@ static void Polyobj_moveToSpawnSpot(mapthing_t *anchor)
 
 	// update linedef bounding boxes
 	for (i = 0; i < po->numLines; ++i)
-		Polyobj_bboxSub(po->lines[i]->bbox, &dist);
+		Polyobj_bboxSub(P_LineBox(po->lines[i]), &dist);
 
 	// translate vertices and record original coordinates relative to spawn spot
 	for (i = 0; i < po->numVertices; ++i)
@@ -777,12 +777,13 @@ static void Polyobj_removeFromBlockmap(polyobj_t *po)
 static inline boolean Polyobj_untouched(line_t *ld, mobj_t *mo)
 {
 	fixed_t x, y, ptmbbox[4];
+	const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
 	return
-		(ptmbbox[BOXRIGHT]  = (x = mo->x) + mo->radius) <= ld->bbox[BOXLEFT]   ||
-		(ptmbbox[BOXLEFT]   =           x - mo->radius) >= ld->bbox[BOXRIGHT]  ||
-		(ptmbbox[BOXTOP]    = (y = mo->y) + mo->radius) <= ld->bbox[BOXBOTTOM] ||
-		(ptmbbox[BOXBOTTOM] =           y - mo->radius) >= ld->bbox[BOXTOP]    ||
+		(ptmbbox[BOXRIGHT]  = (x = mo->x) + mo->radius) <= linebox[BOXLEFT]   ||
+		(ptmbbox[BOXLEFT]   =           x - mo->radius) >= linebox[BOXRIGHT]  ||
+		(ptmbbox[BOXTOP]    = (y = mo->y) + mo->radius) <= linebox[BOXBOTTOM] ||
+		(ptmbbox[BOXBOTTOM] =           y - mo->radius) >= linebox[BOXTOP]    ||
 		P_BoxOnLineSide(ptmbbox, ld) != -1;
 }
 
@@ -927,11 +928,13 @@ static INT32 Polyobj_clipThings(polyobj_t *po, line_t *line)
 	if (!(po->flags & POF_SOLID))
 		return hitflags;
 
+	const fixed_t *bbox = P_LineBox(line); // [ZE]
+
 	// adjust linedef bounding box to blockmap, extend by MAXRADIUS
-	linebox[BOXLEFT]   = (unsigned)(line->bbox[BOXLEFT]   - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
-	linebox[BOXRIGHT]  = (unsigned)(line->bbox[BOXRIGHT]  - bmaporgx + MAXRADIUS) >> MAPBLOCKSHIFT;
-	linebox[BOXBOTTOM] = (unsigned)(line->bbox[BOXBOTTOM] - bmaporgy - MAXRADIUS) >> MAPBLOCKSHIFT;
-	linebox[BOXTOP]    = (unsigned)(line->bbox[BOXTOP]    - bmaporgy + MAXRADIUS) >> MAPBLOCKSHIFT;
+	linebox[BOXLEFT]   = (unsigned)(bbox[BOXLEFT]   - bmaporgx - MAXRADIUS) >> MAPBLOCKSHIFT;
+	linebox[BOXRIGHT]  = (unsigned)(bbox[BOXRIGHT]  - bmaporgx + MAXRADIUS) >> MAPBLOCKSHIFT;
+	linebox[BOXBOTTOM] = (unsigned)(bbox[BOXBOTTOM] - bmaporgy - MAXRADIUS) >> MAPBLOCKSHIFT;
+	linebox[BOXTOP]    = (unsigned)(bbox[BOXTOP]    - bmaporgy + MAXRADIUS) >> MAPBLOCKSHIFT;
 
 	// check all mobj blockmap cells the line contacts
 	for (y = linebox[BOXBOTTOM]; y <= linebox[BOXTOP]; ++y)
@@ -1000,7 +1003,7 @@ boolean Polyobj_moveXY(polyobj_t *po, fixed_t x, fixed_t y, boolean checkmobjs)
 
 	// translate each line
 	for (i = 0; i < po->numLines; ++i)
-		Polyobj_bboxAdd(po->lines[i]->bbox, &vec);
+		Polyobj_bboxAdd(P_LineBox(po->lines[i]), &vec);
 
 	if (checkmobjs)
 	{
@@ -1017,7 +1020,7 @@ boolean Polyobj_moveXY(polyobj_t *po, fixed_t x, fixed_t y, boolean checkmobjs)
 
 		// reset lines that have been moved
 		for (i = 0; i < po->numLines; ++i)
-			Polyobj_bboxSub(po->lines[i]->bbox, &vec);
+			Polyobj_bboxSub(P_LineBox(po->lines[i]), &vec);
 	}
 	else
 	{
@@ -1071,26 +1074,27 @@ static void Polyobj_rotateLine(line_t *ld)
 			((ld->dy > 0) == (ld->dx > 0)) ? ST_POSITIVE : ST_NEGATIVE;
 
 	// update bounding box
+	fixed_t *bbox = P_LineBox(ld); // [ZE]
 	if (v1->x < v2->x)
 	{
-		ld->bbox[BOXLEFT]  = v1->x;
-		ld->bbox[BOXRIGHT] = v2->x;
+		bbox[BOXLEFT]  = v1->x;
+		bbox[BOXRIGHT] = v2->x;
 	}
 	else
 	{
-		ld->bbox[BOXLEFT]  = v2->x;
-		ld->bbox[BOXRIGHT] = v1->x;
+		bbox[BOXLEFT]  = v2->x;
+		bbox[BOXRIGHT] = v1->x;
 	}
 
 	if (v1->y < v2->y)
 	{
-		ld->bbox[BOXBOTTOM] = v1->y;
-		ld->bbox[BOXTOP]    = v2->y;
+		bbox[BOXBOTTOM] = v1->y;
+		bbox[BOXTOP]    = v2->y;
 	}
 	else
 	{
-		ld->bbox[BOXBOTTOM] = v2->y;
-		ld->bbox[BOXTOP]    = v1->y;
+		bbox[BOXBOTTOM] = v2->y;
+		bbox[BOXTOP]    = v1->y;
 	}
 }
 

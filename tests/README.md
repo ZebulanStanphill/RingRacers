@@ -64,6 +64,25 @@ For one group, use a filter such as `ctest --test-dir build/regression -R '^onli
 
 Use the CTest filter under Running to select the cases below by name.
 
+- **Blockmap line walks:** `block_lines` compares the production iterators and
+  the three callback rejection prefixes against a frozen pre-table walk. It
+  checks callback order and live query boxes, early stop and abort results, and
+  final line and polyobject stamps across 300 seeded scenes with 320 lines each.
+  Directed cases change the query during a callback, start a nested walk with a
+  new stamp, and move and roll back a polyobject line through the live box
+  accessor. The reference keeps its own boxes and stamps. Giving its line a
+  different box reveals a missing overlapping callback, and a strict
+  comparison adds a callback on an exactly touching edge. Half the scenes
+  clear `g_tm.thing` from a callback, as a script hook can: the earlier walk
+  then read through the cleared pointer at the very next line, distant or
+  not, and the box walk must fault at that same line (an exception stands in
+  for the fault). A copy of the walk without that rule faults a line later,
+  and the comparison reports it. The test supplies its own query box and
+  mover, so `generate.py` also fails unless `p_map.c` has exactly the three
+  walks, each passing the box its callback tests. The
+  `block_lines_paranoia` variant also checks that the accessor calls `I_Error`
+  for a synthetic line and a one-past-end pointer.
+
 - **Metal presenter, a window out of sight:** `metal_present_seen` runs the production
   decision of VibeRant Metal's presenter (`metal/mtl_present_seen.h`, plain C++; the
   presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three

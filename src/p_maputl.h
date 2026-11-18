@@ -98,6 +98,16 @@ typedef enum
 } BlockItReturn_t;
 
 boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t(*func)(line_t *));
+
+// [ZE]: As P_BlockLinesIterator, for a func that returns BMIT_CONTINUE without
+// side effects when the line's box does not overlap bbox. The walk skips those
+// calls and reads bbox again for each line because func may change it.
+// mover is NULL, or the address of an object pointer that func reads through
+// before its box test (g_tm.thing for PIT_CheckLine). While that pointer is NULL
+// no call is skipped, so func runs, and faults, at the same line as it would in
+// P_BlockLinesIterator: a script hook can clear g_tm.thing in the middle of a walk.
+boolean P_BlockLinesIteratorBox(INT32 x, INT32 y, const fixed_t *bbox, mobj_t *const *mover, BlockItReturn_t (*func)(line_t *));
+
 boolean P_BlockThingsIterator(INT32 x, INT32 y, BlockItReturn_t(*func)(mobj_t *));
 
 #define PT_ADDLINES		(1)

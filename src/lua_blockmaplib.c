@@ -105,9 +105,11 @@ static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *th
 
 			for (i = 0; i < po->numLines; ++i)
 			{
-				if (po->lines[i]->validcount == validcount) // line has been checked
+				// [ZE]: Use the same visit stamp as the engine blockmap walk.
+				linecheck_t *check = &linechecks[po->lines[i] - lines];
+				if (check->validcount == validcount)
 					continue;
-				po->lines[i]->validcount = validcount;
+				check->validcount = validcount;
 
 				lua_pushvalue(L, 1);
 				LUA_PushUserdata(L, thing, META_MOBJ);
@@ -141,10 +143,11 @@ static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *th
 	{
 		ld = &lines[*list];
 
-		if (ld->validcount == validcount)
+		// [ZE]: Share visit stamps with other line walks.
+		if (linechecks[*list].validcount == validcount)
 			continue; // Line has already been checked.
 
-		ld->validcount = validcount;
+		linechecks[*list].validcount = validcount;
 
 		lua_pushvalue(L, 1);
 		LUA_PushUserdata(L, thing, META_MOBJ);

@@ -1,0 +1,545 @@
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <random>
+#include <vector>
+#include "doomdef.h"
+#include "m_bbox.h"
+
+#ifndef TEST_LINE_PARANOIA
+#undef PARANOIA
+#endif
+
+@@TYPES@@
+
+// Both walks use the same map, links, and callback state.
+struct polyobj_t;
+struct line_t
+{
+	polyobj_t *polyobj;
+};
+struct polyobj_t
+{
+	size_t validcount;
+	size_t numLines;
+	line_t **lines;
+	unsigned flags;
+};
+struct polymaplink_t
+{
+	struct { polymaplink_t *next; } link;
+	polyobj_t *po;
+};
+struct vertex_t { fixed_t x, y; };
+struct opening_t { fixed_t top; };
+struct mobj_t { fixed_t z, height; };
+using Thing = mobj_t;
+using Box = std::array<fixed_t, 4>;
+
+static constexpr unsigned POF_SOLID = 3;
+static constexpr INT32 bmapwidth = 4, bmapheight = 3;
+static constexpr size_t Cells = bmapwidth * bmapheight, Lines = 320, Polys = 4;
+static line_t *lines;
+static linecheck_t *linechecks;
+static size_t validcount;
+static INT32 *blockmap, *blockmaplump;
+static std::array<polymaplink_t *, Cells> polyblocklinks;
+static Thing thing{8, 16};
+static struct
+{
+	Box bbox, precipbbox;
+	Thing *thing;
+} g_tm;
+
+#ifdef PARANOIA
+static constexpr size_t numlines = Lines;
+struct InvalidLine {};
+void I_Error(const char *, ...) { throw InvalidLine{}; }
+#endif
+
+@@ACCESSOR@@
+@@MOVE@@
+@@WALKS@@
+@@STRICT_WALK@@
+@@UNGUARDED_WALK@@
+
+// PIT_CheckLine reads through g_tm.thing before its box test. A script hook can clear that pointer during a
+// walk, and the game then faults at the next line the callback is called for. Here that is an exception.
+struct MoverFault { size_t line; };
+static fixed_t MoverTop(const line_t *ld)
+{
+	if (!g_tm.thing)
+		throw MoverFault{static_cast<size_t>(ld - lines)};
+	return g_tm.thing->z + g_tm.thing->height;
+}
+
+static BlockItReturn_t Record(line_t *ld);
+@@REFERENCE@@
+@@CHECKLINE@@
+@@GETSECTORS@@
+@@GETPRECIPSECTORS@@
+
+enum class Callback { Check, Sectors, Precip };
+enum class WalkKind { Reference, Box, Generic, Strict, Unguarded };
+
+struct Observation
+{
+	size_t line;
+	Box box;
+	size_t stamp;
+
+	bool operator==(const Observation &other) const
+	{
+		return line == other.line && box == other.box && stamp == other.stamp;
+	}
+};
+
+struct Result
+{
+	std::vector<Observation> calls, effects;
+	std::vector<boolean> returns;
+	std::array<size_t, Lines> stamps{};
+	std::array<size_t, Polys> polyStamps{};
+	size_t callbackCount = 0, aborts = 0, stops = 0, nested = 0, finalStamp = 0;
+	size_t fault = SIZE_MAX; // The line at which a cleared g_tm.thing was read, ending the run.
+	Box finalBox{};
+
+	bool operator==(const Result &other) const
+	{
+		return calls == other.calls && effects == other.effects && returns == other.returns
+			&& stamps == other.stamps && polyStamps == other.polyStamps
+			&& aborts == other.aborts && stops == other.stops && nested == other.nested
+			&& fault == other.fault
+			&& finalStamp == other.finalStamp && finalBox == other.finalBox;
+	}
+};
+
+struct Scenario
+{
+	std::array<Box, Lines> boxes{};
+	std::array<std::vector<INT32>, Cells> cells, links;
+	std::array<std::vector<INT32>, Polys> polyLines;
+	std::array<unsigned, Polys> polyFlags{POF_SOLID, 0, POF_SOLID, 0};
+	std::vector<INT32> walks{0};
+	Box query{}, newQuery{};
+	INT32 changeBox = -1, nest = -1, abort = -1, stop = -1, move = -1, drop = -1;
+	vertex_t movement{};
+};
+
+static WalkKind kind;
+static Callback callback;
+static const Scenario *scene;
+static bool referenceGeneric;
+static Result *result;
+
+static Box &Query()
+{
+	return callback == Callback::Precip ? g_tm.precipbbox : g_tm.bbox;
+}
+
+static Observation Observe(const line_t *ld)
+{
+	return {static_cast<size_t>(ld - lines), Query(), validcount};
+}
+
+static void Walk(INT32 cell);
+
+// What P_CheckPosition passes for PIT_CheckLine, and the sector list builders for theirs.
+static mobj_t *const *Mover()
+{
+	return callback == Callback::Check ? &g_tm.thing : nullptr;
+}
+
+static BlockItReturn_t Record(line_t *ld)
+{
+	result->effects.push_back(Observe(ld));
+	const INT32 index = ld - lines;
+	if (index == scene->changeBox)
+		Query() = scene->newQuery;
+	if (index == scene->drop)
+		g_tm.thing = nullptr; // As P_RestoreTMStruct does after a hook removed the mover.
+	if (index == scene->nest && result->nested == 0)
+	{
+		++result->nested;
+		++validcount;
+		Walk(2);
+		// Like the engine, leave validcount at the value from the nested walk.
+	}
+	if (index == scene->abort)
+	{
+		++result->aborts;
+		return BMIT_ABORT;
+	}
+	if (index == scene->stop)
+	{
+		++result->stops;
+		return BMIT_STOP;
+	}
+	return BMIT_CONTINUE;
+}
+
+static BlockItReturn_t ProductionCall(line_t *ld)
+{
+	++result->callbackCount;
+	result->calls.push_back(Observe(ld));
+	switch (callback)
+	{
+		case Callback::Check: return PIT_CheckLine(ld);
+		case Callback::Sectors: return PIT_GetSectors(ld);
+		case Callback::Precip: return PIT_GetPrecipSectors(ld);
+	}
+	std::abort();
+}
+
+static BlockItReturn_t ReferenceCall(line_t *ld, bool generic)
+{
+	++result->callbackCount;
+	// A box walk must keep the calls for lines its box doesn't reject, and every call once the mover is gone.
+	if (generic || (callback == Callback::Check && !g_tm.thing) || !ReferenceBoxReject(Query().data(), ld))
+		result->calls.push_back(Observe(ld));
+	switch (callback)
+	{
+		case Callback::Check: return ReferenceCheckLine(ld);
+		case Callback::Sectors: return ReferenceGetSectors(ld);
+		case Callback::Precip: return ReferenceGetPrecipSectors(ld);
+	}
+	std::abort();
+}
+
+static void Walk(INT32 cell)
+{
+	INT32 x = cell < 0 ? cell : cell % bmapwidth;
+	INT32 y = cell < 0 ? 0 : cell / bmapwidth;
+	boolean ret = false;
+	switch (kind)
+	{
+		case WalkKind::Reference:
+			ret = ReferenceBlockLinesIterator(x, y, referenceGeneric
+				? +[](line_t *ld) { return ReferenceCall(ld, true); }
+				: +[](line_t *ld) { return ReferenceCall(ld, false); });
+			break;
+		case WalkKind::Box:
+			ret = P_BlockLinesIteratorBox(x, y, Query().data(), Mover(), ProductionCall);
+			break;
+		case WalkKind::Unguarded:
+			ret = UnguardedBoxWalk(x, y, Query().data(), Mover(), ProductionCall);
+			break;
+		case WalkKind::Generic:
+			ret = P_BlockLinesIterator(x, y, ProductionCall);
+			break;
+		case WalkKind::Strict:
+			ret = StrictBoxWalk(x, y, Query().data(), Mover(), ProductionCall);
+			break;
+	}
+	result->returns.push_back(ret);
+}
+
+static Result Run(const Scenario &input, Callback mode, WalkKind walkKind,
+	bool expectGeneric = false, const Box *referenceBox = nullptr)
+{
+	std::array<line_t, Lines> mapLines{};
+	std::array<linecheck_t, Lines> checks{};
+	std::array<ReferenceLine, Lines> refs{};
+	std::array<polyobj_t, Polys> polys{};
+	std::array<std::vector<line_t *>, Polys> polyLines;
+	std::array<std::vector<polymaplink_t>, Cells> links;
+	std::array<INT32, Cells> offsets{};
+	std::vector<INT32> lump;
+	Result output;
+
+	lines = mapLines.data();
+	linechecks = checks.data();
+	referenceLines = refs.data();
+	validcount = 1;
+	callback = mode;
+	kind = walkKind;
+	referenceGeneric = expectGeneric;
+	scene = &input;
+	result = &output;
+	// An empty, remote box catches accidental use of the other query.
+	g_tm = {{-1000, -1000, -1000, -1000}, {-1000, -1000, -1000, -1000}, &thing};
+	Query() = input.query;
+
+	for (size_t i = 0; i < Lines; ++i)
+	{
+		std::copy(input.boxes[i].begin(), input.boxes[i].end(), P_LineBox(&lines[i]));
+		std::copy(input.boxes[i].begin(), input.boxes[i].end(), refs[i].bbox);
+	}
+	if (referenceBox)
+		std::copy(referenceBox->begin(), referenceBox->end(), refs[0].bbox);
+	for (size_t i = 0; i < Polys; ++i)
+	{
+		for (INT32 index : input.polyLines[i])
+		{
+			polyLines[i].push_back(&lines[index]);
+			lines[index].polyobj = &polys[i];
+		}
+		polys[i] = {0, polyLines[i].size(), polyLines[i].data(), input.polyFlags[i]};
+	}
+	for (size_t i = 0; i < Cells; ++i)
+	{
+		offsets[i] = lump.size();
+		lump.push_back(0); // Unused leading entry.
+		lump.insert(lump.end(), input.cells[i].begin(), input.cells[i].end());
+		lump.push_back(-1);
+		links[i].resize(input.links[i].size());
+		polyblocklinks[i] = links[i].empty() ? nullptr : links[i].data();
+		for (size_t j = 0; j < links[i].size(); ++j)
+		{
+			links[i][j].po = &polys[input.links[i][j]];
+			links[i][j].link.next = j + 1 < links[i].size() ? &links[i][j + 1] : nullptr;
+		}
+	}
+	blockmap = offsets.data();
+	blockmaplump = lump.data();
+
+	try
+	{
+	for (INT32 cell : input.walks)
+		Walk(cell);
+
+	if (input.move >= 0)
+	{
+		fixed_t *box = kind == WalkKind::Reference
+			? refs[input.move].bbox : P_LineBox(&lines[input.move]);
+		vertex_t delta = input.movement;
+		Polyobj_bboxAdd(box, &delta);
+
+		// Moving the box leaves the visit stamp in place.
+		for (INT32 cell : input.walks)
+			Walk(cell);
+
+		++validcount;
+		for (INT32 cell : input.walks)
+			Walk(cell);
+
+		Polyobj_bboxSub(box, &delta);
+		++validcount;
+		for (INT32 cell : input.walks)
+			Walk(cell);
+	}
+	}
+	catch (const MoverFault &fault)
+	{
+		output.fault = fault.line; // The game stops here.
+	}
+
+	for (size_t i = 0; i < Lines; ++i)
+		output.stamps[i] = kind == WalkKind::Reference ? refs[i].validcount : checks[i].validcount;
+	for (size_t i = 0; i < Polys; ++i)
+		output.polyStamps[i] = polys[i].validcount;
+	output.finalStamp = validcount;
+	output.finalBox = Query();
+	return output;
+}
+
+static Box MakeBox(fixed_t left, fixed_t bottom, fixed_t width, fixed_t height)
+{
+	Box box;
+	box[BOXLEFT] = left;
+	box[BOXRIGHT] = left + width;
+	box[BOXBOTTOM] = bottom;
+	box[BOXTOP] = bottom + height;
+	return box;
+}
+
+static size_t comparisons = 0, referenceCalls = 0, boxCalls = 0, effects = 0;
+static size_t walks = 0, aborts = 0, stops = 0, faults = 0;
+
+static Result Compare(const Scenario &input, Callback mode)
+{
+	const Result reference = Run(input, mode, WalkKind::Reference);
+	const Result box = Run(input, mode, WalkKind::Box);
+	assert(reference == box);
+	assert(Run(input, mode, WalkKind::Reference, true)
+		== Run(input, mode, WalkKind::Generic, true));
+	++comparisons;
+	referenceCalls += reference.callbackCount;
+	boxCalls += box.callbackCount;
+	effects += box.effects.size();
+	walks += box.returns.size();
+	aborts += box.aborts;
+	stops += box.stops;
+	faults += box.fault != SIZE_MAX;
+	return box;
+}
+
+static void DirectedCases()
+{
+	Scenario input;
+	input.query = MakeBox(0, 0, 10, 10);
+	input.newQuery = MakeBox(10, 0, 10, 10);
+	input.boxes[0] = MakeBox(2, 2, 4, 4);
+	input.boxes[1] = MakeBox(11, 2, 0, 4);
+	input.boxes[2] = MakeBox(5, 2, 4, 0);
+	input.cells[0] = {0, 1, 2};
+	input.changeBox = 0;
+	const auto movedQuery = Compare(input, Callback::Check);
+	assert(movedQuery.effects == (std::vector<Observation>{{0, input.query, 1}, {1, input.newQuery, 1}}));
+	assert(movedQuery.stamps[2] == 1);
+
+	input.changeBox = -1;
+	input.nest = 0;
+	input.polyLines[0] = {0, 1};
+	input.links[0] = input.links[2] = {0};
+	input.cells[2] = {2, 0};
+	input.walks = {0, 2, -1, Cells};
+	const auto nested = Compare(input, Callback::Precip);
+	assert(nested.nested == 1 && nested.finalStamp == 2);
+	assert(nested.effects == (std::vector<Observation>{{0, input.query, 1},
+		{0, input.query, 2}, {2, input.query, 2}}));
+	assert(nested.polyStamps[0] == 2);
+
+	input.nest = -1;
+	input.stop = 0;
+	input.abort = 2;
+	input.walks = {0, 1};
+	input.cells[1] = {2, 1};
+	const auto stopped = Compare(input, Callback::Sectors);
+	assert(stopped.returns == (std::vector<boolean>{true, false}));
+	assert(stopped.stops == 1 && stopped.aborts == 1 && stopped.stamps[1] == 0);
+
+	Scenario moving;
+	moving.query = input.query;
+	moving.boxes[0] = MakeBox(20, 2, 4, 4);
+	moving.polyLines[0] = {0};
+	moving.links[0] = {0};
+	moving.cells[0] = {0};
+	moving.move = 0;
+	moving.movement = {-16, 0};
+	const auto movedLine = Compare(moving, Callback::Check);
+	assert(movedLine.effects == (std::vector<Observation>{{0, moving.query, 2}}));
+	assert(movedLine.stamps[0] == 3);
+
+	// Give the reference an overlapping box while the live box is distant.
+	moving.move = -1;
+	const auto distant = Run(moving, Callback::Check, WalkKind::Box);
+	const Box overlapping = MakeBox(4, 2, 4, 4);
+	const auto differentReference = Run(moving, Callback::Check, WalkKind::Reference, false, &overlapping);
+	assert(!(differentReference == distant) && distant.calls.empty() && distant.effects.empty());
+	assert(differentReference.calls.size() == 1 && differentReference.effects.size() == 1);
+	std::puts("Reference-box control: comparison detected a missing overlapping callback.");
+
+	// A hook clears the mover at an overlapping line. The next line is distant: the earlier walk still called
+	// PIT_CheckLine for it, which read through the cleared pointer there, and so must the box walk.
+	Scenario dropped;
+	dropped.query = input.query;
+	dropped.boxes[0] = MakeBox(2, 2, 4, 4);
+	dropped.boxes[1] = MakeBox(40, 2, 4, 4);
+	dropped.boxes[2] = MakeBox(4, 2, 4, 4);
+	dropped.cells[0] = {0, 1, 2};
+	dropped.drop = 0;
+	const auto faulted = Compare(dropped, Callback::Check);
+	assert(faulted.fault == 1 && faulted.effects.size() == 1 && faulted.stamps[2] == 0);
+	const auto unguarded = Run(dropped, Callback::Check, WalkKind::Unguarded);
+	assert(!(unguarded == faulted) && unguarded.fault == 2);
+	// The sector list builders read nothing before their box test, and skip regardless.
+	const auto sectors = Compare(dropped, Callback::Sectors);
+	assert(sectors.fault == SIZE_MAX && sectors.effects.size() == 2);
+	std::puts("Missing-mover control: comparison detected a fault moved to a later line.");
+
+	Scenario edge;
+	edge.query = input.query;
+	edge.boxes[0] = MakeBox(10, 2, 4, 4);
+	edge.cells[0] = {0};
+	const auto touching = Compare(edge, Callback::Sectors);
+	const auto strict = Run(edge, Callback::Sectors, WalkKind::Strict);
+	assert(!(touching == strict) && touching.calls.empty() && strict.calls.size() == 1);
+	assert(strict.effects == touching.effects);
+	std::puts("Strict-edge control: comparison detected one extra touching-edge callback.");
+}
+
+#ifdef PARANOIA
+static void CheckLineBoxRange()
+{
+	std::array<line_t, Lines> mapLines{};
+	std::array<linecheck_t, Lines> checks{};
+	line_t fake{};
+	lines = mapLines.data();
+	linechecks = checks.data();
+
+	for (const line_t *invalid : {&fake, lines + numlines})
+	{
+		bool caught = false;
+		try
+		{
+			P_LineBox(invalid);
+		}
+		catch (const InvalidLine &)
+		{
+			caught = true;
+		}
+		assert(caught);
+	}
+	std::puts("Linedef range check: PARANOIA rejected a synthetic line and a one-past-end pointer.");
+}
+#endif
+
+static constexpr size_t Scenes = 300;
+static std::mt19937 rng(20261117);
+
+static INT32 Roll(INT32 lo, INT32 hi)
+{
+	return lo + static_cast<INT32>(rng() % static_cast<unsigned>(hi - lo + 1));
+}
+
+static void RandomScenes()
+{
+	for (size_t i = 0; i < Scenes; ++i)
+	{
+		Scenario input;
+		const fixed_t x = Roll(-64, 64), y = Roll(-64, 64);
+		const fixed_t w = Roll(1, 48), h = Roll(1, 48);
+		input.query = MakeBox(x, y, w, h);
+		for (Box &box : input.boxes)
+		{
+			const fixed_t left = Roll(-96, 96), bottom = Roll(-96, 96);
+			const fixed_t width = Roll(0, 32), height = Roll(0, 32);
+			box = MakeBox(left, bottom, width, height);
+		}
+		input.boxes[0] = MakeBox(x + w, y, 8, h);
+		input.boxes[1] = MakeBox(x - 8, y, 8, h);
+		input.boxes[2] = MakeBox(x, y + h, w, 8);
+		input.boxes[3] = MakeBox(x, y - 8, w, 8);
+		input.boxes[4] = MakeBox(x, y, 0, h);
+		input.boxes[5] = MakeBox(x, y, w, 0);
+
+		for (size_t cell = 0; cell < Cells; ++cell)
+		{
+			for (INT32 j = Roll(30, 130); j > 0; --j)
+				input.cells[cell].push_back(Roll(0, Lines - 1));
+			for (INT32 j = Roll(0, Polys); j > 0; --j)
+				input.links[cell].push_back(Roll(0, Polys - 1));
+		}
+		for (size_t poly = 0; poly < Polys; ++poly)
+			for (INT32 j = 0; j < 8; ++j)
+				input.polyLines[poly].push_back(Roll(poly * 80, poly * 80 + 79));
+
+		input.walks = {0, 1, 2, 3, 2, Roll(4, Cells - 1), Cells, -1};
+		input.abort = Roll(0, Lines - 1);
+		input.stop = Roll(0, Lines - 1);
+		if (i % 2 == 0)
+		{
+			// A line that overlaps the query, so its callback runs and clears the mover.
+			input.drop = Roll(6, Lines - 1);
+			input.boxes[input.drop] = input.query;
+		}
+		for (Callback mode : {Callback::Check, Callback::Sectors, Callback::Precip})
+			Compare(input, mode);
+	}
+}
+
+int main()
+{
+#ifdef PARANOIA
+	CheckLineBoxRange();
+#endif
+	DirectedCases();
+	RandomScenes();
+	std::printf("%zu random scenes, %zu runs per iterator, %zu cell walks, "
+		"%zu aborts, %zu stops, %zu cleared-mover faults, %zu reference calls, %zu box calls, "
+		"%zu matching calls past the callback's rejection tests.\n",
+		Scenes, comparisons, walks, aborts, stops, faults, referenceCalls, boxCalls, effects);
+}

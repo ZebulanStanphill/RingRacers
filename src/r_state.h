@@ -89,6 +89,27 @@ extern node_t *nodes;
 
 extern size_t numlines;
 extern line_t *lines;
+
+// [ZE]: Sole storage for the bounding box and visit stamp for each live linedef.
+typedef struct
+{
+	fixed_t bbox[4];
+	size_t validcount;
+} linecheck_t;
+extern linecheck_t *linechecks;
+
+// [ZE]: Blockmap walks and all other linedef users read and write the same box.
+FUNCINLINE static ATTRINLINE fixed_t *P_LineBox(const line_t *ld)
+{
+#ifdef PARANOIA
+	// Check the address before subtracting pointers, which requires a shared array.
+	const uintptr_t offset = (uintptr_t)ld - (uintptr_t)lines;
+	if (!lines || !linechecks || offset % sizeof(*lines) || offset / sizeof(*lines) >= numlines)
+		I_Error("P_LineBox: linedef is outside the live lines array");
+#endif
+	return linechecks[ld - lines].bbox;
+}
+
 extern line_t *spawnlines;
 
 extern size_t numsides;

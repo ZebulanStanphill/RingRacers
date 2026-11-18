@@ -136,17 +136,18 @@ static boolean P_CrossSubsecPolyObj(polyobj_t *po, register los_t *los, register
 		divline_t divl;
 		const vertex_t *v1,*v2;
 
-		// already checked other side?
-		if (line->validcount == validcount)
+		// [ZE]: Already checked the other side?
+		if (linechecks[line - lines].validcount == validcount)
 			continue;
 
-		line->validcount = validcount;
+		linechecks[line - lines].validcount = validcount;
 
 		// OPTIMIZE: killough 4/20/98: Added quick bounding-box rejection test
-		if (line->bbox[BOXLEFT  ] > los->bbox[BOXRIGHT ] ||
-			line->bbox[BOXRIGHT ] < los->bbox[BOXLEFT  ] ||
-			line->bbox[BOXBOTTOM] > los->bbox[BOXTOP   ] ||
-			line->bbox[BOXTOP]    < los->bbox[BOXBOTTOM])
+		const fixed_t *linebox = P_LineBox(line); // [ZE]
+		if (linebox[BOXLEFT  ] > los->bbox[BOXRIGHT ] ||
+			linebox[BOXRIGHT ] < los->bbox[BOXLEFT  ] ||
+			linebox[BOXBOTTOM] > los->bbox[BOXTOP   ] ||
+			linebox[BOXTOP]    < los->bbox[BOXBOTTOM])
 			continue;
 
 		v1 = line->v1;
@@ -513,17 +514,18 @@ static boolean P_CrossSubsector(size_t num, register los_t *los, register los_fu
 		if (seg->glseg)
 			continue;
 
-		// already checked other side?
-		if (line->validcount == validcount)
+		// [ZE]: Already checked the other side?
+		if (linechecks[line - lines].validcount == validcount)
 			continue;
 
-		line->validcount = validcount;
+		linechecks[line - lines].validcount = validcount;
 
 		// OPTIMIZE: killough 4/20/98: Added quick bounding-box rejection test
-		if (line->bbox[BOXLEFT  ] > los->bbox[BOXRIGHT ] ||
-			line->bbox[BOXRIGHT ] < los->bbox[BOXLEFT  ] ||
-			line->bbox[BOXBOTTOM] > los->bbox[BOXTOP   ] ||
-			line->bbox[BOXTOP]    < los->bbox[BOXBOTTOM])
+		const fixed_t *linebox = P_LineBox(line); // [ZE]
+		if (linebox[BOXLEFT  ] > los->bbox[BOXRIGHT ] ||
+			linebox[BOXRIGHT ] < los->bbox[BOXLEFT  ] ||
+			linebox[BOXBOTTOM] > los->bbox[BOXTOP   ] ||
+			linebox[BOXTOP]    < los->bbox[BOXBOTTOM])
 			continue;
 
 		v1 = line->v1;

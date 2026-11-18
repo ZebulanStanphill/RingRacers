@@ -2410,9 +2410,10 @@ struct complexity_sneaker_s
 		for (size_t i = 0; i < sec->linecount; i++)
 		{
 			line_t *const ld = sec->lines[i];
+			const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
-			M_AddToBox(bbox, ld->bbox[BOXRIGHT], ld->bbox[BOXTOP]);
-			M_AddToBox(bbox, ld->bbox[BOXLEFT], ld->bbox[BOXBOTTOM]);
+			M_AddToBox(bbox, linebox[BOXRIGHT], linebox[BOXTOP]);
+			M_AddToBox(bbox, linebox[BOXLEFT], linebox[BOXBOTTOM]);
 		}
 	}
 
@@ -2689,9 +2690,10 @@ static INT32 K_CalculateTrackComplexity(void)
 				for (size_t j = 0; j < sec->linecount; j++)
 				{
 					line_t *const ld = sec->lines[j];
+					const fixed_t *linebox = P_LineBox(ld); // [ZE]
 
-					M_AddToBox(new_panel.bbox, ld->bbox[BOXRIGHT], ld->bbox[BOXTOP]);
-					M_AddToBox(new_panel.bbox, ld->bbox[BOXLEFT], ld->bbox[BOXBOTTOM]);
+					M_AddToBox(new_panel.bbox, linebox[BOXRIGHT], linebox[BOXTOP]);
+					M_AddToBox(new_panel.bbox, linebox[BOXLEFT], linebox[BOXBOTTOM]);
 				}
 
 				for (auto &panel : sneaker_panels)

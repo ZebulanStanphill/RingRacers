@@ -60,6 +60,60 @@ def generate(engine, output):
         "POLYGONS": Source(engine / "src/hardware/hw_bsp.c").section(
             "extrasubsector_t *extrasubsectors = NULL;", "\n#endif //HWRENDER"),
     }, output / "plane_polygon_loops.cpp")
+    maputl = Source(engine / "src/p_maputl.c")
+    game_map = Source(engine / "src/p_map.c")
+    polyobj = Source(engine / "src/p_polyobj.c")
+    line_box = maputl.function("P_SkipLineBox")
+    line_walk = maputl.function("P_BlockLinesIteratorInternal")
+    box_walk = maputl.function("P_BlockLinesIteratorBox")
+    edge_test = "bbox[BOXRIGHT] <= linebox[BOXLEFT]"
+    if line_box.count(edge_test) != 1:
+        raise ValueError("Could not inject the blockmap edge-comparison negative control")
+    mover_test = "(!mover || *mover) && "
+    if line_box.count(mover_test) != 1:
+        raise ValueError("Could not inject the blockmap missing-mover negative control")
+    mover_read = "g_tm.thing->z + g_tm.thing->height"
+    line_state = Source(engine / "src/r_state.h")
+    block_lines = {
+        "TYPES": line_state.section(
+            "typedef struct\n{\n\tfixed_t bbox[4];\n\tsize_t validcount;", "\nextern linecheck_t *linechecks;")
+            + Source(engine / "src/p_maputl.h").enum("BlockItReturn_t"),
+        "REFERENCE": (templates.parent / "fixtures/block-lines-baseline.c").read_text(encoding="utf-8"),
+        "ACCESSOR": line_state.function("P_LineBox"),
+        "MOVE": polyobj.function("Polyobj_bboxAdd") + polyobj.function("Polyobj_bboxSub"),
+        "WALKS": line_box + line_walk + box_walk + maputl.function("P_BlockLinesIterator"),
+        "STRICT_WALK": line_box.replace(edge_test, "bbox[BOXRIGHT] < linebox[BOXLEFT]")
+            .replace("P_SkipLineBox", "StrictSkipLineBox")
+            + line_walk.replace("P_SkipLineBox", "StrictSkipLineBox")
+            .replace("P_BlockLinesIteratorInternal", "StrictLineWalk")
+            + box_walk.replace("P_BlockLinesIteratorInternal", "StrictLineWalk")
+            .replace("P_BlockLinesIteratorBox", "StrictBoxWalk"),
+        "UNGUARDED_WALK": line_box.replace(mover_test, "((void)mover, true) && ")
+            .replace("P_SkipLineBox", "UnguardedSkipLineBox")
+            + line_walk.replace("P_SkipLineBox", "UnguardedSkipLineBox")
+            .replace("P_BlockLinesIteratorInternal", "UnguardedLineWalk")
+            + box_walk.replace("P_BlockLinesIteratorInternal", "UnguardedLineWalk")
+            .replace("P_BlockLinesIteratorBox", "UnguardedBoxWalk"),
+    }
+    # The test supplies its own query box and mover, so it can't see what the game's three walks pass. Each must
+    # pass the box its callback tests, and only PIT_CheckLine, which reads through g_tm.thing first, a mover.
+    for call in ("P_BlockLinesIteratorBox(bx, by, g_tm.bbox, &g_tm.thing, PIT_CheckLine);",
+                 "P_BlockLinesIteratorBox(bx, by, g_tm.bbox, NULL, PIT_GetSectors);",
+                 "P_BlockLinesIteratorBox(bx, by, g_tm.precipbbox, NULL, PIT_GetPrecipSectors);"):
+        if game_map.text.count(call) != 1:
+            raise ValueError("p_map.c no longer has exactly one call: " + call)
+    if game_map.text.count("P_BlockLinesIteratorBox(") != 3:
+        raise ValueError("p_map.c has a P_BlockLinesIteratorBox call that block_lines doesn't know")
+    for callback in ("CheckLine", "GetSectors", "GetPrecipSectors"):
+        prefix = game_map.function("PIT_" + callback).split("\n\tif (P_BoxOnLineSide", 1)[0]
+        if callback == "CheckLine":
+            # The test stands in for the fault of reading through a cleared g_tm.thing.
+            if prefix.count(mover_read) != 1:
+                raise ValueError("PIT_CheckLine no longer reads g_tm.thing before its box test as the test expects")
+            prefix = prefix.replace(mover_read, "MoverTop(ld)")
+            prefix += "\n\t(void)thingtop;\n\t(void)open;"
+        block_lines[callback.upper()] = prefix + "\n\treturn Record(ld);\n}\n"
+    render(templates / "block_lines.cpp.in", block_lines, output / "block_lines.cpp")
     events = Source(engine / "src/d_main.cpp")
     render(templates / "event_queue.cpp.in", {
         "ADDED": events.function("HandleGamepadDeviceAdded"),
