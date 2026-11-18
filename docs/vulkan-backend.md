@@ -87,8 +87,8 @@ measurement, so the two backends now agree there.
 
 ## Checking it
 
-- **Validation layers**: `-vkdebug` turns on `VK_LAYER_KHRONOS_validation` (if installed) and writes its messages
-  to the log as `Vulkan: validation error: ...`. Any message is a bug.
+- **Validation layers**: `-vkdebug` turns on `VK_LAYER_KHRONOS_validation` (if installed) and logs up to 200
+  messages as `Vulkan: validation error: ...` or `Vulkan: validation warning: ...`. Any message is a bug.
 - **The driver test** (`tests/README.md`) runs the driver's pixel checks on Vulkan.
 - **Frame comparison** (`tests/frame-compare`) plays the same replay with two renderers and compares screenshots
   taken at the same tics.
