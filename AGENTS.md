@@ -115,6 +115,33 @@ Changes that only draw, log, or measure are not game logic, but they must not
 feed back into it: nothing the renderer, the frame rate, or a log line does may
 change a value game logic reads.
 
+## What the rule cannot cover
+
+The rule can only promise upstream's behavior where upstream's code defines
+one. Where upstream itself reads or writes memory it doesn't own, what happens
+depends on the compiler and on where things lie in memory, and no change, not
+even adding a field to a structure, can keep that the same. Known cases:
+
+- Invalid map data. A map can ship its own `BLOCKMAP` lump, which the game
+  loads without checking it (`P_ReadBlockMapLump`). An entry that names a line
+  number at or past the map's number of lines makes the blockmap walks read and
+  write outside the level's arrays, in upstream and here, with different
+  memory behind them.
+- A script that leaves the game in a state upstream's code doesn't handle, so
+  that it reads through a null or freed pointer. A `MobjLineCollide` hook, for
+  example, can remove the moving object and leave `g_tm.thing` null in the
+  middle of a blockmap line walk, and upstream then faults at the next line it
+  visits. Where the result in practice is a crash at a known point, as there,
+  keep that point. Where the result is whatever happens to be in memory, it
+  can't be kept.
+
+Don't lean on this. Before calling a case undefined, show the read or write
+that leaves upstream's own objects, and say so in the commit message as an
+assumption. A case where upstream's result is defined, however odd or
+unintended, is covered by the rule. Don't "fix" an undefined case either (by
+rejecting such a map at load, for example) without the owner's say-so: any
+defined result is itself a difference from upstream.
+
 # Versioning
 
 The fork's version is on top of the Ring Racers version, as

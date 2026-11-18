@@ -8,7 +8,7 @@ This fork does two things the official game doesn't:
 - It runs on Xbox One and Xbox Series consoles in Dev Mode.
 - It has a new hardware renderer, VibeRant, which looks much closer to the Software renderer than the official hardware renderer, Legacy GL, does. It runs on Direct3D 12 on Xbox and Windows (VibeRant D3D) and on Vulkan on Linux and Windows (VibeRant Vulkan).
 
-The game itself plays the same. Replays, ghosts, and online play with people on the official game work as usual.
+The game itself plays the same. Replays, ghosts, and online play with people on the official game work as usual. The one thing that can't be promised is content that is itself broken, such as a custom map with invalid data or a mod that crashes the official game: what happens there depends on chance in the official game too.
 
 I've only tested the Xbox port on an Xbox One X. It should run better on Xbox Series X|S, and it may run on an original Xbox One with lowered graphics settings, but I don't have those consoles to try. If you have one of these consoles and can test the game, let me know how it runs!
 
