@@ -595,6 +595,7 @@ static void Polyobj_moveToSpawnSpot(mapthing_t *anchor)
 
 	// update linedef bounding boxes
 	for (i = 0; i < po->numLines; ++i)
+		// [ZE]: Move the shared line bounds to the spawn position so blockmap walks see the translated lines.
 		Polyobj_bboxSub(P_LineBox(po->lines[i]), &dist);
 
 	// translate vertices and record original coordinates relative to spawn spot
@@ -1003,6 +1004,7 @@ boolean Polyobj_moveXY(polyobj_t *po, fixed_t x, fixed_t y, boolean checkmobjs)
 
 	// translate each line
 	for (i = 0; i < po->numLines; ++i)
+		// [ZE]: Translate the shared line bounds along with the polyobject.
 		Polyobj_bboxAdd(P_LineBox(po->lines[i]), &vec);
 
 	if (checkmobjs)
@@ -1020,6 +1022,7 @@ boolean Polyobj_moveXY(polyobj_t *po, fixed_t x, fixed_t y, boolean checkmobjs)
 
 		// reset lines that have been moved
 		for (i = 0; i < po->numLines; ++i)
+			// [ZE]: Restore the shared line bounds when a blocked move is rolled back.
 			Polyobj_bboxSub(P_LineBox(po->lines[i]), &vec);
 	}
 	else
@@ -1082,17 +1085,20 @@ static void Polyobj_rotateLine(line_t *ld)
 	}
 	else
 	{
+		// [ZE]: Write the shared horizontal bounds when the second endpoint is farther left.
 		bbox[BOXLEFT]  = v2->x;
 		bbox[BOXRIGHT] = v1->x;
 	}
 
 	if (v1->y < v2->y)
 	{
+		// [ZE]: Write the shared vertical bounds when the first endpoint is lower.
 		bbox[BOXBOTTOM] = v1->y;
 		bbox[BOXTOP]    = v2->y;
 	}
 	else
 	{
+		// [ZE]: Write the shared vertical bounds when the second endpoint is at or below the first.
 		bbox[BOXBOTTOM] = v2->y;
 		bbox[BOXTOP]    = v1->y;
 	}

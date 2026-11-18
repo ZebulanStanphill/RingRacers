@@ -140,6 +140,7 @@ static boolean P_CrossSubsecPolyObj(polyobj_t *po, register los_t *los, register
 		if (linechecks[line - lines].validcount == validcount)
 			continue;
 
+		// [ZE]: Record the polyobject sight visit in the shared line table.
 		linechecks[line - lines].validcount = validcount;
 
 		// OPTIMIZE: killough 4/20/98: Added quick bounding-box rejection test
@@ -518,6 +519,7 @@ static boolean P_CrossSubsector(size_t num, register los_t *los, register los_fu
 		if (linechecks[line - lines].validcount == validcount)
 			continue;
 
+		// [ZE]: Record the subsector line visit in the shared table so later sight checks can skip duplicates.
 		linechecks[line - lines].validcount = validcount;
 
 		// OPTIMIZE: killough 4/20/98: Added quick bounding-box rejection test

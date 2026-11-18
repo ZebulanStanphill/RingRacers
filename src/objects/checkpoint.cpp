@@ -33,6 +33,7 @@
 #include "../p_tick.h"
 #include "../r_defs.h"
 #include "../r_main.h"
+// [ZE]: Get the shared linedef bounds accessor for checkpoint overlap tests.
 #include "../r_state.h"
 #include "../s_sound.h"
 #include "../sounds.h"

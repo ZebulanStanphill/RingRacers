@@ -262,9 +262,11 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 	player_t *player = mobj->player;
 
 	// remember states seen, to detect cycles:
+	// [ZE]: Track the nesting depth and table for this player state change to isolate cycle detection.
 	INT32 depth;
 	statenum_t *seenstate;
 	statenum_t i; // initial state
+	// [ZE]: Keep the player state result until the visit table has been cleaned up.
 	boolean ret = true;
 
 #ifdef PARANOIA
@@ -320,6 +322,7 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 			break;
 	}
 
+	// [ZE]: Reserve this nesting depth and get a table without clearing it on every call.
 	depth = seenstate_depth++;
 	seenstate = P_StartSeenStates(depth);
 
@@ -331,6 +334,7 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 		{ // Bad SOC!
 			CONS_Alert(CONS_ERROR, "Cannot remove player mobj by setting its state to S_NULL.\n");
 			//P_RemoveMobj(mobj);
+			// [ZE]: Release the player state table even when an invalid null state is rejected.
 			ret = false;
 			goto done;
 		}
@@ -381,6 +385,7 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 					{
 						if (mobj->frame & FF_FRAMEMASK)
 							mobj->frame--;
+						// [ZE]: Preserve the nested player call's result while cleaning up this call's table.
 						ret = P_SetPlayerMobjState(mobj, st->var1);
 						goto done;
 					}
@@ -416,6 +421,7 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 			// woah. a player was removed by an action.
 			// this sounds like a VERY BAD THING, but there's nothing we can do now...
 			if (P_MobjWasRemoved(mobj))
+			// [ZE]: Release the player state table when an action removes the player object.
 			{
 				ret = false;
 				goto done;
@@ -430,10 +436,12 @@ boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 	if (!mobj->tics)
 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
 
+// [ZE]: Erase this call's recorded states and release its nesting depth on every exit.
 done:
 	P_EndSeenStates(seenstate, i, depth);
 	seenstate_depth--;
 
+	// [ZE]: Return the saved player state result after cleanup.
 	return ret;
 }
 
@@ -443,9 +451,11 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 	state_t *st;
 
 	// remember states seen, to detect cycles:
+	// [ZE]: Track a separate cycle detection table for this object state change's nesting depth.
 	INT32 depth;
 	statenum_t *seenstate;
 	statenum_t i = state; // initial state
+	// [ZE]: Keep the object state result until the visit table has been cleaned up.
 	boolean ret = true;
 
 #ifdef PARANOIA
@@ -453,6 +463,7 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 		I_Error("P_SetMobjState used for player mobj. Use P_SetPlayerMobjState instead!\n(State called: %d)", state);
 #endif
 
+	// [ZE]: Reserve a table for this call so nested state changes leave the caller's entries intact.
 	depth = seenstate_depth++;
 	seenstate = P_StartSeenStates(depth);
 
@@ -461,6 +472,7 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 		if (state == S_NULL)
 		{
 			P_RemoveMobj(mobj);
+			// [ZE]: Release the visit table after a null state removes the object.
 			ret = false;
 			goto done;
 		}
@@ -511,6 +523,7 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 					{
 						if (mobj->frame & FF_FRAMEMASK)
 							mobj->frame--;
+						// [ZE]: Preserve the nested call's result while cleaning up the caller's table.
 						ret = P_SetMobjState(mobj, st->var1);
 						goto done;
 					}
@@ -541,6 +554,7 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 			astate = st;
 			st->action.acp1(mobj);
 			if (P_MobjWasRemoved(mobj))
+			// [ZE]: Release the visit table when a state action removes the object.
 			{
 				ret = false;
 				goto done;
@@ -555,11 +569,13 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 	if (!mobj->tics)
 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
 
+	// [ZE]: Drop the outermost-only table cleanup here so early exits can share the new cleanup path.
 	// Shadow automatically turns white on fullbright frames.
 	// For now, only applies to Follower Audience.
 	if (mobj->type == MT_RANDOMAUDIENCE)
 		mobj->whiteshadow = (mobj->frame & FF_FULLBRIGHT) != 0;
 
+// [ZE]: Clean up the table and release the nesting depth before returning the saved result.
 done:
 	P_EndSeenStates(seenstate, i, depth);
 	seenstate_depth--;
@@ -3934,6 +3950,7 @@ void P_CalcChasePostImg(player_t *player, camera_t *thiscam)
 	{
 		if (player == &players[displayplayers[i]])
 		{
+			// [ZE]: Save Encore mirroring per view so it can coexist with water or heat distortion.
 			postimgmirror[i] = encoremode;
 			if (postimg != postimg_none)
 				postimgtype[i] = postimg;
@@ -12364,6 +12381,7 @@ void P_RemoveMobj(mobj_t *mobj)
 
 // This does not need to be added to Lua.
 // To test it in Lua, check mobj.valid
+// [UWP]: Use the inline removal check on Xbox to avoid a call at each test.
 #ifndef _UWP
 boolean P_MobjWasRemoved(const mobj_t *mobj)
 {
@@ -12371,6 +12389,7 @@ boolean P_MobjWasRemoved(const mobj_t *mobj)
 		return false;
 	return true;
 }
+// [UWP]: End the out-of-line removal check omitted from Xbox builds.
 #endif
 
 void P_FreePrecipMobj(precipmobj_t *mobj)

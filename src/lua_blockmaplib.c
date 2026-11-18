@@ -109,6 +109,7 @@ static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *th
 				linecheck_t *check = &linechecks[po->lines[i] - lines];
 				if (check->validcount == validcount)
 					continue;
+				// [ZE]: Stamp the polyobject line in the shared table before calling Lua.
 				check->validcount = validcount;
 
 				lua_pushvalue(L, 1);
@@ -147,6 +148,7 @@ static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *th
 		if (linechecks[*list].validcount == validcount)
 			continue; // Line has already been checked.
 
+		// [ZE]: Stamp the static line in the shared table before calling Lua.
 		linechecks[*list].validcount = validcount;
 
 		lua_pushvalue(L, 1);

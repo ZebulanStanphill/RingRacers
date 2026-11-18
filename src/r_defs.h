@@ -610,6 +610,7 @@ struct line_t
 	UINT8 blendmode; // blendmode
 	INT32 executordelay;
 
+	// [ZE]: Keep linedef bounds only in the compact table so every bounds check reads the same values.
 	// To aid move clipping.
 	slopetype_t slopetype;
 
@@ -618,6 +619,7 @@ struct line_t
 	sector_t *frontsector;
 	sector_t *backsector;
 
+	// [ZE]: Move the linedef visit stamp to the compact table so walks can check it alongside the bounds.
 	polyobj_t *polyobj; // Belongs to a polyobject?
 
 	boolean tripwire;
@@ -869,6 +871,7 @@ struct rotsprite_t
 {
 	INT32 angles;
 	void **patches;
+// [ZE]: Cache the rolled sprite geometry so the hardware shader can rotate the base texture directly.
 #ifdef HAVE_VIBERANT
 	void *geometry; // PU_ROLL_GEOMETRY, zone clears this owner on level teardown
 #endif
@@ -880,6 +883,7 @@ struct rotsprite_t
 // Patches are used for sprites and all masked pictures, and we compose
 // textures from the TEXTURES list of patches.
 //
+// [ZE]: Save the base patch transform and crop so its brightmap can match the rotation exactly.
 #if defined(ROTSPRITE) && defined(HWRENDER)
 // Sampling coordinates of a rotated base patch, including its final crop.
 typedef struct
@@ -903,6 +907,7 @@ struct patch_t
 
 #ifdef ROTSPRITE
 	rotsprite_t *rotated; // Rotated patches
+// [ZE]: Link rotated brightmaps to their sources so cached companions can be reused and freed safely.
 #ifdef HWRENDER
 	patchrotation_t rotation;
 	// Companion cache links live in the generated patch itself. Dependencies

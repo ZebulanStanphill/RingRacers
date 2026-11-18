@@ -1286,6 +1286,7 @@ FUNCINLINE static ATTRINLINE boolean P_BlockLinesIteratorInternal(INT32 x, INT32
 	INT32 offset;
 	const INT32 *list; // Big blockmap
 	polymaplink_t *plink; // haleyjd 02/22/06
+// [ZE]: Drop the temporary linedef pointer because visit checks use the line index.
 
 	if (x < 0 || y < 0 || x >= bmapwidth || y >= bmapheight)
 		return true;
@@ -1306,9 +1307,11 @@ FUNCINLINE static ATTRINLINE boolean P_BlockLinesIteratorInternal(INT32 x, INT32
 
 			for (i = 0; i < po->numLines; ++i)
 			{
+				// [ZE]: Derive the polyobject line index to find its bounds and stamp in the compact table.
 				const size_t index = po->lines[i] - lines;
 				BlockItReturn_t ret;
 
+				// [ZE]: Skip visited polyobject lines and stamp new ones before testing their bounds.
 				if (linechecks[index].validcount == validcount) // line has been checked
 					continue;
 
@@ -1316,6 +1319,7 @@ FUNCINLINE static ATTRINLINE boolean P_BlockLinesIteratorInternal(INT32 x, INT32
 				if (P_SkipLineBox(index, bbox, mover))
 					continue;
 
+				// [ZE]: Drop the linedef stamp here because even a line rejected by its bounds must be stamped.
 				ret = func(po->lines[i]);
 
 				if (ret == BMIT_ABORT)
@@ -1336,12 +1340,15 @@ FUNCINLINE static ATTRINLINE boolean P_BlockLinesIteratorInternal(INT32 x, INT32
 	// First index is really empty, so +1 it.
 	for (list = blockmaplump + offset + 1; *list != -1; list++)
 	{
+		// [ZE]: Use the blockmap entry as the index into the compact line table.
 		const size_t index = *list;
 		BlockItReturn_t ret;
 
+		// [ZE]: Read the shared visit stamp to avoid checking the same static line twice.
 		if (linechecks[index].validcount == validcount)
 			continue; // Line has already been checked.
 
+		// [ZE]: Stamp static lines before rejecting distant ones, and fetch the linedef only for the callback.
 		linechecks[index].validcount = validcount;
 		if (P_SkipLineBox(index, bbox, mover))
 			continue;
@@ -1360,6 +1367,7 @@ FUNCINLINE static ATTRINLINE boolean P_BlockLinesIteratorInternal(INT32 x, INT32
 	return true; // Everything was checked.
 }
 
+// [ZE]: Keep the original walk unfiltered and let callers opt into bounds filtering.
 boolean P_BlockLinesIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(line_t *))
 {
 	return P_BlockLinesIteratorInternal(x, y, NULL, NULL, func);

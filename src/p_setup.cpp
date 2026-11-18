@@ -17,6 +17,7 @@
 #include <fmt/format.h>
 
 #include "cxxutil.hpp"
+// [UWP]: Make level-load tracing and the map preview cache available on Xbox.
 #ifdef _UWP
 #include "sdl/i_uwptrace.h"
 #include "p_mapcache.h"
@@ -90,6 +91,7 @@
 #include "hardware/hw_main.h"
 #include "hardware/hw_light.h"
 #include "hardware/hw_model.h"
+// [ZE]: Get the active hardware driver query so level setup can choose the Encore remap at runtime.
 #include "hardware/hw_driver.h"
 #endif
 
@@ -136,6 +138,7 @@
 
 extern "C" consvar_t cv_continuousmusic;
 boolean g_reloadinggamestate = false;
+// [UWP]: Remember whether level loading should finish precaching player resources after initialization.
 #if defined(_UWP) && defined(HWRENDER)
 static boolean uwp_precache_players = false;
 #endif
@@ -7578,6 +7581,7 @@ static boolean P_LoadMapFromFile(void)
 	}
 
 	P_LoadMapBSP(curmapvirt);
+// [UWP]: Clear cached point lookups once the new partition tree is loaded.
 #ifdef _UWP
 	R_ClearPointInSubsectorCache();
 #endif
@@ -8461,6 +8465,7 @@ void P_LoadLevelMusic(void)
 
 void P_FreeLevelState(void)
 {
+// [UWP]: Clear cached point lookups before freeing the level they refer to.
 #ifdef _UWP
 	R_ClearPointInSubsectorCache();
 #endif
@@ -8531,11 +8536,13 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	boolean fade_shortcircuit = false;
 
+// [UWP]: Mark the start of level loading so traces can distinguish loading from play.
 #ifdef _UWP
 	UWPTraceLevelLoad(false);
 #endif
 	levelloading = true;
 	g_reloadinggamestate = reloadinggamestate;
+// [UWP]: Reset the deferred player precache flag so a previous load cannot carry it over.
 #if defined(_UWP) && defined(HWRENDER)
 	uwp_precache_players = false;
 #endif
@@ -8857,6 +8864,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	{
 		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette, NULL, 0);
 	}
+// [ZE]: Apply the Encore remap for the active driver so its cached textures use the level palette.
 #ifdef HWRENDER
 	if (HWR_VibeRant() && rendermode == render_opengl)
 		HWR_SetEncoreMap(encoremap);
@@ -9038,6 +9046,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		levelloading = false;
 	}
 
+// [UWP]: Warm level resources before the first draw and start the gameplay trace window when loading is ready.
 #if defined(_UWP) && defined(HWRENDER)
 	// Snapshot/reload/rewind state is restored later, with unusual cache lifetime
 	// and player fields. Leave those paths lazy. Ordinary netgames and Encore
@@ -9165,6 +9174,7 @@ void P_PostLoadLevel(void)
 
 	P_MapEnd();
 
+// [UWP]: Warm the final player and bot models and colors after level-start hooks have run.
 #if defined(_UWP) && defined(HWRENDER)
 	// Bots and P_InitPlayers have finalized skins/colors and spawned mobjs;
 	// level-start hooks have also run. This is before the first gameplay draw.
@@ -9350,6 +9360,7 @@ UINT8 P_InitMapData(void)
 
 	for (i = 0; i < nummapheaders; ++i)
 	{
+// [UWP]: Refresh the loading screen while scanning maps so the skip prompt stays visible.
 #ifdef _UWP
 		CON_UWPLoadingKeepAlive();
 #endif
@@ -9435,6 +9446,7 @@ UINT8 P_InitMapData(void)
 			virtmap = vres_GetMap(mapheaderinfo[i]->lumpnum);
 			thumbnailPic = vres_Find(virtmap, "PICTURE");
 			minimap = vres_Find(virtmap, "MINIMAP");
+// [UWP]: End the uncached fallback for reading map preview graphics on other platforms.
 #endif
 
 			// Clear out existing graphics...
@@ -9508,6 +9520,7 @@ UINT8 P_InitMapData(void)
 
 					W_ReadLumpPwad(wadindex, lumpnum, ghostdata);
 					staffbrief_t* briefghost = G_GetStaffGhostBrief(ghostdata);
+// [UWP]: End the uncached fallback for reading staff ghost briefs on other platforms.
 #endif
 					if (briefghost == nullptr)
 					{
