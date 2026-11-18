@@ -957,10 +957,9 @@ the three layouts. `custom-replace-invalid` replaces the working shader with inv
 built-in color, and `custom-replace-recover` loads a good one again (191, 128, 64).
 `custom-sprite-clip` selects the clipping variant of a sprite replacement. `custom-model-kept`
 draws a model with Model Lighting on and only a model replacement, which stays in use, and
-`custom-model-lighting` adds a model-lighting replacement, which must take over. Failures that only
-the GPU can cause, such as one layout failing to create, are covered by the native test, which also
-counts translations, compilations and pipelines, so compiling with nothing loaded or again without a
-change is shown to do none of them.
+`custom-model-lighting` adds a model-lighting replacement, which must take over. The native test injects failures such as pipeline creation failing for one layout and checks
+the driver's response. It counts translations, compilations, and pipelines to verify that compiling
+with nothing loaded or recompiling without a change does none of that work.
 `custom-water-refraction` loads a water fragment that outputs a fixed color with the surface's
 alpha and draws it over 64 colored bands at two tics. The result must be that color blended
 over the scenery shifted by the production ripple (four rows down, then eight up), which the
