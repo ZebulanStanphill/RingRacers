@@ -229,8 +229,10 @@ game's OpenGL window is hidden".
 - **`-mtlunseen`** presents every frame regardless of AppKit's occlusion report for unattended tests. Both Macs
   kept supplying drawables with the screen locked, including with the MacBook's display asleep.
 - **`-mtlcheck`** reads back the first three drawables for each window and every sixtieth thereafter, along with
-  their source frames. Once the copies finish, `mtl_present_check.h` checks placement pixel for pixel at the
-  frame's own size, by the mean colors of 8 by 8 blocks when scaled, and requires black outside the rectangle.
+  their source frames. Once the copies finish, `mtl_present_check.h` requires black outside the rectangle and
+  compares mean RGB values on a grid of up to 8 by 8 blocks. Each block's channel means must be within one level
+  at the frame's own size or six levels when scaled. At the frame's own size, at most 0.1% of its pixels may
+  differ by more than one level in any RGB channel.
   It is plain C++ with its own test. The log records each drawable and marks a mismatch "FAILED". Game screenshots
   and capture-mode frames read the driver's screen before presentation, so they miss a black window or swapped red
   and blue. Readback requires turning off `framebufferOnly` and is for tests. It checks the presented texture.
@@ -290,7 +292,8 @@ buffer (`MTLCommandBufferError`), such as a timeout, page fault, out-of-memory e
 removal. Direct3D 12 reports GPU work failures as removal. A failed buffer can finish some uploads, draws, and
 copies, with no indication of which finished, while the driver already counts the textures as uploaded.
 
-After the first failure, mtl12 fences read as `UINT64_MAX`, waits fail, and `Signal` fails.
+After the first failure, mtl12 fences read as `UINT64_MAX`, waits fail, and the queue's `Signal` returns the
+failure. The fence's own `Signal` still returns success.
 `GetDeviceRemovedReason` maps Metal's code to `DXGI_ERROR_DEVICE_REMOVED` for removal, `DXGI_ERROR_DEVICE_HUNG`
 for timeouts or a device taken away after too many timeouts, `DXGI_ERROR_DRIVER_INTERNAL_ERROR` for internal
 errors, and `DXGI_ERROR_DEVICE_RESET` for the rest. The driver ends the frame as for a removed Direct3D 12
@@ -364,7 +367,9 @@ autoreleased no objects without a pool. Shader validation uses `MTLGPUDebugDevic
 
 `capture.py sweep` runs a separate game with `-metal` for the first staff ghost on each of 213 maps in frame
 capture mode. It samples five level times per map, yielding 1,002 frames because some replays end earlier.
-A run requires exit status 0, every frame written, and all but a few frames presented by the presenter's count.
+A run requires exit status 0, a frame capture summary, and at least one captured frame. The number of files
+must match the summary's count of screenshots taken. The script also requires at least one presented frame, with
+at most 20 frames or one twentieth of the frames given to the presenter, whichever is greater, left unpresented.
 Validation messages, failed command buffers, "not implemented" lines, driver errors, and GPU waits the driver gave
 up on fail the run. The sweeps below predate the presentation count requirement, but include the counts.
 See `tests/README.md` ("Metal frames") for what a run checks about the window.
@@ -409,8 +414,9 @@ nothing either way, and no captured frame of that build had a cap in view with a
 
 ### The frames
 
-`compare.py` compares frames pixel by pixel. "Beyond texel edges" counts pixels whose color appears nowhere
-within one pixel in either frame. A texture coordinate on an edge can sample either texel. Two GPUs disagree on
+`compare.py` compares frames pixel by pixel. A differing pixel counts as "Beyond texel edges" if, in either
+direction, the other frame has no match in the 3 by 3 neighborhood centered on that pixel. A match is within
+eight levels per RGB channel. A texture coordinate on an edge can sample either texel. Two GPUs disagree on
 that choice more often than two backends on one GPU.
 
 | Frames of | against | differ: median, 95% of frames under, worst | more than one level apart | beyond texel edges: frames at most 0.02%, above 0.1% |
