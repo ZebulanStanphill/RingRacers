@@ -1,0 +1,340 @@
+#include <array>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <optional>
+#include <random>
+
+using fixed_t = std::int32_t;
+using INT64 = std::int64_t;
+using UINT32 = std::uint32_t;
+using boolean = bool;
+using std::abs;
+
+enum BlockItReturn_t { BMIT_CONTINUE, ReachedPaperCollision };
+
+// Only the flags read by the extracted guards and an unrelated flag.
+enum : UINT32
+{
+	MF_SPECIAL = 1u << 0,
+	MF_SOLID = 1u << 1,
+	MF_SHOOTABLE = 1u << 2,
+	MF_PAPERCOLLISION = 1u << 5,
+	MF_SPRING = 1u << 16,
+	MF_PAIN = 1u << 22,
+	MF_NOCLIPTHING = 1u << 25,
+};
+
+struct player_t
+{
+	bool spectator;
+};
+
+struct mobj_t
+{
+	fixed_t x, y, radius;
+	UINT32 flags;
+	const player_t *player;
+	bool frozen, reappearing, removed;
+	const mobj_t *punt_ref;
+};
+
+static struct
+{
+	mobj_t *thing;
+	fixed_t x, y;
+} g_tm;
+
+struct Calls
+{
+	unsigned frozen, respawn, removed;
+};
+
+static Calls calls;
+
+static bool P_MobjIsFrozen(const mobj_t *thing)
+{
+	++calls.frozen;
+	return thing->frozen;
+}
+
+static bool P_MobjWasRemoved(const mobj_t *thing)
+{
+	++calls.removed;
+	return !thing || thing->removed;
+}
+
+static bool P_MobjIsReappearing(const mobj_t *thing)
+{
+	++calls.respawn;
+	const mobj_t *punt = thing->punt_ref;
+	return (P_MobjWasRemoved(punt) ? thing : punt)->reappearing;
+}
+
+@@PREFILTER@@
+@@STRICT_PREFILTER@@
+@@UNCHECKED_RADII@@
+
+static BlockItReturn_t Production(mobj_t *thing, fixed_t &blockdist)
+{
+@@PRODUCTION@@
+	return ReachedPaperCollision;
+}
+
+static BlockItReturn_t Reference(mobj_t *thing, fixed_t &blockdist)
+{
+@@REFERENCE@@
+	return ReachedPaperCollision;
+}
+
+static BlockItReturn_t NoRespawn(mobj_t *thing, fixed_t &blockdist)
+{
+@@NO_RESPAWN@@
+	return ReachedPaperCollision;
+}
+
+enum class Player { Absent, Racer, Spectator };
+
+struct Object
+{
+	fixed_t x = 0, y = 0, radius = 5;
+	UINT32 flags = MF_SOLID;
+	Player player = Player::Absent;
+	bool frozen = false, reappearing = false;
+};
+
+struct Scenario
+{
+	Object thing, mover;
+	fixed_t queryX = 0, queryY = 0;
+	bool self = false;
+	bool hasPunt = false, puntRemoved = false, puntReappearing = false;
+};
+
+// An empty outcome is BMIT_CONTINUE. A value is blockdist at the paper-collision test.
+using Outcome = std::optional<fixed_t>;
+using Guards = BlockItReturn_t (*)(mobj_t *, fixed_t &);
+using Prefilter = boolean (*)(const mobj_t *);
+
+static mobj_t MakeObject(const Object &input)
+{
+	static const player_t racer{false}, spectator{true};
+	const player_t *player = nullptr;
+	if (input.player == Player::Racer)
+		player = &racer;
+	if (input.player == Player::Spectator)
+		player = &spectator;
+	return {input.x, input.y, input.radius, input.flags, player, input.frozen, input.reappearing, false, nullptr};
+}
+
+static Outcome Run(const Scenario &s, Guards guards)
+{
+	mobj_t mover = MakeObject(s.mover);
+	mobj_t thing = MakeObject(s.thing);
+	mobj_t punt{};
+	punt.removed = s.puntRemoved;
+	punt.reappearing = s.puntReappearing;
+	thing.punt_ref = s.hasPunt ? &punt : nullptr;
+	g_tm = {&mover, s.queryX, s.queryY};
+	calls = {};
+
+	fixed_t blockdist = 0;
+	if (guards(s.self ? &mover : &thing, blockdist) == BMIT_CONTINUE)
+		return std::nullopt;
+	return blockdist;
+}
+
+static bool RunPrefilter(const Scenario &s, Prefilter prefilter)
+{
+	mobj_t mover = MakeObject(s.mover);
+	const mobj_t thing = MakeObject(s.thing);
+	g_tm = {&mover, s.queryX, s.queryY};
+	return prefilter(s.self ? &mover : &thing);
+}
+
+struct WideDistance
+{
+	std::int64_t radii, dx, dy;
+
+	bool Defined() const
+	{
+		// A magnitude must fit in fixed_t, even for the axis upstream could short-circuit.
+		return INT32_MIN <= radii && radii <= INT32_MAX
+			&& abs(dx) <= INT32_MAX && abs(dy) <= INT32_MAX;
+	}
+
+	bool Skips() const
+	{
+		return Defined() && (abs(dx) >= radii || abs(dy) >= radii);
+	}
+};
+
+static WideDistance Distance(const Scenario &s)
+{
+	const Object &thing = s.self ? s.mover : s.thing;
+	return {
+		std::int64_t{thing.radius} + s.mover.radius,
+		std::int64_t{thing.x} - s.queryX,
+		std::int64_t{thing.y} - s.queryY,
+	};
+}
+
+static unsigned guardComparisons = 0, prefilterComparisons = 0, undefinedDistances = 0;
+
+static bool PrefilterMatches(const Scenario &s, const WideDistance &d, Prefilter prefilter)
+{
+	return RunPrefilter(s, prefilter) == d.Skips();
+}
+
+static void ComparePrefilter(const Scenario &s, const WideDistance &d)
+{
+	++prefilterComparisons;
+	undefinedDistances += !d.Defined();
+	if (!PrefilterMatches(s, d, P_ThingSurelyOutOfReach))
+	{
+		std::fprintf(stderr, "Pre-filter case %u disagrees with the 64-bit model. "
+			"Radius sum=%lld, dx=%lld, dy=%lld, defined=%d, expected skip=%d.\n",
+			prefilterComparisons, static_cast<long long>(d.radii), static_cast<long long>(d.dx),
+			static_cast<long long>(d.dy), d.Defined(), d.Skips());
+		std::abort();
+	}
+}
+
+static Outcome CompareGuards(const Scenario &s)
+{
+	assert(Distance(s).Defined());
+	++guardComparisons;
+	const Outcome expected = Run(s, Reference);
+	const Outcome actual = Run(s, Production);
+	if (actual != expected)
+	{
+		std::fprintf(stderr, "Guard case %u disagrees with frozen upstream. "
+			"Expected fall-through=%d, blockdist=%d. Got fall-through=%d, blockdist=%d.\n",
+			guardComparisons,
+			expected.has_value(), expected.value_or(0), actual.has_value(), actual.value_or(0));
+		std::abort();
+	}
+	return expected;
+}
+
+static void DirectedCases()
+{
+	Scenario nearby;
+	nearby.mover.x = 100; // The distance is to the query point, not the mover's current position.
+	assert(CompareGuards(nearby) == 10);
+	Scenario self = nearby;
+	self.self = true;
+	assert(!CompareGuards(self));
+
+	Scenario respawn = nearby;
+	respawn.hasPunt = true;
+	respawn.puntReappearing = true;
+	const Outcome respawnExpected = CompareGuards(respawn);
+	assert(!respawnExpected && Run(respawn, NoRespawn) == 10);
+	std::puts("Missing-respawn control: comparison detected fall-through while respawning.");
+	respawn.puntRemoved = true;
+	assert(CompareGuards(respawn) == 10);
+	respawn.thing.reappearing = true;
+	assert(!CompareGuards(respawn));
+
+	Scenario touching = nearby;
+	touching.thing.x = 10;
+	assert(!CompareGuards(touching));
+	ComparePrefilter(touching, Distance(touching));
+	assert(!PrefilterMatches(touching, Distance(touching), StrictPrefilter));
+	touching.thing.x = 0;
+	touching.thing.y = -10;
+	assert(!CompareGuards(touching));
+	ComparePrefilter(touching, Distance(touching));
+	assert(!PrefilterMatches(touching, Distance(touching), StrictPrefilter));
+	std::puts("Strict pre-filter control: comparison detected a missed skip at a touching edge on each axis.");
+
+	// A distant thing bypasses the hitlag and respawn helpers in the new order.
+	assert(!Run(touching, Production));
+	assert(calls.frozen == 0 && calls.respawn == 0 && calls.removed == 0);
+	assert(!Run(touching, Reference));
+	assert(calls.frozen == 1 && calls.respawn == 1 && calls.removed == 1);
+
+	Scenario underflow = nearby;
+	underflow.thing.radius = INT32_MIN;
+	underflow.mover.radius = -1;
+	const WideDistance d = Distance(underflow);
+	ComparePrefilter(underflow, d);
+	// With two zero deltas and a negative wide sum, omitting the sum check skips the thing.
+	assert(!d.Defined() && !PrefilterMatches(underflow, d, UncheckedRadiiPrefilter));
+	std::puts("Unchecked radii control: comparison detected a skip when the radius sum underflows.");
+
+	constexpr fixed_t half = 1 << 30;
+	constexpr std::array<fixed_t, 8> edges{INT32_MIN, -INT32_MAX, -half, -1, 0, 1, half, INT32_MAX};
+	for (const fixed_t a : edges)
+	{
+		for (const fixed_t b : edges)
+		{
+			Scenario radii = nearby;
+			radii.thing.radius = a;
+			radii.mover.radius = b;
+			ComparePrefilter(radii, Distance(radii));
+
+			// Give the other axis a valid touching distance so an invalid delta must suppress the skip.
+			Scenario horizontal = nearby;
+			horizontal.thing.x = a;
+			horizontal.queryX = b;
+			horizontal.thing.y = 10;
+			ComparePrefilter(horizontal, Distance(horizontal));
+			Scenario vertical = nearby;
+			vertical.thing.y = a;
+			vertical.queryY = b;
+			vertical.thing.x = 10;
+			ComparePrefilter(vertical, Distance(vertical));
+		}
+	}
+}
+
+static constexpr unsigned RandomCases = 100000;
+static std::mt19937 rng(20261118);
+
+static fixed_t RandomFixed(bool wide)
+{
+	constexpr fixed_t half = 1 << 30;
+	static constexpr std::array<fixed_t, 15> edges{
+		INT32_MIN, INT32_MIN + 1, INT32_MIN + 2, -half - 1, -half, -half + 1,
+		-1, 0, 1, half - 1, half, half + 1, INT32_MAX - 2, INT32_MAX - 1, INT32_MAX,
+	};
+	if (!wide)
+		return static_cast<fixed_t>(rng() % 129) - 64;
+	if (rng() % 2)
+		return edges[rng() % edges.size()];
+	return static_cast<fixed_t>(std::int64_t{INT32_MIN} + static_cast<std::int64_t>(rng()));
+}
+
+static Object RandomObject(bool wide)
+{
+	static constexpr std::array<UINT32, 10> flags{
+		0, MF_SPECIAL, MF_SOLID, MF_SHOOTABLE, MF_SPRING, MF_PAIN, MF_NOCLIPTHING,
+		MF_SOLID | MF_NOCLIPTHING, MF_PAPERCOLLISION, MF_SOLID | MF_PAPERCOLLISION,
+	};
+	return {RandomFixed(wide), RandomFixed(wide), RandomFixed(wide), flags[rng() % flags.size()],
+		static_cast<Player>(rng() % 3), rng() % 2 != 0, rng() % 4 == 0};
+}
+
+int main()
+{
+	DirectedCases();
+	const unsigned directedGuards = guardComparisons;
+	const unsigned directedPrefilters = prefilterComparisons;
+	for (unsigned i = 0; i < RandomCases; ++i)
+	{
+		const bool wide = i % 2 != 0;
+		Scenario s{RandomObject(wide), RandomObject(wide), RandomFixed(wide), RandomFixed(wide),
+			rng() % 8 == 0, rng() % 2 != 0, rng() % 2 != 0, rng() % 2 != 0};
+		const WideDistance d = Distance(s);
+		ComparePrefilter(s, d);
+		if (d.Defined())
+			CompareGuards(s);
+	}
+
+	std::printf("%u seeded random scenarios. %u frozen upstream guard comparisons (%u directed). "
+		"%u pre-filter model comparisons (%u directed, %u with undefined upstream distance arithmetic).\n",
+		RandomCases, guardComparisons, directedGuards, prefilterComparisons, directedPrefilters, undefinedDistances);
+}

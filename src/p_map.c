@@ -519,6 +519,22 @@ static void P_DoFanAndGasJet(mobj_t *spring, mobj_t *object)
 	}
 }
 
+// [ZE]: True only when upstream's distance test in PIT_CheckThing would be well defined (no signed overflow in the
+// radius sum or the differences, and no abs(INT32_MIN)) and would skip the thing. Computed in 64 bits, so it has no
+// undefined behavior of its own; it reads positions and radii only.
+static boolean P_ThingSurelyOutOfReach(const mobj_t *thing)
+{
+	const INT64 blockdist = (INT64)thing->radius + g_tm.thing->radius;
+	const INT64 dx = (INT64)thing->x - g_tm.x;
+	const INT64 dy = (INT64)thing->y - g_tm.y;
+
+	if (blockdist > INT32_MAX || blockdist < INT32_MIN
+		|| dx <= INT32_MIN || dx > INT32_MAX || dy <= INT32_MIN || dy > INT32_MAX)
+		return false; // Leave it to upstream's own test.
+
+	return (dx < 0 ? -dx : dx) >= blockdist || (dy < 0 ? -dy : dy) >= blockdist;
+}
+
 //
 // PIT_CheckThing
 //
@@ -536,6 +552,12 @@ static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
 
 	// don't clip against self
 	if (thing == g_tm.thing)
+		return BMIT_CONTINUE;
+
+	// [ZE]: Skip most things before the spectator, hitlag, flag, and respawn tests below, which read three more of the
+	// thing's cache lines. This only skips a thing that upstream's distance test further down skips too, and those tests
+	// only read and only skip, so the same things are skipped; every other thing still meets upstream's own test.
+	if (P_ThingSurelyOutOfReach(thing))
 		return BMIT_CONTINUE;
 
 	// Ignore spectators

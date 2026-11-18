@@ -115,6 +115,25 @@ def generate(engine, output):
     }, output / "plane_polygon_loops.cpp")
     maputl = Source(engine / "src/p_maputl.c")
     game_map = Source(engine / "src/p_map.c")
+    thing_guards = function_section(game_map, "PIT_CheckThing",
+                                    "\t// don't clip against self", "\tif (thing->flags & MF_PAPERCOLLISION)")
+    prefilter = game_map.function("P_ThingSurelyOutOfReach")
+    respawn_guard = "\tif (P_MobjIsReappearing(thing))\n\t\treturn BMIT_CONTINUE;"
+    touching_edge = ") >= blockdist"
+    sum_range = "blockdist > INT32_MAX || blockdist < INT32_MIN\n\t\t|| "
+    if (thing_guards.count(respawn_guard) != 1 or prefilter.count(touching_edge) != 2
+            or prefilter.count(sum_range) != 1):
+        raise ValueError("Could not inject the thing check order negative controls")
+    render(templates / "thing_check_order.cpp.in", {
+        "PREFILTER": prefilter,
+        "PRODUCTION": thing_guards,
+        "REFERENCE": (templates.parent / "fixtures/thing-check-order-baseline.inc").read_text(encoding="utf-8"),
+        "NO_RESPAWN": thing_guards.replace(respawn_guard, "\n"),
+        "STRICT_PREFILTER": prefilter.replace("P_ThingSurelyOutOfReach", "StrictPrefilter")
+            .replace(touching_edge, ") > blockdist"),
+        "UNCHECKED_RADII": prefilter.replace("P_ThingSurelyOutOfReach", "UncheckedRadiiPrefilter")
+            .replace(sum_range, "\n\t\t"),
+    }, output / "thing_check_order.cpp")
     polyobj = Source(engine / "src/p_polyobj.c")
     line_box = maputl.function("P_SkipLineBox")
     line_walk = maputl.function("P_BlockLinesIteratorInternal")

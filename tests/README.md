@@ -99,6 +99,22 @@ Use the CTest filter under Running to select the cases below by name.
   `block_lines_paranoia` variant also checks that the accessor calls `I_Error`
   for a synthetic line and a one-past-end pointer.
 
+- **Blockmap thing checks.** `thing_check_order` runs the collision guards from
+  `PIT_CheckThing` through the point just before the paper-collision test.
+  It compares skips and the radius sum on fall-through with frozen upstream
+  guards when both coordinate differences, their absolute values, and the
+  radius sum fit in signed 32-bit values. The 100,000 seeded random scenarios vary
+  self-collision, spectators, hitlag, collision flags, respawn through a punt
+  reference, positions, and radii. The test compares the extracted early
+  distance check in isolation with a 64-bit model on every random scenario
+  and on 195 directed cases, including cases around the arithmetic limits.
+  The model requires the early check to defer to the original guards on every
+  out-of-range input. The full guard comparison also runs on seven directed cases.
+  A call count confirms that a distant thing bypasses the hitlag and respawn
+  helpers. Generated negative controls detect a missed skip at a touching edge
+  on either axis, an early skip when the radius sum underflows, and fall-through
+  while respawning.
+
 - **Metal presenter, a window out of sight:** `metal_present_seen` runs the production
   decision of VibeRant Metal's presenter (`metal/mtl_present_seen.h`, plain C++; the
   presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three
