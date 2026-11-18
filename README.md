@@ -131,7 +131,7 @@ On a PC, include `latest-log.txt` from the game's own folder (`~/.ringracers` on
 
 ### GitHub Actions
 
-Every push runs two workflows:
+Every push triggers **Build** and **Tests**.
 
 - **Build** builds the Xbox app on Windows and uploads it as the `ring-racers-ze-uwp` artifact, which [Install the game](#install-the-game) explains how to use.
 - **Tests** runs the native regression tests and the VibeRant driver tests (on Direct3D 12 with WARP, on Vulkan, and on Metal) described in [tests/README.md](tests/README.md), checks that Linux and macOS still build, and uploads the Windows desktop build as `windows-desktop`.
