@@ -109,7 +109,7 @@ Files copied onto the drive on Windows inherit these permissions. Files copied f
 
 ### If the game can't use the drive
 
-Every error message the game shows ends with a list of the drives it can see. The message is also saved as `E:\ringracers\error.txt` if the drive can be written to. In the list, error 5 means access denied, and error 2 or 3 means not found:
+When the game stops with an error, the message ends with a list of the drives it can see. The message is also saved as `E:\ringracers\error.txt` if the drive can be written to. In the list, error 5 means access denied, and error 2 or 3 means not found:
 
 - `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Give Xbox apps access to the drive again.
 - `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at the top of it.
