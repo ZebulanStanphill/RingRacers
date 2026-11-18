@@ -26,6 +26,9 @@
 #endif
 
 #ifdef _UWP
+#include "d_clisrv.h"
+#include "g_demo.h"
+#include "k_grandprix.h"
 #include "r_fps.h"
 #include "screen.h"
 #ifdef HAVE_VIBERANT
@@ -780,6 +783,54 @@ static void PS_UWPCountMobjs(int *regular, int *scenery, int *nothink)
 	}
 }
 
+// [UWP]: Record the level and settings in effect when the perf block is written.
+static void PS_UWPLogLevelContext(void)
+{
+	const char *mapname = G_BuildMapName(gamemap);
+	char *title = mapname ? G_BuildMapTitle(gamemap) : NULL;
+	const char *speed = va("%u", (unsigned)gamespeed);
+	int playing = 0, bots = 0, spectating = 0;
+
+	for (const CV_PossibleValue_t *gear = kartspeed_cons_t; gear->strvalue; gear++)
+	{
+		if (gear->value == gamespeed)
+		{
+			speed = gear->strvalue;
+			break;
+		}
+	}
+
+	for (int i = 0; i < MAXPLAYERS; i++)
+	{
+		if (!playeringame[i])
+			continue;
+		if (players[i].spectator)
+			spectating++;
+		else
+		{
+			playing++;
+			if (players[i].bot)
+				bots++;
+		}
+	}
+
+	I_OutputMsg("UWP perf:   level: %s \"%s\", %s, game speed %s, encore %s, netgame %s, Grand Prix %s, time attack %s, replay %s\n",
+		mapname ? mapname : "", title ? title : "", gametypes[gametype]->name, speed,
+		encoremode ? "On" : "Off", netgame ? (server ? "host" : "client") : "off",
+		grandprixinfo.gp ? "On" : "Off", modeattacking ? "On" : "Off", demo.playback ? "On" : "Off");
+	if (title)
+		Z_Free(title);
+
+	I_OutputMsg("UWP perf:   racers: %d playing (%d bots), %d spectating, %d on this console; 3D models %s, drop shadows %s, FOV %s\n",
+		playing, bots, spectating, r_splitscreen + 1,
+#ifdef HWRENDER
+		cv_glmodels.string,
+#else
+		"Off",
+#endif
+		cv_shadow.string, cv_fov[0].string);
+}
+
 void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 {
 	const double ms = 1000.0 / I_GetPrecisePrecision();
@@ -866,6 +917,9 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 	I_OutputMsg("UWP perf:   %.1f frames/s (%.1f with 3D) from %.1f loops/s; work %.1f ms per loop, %.1f ms at worst\n",
 		uwp_perf.frames / seconds, uwp_perf.worldframes / seconds, uwp_perf.loops / seconds,
 		uwp_perf.work * ms / uwp_perf.loops, uwp_perf.worstwork * ms);
+
+	if (gamestate == GS_LEVEL)
+		PS_UWPLogLevelContext();
 
 	if (uwp_perf.worldframes)
 	{
