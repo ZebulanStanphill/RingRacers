@@ -1327,11 +1327,12 @@ Each run gets a fresh home directory, `MTL_DEBUG_LAYER=1`, and
 `MTL_SHADER_VALIDATION=1`. A run fails, and with it the job, if the game doesn't exit
 with status 0 before the timeout (a game that stops at its error dialog is killed after five seconds),
 if the log doesn't say that the backend is Metal with both kinds of validation on, if
-a frame the capture mode announced is missing, if the presenter didn't present
+a sweep writes no screenshots, omits its capture summary, or writes a different
+number of files than the summary reports, if the presenter didn't present
 the frames it was given (below), if the game's OpenGL window wasn't
 still hidden when the game quit with VibeRant Metal (the presenter's last line says
-what SDL says of it), if the log doesn't say that the Metal layer has its window's
-color space, or if the log has a validation
+what SDL says of it), if the log includes a presenter line but lacks confirmation that the Metal layer
+has its window's color space, or if the log has a validation
 message, a failed command buffer, a "not implemented" line, a driver error,
 a GPU wait timeout, or a fallback to Software. `summary.json` in each artifact has every run's result.
 
