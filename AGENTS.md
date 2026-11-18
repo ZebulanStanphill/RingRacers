@@ -3,17 +3,17 @@
 `master` is upstream's [Ring Racers](https://github.com/KartKrewDev/RingRacers)
 `maintenance-2.4` branch plus our changes, one commit per change. The UWP (Xbox)
 app is built from this repository too: `uwp/` holds its launcher, build script,
-SDL patches, profile recordings and tools, and `CHANGES.md` is the user-facing
+SDL patches, profile recordings, and tools, and `CHANGES.md` is the user-facing
 changelog. They came from a separate repository,
 [ringracers-uwp](https://github.com/ZebulanStanphill/ringracers-uwp) (archived),
 whose history joins this one at the commit "Merge the UWP app's repository".
 
 # Commit scope
 
-Keep each commit focused: implement one change or fix per commit, with the
-documentation for that change (its commit message, and the docs in `docs/` or
-`tests/README.md` that describe it) and its `CHANGES.md` entry. Split unrelated
-changes into separate commits, even when they're made in the same session.
+Implement one change or fix per commit, with its documentation (its commit
+message and the docs in `docs/` or `tests/README.md` that describe it) and its
+`CHANGES.md` entry. Split unrelated changes into separate commits, even when
+they're made in the same session.
 
 # Writing style
 
@@ -29,7 +29,7 @@ flatten it into this one and stop on its old conflicts. With `--rebase-merges`
 those commits stay as they are and the merge is made again.
 
 - Prefer new files and small, contained hooks over edits spread through upstream
-  code. Don't reformat, rename or reorder upstream code you aren't changing.
+  code. Don't reformat, rename, or reorder upstream code you aren't changing.
 - Mark a change inside upstream code with a comment that starts `[ZE]:` (for
   Zebulan Edition, this fork), or `[UWP]:` when the code is only compiled for or
   only applies to the Xbox (UWP) build. Names and log lines follow the same rule:
@@ -43,14 +43,15 @@ those commits stay as they are and the merge is made again.
   which Linux builds and those Windows desktop builds have by default:
   `src/hardware/r_viberant/vulkan` implements the Direct3D 12 interfaces the driver
   uses, so the driver's own code is the same for both
-  (`docs/vulkan-backend.md`). Only code that makes the device, compiles shaders
+  (`docs/vulkan-backend.md`). Only code that makes the device, compiles shaders,
   or presents asks which backend it is on (`Core_Vulkan()`); engine code doesn't,
   except to name the renderer (`HWR_Vulkan()`). A UWP build has the driver as its
   only hardware driver; a build with `HAVE_VIBERANT` but not `_UWP` has both it and
-  OpenGL, and the video code picks one per run of the game. Behaviour that depends on the driver (what the hardware renderer
-  draws or how it walks the level, calls into the driver) therefore checks
-  `HWR_VibeRant()` (`src/hardware/hw_driver.h`) at run time: it is the constant 1 with
-  `_UWP`, the constant 0 without `HAVE_VIBERANT`, and `hwr_viberant` between them.
+  OpenGL, and the video code picks one per run. Driver-dependent behavior (what
+  the hardware renderer draws, how it walks the level, and calls into the
+  driver) therefore checks `HWR_VibeRant()` (`src/hardware/hw_driver.h`) at run
+  time. It is the constant 1 with `_UWP`, the constant 0 without
+  `HAVE_VIBERANT`, and `hwr_viberant` otherwise.
   `#ifdef HAVE_VIBERANT` is only for what has to be compiled out without the driver:
   includes, types, struct fields, enum values, prototypes, function definitions, a
   call of a VibeRant driver function (with the `HWR_VibeRant()` check around it), and
@@ -80,17 +81,17 @@ The fork's version is on top of the Ring Racers version, as
 Ring Racers 2.4.1.
 
 To release, make a commit that raises `FORKVERSION` in `src/fork_version.h`, tag
-it `<Ring Racers version>_z<fork version>` (`v` before it also works) and push the
+it `<Ring Racers version>_z<fork version>` (`v` before it also works), and push the
 tag. A build is a release only from a clean checkout of a commit with that tag
 (`cmake/Modules/ForkVersion.cmake`). Builds from any other commit are
-development builds, and the title screen, `version` and the startup log say
+development builds, and the title screen, `version`, and the startup log say
 `-dev` and the commit, e.g. `v2.4_z1-dev (1a2b3c4d)`.
 
 `FORKVERSION` goes back to `"0"` (no release yet on that Ring Racers version) when
 the fork is rebased onto a new Ring Racers version.
 
 The text is display and log only. Nothing sent over the network or written to
-replays or saves carries it; `SRB2VERSION`, `VERSIONSTRING` and `MODVERSION` stay
+replays or saves carries it; `SRB2VERSION`, `VERSIONSTRING`, and `MODVERSION` stay
 upstream's, and `DEVELOP` stays off, so netplay and replays remain compatible with
 the unmodified game.
 
@@ -128,8 +129,8 @@ earlier work to the current agent.
 
 To reduce token usage, a more capable agent should hand routine work to
 subagents rather than doing it itself, and keep the design decisions, reviews
-and replies to the user. Give each subagent a self-contained brief: the
-settled design, constraints, and the commit attribution to use.
+and replies to the user. Give each subagent a self-contained brief with the
+settled design, constraints, and commit attribution to use.
 
 - Menial tasks (mechanical edits, searches, log extraction, documentation
   updates): prefer Claude Haiku, falling back to GPT Luna.
