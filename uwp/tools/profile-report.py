@@ -168,7 +168,12 @@ def main():
     allfuncs = collections.Counter()
     for name, entries in phases.items():
         n = sum(c for _, _, c in entries)
-        share = ("during startup" if name.endswith(": startup") else "outside levels") if is_outside(name) else f"{100.0 * n / max(total, 1):.1f}% of all in levels"
+        if name.endswith(": driver thread"):
+            share = "driver thread in levels"
+        elif is_outside(name):
+            share = "during startup" if name.endswith(": startup") else "outside levels"
+        else:
+            share = f"{100.0 * n / max(total, 1):.1f}% of all in levels"
         print(f"\n== {name}: {n} samples, {share}{angle_text(name)}")
         funcs = collections.Counter()
         mods = collections.Counter()

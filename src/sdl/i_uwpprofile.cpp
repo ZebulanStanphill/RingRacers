@@ -29,6 +29,7 @@
 #include <cstring>
 #include <system_error>
 #include <thread>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -55,7 +56,7 @@ constexpr const char* kProfilePath = "E:\\ringracers\\uwp-profile.txt";
 constexpr auto kWriteInterval = std::chrono::seconds(20);
 constexpr LONGLONG kSampleInterval = -200000; // 20 ms, in 100 ns units (negative for relative to now)
 constexpr const char* kPhaseNames[NUMUWPPROFPHASES] = {"other", "game logic", "3D view", "2D", "display", "startup",
-	"level paused or loading", "title and menus", "intermission", "voting", "podium", "cutscenes", "elsewhere"};
+	"level paused or loading", "title and menus", "intermission", "voting", "podium", "cutscenes", "elsewhere", "driver thread"};
 // What was drawing: rendermode's render_soft, render_opengl, and anything else (render_none)
 enum Renderer
 {
@@ -194,6 +195,12 @@ struct Sampler
 	uintptr_t stacklow, stackhigh; // the main thread's stack
 };
 
+// The sampler holds this lock only while using the registered handle.
+std::mutex g_driverMutex;
+HANDLE g_driverThread;
+uintptr_t g_driverStackLow, g_driverStackHigh;
+std::atomic<bool> g_profileDriver{false};
+
 using Stack = std::array<uintptr_t, kMaxFrames>;
 
 struct StackHash
@@ -261,6 +268,7 @@ struct Profile
 	uint64_t startupsamples = 0;
 	uint64_t othersamples = 0;
 	uint64_t failedsamples = 0;
+	uint64_t driversamples = 0;
 };
 
 // Profiler samples and the time they paused the main thread, since the perf log last took them
@@ -495,6 +503,42 @@ void WriteProfile(const Profile& profile, double seconds)
 	fclose(file);
 }
 
+void DiscoverModule(UnwindModules &modules, uintptr_t unknown)
+{
+	if (!unknown)
+		return;
+	MEMORY_BASIC_INFORMATION info = {};
+	if (VirtualQuery(reinterpret_cast<LPCVOID>(unknown), &info, sizeof info) && info.Type == MEM_IMAGE)
+		modules.add(reinterpret_cast<uintptr_t>(info.AllocationBase));
+}
+
+void SampleDriverThread(const Sampler &sampler, Profile &profile, UnwindModules &modules)
+{
+	CONTEXT context = {};
+	context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+	Stack stack = {};
+	int frames = 0;
+	uintptr_t unknown = 0;
+	BOOL gotcontext = FALSE;
+	{
+		std::lock_guard<std::mutex> lock(g_driverMutex);
+		if (!g_driverThread || sampler.suspend(g_driverThread) == static_cast<DWORD>(-1))
+			return;
+		gotcontext = sampler.getcontext(g_driverThread, &context);
+		if (gotcontext && sampler.unwind && g_driverStackHigh)
+			frames = UnwindStack(sampler.unwind, modules, false, g_driverStackLow, g_driverStackHigh, &context,
+				stack.data(), kMaxFrames, &unknown);
+		sampler.resume(g_driverThread);
+	}
+	if (!gotcontext)
+		return;
+	profile.counts[RENDERER_VIBERANT][UWPPROF_DRIVERTHREAD][frames ? stack[0] : context.Rip]++;
+	if (frames)
+		profile.stacks[RENDERER_VIBERANT][UWPPROF_DRIVERTHREAD][stack]++;
+	profile.driversamples++;
+	DiscoverModule(modules, unknown);
+}
+
 void SampleMainThread(Sampler sampler)
 {
 	using Clock = std::chrono::steady_clock;
@@ -598,19 +642,14 @@ void SampleMainThread(Sampler sampler)
 			profile.othersamples++;
 		}
 
-		// A module that wasn't loaded when the last stack was unwound, to unwind through next time
-		if (unknown)
-		{
-			MEMORY_BASIC_INFORMATION info = {};
-			if (VirtualQuery(reinterpret_cast<LPCVOID>(unknown), &info, sizeof info) && info.Type == MEM_IMAGE)
-			{
-				modules.add(reinterpret_cast<uintptr_t>(info.AllocationBase));
-			}
-		}
+		DiscoverModule(modules, unknown);
+		if (gotcontext && inlevel && !startup)
+			SampleDriverThread(sampler, profile, modules);
 
 		// Written when there are new samples, or failures, so those show up too
 		const Clock::time_point now = Clock::now();
-		const uint64_t interesting = profile.levelsamples + profile.startupsamples + profile.othersamples + profile.failedsamples;
+		const uint64_t interesting = profile.levelsamples + profile.startupsamples + profile.othersamples + profile.failedsamples
+			+ profile.driversamples;
 		if (now - lastwrite >= kWriteInterval && interesting > written)
 		{
 			WriteProfile(profile, std::chrono::duration<double>(now - start).count());
@@ -621,6 +660,28 @@ void SampleMainThread(Sampler sampler)
 }
 
 } // namespace
+
+void I_UWPProfileDriverThread(boolean active)
+{
+	if (!g_profileDriver)
+		return;
+	std::lock_guard<std::mutex> lock(g_driverMutex);
+	if (g_driverThread)
+	{
+		CloseHandle(g_driverThread);
+		g_driverThread = nullptr;
+	}
+	if (!active)
+		return;
+
+	ULONG_PTR low = 0, high = 0;
+	const auto getstacklimits = reinterpret_cast<GetStackLimitsFn>(FindKernelFunction("GetCurrentThreadStackLimits"));
+	if (getstacklimits)
+		getstacklimits(&low, &high);
+	g_driverStackLow = low;
+	g_driverStackHigh = high;
+	DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_driverThread, 0, FALSE, DUPLICATE_SAME_ACCESS);
+}
 
 void I_UWPStartProfiler(void)
 {
@@ -660,6 +721,7 @@ void I_UWPStartProfiler(void)
 	try
 	{
 		std::thread(SampleMainThread, sampler).detach();
+		g_profileDriver = true;
 	}
 	catch (const std::system_error& error)
 	{

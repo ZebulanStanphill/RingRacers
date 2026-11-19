@@ -338,6 +338,9 @@ void I_UWPRequireGameMode(void);
 // Call from the main thread.
 void I_UWPStartProfiler(void);
 
+// [UWP]: Registers or unregisters the calling driver thread for in-level samples.
+void I_UWPProfileDriverThread(boolean active);
+
 // [UWP]: How many samples the profiler took, and how long they paused the main thread, since the last call
 void I_UWPTakeProfilerStats(INT32 *samples, double *pausedms);
 
@@ -380,6 +383,7 @@ typedef enum
 	UWPPROF_PODIUM, // GS_CEREMONY
 	UWPPROF_CUTSCENES, // GS_INTRO, GS_CUTSCENE, GS_CREDITS, GS_EVALUATION
 	UWPPROF_ELSEWHERE, // any other gamestate
+	UWPPROF_DRIVERTHREAD, // [UWP]: The VibeRant D3D worker
 	NUMUWPPROFPHASES
 } uwpprofphase_t;
 extern volatile INT32 i_uwpprofphase;
