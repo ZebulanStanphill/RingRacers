@@ -288,6 +288,12 @@ struct mobj_t
 	// --- Please make sure you keep the fields up to this
 	// --- point in sync with degenmobj_t.
 
+	// For movement checking.
+	// [ZE]: radius and height moved here from after ceilingdrop, so the blockmap walks' distance tests read them from
+	// the same cache line as x and y. precipmobj_t moves them the same way; p_mobj.c checks the shared layout.
+	fixed_t radius;
+	fixed_t height;
+
 	fixed_t old_x, old_y, old_z; // position interpolation
 	fixed_t old_x2, old_y2, old_z2;
 
@@ -329,9 +335,7 @@ struct mobj_t
 	fixed_t floordrop;
 	fixed_t ceilingdrop;
 
-	// For movement checking.
-	fixed_t radius;
-	fixed_t height;
+	// [ZE]: radius and height were here; they follow z now.
 
 	// Momentums, used to update position.
 	fixed_t momx, momy, momz;
@@ -474,6 +478,12 @@ struct precipmobj_t
 
 	// Info for drawing: position.
 	fixed_t x, y, z;
+
+	// For movement checking.
+	// [ZE]: Moved here from after ceilingdrop, as in mobj_t, so the shared fields keep the same offsets.
+	fixed_t radius; // Fixed at 2*FRACUNIT
+	fixed_t height; // Fixed at 4*FRACUNIT
+
 	fixed_t old_x, old_y, old_z; // position interpolation
 	fixed_t old_x2, old_y2, old_z2;
 
@@ -515,9 +525,7 @@ struct precipmobj_t
 	fixed_t floordrop;
 	fixed_t ceilingdrop;
 
-	// For movement checking.
-	fixed_t radius; // Fixed at 2*FRACUNIT
-	fixed_t height; // Fixed at 4*FRACUNIT
+	// [ZE]: radius and height were here; they follow z now, as in mobj_t.
 
 	// Momentums, used to update position.
 	fixed_t momx, momy, momz;

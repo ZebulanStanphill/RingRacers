@@ -55,6 +55,72 @@
 #include "k_podium.h"
 #include "g_party.h"
 
+// [ZE]: precipmobj_t is handled as an mobj_t in shared code (P_LinkToBlockMap, the renderers), and sector sound
+// origins (degenmobj_t) as mobj_t positions, so these fields must sit at the same offsets in each. Upstream relies
+// on keeping the declarations in step by hand; the fork moved radius and height in both and checks it here.
+#define P_SAMEOFFSET(t, f) _Static_assert(offsetof(mobj_t, f) == offsetof(t, f), #t "." #f " must match mobj_t")
+P_SAMEOFFSET(precipmobj_t, thinker);
+P_SAMEOFFSET(precipmobj_t, x);
+P_SAMEOFFSET(precipmobj_t, y);
+P_SAMEOFFSET(precipmobj_t, z);
+P_SAMEOFFSET(precipmobj_t, radius);
+P_SAMEOFFSET(precipmobj_t, height);
+P_SAMEOFFSET(precipmobj_t, old_x);
+P_SAMEOFFSET(precipmobj_t, old_y);
+P_SAMEOFFSET(precipmobj_t, old_z);
+P_SAMEOFFSET(precipmobj_t, old_x2);
+P_SAMEOFFSET(precipmobj_t, old_y2);
+P_SAMEOFFSET(precipmobj_t, old_z2);
+P_SAMEOFFSET(precipmobj_t, type);
+P_SAMEOFFSET(precipmobj_t, info);
+P_SAMEOFFSET(precipmobj_t, bnext);
+P_SAMEOFFSET(precipmobj_t, bprev);
+P_SAMEOFFSET(precipmobj_t, angle);
+P_SAMEOFFSET(precipmobj_t, pitch);
+P_SAMEOFFSET(precipmobj_t, roll);
+P_SAMEOFFSET(precipmobj_t, old_angle);
+P_SAMEOFFSET(precipmobj_t, old_pitch);
+P_SAMEOFFSET(precipmobj_t, old_roll);
+P_SAMEOFFSET(precipmobj_t, old_angle2);
+P_SAMEOFFSET(precipmobj_t, old_pitch2);
+P_SAMEOFFSET(precipmobj_t, old_roll2);
+P_SAMEOFFSET(precipmobj_t, rollangle);
+P_SAMEOFFSET(precipmobj_t, sprite);
+P_SAMEOFFSET(precipmobj_t, frame);
+P_SAMEOFFSET(precipmobj_t, sprite2);
+P_SAMEOFFSET(precipmobj_t, anim_duration);
+P_SAMEOFFSET(precipmobj_t, renderflags);
+P_SAMEOFFSET(precipmobj_t, spritexscale);
+P_SAMEOFFSET(precipmobj_t, spriteyscale);
+P_SAMEOFFSET(precipmobj_t, spritexoffset);
+P_SAMEOFFSET(precipmobj_t, spriteyoffset);
+P_SAMEOFFSET(precipmobj_t, old_spritexscale);
+P_SAMEOFFSET(precipmobj_t, old_spriteyscale);
+P_SAMEOFFSET(precipmobj_t, old_spritexoffset);
+P_SAMEOFFSET(precipmobj_t, old_spriteyoffset);
+P_SAMEOFFSET(precipmobj_t, floorspriteslope);
+P_SAMEOFFSET(precipmobj_t, lightlevel);
+P_SAMEOFFSET(precipmobj_t, touching_sectorlist);
+P_SAMEOFFSET(precipmobj_t, subsector);
+P_SAMEOFFSET(precipmobj_t, floorz);
+P_SAMEOFFSET(precipmobj_t, ceilingz);
+P_SAMEOFFSET(precipmobj_t, floorrover);
+P_SAMEOFFSET(precipmobj_t, ceilingrover);
+P_SAMEOFFSET(precipmobj_t, floordrop);
+P_SAMEOFFSET(precipmobj_t, ceilingdrop);
+P_SAMEOFFSET(precipmobj_t, momx);
+P_SAMEOFFSET(precipmobj_t, momy);
+P_SAMEOFFSET(precipmobj_t, momz);
+P_SAMEOFFSET(precipmobj_t, tics);
+P_SAMEOFFSET(precipmobj_t, state);
+P_SAMEOFFSET(precipmobj_t, flags);
+_Static_assert(offsetof(mobj_t, pmomz) == offsetof(precipmobj_t, precipflags), "precipflags must share pmomz's offset");
+P_SAMEOFFSET(degenmobj_t, thinker);
+P_SAMEOFFSET(degenmobj_t, x);
+P_SAMEOFFSET(degenmobj_t, y);
+P_SAMEOFFSET(degenmobj_t, z);
+#undef P_SAMEOFFSET
+
 actioncache_t actioncachehead;
 
 static mobj_t *overlaycap = NULL;
