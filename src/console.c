@@ -1998,12 +1998,12 @@ void CON_SetLoadingProgress(con_loadprogress_t newStep)
 		if (!loadstart)
 		{
 			loadstart = I_GetPreciseTime();
-			logstart = i_uwplogtime;
+			logstart = I_UWPLogTime(); // [UWP]: Read the shared logging timer.
 		}
 
 		CONS_Printf("LOADING UPDATE - %s (%.1f s, %.1f s of it logging)\n", CON_LoadingStrings[con_startup_loadprogress],
 			(double)(I_GetPreciseTime() - loadstart) / I_GetPrecisePrecision(),
-			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
+			(double)(I_UWPLogTime() - logstart) / I_GetPrecisePrecision()); // [UWP]: Read the shared logging timer.
 #else
 		CONS_Printf("LOADING UPDATE - %s\n", CON_LoadingStrings[con_startup_loadprogress]);
 // [UWP]: The Xbox build logs how long each loading step took, and the other platforms print only the step name as upstream does.

@@ -16,7 +16,7 @@ foreach ($Entry in $Entries) {
 & fxc.exe /nologo /T rootsig_1_0 /E RR_ROOT_SIGNATURE /Vn g_RootSignature /Fh "$Shaders\RootSignature.h" $Source
 if ($LASTEXITCODE -ne 0) { throw "Production root signature compilation failed" }
 $Driver = Join-Path $Engine "src\hardware\r_viberant"
-$Files = @((Join-Path $PSScriptRoot 'viberant-driver.cpp'), "$Driver\r_viberant.cpp", "$Driver\viberant_core.cpp", "$Driver\viberant_upload.cpp", "$Driver\viberant_pipeline.cpp", "$Driver\viberant_prewarm.cpp")
+$Files = @((Join-Path $PSScriptRoot 'viberant-driver.cpp'), "$Driver\r_viberant.cpp", "$Driver\viberant_thread.cpp", "$Driver\viberant_core.cpp", "$Driver\viberant_upload.cpp", "$Driver\viberant_pipeline.cpp", "$Driver\viberant_prewarm.cpp")
 $Includes = @("/I$Engine\src", "/I$Output", "/I$PSScriptRoot\viberant-stubs")
 # The real engine headers use third-party headers even though the harness calls no engine services.
 Get-ChildItem "$Engine\thirdparty" -Directory | ForEach-Object {
@@ -46,6 +46,8 @@ if ($LASTEXITCODE -eq 77) {
     & $Exe
 }
 if ($LASTEXITCODE -ne 0) { throw "Production D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
+& $Exe --driver-thread
+if ($LASTEXITCODE -ne 0) { throw "Production threaded D3D12 WARP/GBV regression failed (exit $LASTEXITCODE)" }
 # The desktop presenter, d3d_present_win32.cpp, is the one driver file that isn't built with _UWP (the UWP one, d3d_present_uwp.cpp,
 # is the harness's stub above), so it and the device core it presents on are compiled without it, into a second executable with
 # its own stubs: SDL's window lookup hands it a real top-level window that is never shown. The engine headers it includes

@@ -21,6 +21,7 @@
 
 #include "viberant_present.h"
 
+#include <atomic>
 #include <dxgi1_5.h>
 
 #include <algorithm>
@@ -65,7 +66,7 @@ struct Presenter
 {
 	bool classRegistered = false;
 	bool stopped = false; // shut down, so nothing presents
-	bool placementFailed = false; // the driver couldn't place a frame, so frames are copied into a swap chain of their size, until the window is taken again
+	std::atomic<bool> placementFailed{false}; // the driver couldn't place a frame, so frames are copied into a swap chain of their size, until the window is taken again
 };
 Presenter g_present;
 INT32 g_traceSlot = -1;
@@ -334,15 +335,9 @@ bool ResizeSwapChain(UINT width, UINT height)
 }
 
 // How a frame of the given size is shown: the swap chain's size, and where in it the frame goes
-struct Layout
+PresentFrame ChooseLayout(UINT frameWidth, UINT frameHeight, UINT clientWidth, UINT clientHeight)
 {
-	screen_scaling::Placement placement; // fit: the frame is copied to a swap chain of its size, which DXGI stretches
-	UINT width, height; // the swap chain's size
-};
-
-Layout ChooseLayout(UINT frameWidth, UINT frameHeight, UINT clientWidth, UINT clientHeight)
-{
-	Layout layout;
+	PresentFrame layout;
 	if (g_present.placementFailed)
 	{
 		layout.width = frameWidth;
@@ -361,10 +356,10 @@ Layout ChooseLayout(UINT frameWidth, UINT frameHeight, UINT clientWidth, UINT cl
 }
 
 // Says how frames are shown whenever that changes: Screen Scaling, a resolution or the window's size
-void LogLayout(UINT frameWidth, UINT frameHeight, const Layout &layout)
+void LogLayout(UINT frameWidth, UINT frameHeight, const PresentFrame &layout)
 {
 	static UINT lastFrameWidth, lastFrameHeight;
-	static Layout last;
+	static PresentFrame last;
 	static bool logged = false;
 	const screen_scaling::Placement &p = layout.placement, &l = last.placement;
 	if (logged && lastFrameWidth == frameWidth && lastFrameHeight == frameHeight && layout.width == last.width
@@ -404,7 +399,22 @@ bool Present_TakeWindow()
 	return CreateWindowAndSwapChain("VibeRant D3D can't present, so the game falls back to Software");
 }
 
-void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
+bool Present_PrepareFrame(PresentFrame &frame, UINT width, UINT height)
+{
+	if (!g_direct.owned)
+		return true;
+	UINT clientWidth, clientHeight;
+	ParentClientSize(g_direct.parent, clientWidth, clientHeight);
+	if (clientWidth && clientHeight)
+		frame = ChooseLayout(width, height, clientWidth, clientHeight);
+	frame.clientWidth = clientWidth;
+	frame.clientHeight = clientHeight;
+	return clientWidth && clientHeight && (g_direct.childWidth != clientWidth || g_direct.childHeight != clientHeight
+		|| g_direct.width != frame.width || g_direct.height != frame.height);
+}
+
+void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place,
+	const PresentFrame *frame)
 {
 #ifdef HAVE_VIBERANT_VULKAN
 	if (Core_Vulkan())
@@ -422,22 +432,27 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		return;
 	}
 
-	// Only if the driver started before the window was made, or the window was given back and the driver is still drawing
-	if (!g_direct.owned && !CreateWindowAndSwapChain("VibeRant D3D can't present"))
-		I_Error("Direct3D 12 couldn't create its window to present on (%s).\nSet Renderer to Software in Video Options > Advanced.",
-			g_direct.failure);
+	PresentFrame measured;
+	if (!frame || (frame->mainThread && !g_direct.owned))
+	{
+		// The direct path takes the window before measuring its client area.
+		if (!g_direct.owned && !CreateWindowAndSwapChain("VibeRant D3D can't present"))
+			I_Error("Direct3D 12 couldn't create its window to present on (%s).\nSet Renderer to Software in Video Options > Advanced.",
+				g_direct.failure);
+		Present_PrepareFrame(measured, width, height);
+		measured.mainThread = true;
+		frame = &measured;
+	}
 
-	// A window with no client area (minimized) shows nothing
-	UINT clientWidth, clientHeight;
-	ParentClientSize(g_direct.parent, clientWidth, clientHeight);
+	const UINT clientWidth = frame->clientWidth, clientHeight = frame->clientHeight;
 	if (!clientWidth || !clientHeight)
 	{
 		LOG_ONCE("the game window has no client area, so nothing is presented until it has one");
 		SubmitWithoutPresenting();
 		return;
 	}
-	// The child covers the whole client area
-	if (g_direct.childWidth != clientWidth || g_direct.childHeight != clientHeight)
+	const PresentFrame &layout = *frame;
+	if (frame->mainThread && (g_direct.childWidth != clientWidth || g_direct.childHeight != clientHeight))
 	{
 		if (SetWindowPos(g_direct.child, nullptr, 0, 0, (int)clientWidth, (int)clientHeight,
 			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOCOPYBITS))
@@ -449,9 +464,8 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			LOG_ONCE("couldn't resize the child window to %ux%u (error %lu)", clientWidth, clientHeight, (unsigned long)GetLastError());
 	}
 
-	const Layout layout = ChooseLayout(width, height, clientWidth, clientHeight);
 	LogLayout(width, height, layout);
-	if (g_direct.width != layout.width || g_direct.height != layout.height)
+	if (frame->mainThread && (g_direct.width != layout.width || g_direct.height != layout.height))
 	{
 		if (!ResizeSwapChain(layout.width, layout.height))
 		{

@@ -64,7 +64,9 @@
 #include "../hw_glob.h"
 #include "../hw_md2.h"
 #include "../../m_fixed.h"
-#include "r_viberant.h"
+#include "viberant_thread.h"
+
+#include <atomic>
 
 // doomdef.h's
 #undef min
@@ -74,10 +76,8 @@
 // v_video.h's, which this driver doesn't otherwise need
 extern "C" RGBA_t *pMasterPalette;
 
-namespace
+namespace rr_viberant::impl
 {
-
-using namespace rr_viberant;
 
 // The renderer's name as the player knows it, for messages
 const char *RendererName()
@@ -359,6 +359,7 @@ bool g_modelLighting = false;
 int g_shaderCurrent = -1; // gl_shaderstate.current, as its type, or -1 for NULL
 int g_shaderType = 0; // gl_shaderstate.type
 bool g_shaderChanged = false; // gl_shaderstate.changed
+float g_postImageTime, g_postImageType;
 bool g_postImage = false;
 bool g_waterRefraction = false;
 bool g_fogRemap = false;
@@ -486,7 +487,8 @@ IndexFreeList g_srvIndices;
 UINT g_srvHighWater = 4;
 UINT64 g_srvReuses = 0;
 UINT64 g_textureAllocatedBytes = 0;
-bool g_textureFlushRequested = false, g_budgetTextureFlush = false, g_textureFlushed = false;
+std::atomic<bool> g_textureFlushRequested{false};
+bool g_budgetTextureFlush = false, g_textureFlushed = false;
 precise_t g_lastTextureFlush = 0;
 DXGI_QUERY_VIDEO_MEMORY_INFO g_localMemory = {};
 bool g_localMemoryValid = false;
@@ -793,8 +795,6 @@ void SetBlendMode(FBITFIELD flags)
 		}
 	}
 }
-void VibeRant_SetBlend(FBITFIELD);
-void VibeRant_FlushScreenTextures();
 void SetStates()
 {
 	g_gl.texture2D = true;
@@ -1437,44 +1437,47 @@ void UpdateTextureInternal(GLMipmap_t *pTexInfo)
 	texture->sampler = UINT32_MAX;
 }
 
-// r_opengl.c's SetTexture
-void SetTextureInternal(GLMipmap_t *pTexInfo)
+void BindDownloadedTexture(UINT32 name, bool brightmap)
 {
-	if (!pTexInfo)
+	if (!name)
 	{
 		SetNoTexture(0);
 		return;
 	}
-	else if (pTexInfo->downloaded)
-	{
-		// g_texDownloaded is the texture on unit 0. A brightmap goes on unit 1, so it always binds and is not
-		// remembered: the same texture may be the next surface's own, which must then bind on unit 0
-		const bool brightmap = (pTexInfo->flags & TF_BRIGHTMAP) != 0;
-		if (brightmap || pTexInfo->downloaded != g_texDownloaded)
-		{
-			if (!brightmap)
-			{
-				g_texDownloaded = 0; // force update
-				SetNoTexture(1); // will be assigned later, if needed
-			}
 
-			BindTexture(brightmap ? 1 : 0, pTexInfo->downloaded);
-			g_texDownloaded = brightmap ? 0 : pTexInfo->downloaded;
+	// A brightmap always binds on unit 1 and is not remembered on unit 0.
+	if (brightmap || name != g_texDownloaded)
+	{
+		if (!brightmap)
+		{
+			g_texDownloaded = 0;
+			SetNoTexture(1);
 		}
+		BindTexture(brightmap ? 1 : 0, name);
+		g_texDownloaded = brightmap ? 0 : name;
 	}
-	else
-	{
-		UpdateTextureInternal(pTexInfo);
+}
 
-		Texture *texture = FindTexture(pTexInfo->downloaded);
-		if (texture)
-		{
-			texture->listed = true;
-			texture->mipmap = pTexInfo;
-			texture->listFormat = pTexInfo->format;
-			texture->listWidth = pTexInfo->width;
-			texture->listHeight = pTexInfo->height;
-		}
+// r_opengl.c's SetTexture
+void SetTextureInternal(GLMipmap_t *pTexInfo)
+{
+	if (!pTexInfo || pTexInfo->downloaded)
+	{
+		BindDownloadedTexture(pTexInfo ? pTexInfo->downloaded : 0,
+			pTexInfo && (pTexInfo->flags & TF_BRIGHTMAP));
+		return;
+	}
+
+	UpdateTextureInternal(pTexInfo);
+
+	Texture *texture = FindTexture(pTexInfo->downloaded);
+	if (texture)
+	{
+		texture->listed = true;
+		texture->mipmap = pTexInfo;
+		texture->listFormat = pTexInfo->format;
+		texture->listWidth = pTexInfo->width;
+		texture->listHeight = pTexInfo->height;
 	}
 }
 
@@ -1642,8 +1645,8 @@ bool ApplyConstants(bool custom)
 		c.postImageRect[1] = (g_screenHeight - g_gl.viewport[1] - g_gl.viewport[3]) / size;
 		c.postImageRect[2] = (g_gl.viewport[0] + g_gl.viewport[2]) / size;
 		c.postImageRect[3] = (g_screenHeight - g_gl.viewport[1]) / size;
-		c.postImageInfo[0] = (float)leveltime;
-		c.postImageInfo[1] = (float)postimgtype[R_GetViewNumber()];
+		c.postImageInfo[0] = g_postImageTime;
+		c.postImageInfo[1] = g_postImageType;
 		c.postImageInfo[2] = g_screenWidth / size;
 		c.postImageInfo[3] = g_screenHeight / size;
 	}
@@ -2362,7 +2365,7 @@ void VibeRant_Draw2DLine(F2DCoord *v1, F2DCoord *v2, RGBA_t Color)
 
 #include "viberant_captures.inc"
 
-void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *vertices, UINT count)
+void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *vertices, UINT count, bool reduceEffects)
 {
 	static float poly[4] = {0, 0, 0, 0};
 	static float tint[4] = {0, 0, 0, 0};
@@ -2420,17 +2423,17 @@ void PreparePolygon(FSurfaceInfo *pSurf, FBITFIELD PolyFlags, const FOutVector *
 	// that over the refracted scene, like PSWaterRefraction does for PSWater.
 	const CustomProgram *customWater = CustomDrawProgram(LAYOUT_POLY);
 	g_waterRefraction = (PolyFlags & PF_Ripple) && g_program == SHADER_WATER
-		&& refractingBlend && !cv_reducevfx.value && (!customWater || customWater->refraction)
+		&& refractingBlend && !reduceEffects && (!customWater || customWater->refraction)
 		&& CaptureWaterScene(pSurf, PolyFlags, vertices, count,
 			customWater && !g_customShaders[SHADER_WATER].vertex.empty());
 	g_fogRemap = (PolyFlags & PF_Fog) && g_program == SHADER_FOG
 		&& !CustomDrawProgram(LAYOUT_POLY) && CaptureFogScene(pSurf, PolyFlags, vertices, count);
 }
 
-void VibeRant_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
+void VibeRant_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, bool reduceEffects)
 {
 
-	PreparePolygon(pSurf, PolyFlags, pOutVerts, iNumPts);
+	PreparePolygon(pSurf, PolyFlags, pOutVerts, iNumPts, reduceEffects);
 
 	if (PolyFlags & PF_WireFrame)
 		DrawArrays(LAYOUT_POLY, PRIM_LINES, pOutVerts, (UINT)iNumPts);
@@ -2448,13 +2451,13 @@ void VibeRant_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNum
 		SetRepeatT(false);
 }
 
-void VibeRant_DrawIndexedTriangles(FSurfaceInfo *surface, FOutVector *vertices, FUINT count, FBITFIELD flags, UINT32 *indices)
+void VibeRant_DrawIndexedTriangles(FSurfaceInfo *surface, FOutVector *vertices, FUINT count, FBITFIELD flags, UINT32 *indices, UINT32 vertexCount, bool reduceEffects)
 {
 	g_stats.batches++;
 	if (!CanDraw() || !count || !indices) return;
-	UINT vertexCount = 0;
-	for (FUINT i = 0; i < count; i++) vertexCount = std::max(vertexCount, indices[i] + 1);
-	PreparePolygon(surface, flags, vertices, vertexCount);
+	if (!vertexCount)
+		for (FUINT i = 0; i < count; ++i) vertexCount = std::max<UINT32>(vertexCount, indices[i] + 1);
+	PreparePolygon(surface, flags, vertices, vertexCount, reduceEffects);
 	if (DrawUploaded(LAYOUT_POLY, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST, vertices, vertexCount, indices, count))
 		CaptureSurfaceProbe("batch", vertices, vertexCount);
 }
@@ -2527,6 +2530,8 @@ void VibeRant_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *Cl
 	if (DepthMask)
 		ClearScreenDepth();
 }
+
+void BindTextureName(UINT32 name, bool brightmap) { BindDownloadedTexture(name, brightmap); }
 
 void VibeRant_SetTexture(GLMipmap_t *texture)
 {
@@ -2965,10 +2970,10 @@ void VibeRant_CleanShaders(void)
 	g_shaderChanged = true;
 }
 
-void VibeRant_SetShader(int type)
+void VibeRant_SetShader(int type, bool reduceEffects)
 {
 	g_waterRefraction = false;
-	if (type == SHADER_WATER && cv_reducevfx.value) type = SHADER_FLOOR;
+	if (type == SHADER_WATER && reduceEffects) type = SHADER_FLOOR;
 	g_fogRemap = false;
 	if (type == SHADER_NONE)
 	{
@@ -3063,57 +3068,6 @@ void VibeRant_LoadCustomShader(int number, char *code, size_t size, boolean isfr
 	}
 }
 
-#define DRIVERFUNCTION(name) {#name, reinterpret_cast<void *>(&VibeRant_##name)}
-const struct
-{
-	const char *name;
-	void *function;
-} kDriverFunctions[] =
-{
-	DRIVERFUNCTION(Init),
-	DRIVERFUNCTION(SetPalette),
-	DRIVERFUNCTION(Draw2DLine),
-	DRIVERFUNCTION(DrawPolygon),
-	DRIVERFUNCTION(DrawIndexedTriangles),
-	DRIVERFUNCTION(RenderSkyDome),
-	DRIVERFUNCTION(SetBlend),
-	DRIVERFUNCTION(ClearBuffer),
-	DRIVERFUNCTION(SetTexture),
-	DRIVERFUNCTION(UpdateTexture),
-	DRIVERFUNCTION(DeleteTexture),
-	DRIVERFUNCTION(ReadRect),
-	DRIVERFUNCTION(GClipRect),
-	DRIVERFUNCTION(ClearMipMapCache),
-	DRIVERFUNCTION(SetSpecialState),
-	DRIVERFUNCTION(DrawModel),
-	DRIVERFUNCTION(CreateModelVBOs),
-	DRIVERFUNCTION(SetTransform),
-	DRIVERFUNCTION(GetTextureUsed),
-	DRIVERFUNCTION(PostImgRedraw),
-	DRIVERFUNCTION(FlushScreenTextures),
-	DRIVERFUNCTION(StartScreenWipe),
-	DRIVERFUNCTION(EndScreenWipe),
-	DRIVERFUNCTION(DoScreenWipe),
-	DRIVERFUNCTION(DrawIntermissionBG),
-	DRIVERFUNCTION(MakeScreenTexture),
-	DRIVERFUNCTION(MakeScreenFinalTexture),
-	DRIVERFUNCTION(DrawScreenFinalTexture),
-	DRIVERFUNCTION(CompileShaders),
-	DRIVERFUNCTION(CleanShaders),
-	DRIVERFUNCTION(SetShader),
-	DRIVERFUNCTION(UnSetShader),
-	DRIVERFUNCTION(SetShaderInfo),
-	DRIVERFUNCTION(LoadCustomShader),
-	DRIVERFUNCTION(SetScreenPalette),
-	DRIVERFUNCTION(SetPaletteLookup),
-	DRIVERFUNCTION(CreateLightTable),
-	DRIVERFUNCTION(UpdateLightTable),
-	DRIVERFUNCTION(ClearLightTables),
-};
-#undef DRIVERFUNCTION
-
-} // namespace
-
 boolean VibeRant_CanRollSprite(void) { return CanRollSprite(); }
 
 void VibeRant_SelectBackend(boolean vulkan, boolean validation, boolean software)
@@ -3121,24 +3075,6 @@ void VibeRant_SelectBackend(boolean vulkan, boolean validation, boolean software
 	Core_UseVulkan(vulkan);
 	Core_VulkanValidation(validation);
 	Core_ForceWarp(software != 0);
-}
-
-void *VibeRant_GetDriverFunction(const char *name)
-{
-	static bool logged = false;
-	if (!logged)
-	{
-		logged = true;
-		I_OutputMsg("VibeRant backend: %s\n", Core_Metal() ? "Metal" : Core_Vulkan() ? "Vulkan" : "D3D12");
-	}
-
-	for (const auto &function : kDriverFunctions)
-	{
-		if (strcmp(function.name, name) == 0)
-			return function.function;
-	}
-	Log("no driver function %s", name);
-	return nullptr;
 }
 
 boolean VibeRant_Surface(INT32 w, INT32 h)
@@ -3168,7 +3104,19 @@ boolean VibeRant_Surface(INT32 w, INT32 h)
 	return true;
 }
 
-void VibeRant_FinishUpdate(INT32 waitvbl)
+#ifdef HAVE_VIBERANT_D3D
+bool PrepareFrame(PresentFrame &frame, INT32 effect)
+{
+	// Only Surface writes the dimensions. The presenters' frame-dependent fields are
+	// read after the previous FinishUpdate completes.
+	if (!g_rtWidth || !g_rtHeight)
+		return false;
+	const bool needsWindow = Present_PrepareFrame(frame, g_rtWidth, g_rtHeight);
+	return needsWindow || ScreenEffectNeedsLoad(effect);
+}
+#endif
+
+void VibeRant_FinishUpdate(INT32 waitvbl, INT32 effect, const PresentFrame *frame)
 {
 	const bool vsync = waitvbl != 0; // the swap chain's sync interval
 
@@ -3189,9 +3137,13 @@ void VibeRant_FinishUpdate(INT32 waitvbl)
 	// screen effects, if chosen, are drawn over that. Screenshots and captures read the screen and that step, not the effect.
 	// Present_Frame then places the result on the screen (Screen Scaling), after the effect.
 	const bool palette = PalettePostprocess();
-	ID3D12Resource *shown = ApplyScreenEffect(palette);
+	ID3D12Resource *shown = ApplyScreenEffect(palette, effect, !frame || frame->mainThread);
 	const precise_t start = I_GetPreciseTime();
+	#ifdef HAVE_VIBERANT_D3D
+	Present_Frame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync, PlaceFrame, frame);
+#else
 	Present_Frame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_rtWidth, g_rtHeight, vsync, PlaceFrame);
+#endif
 	g_stats.presentTime += I_GetPreciseTime() - start;
 	g_stats.frames++;
 	g_vertexRing.EndFrame(); g_indexRing.EndFrame(); g_constantRing.EndFrame();
@@ -3213,16 +3165,16 @@ void VibeRant_FinishUpdate(INT32 waitvbl)
 		g_deviceLost = true;
 		const HRESULT removed = Core_RemovedReason();
 		Core_LogDeviceRemoved();
-		I_Error("%s's graphics device stopped working (0x%08X).\nSet Renderer to Software in Video Options > Advanced if it keeps happening.",
+		DriverFatal("%s's graphics device stopped working (0x%08X).\nSet Renderer to Software in Video Options > Advanced if it keeps happening.",
 			RendererName(), (unsigned)removed);
 	}
 }
 
+bool TextureFlushPending() { return g_textureFlushRequested.load(); }
+
 boolean VibeRant_TakeTextureFlushRequest(void)
 {
-	const bool requested = g_textureFlushRequested;
-	g_textureFlushRequested = false;
-	if (!requested)
+	if (!g_textureFlushRequested.exchange(false))
 		return false;
 	const precise_t now = I_GetPreciseTime();
 	if (g_textureFlushed && now - g_lastTextureFlush < 5 * I_GetPrecisePrecision())
@@ -3240,6 +3192,8 @@ boolean VibeRant_RequestSurfaceProbe(INT32 x, INT32 y)
 	g_probePercentX = x; g_probePercentY = y; g_probePending = true;
 	return true;
 }
+
+bool SurfaceProbePending() { return g_probePending; }
 
 boolean VibeRant_BeginSurfaceProbe(void)
 {
@@ -3306,6 +3260,8 @@ void VibeRant_SetPortalStencil(INT32 level)
 		g_stats.portalMaxLevel = std::max(g_stats.portalMaxLevel, (int)g_gl.stencilRef);
 	}
 }
+
+int CachedPortalSupport() { return g_portalsSupported; }
 
 boolean VibeRant_PortalsSupported(void)
 {
@@ -3486,7 +3442,7 @@ void VibeRant_ReleaseWindow(void)
 	Present_ReleaseWindow();
 }
 
-void VibeRant_LogPerf(double seconds)
+void VibeRant_LogPerf(double seconds, INT32 effect, UINT32 shaderRolls, UINT32 cpuRolls, UINT32 geometryRolls, UINT32 lazyModels)
 {
 	const Stats &s = g_stats;
 	const double n = s.frames ? s.frames : 1;
@@ -3533,8 +3489,7 @@ void VibeRant_LogPerf(double seconds)
 		g_srvIndices.Used() + 4, g_nextSampler, g_textureAllocatedBytes / 1048576.0, g_textureBytes / 1048576.0,
 		staging.peakBytes / 1048576.0, staging.wraps, staging.stalls, staging.stallMs, staging.grows);
 	I_OutputMsg("VibeRant perf: roll sprites: %u shader, %u CPU patches, %u geometry computations\n",
-		hwr_roll_shader, hwr_roll_cpu, hwr_roll_geometry);
-	hwr_roll_shader = hwr_roll_cpu = hwr_roll_geometry = 0;
+		shaderRolls, cpuRolls, geometryRolls);
 	I_OutputMsg("VibeRant perf: screens: %.1f per frame (%.1f copies, %.1f barriers); wipes %d full, %d two-pass; post image %d; fade maps %d drawn, %d left to the overlay\n",
 		s.screens / n, s.screenCopies / n, core.barriers / n, s.wipes, s.wipeFallbacks, s.postImages, s.fadeMaps, s.fadeMapFallbacks);
 	I_OutputMsg("VibeRant perf: water: %.1f copies/frame, %.2f MP/frame; fog: %.1f captures/frame\n", s.waterCopies / n, s.waterPixels / n / 1000000.0, s.fogCaptures / n);
@@ -3545,16 +3500,18 @@ void VibeRant_LogPerf(double seconds)
 		I_OutputMsg("VibeRant perf: palette: rendering %s; %u light tables alive, %d created, %d updated; %d LUT/palette uploads; %.2f post passes per frame, %.2f ms per frame\n",
 			g_paletteRendering ? "on" : "off", (unsigned)g_lightTables.size(), s.lightTablesCreated, s.lightTablesUpdated,
 			s.paletteUploads, s.paletteSteps / n, PreciseToMs(s.paletteTime) / n);
-	if (cv_scr_effect.value >= 2 || s.effectPasses)
+	if (effect >= 2 || s.effectPasses)
 		I_OutputMsg("VibeRant perf: screen effect: %s; %.2f passes per frame, %.2f ms per frame\n",
-			cv_scr_effect.value >= 2 && cv_scr_effect.value <= 3 ? kEffectNames[cv_scr_effect.value - 2] : "off",
+			effect >= 2 && effect <= 3 ? kEffectNames[effect - 2] : "off",
 			s.effectPasses / n, PreciseToMs(s.effectTime) / n);
 	I_OutputMsg("VibeRant perf: models %.1f/frame, skies %.1f/frame; fallbacks %d, lerps %d, sky rebuilds %d; static arena %u chunks (%.2f MB), %u dedicated buffers; mips %llu generated (%.2f CPU ms)\n",
 		s.models / n, s.skies / n, s.modelFallbacks, s.modelLerps, s.skyBuilds,
 		(unsigned)StaticChunkCount(), StaticChunkCount() * kStaticChunkBytes / 1048576.0,
 		(unsigned)g_staticDedicated, (unsigned long long)s.mipsGenerated, s.mipMs);
 #ifdef _UWP
-	I_OutputMsg("VibeRant perf: models: %u loaded lazily during drawing\n", (unsigned)HWR_UWPTakeLazyModelLoads());
+	I_OutputMsg("VibeRant perf: models: %u loaded lazily during drawing\n", (unsigned)lazyModels);
+#else
+	(void)lazyModels;
 #endif
 	I_OutputMsg("VibeRant perf: texture heaps: %llu placed, %llu dedicated, %llu committed created; %u heaps (%.2f MB used, %.2f MB allocated, peak %.2f MB); placements 4 KB %llu, 64 KB %llu; creation %.2f CPU ms\n",
 		(unsigned long long)g_placedCreated, (unsigned long long)g_dedicatedCreated, (unsigned long long)g_committedCreated, (unsigned)g_textureHeaps.size(),
@@ -3622,7 +3579,7 @@ void VibeRant_ReadPresentedRectForTest(INT32 x, INT32 y, INT32 width, INT32 heig
 {
 	// The frame as VibeRant_FinishUpdate hands it to the present
 	const bool palette = PalettePostprocess();
-	ReadRectFrom(ApplyScreenEffect(palette), x, y, width, height, dst_stride, dst_data);
+	ReadRectFrom(ApplyScreenEffect(palette, cv_scr_effect.value, true), x, y, width, height, dst_stride, dst_data);
 }
 
 // The frame as Present_Frame places it, read from a screenWidth by screenHeight target
@@ -3655,7 +3612,7 @@ static boolean ReadPlacedRect(const screen_scaling::Placement &placement, INT32 
 
 	// The frame as VibeRant_FinishUpdate hands it to the present, then as Present_Frame places it
 	const bool palette = PalettePostprocess();
-	ID3D12Resource *shown = ApplyScreenEffect(palette);
+	ID3D12Resource *shown = ApplyScreenEffect(palette, cv_scr_effect.value, true);
 	if (!PlaceFrame(shown, D3D12_RESOURCE_STATE_RENDER_TARGET, g_placeTestTarget.Get(), rtv, placement, (UINT)screenWidth, (UINT)screenHeight))
 		return false;
 	ReadRectFrom(g_placeTestTarget.Get(), x, y, width, height, dst_stride, dst_data, (UINT)screenWidth, (UINT)screenHeight);
@@ -3744,3 +3701,5 @@ void VibeRant_Shutdown(void)
 	ShutdownArenas();
 	Core_Shutdown(idle);
 }
+
+} // namespace rr_viberant::impl

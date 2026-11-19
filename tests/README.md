@@ -47,6 +47,13 @@ root signature attribute). The Windows WARP harness compiles the driver's C++ wi
 `_UWP`, except that its second executable, which runs the desktop presenter, is
 compiled without it (below).
 
+The WARP harness runs the same scenes with `gr_driverthread` off and on.
+A held present keeps the worker busy while the caller overwrites vertices,
+indices, surfaces, a transform, and a sky loop. Readback checks the original
+pixels. A second scene sends more than the test ring's 16 KiB capacity before
+readback and checks wrap and sync counts. A sequence of 16 frames checks that
+every frame presents and that at most one present is outstanding.
+
 A desktop variant (built without `_UWP`) exists only where the extracted code
 differs under `_UWP`: it is the one check that the UWP changes stay off desktop
 builds. Those are `online_desktop_hw`, `menu_desktop`, `intro_desktop`, `transparency_desktop`, `front_bbox_desktop`, and `semibright_light_desktop`.

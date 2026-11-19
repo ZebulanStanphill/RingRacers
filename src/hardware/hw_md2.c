@@ -46,6 +46,11 @@
 #endif
 
 #include "hw_model.h"
+// [ZE]: Drain queued model draws before adjusting the UVs they read.
+#ifdef HAVE_VIBERANT
+#include "hw_driver.h"
+#include "r_viberant/r_viberant.h"
+#endif
 
 #include "hw_main.h"
 #include "../v_video.h"
@@ -1322,7 +1327,7 @@ static UINT8 HWR_GetModelSprite2(md2_t *md2, skin_t *skin, UINT8 spr2, player_t 
 static void adjustTextureCoords(model_t *model, patch_t *patch)
 {
 	int i;
-	GLPatch_t *gpatch;
+	GLPatch_t *gpatch; // [ZE]: Assigned after the null checks below.
 
 	// [ZE]: The patch's hardware data, which has its max_s and max_t, only exists once it has been prepared, and
 	// changing video settings frees it, so a model that borrows its sprite's graphics could read through a null
@@ -1335,6 +1340,11 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
 	if (!gpatch)
 		return;
 
+	// [ZE]: Queued VibeRant draws still read this model's UVs.
+#ifdef HAVE_VIBERANT
+	if (HWR_VibeRant())
+		VibeRant_SyncModelUpdates();
+#endif
 	for (i = 0; i < model->numMeshes; i++)
 	{
 		int j;

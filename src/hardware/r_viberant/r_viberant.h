@@ -87,6 +87,17 @@ void VibeRant_ReleaseWindow(void);
 // Waits for the GPU, then releases the swap chain and the device
 void VibeRant_Shutdown(void);
 
+// Drains draws that might read game-owned model UVs before the game rewrites them.
+void VibeRant_SyncModelUpdates(void);
+// Worker logging skips game- and window-owned output.
+boolean VibeRant_OnDriverThread(void);
+// Only true after a shutdown timeout. The process must leave live graphics objects alone.
+boolean VibeRant_DriverAbandoned(void);
+
+// Test hooks. Zero ring bytes keeps the production capacity. Pass -1 to use the cvar.
+void VibeRant_SetDriverThreadForTest(INT32 enabled, size_t bytes);
+void VibeRant_GetDriverThreadCountsForTest(UINT64 *readbacks, UINT64 *syncs, UINT64 *wraps, UINT64 *peakPresents);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

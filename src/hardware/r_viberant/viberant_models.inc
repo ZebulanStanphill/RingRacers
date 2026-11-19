@@ -468,6 +468,11 @@ void VibeRant_RenderSkyDome(gl_sky_t* sky)
 		return;
 	if (sky->rebuild || !g_skyBuffer)
 	{
+		if (!sky->data)
+		{
+			VIBERANT_LOG_ONCE("skipping a sky draw without a vertex buffer or source data");
+			return;
+		}
 		if (!CreateStaticBuffer(sky->data, (UINT) (sky->vertex_count * sizeof(sky->data[0])), g_skyBuffer))
 			return;
 		sky->vbo = 1;

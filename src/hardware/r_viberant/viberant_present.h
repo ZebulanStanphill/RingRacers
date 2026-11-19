@@ -40,6 +40,21 @@ bool Present_TakeWindow();
 typedef bool (*PlaceFrameFn)(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, ID3D12Resource *target,
 	D3D12_CPU_DESCRIPTOR_HANDLE rtv, const screen_scaling::Placement &placement, UINT targetWidth, UINT targetHeight);
 
+// Main-thread window measurements for a D3D frame. A frame requiring a window or
+// swap-chain change is executed on the main thread.
+struct PresentFrame
+{
+	screen_scaling::Placement placement;
+	UINT width = 0, height = 0;
+	UINT clientWidth = 0, clientHeight = 0;
+	UINT32 traceFrame = 0;
+	bool mainThread = false;
+};
+
+#ifdef HAVE_VIBERANT_D3D
+bool Present_PrepareFrame(PresentFrame &frame, UINT width, UINT height);
+#endif
+
 // Shows source (in sourceState, which it's left in), a width by height frame, on the swap chain's next buffer, submits
 // the frame and presents it with vsync as the sync interval. Options > Video > Screen Scaling (cv_scr_scaling) decides
 // how. Stops the game with an error if the window can't be taken or the swap chain resized.
@@ -51,7 +66,11 @@ typedef bool (*PlaceFrameFn)(ID3D12Resource *source, D3D12_RESOURCE_STATES sourc
 // window, at the largest rectangle of the frame's aspect ratio (screen_scaling::FitRect), scaled with linear
 // filtering. Without place, or if it returns false, the frame is copied into a swap chain of its own size, which the
 // system stretches to the window, from then on, until the window is taken again. A window with no client area (minimized) is not presented to.
-void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place);
+void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place
+#ifdef HAVE_VIBERANT_D3D
+	, const PresentFrame *frame = nullptr
+#endif
+);
 
 // Gives the window back, for the Software renderer to use. Does nothing without the swap chain. Starting the driver again
 // takes the window again.

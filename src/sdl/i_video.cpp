@@ -1997,6 +1997,9 @@ void I_ShutdownGraphics(void)
 #ifdef HAVE_VIBERANT
 	// [UWP]: The VibeRant driver releases its swap chain and ANGLE's device while ANGLE's context exists
 	VibeRant_Shutdown();
+	// [ZE]: On a drain timeout, the worker may still be using the window.
+	if (VibeRant_DriverAbandoned())
+		return;
 #endif
 #ifdef _UWP
 	// [UWP]: The queries timing ANGLE's GPU work belong to its device, which goes with its context

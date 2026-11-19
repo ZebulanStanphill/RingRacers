@@ -28,8 +28,9 @@ if(SRB2_CONFIG_VIBERANT_D3D OR SRB2_CONFIG_VIBERANT_VULKAN OR SRB2_CONFIG_VIBERA
 	target_compile_definitions(SRB2SDL2 PRIVATE HAVE_VIBERANT)
 	set(viberant_shader_source "${CMAKE_CURRENT_SOURCE_DIR}/r_viberant/shaders.hlsl")
 	include(r_viberant/custom_shaders.cmake)
+	# [ZE]: Build the driver proxy on every VibeRant backend.
 	target_sources(SRB2SDL2 PRIVATE r_viberant/custom_shader.cpp r_viberant/viberant_pipeline.cpp r_viberant/viberant_prewarm.cpp
-		r_viberant/viberant_core.cpp r_viberant/viberant_upload.cpp r_viberant/r_viberant.cpp)
+		r_viberant/viberant_core.cpp r_viberant/viberant_upload.cpp r_viberant/r_viberant.cpp r_viberant/viberant_thread.cpp)
 	target_link_libraries(SRB2SDL2 PRIVATE glslang SPIRV glslang-default-resource-limits spirv-cross-hlsl)
 	target_include_directories(SRB2SDL2 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

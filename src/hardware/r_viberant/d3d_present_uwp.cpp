@@ -21,6 +21,7 @@
 
 #include "viberant_present.h"
 
+#include <atomic>
 #include <dxgi1_2.h>
 
 #include <algorithm>
@@ -258,7 +259,7 @@ struct Presenter
 	ComPtr<ID3D12Resource> timestampBuffer; // READBACK, 16 bytes per entry
 	bool timestampsTried = false;
 	bool stopped = false; // shut down, so nothing presents
-	bool placementFailed = false; // the driver couldn't place a frame, so Screen Scaling is Fit from then on
+	std::atomic<bool> placementFailed{false}; // the driver couldn't place a frame, so Screen Scaling is Fit from then on
 };
 Presenter g_present;
 INT32 g_traceSlot = -1;
@@ -720,15 +721,9 @@ void ScreenSize(UINT &width, UINT &height)
 }
 
 // How a frame of the given size is shown: the swap chain's size, and for Integer and 1:1, where in it the frame goes
-struct Layout
+PresentFrame ChooseLayout(UINT frameWidth, UINT frameHeight)
 {
-	screen_scaling::Placement placement; // fit: the swap chain is the frame's size, and the system scales it
-	UINT width, height; // the swap chain's size
-};
-
-Layout ChooseLayout(UINT frameWidth, UINT frameHeight)
-{
-	Layout layout;
+	PresentFrame layout;
 	layout.width = frameWidth;
 	layout.height = frameHeight;
 	if (g_present.placementFailed)
@@ -747,10 +742,10 @@ Layout ChooseLayout(UINT frameWidth, UINT frameHeight)
 }
 
 // Says how frames are shown whenever that changes: Screen Scaling, a resolution or the screen's size
-void LogLayout(UINT frameWidth, UINT frameHeight, const Layout &layout)
+void LogLayout(UINT frameWidth, UINT frameHeight, const PresentFrame &layout)
 {
 	static UINT lastFrameWidth, lastFrameHeight;
-	static Layout last;
+	static PresentFrame last;
 	static bool logged = false;
 	const screen_scaling::Placement &p = layout.placement, &l = last.placement;
 	if (logged && lastFrameWidth == frameWidth && lastFrameHeight == frameHeight && layout.width == last.width
@@ -784,12 +779,20 @@ bool Present_TakeWindow()
 	}
 
 	// The size Present_Frame will want, so that the first frame doesn't resize it
-	const Layout layout = ChooseLayout(width, height);
+	const PresentFrame layout = ChooseLayout(width, height);
 	// TAKE_LATER: Present_Frame tries again once an ANGLE context is current
 	return TakeWindow(layout.width, layout.height, "VibeRant D3D can't present, so the game falls back to Software") != TAKE_FAILED;
 }
 
-void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place)
+bool Present_PrepareFrame(PresentFrame &frame, UINT width, UINT height)
+{
+	frame = ChooseLayout(width, height);
+	frame.traceFrame = UWPTraceFrameId();
+	return !g_direct.owned || g_direct.width != frame.width || g_direct.height != frame.height;
+}
+
+void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UINT width, UINT height, bool vsync, PlaceFrameFn place,
+	const PresentFrame *frame)
 {
 	g_traceSlot = -1;
 	g_traceFrame = 0;
@@ -801,10 +804,17 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		return;
 	}
 
-	const Layout layout = ChooseLayout(width, height);
+	PresentFrame measured;
+	if (!frame)
+	{
+		Present_PrepareFrame(measured, width, height);
+		measured.mainThread = true;
+		frame = &measured;
+	}
+	const PresentFrame &layout = *frame;
 	LogLayout(width, height, layout);
 
-	if (!g_direct.owned)
+	if (frame->mainThread && !g_direct.owned)
 	{
 		// Only if no ANGLE context was current when the driver started
 		const TakeResult taken = TakeWindow(layout.width, layout.height, "VibeRant D3D can't present");
@@ -817,7 +827,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 			I_Error("Direct3D 12 couldn't take the game window from ANGLE (%s).\nSet Renderer to Software in Video Options > Advanced.",
 				g_direct.failure);
 	}
-	else if (g_direct.width != layout.width || g_direct.height != layout.height)
+	else if (frame->mainThread && (g_direct.width != layout.width || g_direct.height != layout.height))
 	{
 		if (!ResizeSwapChain(layout.width, layout.height))
 		{
@@ -878,7 +888,7 @@ void Present_Frame(ID3D12Resource *source, D3D12_RESOURCE_STATES sourceState, UI
 		}
 	}
 	g_traceSlot = (INT32)index;
-	g_traceFrame = UWPTraceFrameId();
+	g_traceFrame = frame->traceFrame;
 	const UINT64 fence = list ? Core_Submit("present") : 0;
 	if (!list)
 		SubmitWithoutPresenting(); // reopens the list

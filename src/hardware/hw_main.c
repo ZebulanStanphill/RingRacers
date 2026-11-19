@@ -9691,6 +9691,7 @@ void CV_glanisotropic_OnChange(void)
 
 #ifdef HAVE_VIBERANT
 static void TextureAtlas_OnChange(void);
+consvar_t cv_grdriverthread = CVAR_INIT("gr_driverthread", "On", CV_SAVE, CV_OnOff, NULL); // [ZE]: VibeRant D3D worker
 static consvar_t cv_grtextureatlas = CVAR_INIT("gr_textureatlas", "On", CV_SAVE|CV_CALL, CV_OnOff, TextureAtlas_OnChange);
 static void TextureAtlas_OnChange(void)
 {
@@ -9776,6 +9777,7 @@ void HWR_AddSessionCommands(void)
 // [ZE]: Register texture atlas controls and surface probes when the driver is available, plus the Xbox spring probe.
 #ifdef HAVE_VIBERANT
 	CV_RegisterVar(&cv_grtextureatlas);
+	CV_RegisterVar(&cv_grdriverthread); // [ZE]: VibeRant D3D worker
 	COM_AddCommand("gr_surfaceprobe", HWR_SurfaceProbe_f);
 #endif
 #ifdef _UWP

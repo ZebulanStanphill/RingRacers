@@ -103,6 +103,14 @@ struct ScreenEffect
 	unsigned constantsBytes = 0;
 };
 ScreenEffect g_screenEffects[2];
+bool g_effectLoadAttempted[2]; // Only the main thread builds effects or resets them.
+
+#ifdef HAVE_VIBERANT_D3D
+bool ScreenEffectNeedsLoad(INT32 mode)
+{
+	return (mode == 2 || mode == 3) && !g_effectLoadAttempted[mode - 2];
+}
+#endif
 ComPtr<ID3DBlob> g_effectVertexShader;
 
 // Reads a lump of shaders.pk3 (or the flat shader directory) as text
@@ -397,10 +405,9 @@ RunResult RunScreenEffect(ScreenEffect &effect, bool palette, std::string &error
 
 // What to present: source, the finished frame (the palette step's texture if palette, else the screen), or that frame
 // through the screen effect. Either is in RENDER_TARGET.
-ID3D12Resource *ApplyScreenEffect(bool palette)
+ID3D12Resource *ApplyScreenEffect(bool palette, INT32 mode, bool allowLoad)
 {
 	ID3D12Resource *plain = palette ? g_postTexture.res.Get() : g_rt.Get();
-	const INT32 mode = cv_scr_effect.value;
 	if ((mode != 2 && mode != 3) || !CanDraw() || Core_RemovalSeen())
 		return plain;
 	ScreenEffect &effect = g_screenEffects[mode - 2];
@@ -412,6 +419,9 @@ ID3D12Resource *ApplyScreenEffect(bool palette)
 	bool done = false;
 	if (effect.state == ScreenEffect::UNTRIED)
 	{
+		if (!allowLoad)
+			return plain;
+		g_effectLoadAttempted[mode - 2] = true;
 		if (BuildScreenEffect(effect, mode - 2, error))
 		{
 			effect.state = ScreenEffect::READY;
@@ -448,6 +458,7 @@ void ShutdownScreenEffect(bool idle)
 			Core_Retire(effect.pso);
 		effect = ScreenEffect();
 	}
+	g_effectLoadAttempted[0] = g_effectLoadAttempted[1] = false;
 	g_effectVertexShader.Reset();
 	RetireTexture(g_effectTarget);
 	RetireTexture(g_dotPattern);

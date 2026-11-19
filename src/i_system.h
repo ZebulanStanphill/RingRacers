@@ -321,7 +321,7 @@ void I_OpenURL(const char *data);
 
 #ifdef _UWP
 // [UWP]: Time I_OutputMsg has spent writing messages to the log file and debugger, to see how much logging slows startup
-extern precise_t i_uwplogtime;
+precise_t I_UWPLogTime(void); // [UWP]: Reads the atomic logging timer.
 
 // [UWP]: Implemented by the launcher using MemoryManager. Returns 0 on success,
 // otherwise an HRESULT. Reports the actual process budget and whether this is Xbox.

@@ -366,7 +366,7 @@ def generate(engine, output):
         "COMPILE": driver12.function("VibeRant_CompileShaders"),
         "CLEAN": driver12.function("VibeRant_CleanShaders"),
         "LOAD": driver12.function("VibeRant_LoadCustomShader"),
-        "SET_SHADER": driver12.function("VibeRant_SetShader"),
+        "SET_SHADER": driver12.function("VibeRant_SetShader").replace("bool reduceEffects", "bool reduceEffects = cv_reducevfx.value != 0"),
     }, output / "custom_dispatch.cpp")
     fog = Source(engine / "src/hardware/r_viberant/shaders.hlsl")
     renderer = Source(engine / "src/r_main.cpp")
@@ -722,7 +722,7 @@ def generate(engine, output):
         "FIND_TEXTURE": driver12.function("FindTexture"),
         "BIND_TEXTURE": driver12.function("BindTexture"),
         "NO_TEXTURE": driver12.function("SetNoTexture"),
-        "SET_TEXTURE": driver12.function("SetTextureInternal"),
+        "SET_TEXTURE": driver12.function("BindDownloadedTexture") + "\n" + driver12.function("SetTextureInternal"),
         "UPLOAD_BIND": function_section(driver12, "UpdateTextureInternal",
             "\tif (!(pTexInfo->flags & TF_BRIGHTMAP))", "\n\tTexture *texture = FindTexture(num);"),
     }

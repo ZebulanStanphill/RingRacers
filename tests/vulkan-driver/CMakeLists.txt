@@ -7,6 +7,7 @@ include("${RR_ENGINE}/src/hardware/r_viberant/custom_shaders.cmake")
 add_executable(vulkan-driver
     ../viberant-driver.cpp
     "${RR_ENGINE}/src/hardware/r_viberant/r_viberant.cpp"
+    "${RR_ENGINE}/src/hardware/r_viberant/viberant_thread.cpp"
     "${RR_ENGINE}/src/hardware/r_viberant/viberant_core.cpp"
     "${RR_ENGINE}/src/hardware/r_viberant/viberant_upload.cpp"
     "${RR_ENGINE}/src/hardware/r_viberant/viberant_pipeline.cpp"

@@ -189,9 +189,11 @@ FOutVector PostImageVertex(int x, int y, const int viewport[4], int screenHeight
 	return v;
 }
 
-void VibeRant_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
+void VibeRant_PostImgRedraw(float time, float type)
 {
-	(void)points; // The driver's shader uses Software's per-pixel sampling, not Legacy GL's grid.
+	// The shader uses Software's per-pixel sampling instead of Legacy GL's grid.
+	g_postImageTime = time;
+	g_postImageType = type;
 	const int texsize = ScreenTextureSize();
 	const GLState saved = g_gl;
 	g_postImage = true;

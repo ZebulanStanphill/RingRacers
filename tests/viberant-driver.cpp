@@ -34,6 +34,10 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -52,7 +56,12 @@ static_assert((PF_Invert & PF_Occlude) == 0, "Inversion must not alias depth wri
 // negative names the one negative control this process runs, if any: a regression is injected and the oracle that should
 // catch it must then reject it. Every other oracle is checked by selfTest and the hit registry below.
 static std::string logs, negative;
+static std::mutex logMutex;
+static std::string readLogs() { std::lock_guard<std::mutex> lock(logMutex); return logs; }
 static bool negativeRejected=false;
+#ifdef HAVE_VIBERANT_D3D
+static bool threaded = false;
+#endif
 static std::vector<UINT8> lumpBytes; // what the stubbed wipe mask lump holds
 static std::map<std::string,std::string> shaderLumps; // what the stubbed shaders.pk3 holds: the screen effects' sources
 extern "C" {
@@ -72,6 +81,7 @@ size_t W_LumpLength(lumpnum_t) { return lumpBytes.size(); }
 void W_ReadLump(lumpnum_t, void *d) { memcpy(d,lumpBytes.data(),lumpBytes.size()); }
 consvar_t cv_reducevfx{};
 consvar_t cv_scr_effect{};
+consvar_t cv_grdriverthread{};
 boolean W_ReadShader(const char *name, size_t *size, void *dest) {
     auto lump=shaderLumps.find(name);
     if(lump==shaderLumps.end()) return false;
@@ -82,9 +92,10 @@ boolean W_ReadShader(const char *name, size_t *size, void *dest) {
 CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nullptr}};
 void HWR_Startup() {}
 UINT32 HWR_UWPTakeLazyModelLoads(void) { return 0; }
+void I_UWPProfileDriverThread(boolean) {}
 precise_t I_GetPreciseTime() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 UINT64 I_GetPrecisePrecision() { LARGE_INTEGER n; QueryPerformanceFrequency(&n); return n.QuadPart; }
-void I_OutputMsg(const char *fmt, ...) { char b[8192]; va_list ap; va_start(ap,fmt); vsnprintf(b,sizeof b,fmt,ap); va_end(ap); logs += b; fputs(b,stdout); }
+void I_OutputMsg(const char *fmt, ...) { char b[8192]; va_list ap; va_start(ap,fmt); vsnprintf(b,sizeof b,fmt,ap); va_end(ap); std::lock_guard<std::mutex> lock(logMutex); logs += b; fputs(b,stdout); }
 RGBA_t *pMasterPalette = nullptr;
 // Set by the run that has the device fail on purpose (Metal's). A real presenter goes on without its frame then, and it is
 // the driver that stops the game, with I_Error: the run ends there, without the destructors of a driver that is still up.
@@ -93,8 +104,30 @@ void I_Error(const char *fmt, ...) { va_list ap; va_start(ap,fmt); vfprintf(stde
 }
 namespace rr_viberant {
 bool Present_TakeWindow() { return true; }
-static int presentedFrames=0;
-void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool, PlaceFrameFn) {
+static std::atomic<int> presentedFrames{0};
+#ifdef HAVE_VIBERANT_D3D
+static std::mutex presentMutex;
+static std::condition_variable presentCondition;
+static bool holdPresent = false, presentBlocked = false;
+bool Present_PrepareFrame(PresentFrame &, UINT, UINT) { return false; }
+#endif
+void Present_Frame(ID3D12Resource *, D3D12_RESOURCE_STATES, UINT, UINT, bool, PlaceFrameFn
+#ifdef HAVE_VIBERANT_D3D
+    , const PresentFrame *
+#endif
+) {
+#ifdef HAVE_VIBERANT_D3D
+    {
+        std::unique_lock<std::mutex> lock(presentMutex);
+        if (holdPresent) {
+            presentBlocked = true;
+            presentCondition.notify_all();
+            if (!presentCondition.wait_for(lock, std::chrono::seconds(10), [] { return !holdPresent; }))
+                throw std::runtime_error("present gate was not released");
+            presentBlocked = false;
+        }
+    }
+#endif
     presentedFrames++;
     // No transition is necessary: submission leaves the source in its supplied state.
     UINT64 fence = Core_Submit("present");
@@ -280,6 +313,7 @@ static void validate(ID3D12InfoQueue *queue)
 #else
     if (rr_vk12::ValidationErrors() != 0) throw std::runtime_error("Vulkan validation error");
 #endif
+    VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
     if (Core_Errors()) throw std::runtime_error("production Core_Errors nonzero");
 }
 #ifdef HAVE_VIBERANT_METAL
@@ -373,7 +407,7 @@ static void metalNullViews() {
     const size_t before=rr_mtl12::CountsForTest().nullViews;
     rr_mtl12::FailNextNullViewForTest(); metalNullView(heap);
     if(rr_mtl12::CountsForTest().nullViews!=before) throw std::runtime_error("Metal null views: a texture that couldn't be set up was kept");
-    if(logs.find("a null view's texture couldn't be written as zero")==std::string::npos) throw std::runtime_error("Metal null views: the log doesn't say that one couldn't be set up");
+    if(readLogs().find("a null view's texture couldn't be written as zero")==std::string::npos) throw std::runtime_error("Metal null views: the log doesn't say that one couldn't be set up");
     metalNullView(heap);
     if(rr_mtl12::CountsForTest().nullViews!=before+1) throw std::runtime_error("Metal null views: the view after one that failed made no texture");
     metalNullView(heap);
@@ -416,7 +450,7 @@ static void metalFailedCommandBuffer() {
     if(Core_RemovedReason()!=reason) { fprintf(stderr,"reason 0x%08X, expected 0x%08X\n",(unsigned)Core_RemovedReason(),(unsigned)reason); throw std::runtime_error("Metal failed command buffer: the device gives another reason"); }
     if(Core_CompletedFence()!=UINT64_MAX) throw std::runtime_error("Metal failed command buffer: the fence still reads as a value");
     if(rr_mtl12::ValidationErrors()!=1) throw std::runtime_error("Metal failed command buffer: the failure wasn't counted once");
-    if(logs.find("a command buffer failed: a failure injected by a test")==std::string::npos) throw std::runtime_error("Metal failed command buffer: the log doesn't say so");
+    if(readLogs().find("a command buffer failed: a failure injected by a test")==std::string::npos) throw std::runtime_error("Metal failed command buffer: the log doesn't say so");
     printf("METAL_FAILURE_REACHED_DRIVER: %d%s as 0x%08X\n",metalFailure,metalFailureInNullView ? " null-view" : "",(unsigned)reason); fflush(stdout);
     // The driver ends the frame by stopping the game, as it does for a Direct3D 12 device that was removed
     deviceFailsOnPurpose=true; VibeRant_FinishUpdate(0);
@@ -442,6 +476,9 @@ static const char *const kOracles[]={
     "blend-invisible", "blend-invisible-depth", "blend-invisible-restore", "blend-remap-mask", "blend-remap-restore",
     "void-fill", "void-claim", "void-translucent", "void-depth", "void-viewport", "void-portal",
     "custom-none", "custom-layout-poly", "custom-layout-sky", "custom-layout-model", "custom-replace-invalid", "custom-replace-recover", "custom-sprite-clip", "custom-model-kept", "custom-model-lighting", "custom-water-refraction",
+#ifdef HAVE_VIBERANT_D3D
+    "driver-copy", "driver-wrap", "driver-pacing", "driver-syncs",
+#endif
     "shutdown",
 };
 static std::string oracleProblems() {
@@ -528,6 +565,9 @@ static void selfTest() {
 }
 int main(int argc,char **argv) {
     if(argc==3 && !strcmp(argv[1],"--negative-control")) negative=argv[2];
+#ifdef HAVE_VIBERANT_D3D
+    else if(argc==2 && !strcmp(argv[1],"--driver-thread")) threaded=true;
+#endif
 #ifdef HAVE_VIBERANT_METAL
     else if((argc==3 || (argc==4 && !strcmp(argv[3],"null-view"))) && !strcmp(argv[1],"--metal-command-buffer-error") && atoi(argv[2])>0) { metalFailure=atoi(argv[2]); metalFailureInNullView=argc==4; }
 #endif
@@ -544,6 +584,7 @@ int main(int argc,char **argv) {
     try {
 #ifdef HAVE_VIBERANT_D3D
         Core_ForceWarp(true);
+        VibeRant_SetDriverThreadForTest(threaded, 16 * 1024);
 #elif defined(HAVE_VIBERANT_METAL)
         // Metal has no CPU device: the test runs on the machine's GPU, which on a CI runner is a virtual one shared with
         // other machines. RR_METAL_PRODUCTION_WAITS keeps the waits production gives the GPU.
@@ -561,16 +602,16 @@ int main(int argc,char **argv) {
 #ifdef HAVE_VIBERANT_D3D
         ComPtr<ID3D12InfoQueue> queue; if(FAILED(Core_Device()->QueryInterface(IID_PPV_ARGS(&queue)))) throw std::runtime_error("InfoQueue unavailable"); validationQueue=queue.Get();
 #elif defined(HAVE_VIBERANT_METAL)
-        if(logs.find("API validation on") == std::string::npos || logs.find("shader validation on") == std::string::npos)
+        if(readLogs().find("API validation on") == std::string::npos || readLogs().find("shader validation on") == std::string::npos)
             throw std::runtime_error("Metal's API and shader validation are required (MTL_DEBUG_LAYER=1 and MTL_SHADER_VALIDATION=1)");
         // For run-metal.sh, which looks for the Objective-C runtime's reports of objects this thread autoreleased with no pool
         printf("Metal driver test: main thread %p\n",(void *)pthread_self());
 #else
-        if(logs.find(", validation on") == std::string::npos) throw std::runtime_error("Vulkan validation layer required");
+        if(readLogs().find(", validation on") == std::string::npos) throw std::runtime_error("Vulkan validation layer required");
 #endif
         function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect")(0,0,W,H,.1f);
         // Clear-only frames while the renderer starts aren't presented, so the loading screen stays up until the first draw.
-        { reset(); VibeRant_FinishUpdate(0); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
+        { reset(); VibeRant_FinishUpdate(0); VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr); require("startup-present",presentedFrames==0,"clear-only startup frame was presented"); }
 #ifdef HAVE_VIBERANT_METAL
         if(metalFailure) metalFailedCommandBuffer();
 #endif
@@ -591,11 +632,11 @@ int main(int argc,char **argv) {
           reset({0,0,0});
           if(VibeRant_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began without a request");
           if(!VibeRant_RequestSurfaceProbe(50,50) || VibeRant_RequestSurfaceProbe(50,50)) throw std::runtime_error("surface probe requests weren't accepted once");
-          const size_t start=logs.size();
+          const size_t start=readLogs().size();
           if(!VibeRant_BeginSurfaceProbe()) throw std::runtime_error("the surface probe didn't begin");
           for(int i=0;i<3;i++) { if(i==1) VibeRant_SurfaceProbeSource("wall",7); draw(colors[i],PF_NoDepthTest); }
           VibeRant_EndSurfaceProbe(); validate(validationQueue);
-          const std::string probeLog=logs.substr(start);
+          const std::string probeLog=readLogs().substr(start);
           require("surface-probe",probeLog.find("surface probe: begin pixel=(32,32) screen=64x64")!=std::string::npos,"surface probe begin line");
           for(int i=0;i<3;i++)
           { char key[48]; snprintf(key,sizeof key,"surface probe: sample=%d raw=0x",i);
@@ -609,15 +650,15 @@ int main(int argc,char **argv) {
           // The copies leave the screen as they found it
           expect("surface-probe-pixel",colors[2]);
           // Without a request, the next frame copies and logs nothing
-          const size_t quiet=logs.size();
+          const size_t quiet=readLogs().size();
           reset(); if(VibeRant_BeginSurfaceProbe()) throw std::runtime_error("a surface probe began twice for one request");
           draw(colors[0],PF_NoDepthTest); VibeRant_EndSurfaceProbe(); expect("surface-probe-quiet",colors[0]);
-          if(logs.find("surface probe:",quiet)!=std::string::npos) throw std::runtime_error("an inactive surface probe logged"); }
+          if(readLogs().find("surface probe:",quiet)!=std::string::npos) throw std::runtime_error("an inactive surface probe logged"); }
         RGB src={160,96,64},dst={48,80,112};
         struct Mode { const char *name; FBITFIELD flags; } modes[]={{"opaque",0},{"translucent",PF_Translucent},{"additive",PF_Additive},{"subtract",PF_Subtractive},{"reverse",PF_ReverseSubtract},{"multiply",PF_Multiplicative},{"environment",PF_Environment},{"masked",PF_Masked},{"invert",PF_Invert},{"fog",PF_Fog}};
         // The color of a source with this alpha drawn over a destination in one of these modes
         auto blended=[](FBITFIELD flags,RGB source,RGB target,int alpha) { const double a=alpha/255.; RGB result={}; for(int c=0;c<3;c++) { double s=source[c],d=target[c],v=s; switch(flags) { case PF_Translucent:v=s*a+d*(1-a);break; case PF_Additive:v=s*a+d;break; case PF_Subtractive:v=s*a-d;break; case PF_ReverseSubtract:v=d-s*a;break; case PF_Multiplicative:v=s*d/255;break; case PF_Environment:v=s+d*(1-a);break; case PF_Masked:v=s*a;break; case PF_Invert:v=s*(1-d/255);break; case PF_Fog:v=s*a+d*s/255;break; } result[c]=(int)std::lround(std::max(0.,std::min(255.,v))); } return result; };
-        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expectQuad(m.name,blended(m.flags,src,dst,128)); VibeRant_FinishUpdate(0); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
+        for(auto m:modes) { reset(dst); draw(src,m.flags|PF_NoDepthTest,1,128); expectQuad(m.name,blended(m.flags,src,dst,128)); VibeRant_FinishUpdate(0); VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr); if(!presentedFrames) throw std::runtime_error("drawn frame was not presented"); }
         reset(); draw({200,40,20},PF_Occlude,.5f); draw({20,200,40},PF_Occlude,1.5f); expectQuad("depth",{200,40,20});
         draw({20,40,200},PF_NoDepthTest,1.5f); expectQuad("nodepth",{20,40,200});
         reset(); draw({200,40,20},0,.5f); draw({20,200,40},PF_Occlude,1.5f); expectQuad("noocclude",{20,200,40});
@@ -899,12 +940,12 @@ int main(int argc,char **argv) {
             try { expect("custom-shader",{64,128,191}); }
             catch(const OracleRejected &) { if(negative=="custom-shader-nocustom") negativeRejected=true; throw; }
             clean(); shader(SHADER_FLOOR); customDraw(); expect("custom-shader-clean",{200,40,16});
-            const size_t logStart=logs.size();
+            const size_t logStart=readLogs().size();
             char invalid[]="void main() { gl_FragColor = vec4(; }";
             load(SHADER_FLOOR,vertex,sizeof(vertex)-1,false);
             load(SHADER_FLOOR,invalid,sizeof(invalid)-1,true);
             if(!compile()) throw std::runtime_error("invalid add-on disabled built-in shaders");
-            const std::string diagnostic=logs.substr(logStart);
+            const std::string diagnostic=readLogs().substr(logStart);
             if(diagnostic.find("custom shader")==std::string::npos || diagnostic.find("built-in")==std::string::npos)
                 throw std::runtime_error("invalid custom shader did not log built-in fallback");
             shader(SHADER_FLOOR); customDraw(); expect("custom-shader-invalid",{200,40,16});
@@ -930,20 +971,20 @@ int main(int argc,char **argv) {
             };
             cv_scr_effect.value=0; quadrants(tl,tr,bl,br);
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-off",p,tl,tr,bl,br); }
-            const size_t effectLog=logs.size();
+            const size_t effectLog=readLogs().size();
             cv_scr_effect.value=2; quadrants(tl,tr,bl,br);
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
             // A presented frame, and a second pass: nothing is built again
             VibeRant_FinishUpdate(0); quadrants(tl,tr,bl,br);
             { auto p=presentedPixels(); validate(validationQueue); corners("screen-effect",p,shadedTl,shadedTr,shadedBl,shadedBr); }
-            const std::string effectText=logs.substr(effectLog);
+            const std::string effectText=readLogs().substr(effectLog);
             require("screen-effect",occurrences(effectText,"screen effect SalCRT is ready")==1 && effectText.find("SalCRT failed")==std::string::npos,"SalCRT was not built exactly once");
             // Not the shaders of the other mode, either
             cv_scr_effect.value=3; quadrants(tl,tr,bl,br);
             for(int frame=0;frame<2;frame++) {
                 auto p=presentedPixels(); validate(validationQueue); corners("screen-effect-fallback",p,tl,tr,bl,br); VibeRant_FinishUpdate(0); quadrants(tl,tr,bl,br);
             }
-            const std::string fallbackText=logs.substr(effectLog);
+            const std::string fallbackText=readLogs().substr(effectLog);
             require("screen-effect-fallback",occurrences(fallbackText,"screen effect SalCRT Sharp failed: translation failed")==1 && fallbackText.find("SalCRT Sharp is ready")==std::string::npos,"SalCRT Sharp's failure was not logged once");
             // Back to the first mode, which stays built; with the effect off the frame is as drawn
             cv_scr_effect.value=2;
@@ -1394,7 +1435,9 @@ int main(int argc,char **argv) {
             bool mixedSameList=false;
             for(int attempt=0;attempt<4 && !mixedSameList;attempt++) {
                 reset({80,120,160}); auto mixedBefore=captureCounts();
-                waterDraw(); UINT64 pending=Core_PendingFence(); fogDraw();
+                waterDraw(); VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
+                UINT64 pending=Core_PendingFence(); fogDraw();
+                VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
                 mixedSameList=Core_PendingFence()==pending;
                 countDelta("capture-mixed",mixedBefore,1,1); expect("capture-mixed",{80,120,159});
                 // Shift the constant-ring head after a split pair; otherwise its next wrap can
@@ -1429,7 +1472,9 @@ int main(int argc,char **argv) {
             reset({80,120,160}); auto skippedBefore=captureCounts(); bool sameList=false;
             auto fullQuad=captureQuad; captureQuad[1]=captureQuad[2];
             for(int pair=0;pair<8;pair++) {
+                VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
                 UINT64 pending=Core_PendingFence(); waterDraw(2); fogDraw(2);
+                VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
                 if(Core_PendingFence()==pending) sameList=true;
             }
             captureQuad=fullQuad; waterDraw(); fogDraw();
@@ -1563,7 +1608,7 @@ int main(int argc,char **argv) {
                 check("wipe-fallback",p,16,48,over(alpha[2])); check("wipe-fallback",p,48,48,over(alpha[3]));
                 deleteMask(&fadeMask);
                 VibeRant_FinishUpdate(0);
-                if(logs.find("wipe: the full wipe isn't available")==std::string::npos) throw std::runtime_error("the two-pass wipe wasn't logged");
+                if(readLogs().find("wipe: the full wipe isn't available")==std::string::npos) throw std::runtime_error("the two-pass wipe wasn't logged");
             }
             // A wipe's mask is remade at a new size, and the screen after a wipe still draws
             lumpBytes.assign(16000,0); g_wipeframe=1; // 160x100: every pixel of the end screen
@@ -1685,6 +1730,111 @@ int main(int argc,char **argv) {
         std::swap(skyVertices[2],skyVertices[3]); skyLoop.mode=HWD_SKYLOOP_STRIP; sky.rebuild=true;
         reset(); function<void (*)(gl_sky_t *)>("RenderSkyDome")(&sky); expect("sky",{64,176,224});
         function<void (*)(FTransform *)>("SetTransform")(&identity);
+#ifdef HAVE_VIBERANT_D3D
+        // Keep the worker in the previous present until all the caller's buffers
+        // have been overwritten. The sky vertex data is already in its static VBO.
+        {
+            struct PresentGate
+            {
+                PresentGate()
+                {
+                    std::lock_guard<std::mutex> lock(presentMutex);
+                    holdPresent = threaded;
+                }
+                ~PresentGate()
+                {
+                    std::lock_guard<std::mutex> lock(presentMutex);
+                    holdPresent = false;
+                    presentCondition.notify_all();
+                }
+            };
+            auto transform = function<void (*)(FTransform *)>("SetTransform");
+            auto renderSky = function<void (*)(gl_sky_t *)>("RenderSkyDome");
+            auto clip = function<void (*)(INT32,INT32,INT32,INT32,float)>("GClipRect");
+            const FBITFIELD drawFlags = PF_Modulated | PF_NoTexture | PF_NoDepthTest;
+            VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
+            {
+                PresentGate gate;
+                VibeRant_FinishUpdate(0);
+                if (threaded) {
+                    std::unique_lock<std::mutex> lock(presentMutex);
+                    if (!presentCondition.wait_for(lock, std::chrono::seconds(5), [] { return presentBlocked; }))
+                        throw std::runtime_error("threaded present did not reach the gate");
+                }
+
+                FTransform view = identity;
+                transform(&view);
+                view.x = 100;
+                reset();
+                clip(0,0,W,H,.1f);
+                texture(nullptr);
+                blend(PF_NoTexture|PF_NoDepthTest);
+                gl_skyloopdef_t loop = skyLoop;
+                gl_sky_t callerSky = sky;
+                callerSky.loops = &loop;
+                renderSky(&callerSky);
+                loop.vertexcount = 0;
+                callerSky.height = -1;
+
+                view = identity; // The sky rotates the modelview.
+                transform(&view);
+                view.x = 100;
+                auto vertices = quad();
+                for (auto &v : vertices)
+                    v.x = v.x * .35f - .45f;
+                auto info = surface({220,48,24});
+                polygon(&info,vertices.data(),4,drawFlags);
+                info = {};
+                vertices.assign(4,{});
+
+                vertices = quad();
+                for (auto &v : vertices)
+                    v.x = v.x * .35f + .45f;
+                info = surface({32,224,80});
+                std::array<UINT32,6> indices{0,1,2,0,2,3};
+                indexed(&info,vertices.data(),6,drawFlags,indices.data());
+                info = {};
+                indices.fill(0);
+                vertices.assign(4,{});
+            }
+            auto result = pixels();
+            check("driver-copy",result,16,32,{220,48,24});
+            check("driver-copy",result,48,32,{32,224,80});
+            check("driver-copy",result,32,32,{64,176,224});
+
+            UINT64 readsBefore, syncsBefore, wrapsBefore;
+            VibeRant_GetDriverThreadCountsForTest(&readsBefore,&syncsBefore,&wrapsBefore,nullptr);
+            reset();
+            // Each polygon record is at least 80 bytes of vertices, so the group
+            // exceeds the configured 16 KiB queue even without headers.
+            for (int i=0; i<320; ++i) {
+                VibeRant_SurfaceProbeSource("inactive", i);
+                VibeRant_SurfaceProbeTexture("inactive");
+                draw({32,80,180},PF_NoDepthTest);
+            }
+            require("driver-syncs",!VibeRant_BeginSurfaceProbe(),"an unrequested probe began");
+            VibeRant_EndSurfaceProbe();
+            const auto wrapped = pixels();
+            check("driver-wrap",wrapped,32,32,{32,80,180});
+            UINT64 readsAfter, syncsAfter, wrapsAfter;
+            VibeRant_GetDriverThreadCountsForTest(&readsAfter,&syncsAfter,&wrapsAfter,nullptr);
+            require("driver-wrap",threaded ? wrapsAfter>wrapsBefore : wrapsAfter==wrapsBefore,"queue wrap count is wrong");
+            require("driver-syncs",readsAfter-readsBefore==(threaded ? 1 : 0),"readback sync count is wrong");
+            require("driver-syncs",syncsAfter-syncsBefore==(threaded ? 2 : 0),"drawing added a sync");
+
+            const int before = presentedFrames.load();
+            constexpr int frames = 16;
+            for (int i=0; i<frames; ++i) {
+                reset();
+                draw({20,120,200},PF_NoDepthTest);
+                VibeRant_FinishUpdate(0);
+            }
+            UINT64 peak;
+            VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,&peak);
+            require("driver-pacing",presentedFrames.load()==before+frames,"a frame did not present");
+            require("driver-pacing",peak==(threaded ? 1 : 0),"peak queued presents is wrong");
+        }
+#endif
         std::array<float,18> modelVertices={-.8f,-.8f,1,.8f,-.8f,1,.8f,.8f,1,-.8f,-.8f,1,.8f,.8f,1,-.8f,.8f,1};
         std::array<float,18> modelNext=modelVertices, normals={}; std::array<float,12> uvs={};
         for(int i=2;i<18;i+=3) normals[i]=1;
@@ -1723,13 +1873,14 @@ int main(int argc,char **argv) {
         }
         reset(); std::vector<FOutVector> huge(400,quad()[0]); huge[0]=quad()[0]; huge[1]=quad()[1]; huge[2]=quad()[2]; huge[3]=quad()[3]; auto hs=surface({32,220,96}); polygon(&hs,huge.data(),(FUINT)huge.size(),PF_Modulated|PF_NoTexture|PF_NoDepthTest); expect("growth",{32,220,96});
         VibeRant_FinishUpdate(0); VibeRant_LogPerf(1);
-        if(logs.find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
+        VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
+        if(readLogs().find("fallbacks 1, lerps 1")==std::string::npos) throw std::runtime_error("model buffered/lerped/fallback paths were not all exercised");
         // Every light table the palette scenes made is gone by now
-        { unsigned alive=9; int parsed=0; auto pp=logs.find("VibeRant perf: palette: rendering ");
-          if(pp==std::string::npos || sscanf(logs.c_str()+pp,"VibeRant perf: palette: rendering %*s %u light tables alive%n",&alive,&parsed)!=1 || !parsed) throw std::runtime_error("missing palette perf line");
+        { unsigned alive=9; int parsed=0; auto pp=readLogs().find("VibeRant perf: palette: rendering ");
+          if(pp==std::string::npos || sscanf(readLogs().c_str()+pp,"VibeRant perf: palette: rendering %*s %u light tables alive%n",&alive,&parsed)!=1 || !parsed) throw std::runtime_error("missing palette perf line");
           if(alive!=0) throw std::runtime_error("light tables outlived the palette scenes"); }
-        unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=logs.find("; wraps "); if(pos==std::string::npos || sscanf(logs.c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=logs.find("; grows ",pos); if(gp==std::string::npos || sscanf(logs.c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
-        unsigned ringSubmissions=0; auto rp=logs.find("mid-frame: ring "); if(rp==std::string::npos || sscanf(logs.c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");
+        unsigned vw=0,iw=0,cw=0,st=0,grows=0; auto pos=readLogs().find("; wraps "); if(pos==std::string::npos || sscanf(readLogs().c_str()+pos,"; wraps %u/%u/%u; stalls %u",&vw,&iw,&cw,&st)!=4) throw std::runtime_error("missing ring perf counters"); auto gp=readLogs().find("; grows ",pos); if(gp==std::string::npos || sscanf(readLogs().c_str()+gp,"; grows %u",&grows)!=1 || !grows || !(vw+iw+cw) || !st) throw std::runtime_error("stress did not wrap/stall and grow rings");
+        unsigned ringSubmissions=0; auto rp=readLogs().find("mid-frame: ring "); if(rp==std::string::npos || sscanf(readLogs().c_str()+rp,"mid-frame: ring %u",&ringSubmissions)!=1 || !ringSubmissions) throw std::runtime_error("stress had no ring submissions");
         // Invisible geometry, such as depth-only sky walls and sprite silhouettes, never changes the target's color,
         // whichever blend modes it passes through, and always writes depth. The visible surface after it blends with
         // its own mode again.
@@ -1852,7 +2003,7 @@ int main(int argc,char **argv) {
             auto skyDome=function<void (*)(gl_sky_t *)>("RenderSkyDome");
             auto setTransform=function<void (*)(FTransform *)>("SetTransform");
             // Each successful add-on compilation logs one line
-            auto compilations=[&]() { size_t count=0; for(size_t at=0;(at=logs.find("compiled for polygon, sky and model layouts",at))!=std::string::npos;at++) count++; return count; };
+            auto compilations=[&]() { size_t count=0; for(size_t at=0;(at=readLogs().find("compiled for polygon, sky and model layouts",at))!=std::string::npos;at++) count++; return count; };
             auto loadFragment=[&](int type,const char *code) { load(type,const_cast<char *>(code),strlen(code),true); };
             const char *const first="void main() { gl_FragColor = vec4(0.25, 0.5, 0.75, 1.0); }";
             const char *const second="void main() { gl_FragColor = vec4(0.75, 0.5, 0.25, 1.0); }";
@@ -1993,6 +2144,7 @@ int main(int argc,char **argv) {
         metalNullViews();
         metalPresenterHooks();
 #endif
+        VibeRant_GetDriverThreadCountsForTest(nullptr,nullptr,nullptr,nullptr);
         Prewarm_Stop(); if(!Core_WaitIdle(30000,"validation")) throw std::runtime_error("idle failed"); validate(validationQueue);
         VibeRant_Shutdown(); validate(validationQueue);
         require("shutdown",Core_Device()==nullptr,"shutdown device lifetime oracle failed");
@@ -2000,7 +2152,7 @@ int main(int argc,char **argv) {
         const std::string problems=oracleProblems();
         if(!problems.empty()) throw std::runtime_error("oracles that never ran, or that aren't listed:"+problems);
 #ifdef HAVE_VIBERANT_D3D
-        puts("Production D3D12 WARP driver scenes passed (RGB tolerance 1, GBV clean)"); return 0;
+        printf("Production D3D12 WARP driver scenes passed (RGB tolerance 1, GBV clean, driver thread %s)\n", threaded ? "on" : "off"); return 0;
 #elif defined(HAVE_VIBERANT_METAL)
         printf("Production Metal driver scenes passed (%zu scenes, RGB tolerance 1, validation clean)\n",oracleHits.size()); return 0;
 #else

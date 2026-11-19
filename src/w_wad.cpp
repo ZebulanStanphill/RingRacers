@@ -1150,7 +1150,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 // [UWP]: Times how long each file takes to load.
 #ifdef _UWP
 	const precise_t uwploadstart = I_GetPreciseTime();
-	const precise_t uwplogstart = i_uwplogtime;
+	const precise_t uwplogstart = I_UWPLogTime(); // [UWP]: Read the shared logging timer.
 #endif
 
 	if (!(refreshdirmenu & REFRESHDIR_ADDFILE))
@@ -1443,7 +1443,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, const
 	// [UWP]: Time each file, to see what makes startup slow on Xbox
 	I_OutputMsg("UWP: loading %s took %.1f s (%.1f s of it logging)\n", filename,
 		(double)(I_GetPreciseTime() - uwploadstart) / I_GetPrecisePrecision(),
-		(double)(i_uwplogtime - uwplogstart) / I_GetPrecisePrecision());
+		(double)(I_UWPLogTime() - uwplogstart) / I_GetPrecisePrecision()); // [UWP]: Read the shared logging timer.
 #endif
 	return wadfile->numlumps;
 }

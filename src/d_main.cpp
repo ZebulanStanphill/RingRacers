@@ -2275,12 +2275,12 @@ void D_SRB2Main(void)
 	//
 	{
 		const precise_t mapdatastart = I_GetPreciseTime();
-		const precise_t logstart = i_uwplogtime;
+		const precise_t logstart = I_UWPLogTime(); // [UWP]: Read the shared logging timer.
 
 		P_InitMapData();
 		I_OutputMsg("UWP: P_InitMapData took %.1f s (%.1f s of it logging)\n",
 			(double)(I_GetPreciseTime() - mapdatastart) / I_GetPrecisePrecision(),
-			(double)(i_uwplogtime - logstart) / I_GetPrecisePrecision());
+			(double)(I_UWPLogTime() - logstart) / I_GetPrecisePrecision()); // [UWP]: Read the shared logging timer.
 	}
 	basenummapheaders = nummapheaders;
 	basenumkartcupheaders = numkartcupheaders;

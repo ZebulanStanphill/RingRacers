@@ -25,6 +25,9 @@
 /// \brief SRB2 system stuff for SDL
 
 #include <thread>
+// [ZE]: The Xbox logging timer is shared, and a stalled driver can skip destructors on exit.
+#include <atomic>
+#include <cstdlib>
 
 #include <signal.h>
 
@@ -187,6 +190,10 @@ static char returnWadPath[256];
 #include "../core/thread_pool.h"
 #include "endtxt.h"
 #include "sdlmain.h"
+// [ZE]: Driver-thread logging and shutdown avoid the main thread's window state.
+#ifdef HAVE_VIBERANT_D3D
+#include "../hardware/r_viberant/r_viberant.h"
+#endif
 
 #include "../i_joy.h"
 
@@ -330,7 +337,8 @@ static void UWPDescribeDrives(char *out, size_t outsize)
 	}
 }
 
-precise_t i_uwplogtime = 0;
+static std::atomic<precise_t> i_uwplogtime{0}; // [UWP]: Logging can run on the driver thread.
+precise_t I_UWPLogTime(void) { return i_uwplogtime.load(std::memory_order_relaxed); }
 
 void I_UWPLogMemoryLimit(void)
 {
@@ -1165,7 +1173,16 @@ void I_OutputMsg(const char *fmt, ...)
 	vsprintf(txt, fmt, argptr);
 	va_end(argptr);
 
+// [ZE]: Worker messages can go to the log, but the terminal cursor and TTF state belong to the main thread.
+#ifdef HAVE_VIBERANT_D3D
+	const bool driverWorker = VibeRant_OnDriverThread();
+#endif
+
 #ifdef HAVE_TTF
+// [ZE]: TTF updates the screen and can only run on the main thread.
+#ifdef HAVE_VIBERANT_D3D
+	if (!driverWorker)
+#endif
 	if (TTF_WasInit()) I_TTFDrawText(currentfont, solid, DEFAULTFONTFGR, DEFAULTFONTFGG, DEFAULTFONTFGB,  DEFAULTFONTFGA,
 	DEFAULTFONTBGR, DEFAULTFONTBGG, DEFAULTFONTBGB, DEFAULTFONTBGA, txt);
 #endif
@@ -1192,7 +1209,11 @@ void I_OutputMsg(const char *fmt, ...)
 
 // [UWP]: Adds the time spent logging to the total.
 #ifdef _UWP
-	i_uwplogtime += I_GetPreciseTime() - logstart;
+	// [UWP]: Leaves driver-thread logging out of main-thread timings.
+#ifdef HAVE_VIBERANT_D3D
+	if (!driverWorker)
+#endif
+		i_uwplogtime.fetch_add(I_GetPreciseTime() - logstart, std::memory_order_relaxed);
 #endif
 
 #if defined (_WIN32)
@@ -1208,6 +1229,11 @@ void I_OutputMsg(const char *fmt, ...)
 
 		if (GetFileType(co) == FILE_TYPE_CHAR && GetConsoleMode(co, &bytesWritten))
 		{
+			// [ZE]: The interactive terminal state belongs to the main thread.
+#ifdef HAVE_VIBERANT_D3D
+			if (driverWorker)
+				return;
+#endif
 			static COORD coordNextWrite = {0,0};
 			LPVOID oldLines = NULL;
 			INT oldLength;
@@ -1998,6 +2024,12 @@ FUNCNORETURN void ATTRNORETURN I_Quit(void)
 	I_ShutdownSound();
 	// use this for 1.28 19990220 by Kin
 	I_ShutdownGraphics();
+// [ZE]: A stuck graphics call may still own resources. Skip destructors and
+// [ZE]: SDL teardown on this exceptional exit, after saves and network shutdown.
+#ifdef HAVE_VIBERANT_D3D
+	if (VibeRant_DriverAbandoned())
+		std::_Exit(0);
+#endif
 	I_ShutdownInput();
 // [UWP]: Writes out the optional PGO capture before shutting down.
 #if defined(_UWP) && defined(SRB2_PGO_GENERATE)
@@ -2127,6 +2159,11 @@ FUNCIERROR void ATTRNORETURN I_Error(const char *error, ...)
 
 	I_ShutdownMusic();
 	I_ShutdownGraphics();
+// [ZE]: A stuck graphics call may still own resources. Let the OS tear them down.
+#ifdef HAVE_VIBERANT_D3D
+	if (VibeRant_DriverAbandoned())
+		std::_Exit(EXIT_FAILURE);
+#endif
 	I_ShutdownInput();
 
 	if (!cv_fuzz.value)
