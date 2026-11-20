@@ -424,6 +424,11 @@ if(SRB2_CONFIG_UWP)
 	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 		target_compile_options(SRB2SDL2 PRIVATE "/clang:-march=btver2")
 
+		# [ZE]: Make signed integer overflow wrap, as the official Windows build (MSVC) compiles it. Clang otherwise
+		# treats it as impossible and may widen the arithmetic instead (R_PointOnSide used the unwrapped 64-bit
+		# difference of two coordinates), which changes results where upstream's fixed-point math overflows.
+		target_compile_options(SRB2SDL2 PRIVATE "/clang:-fwrapv")
+
 		option(SRB2_CONFIG_PGO_GENERATE "Instrument the UWP engine for PGO" OFF)
 		set(SRB2_CONFIG_PGO_USE "" CACHE FILEPATH "Merged LLVM instrumentation profile (.profdata)")
 		if(SRB2_CONFIG_PGO_GENERATE AND SRB2_CONFIG_PGO_USE)

@@ -105,6 +105,12 @@ the tested ones:
   state exactly.
 - Write the argument down in the commit message: what is skipped or moved, why
   the result is the same in every case, and what it assumes.
+- Signed integer overflow wraps. Upstream's fixed-point math can overflow (two
+  coordinates far apart, for example), and the official Windows game, built with
+  MSVC, wraps it. The Xbox build compiles the engine with clang's `-fwrapv` so it
+  does the same; without it, clang may widen the arithmetic instead, and how it
+  does that can change with unrelated edits. Reason about overflow as wrapping,
+  and check the compiled code of a changed hot function when in doubt.
 
 Tests support that argument and never replace it. Such a change comes with a
 native test that compares the new code with a frozen copy of the earlier code on
