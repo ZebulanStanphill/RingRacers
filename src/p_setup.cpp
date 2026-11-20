@@ -163,6 +163,7 @@ seg_t *segs;
 sector_t *sectors;
 subsector_t *subsectors;
 node_t *nodes;
+node_walk_t *nodewalk; // [ZE]: Compact copy of nodes[] for R_PointInSubsector's walk, built by P_BuildNodeWalk.
 line_t *lines;
 linecheck_t *linechecks; // [ZE]: Level-local linedef iteration data.
 side_t *sides;
@@ -4097,6 +4098,25 @@ static void P_LoadExtendedNodes(UINT8 **data, nodetype_t nodetype)
 	}
 }
 
+// [ZE]: Copies the fields R_PointInSubsector reads out of nodes[] into nodewalk[], which has the same zone tag as nodes
+// and so lives and dies with it. Called at the end of P_LoadMapBSP, after the last write to nodes[]'s partition lines
+// and children (see the commit message). Both loaders allocate nodes[] with Z_Calloc of numnodes entries, so this
+// allocates the same way.
+static void P_BuildNodeWalk(void)
+{
+	nodewalk = static_cast<node_walk_t*>(Z_Calloc(numnodes * sizeof(*nodewalk), PU_LEVEL, NULL));
+
+	for (size_t i = 0; i < numnodes; i++)
+	{
+		nodewalk[i].x = nodes[i].x;
+		nodewalk[i].y = nodes[i].y;
+		nodewalk[i].dx = nodes[i].dx;
+		nodewalk[i].dy = nodes[i].dy;
+		nodewalk[i].children[0] = nodes[i].children[0];
+		nodewalk[i].children[1] = nodes[i].children[1];
+	}
+}
+
 static void P_LoadMapBSP(const virtres_t *virt)
 {
 	UINT8 *nodedata = NULL;
@@ -4143,6 +4163,8 @@ static void P_LoadMapBSP(const virtres_t *virt)
 		CONS_Alert(CONS_WARNING, "Unsupported BSP format detected.\n");
 		return;
 	}
+	// [ZE]: Build the compact walk table once nodes[] is final. Not reached by the early returns above, which load no nodes.
+	P_BuildNodeWalk();
 	return;
 }
 

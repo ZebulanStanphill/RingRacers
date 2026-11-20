@@ -26,9 +26,9 @@ class Source:
         return f"#line {line} {json.dumps(self.path.as_posix())}\n" + self.text[start:end] + "\n"
 
     def function(self, name):
-        # These functions have ordinary, non-template definitions. Prototypes and
+        # Ordinary definitions, or a template whose template line directly precedes it. Prototypes and
         # call sites cannot match; changed/ambiguous signatures fail generation.
-        pattern = rf"^[\w \t*]+\b{re.escape(name)}\([^;{{}}]*\)(?:\s*:\s*SV_Target)?\s*\{{"
+        pattern = rf"^(?:template\s*<[^<>;{{}}]*>\s*\n)?[\w \t*]+\b{re.escape(name)}\([^;{{}}]*\)(?:\s*:\s*SV_Target)?\s*\{{"
         matches = list(re.finditer(pattern, self.code, re.MULTILINE))
         if len(matches) != 1:
             raise ValueError(f"{self.path}: expected one definition of {name}, found {len(matches)}")

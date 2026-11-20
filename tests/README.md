@@ -916,13 +916,22 @@ untouched padding.
   `FORKVERSION` `"0"`, a directory that is not a repository and a missing git are development builds, and that both tag
   spellings (and an annotated tag) are releases. Also checks that the two versions are read from `src/version.h` and
   `src/fork_version.h`. Runs when git is found.
-- **Point-in-subsector cache:** `point_subsector_cache` compiles the production `R_PointOnSide` and the UWP
+- **Point-in-subsector cache:** `point_subsector_cache` compiles the production `R_PointOnSideOf` and the UWP
   `R_PointInSubsector` with its 2-way set-associative cache against a randomly generated BSP (axis-aligned and
   diagonal partitions), and compares every answer with an uncached walk of the tree: 400k lookups per BSP over
   repeated and fresh points, from a hot pool smaller than the cache to one far larger than it, with immediate
   repeats. It checks that the cache is empty after `R_ClearPointInSubsectorCache` on a new BSP, that two points
   sharing a set are both kept and that a third evicts the oldest, and that the lookup and hit counters stay
   consistent. Whether the real race hit rate improves is measured on Xbox, not here.
+- **BSP walk table:** `node_walk` and `node_walk_uwp` compile the production `R_PointOnSideOf`,
+  `R_PointInSubsector` (with the UWP cache in the second, cleared before every lookup), and `P_BuildNodeWalk`, and compare
+  each answer with a frozen copy of upstream's walk over `node_t` (`fixtures/node-walk-baseline.inc`). They use random
+  DAGs of 1 to 20,000 nodes, shallow and as deep chains, with partition lines that include `dx = 0`, `dy = 0`, zero-length
+  directions, and values near `INT32_MIN` and `INT32_MAX`, 720,000 random and extreme points, and hand-made nodes with
+  points on each partition line. They also check that every entry of the compact table equals its node. Integer
+  overflow wraps (`-fwrapv`, and the overflow sanitizer is off for these two tests) so that extreme coordinates run.
+  Three negative controls must fail in-process: a copy that swaps the children, a copy that puts `dy` in `dx`, and a
+  copy made before `nodes[]` changes.
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 - **VibeRant without `_UWP`:** `python3 tests/check-viberant-desktop.py build/ninja-release/compile_commands.json`

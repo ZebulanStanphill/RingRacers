@@ -1060,10 +1060,30 @@ def generate(engine, output):
     }, output / "view_interp.cpp")
 
     render(templates / "point_subsector.cpp.in", {
-        "POINT_ON_SIDE": renderer.function("R_PointOnSide"),
+        "POINT_ON_SIDE": renderer.function("R_PointOnSideOf") + renderer.function("R_PointOnSide"),
+        "BUILD": Source(engine / "src/p_setup.cpp").function("P_BuildNodeWalk"),
         "CACHE": renderer.section("#ifdef _UWP\n// [UWP]: The subsectors of points looked up recently",
             "//\n// R_PointInSubsectorOrNull"),
     }, output / "point_subsector.cpp")
+
+    setup = Source(engine / "src/p_setup.cpp")
+    build = setup.function("P_BuildNodeWalk")
+    copy_children = "nodewalk[i].children[0] = nodes[i].children[0];"
+    copy_dx = "nodewalk[i].dx = nodes[i].dx;"
+    if build.count(copy_children) != 1 or build.count(copy_dx) != 1:
+        raise ValueError("Could not inject the node walk negative controls")
+    render(templates / "node_walk.cpp.in", {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "POINT_ON_SIDE": renderer.function("R_PointOnSideOf"),
+        "WALK": renderer.section("#ifdef _UWP\n// [UWP]: The subsectors of points looked up recently",
+            "//\n// R_PointInSubsectorOrNull"),
+        "BUILD": build,
+        "BUILD_SWAPPED_CHILDREN": build.replace("P_BuildNodeWalk", "P_BuildNodeWalkSwappedChildren")
+            .replace(copy_children, "nodewalk[i].children[0] = nodes[i].children[1];"),
+        "BUILD_DY_AS_DX": build.replace("P_BuildNodeWalk", "P_BuildNodeWalkDyAsDx")
+            .replace(copy_dx, "nodewalk[i].dx = nodes[i].dy;"),
+        "REFERENCE": (templates.parent / "fixtures/node-walk-baseline.inc").read_text(encoding="utf-8"),
+    }, output / "node_walk.cpp")
 
     shader = Source(engine / "src/hardware/r_viberant/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")

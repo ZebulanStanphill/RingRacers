@@ -794,6 +794,16 @@ struct node_t
 	UINT16 children[2];
 };
 
+// [ZE]: The fields R_PointInSubsector reads, one entry per node, copied from nodes[] once the level's nodes are final
+// (P_BuildNodeWalk). The walk reads 20 bytes of a node's 52, and the bounding boxes in between spread it over about
+// 2.6 times as many cache lines. Same field types as node_t, so the copy is exact.
+struct node_walk_t
+{
+	fixed_t x, y;
+	fixed_t dx, dy;
+	UINT16 children[2];
+};
+
 #if defined(_MSC_VER)
 #pragma pack(1)
 #endif

@@ -21,7 +21,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     ${smoke_sources} addons/shader-smoke/build.py addons/shader-smoke/D_ShaderSmoke_v1.pk3
     ${templates} fixtures/sprite-rotation-baseline.c fixtures/spring-clip-reference.inc source.py generate.py title_replay.py title_fixture.py title-shifts.ignorelist fixtures/title-map.json fixtures/title-znodes.bin fixtures/rhi_glsl_fragment_postimg.glsl fixtures/water-palace-horizons.json fixtures/water-palace-water.json
     fixtures/block-lines-baseline.c fixtures/batch-sort-baseline.c fixtures/pathfind-baseline.c
-    fixtures/thing-check-order-baseline.inc fixtures/thing-walk-baseline.c
+    fixtures/thing-check-order-baseline.inc fixtures/thing-walk-baseline.c fixtures/node-walk-baseline.inc
+    "${RR_SOURCE_DIR}/src/p_setup.cpp"
+    "${RR_SOURCE_DIR}/src/r_defs.h"
     "${RR_SOURCE_DIR}/src/k_pathfind.c"
     "${RR_SOURCE_DIR}/src/k_bheap.c"
     "${RR_SOURCE_DIR}/src/p_map.c"
@@ -171,6 +173,12 @@ regression(block_lines_paranoia block_lines PARANOIA TEST_LINE_PARANOIA)
 regression(thing_check_order thing_check_order)
 regression(thing_walk thing_walk)
 regression(point_subsector_cache point_subsector _UWP)
+regression(node_walk node_walk)
+regression(node_walk_uwp node_walk _UWP)
+# The comparison wraps on overflow, as the engine's build does in practice, so extreme coordinates are checked too.
+foreach(walk node_walk node_walk_uwp)
+    target_compile_options(${walk} PRIVATE -fwrapv -fno-sanitize=signed-integer-overflow)
+endforeach()
 regression(picture_formats pictures HWRENDER)
 regression(fill_alpha_uwp fills _UWP HWRENDER)
 regression(ripples_uwp ripples _UWP HWRENDER)

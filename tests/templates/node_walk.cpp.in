@@ -1,0 +1,194 @@
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <random>
+#include <vector>
+#include "doomdef.h"
+#include "doomdata.h"
+#include "m_fixed.h"
+#include "r_defs.h"
+#include "r_state.h"
+#include "r_main.h"
+#include "z_zone.h"
+
+// A synthetic BSP stands in for a level's. R_PointOnSideOf, R_PointInSubsector, and P_BuildNodeWalk are production code.
+subsector_t *subsectors = nullptr;
+size_t numnodes = 0;
+node_t *nodes = nullptr;
+node_walk_t *nodewalk = nullptr;
+
+void *Z_Calloc2(size_t size, INT32, void *, INT32, const char *, INT32)
+{
+	return std::calloc(1, size ? size : 1);
+}
+
+#ifndef _UWP // _UWP builds have FixedMul inline in m_fixed.h
+@@FIXED_MUL@@
+#endif
+@@POINT_ON_SIDE@@
+@@WALK@@
+@@BUILD@@
+@@BUILD_SWAPPED_CHILDREN@@
+@@BUILD_DY_AS_DX@@
+@@REFERENCE@@
+
+static std::mt19937 rng(7);
+static uint32_t roll(uint32_t n) { return (uint32_t)(rng() % n); }
+
+// Partition values: small, whole units, on the 32-bit limits, around zero, and anything.
+static fixed_t RandValue()
+{
+	switch (roll(8))
+	{
+		case 0: return 0;
+		case 1: return (fixed_t)((int32_t)roll(257) - 128) * FRACUNIT;
+		case 2: return INT32_MAX - (int32_t)roll(4);
+		case 3: return INT32_MIN + (int32_t)roll(4);
+		case 4: return (fixed_t)((int32_t)roll(9) - 4);
+		case 5: return (fixed_t)((int32_t)rng() >> 8);
+		default: return (fixed_t)rng();
+	}
+}
+
+static std::vector<node_t> nodeStore;
+static std::vector<subsector_t> subStore;
+
+// Nodes refer to lower-numbered nodes or to subsectors, so every walk ends; the root is the last node. Children are
+// random (a node can be shared, a subsector too), the tree is shallow or a deep chain.
+static void NewBsp(size_t count, bool chain)
+{
+	nodeStore.assign(count, node_t{});
+	subStore.assign(4096, subsector_t{});
+	for (size_t i = 0; i < count; i++)
+	{
+		node_t &n = nodeStore[i];
+		n.x = RandValue();
+		n.y = RandValue();
+		n.dx = roll(5) == 0 ? 0 : RandValue();
+		n.dy = roll(5) == 0 ? 0 : RandValue();
+		for (int j = 0; j < 2; j++)
+		{
+			bool node = i > 0 && roll(3) != 0;
+			if (chain && i > 0 && j == (int)roll(2))
+				n.children[j] = (UINT16)(i - 1);
+			else if (node)
+				n.children[j] = (UINT16)roll((uint32_t)i);
+			else
+				n.children[j] = (UINT16)(NF_SUBSECTOR | roll((uint32_t)subStore.size()));
+		}
+		for (int j = 0; j < 8; j++)
+			(&n.bbox[0][0])[j] = RandValue();
+	}
+	nodes = nodeStore.data();
+	numnodes = count;
+	subsectors = subStore.data();
+}
+
+static fixed_t RandPoint(const node_t &near)
+{
+	switch (roll(6))
+	{
+		case 0: return INT32_MIN;
+		case 1: return INT32_MAX;
+		case 2: return near.x + (int32_t)roll(3) - 1;
+		case 3: return near.y + (int32_t)roll(3) - 1;
+		default: return RandValue();
+	}
+}
+
+// How many of the points the production walk and the frozen upstream walk disagree on.
+static size_t Mismatches(size_t points)
+{
+	size_t bad = 0;
+	for (size_t i = 0; i < points; i++)
+	{
+		const node_t &near = nodeStore[roll((uint32_t)nodeStore.size())];
+		fixed_t x = RandPoint(near), y = RandPoint(near);
+#ifdef _UWP
+		R_ClearPointInSubsectorCache(); // test the walk, not the cache
+#endif
+		if (R_PointInSubsector(x, y) != UpstreamPointInSubsector(x, y))
+			bad++;
+	}
+	return bad;
+}
+
+static void Rebuild(void (*build)(void))
+{
+	std::free(nodewalk);
+	nodewalk = nullptr;
+	build();
+}
+
+int main()
+{
+	static_assert(sizeof(node_walk_t) == 20, "compact entry");
+	size_t total = 0;
+	const struct { size_t count; bool chain; } shapes[] = {
+		{1, false}, {2, false}, {3, true}, {15, false}, {200, false}, {300, true}, {4000, false}, {4000, true}, {20000, true},
+	};
+	for (int round = 0; round < 4; round++)
+	{
+		for (auto &shape : shapes)
+		{
+			NewBsp(shape.count, shape.chain);
+			Rebuild(P_BuildNodeWalk);
+			for (size_t i = 0; i < numnodes; i++)
+			{
+				assert(nodewalk[i].x == nodes[i].x && nodewalk[i].y == nodes[i].y);
+				assert(nodewalk[i].dx == nodes[i].dx && nodewalk[i].dy == nodes[i].dy);
+				assert(nodewalk[i].children[0] == nodes[i].children[0] && nodewalk[i].children[1] == nodes[i].children[1]);
+			}
+			assert(Mismatches(20000) == 0);
+			total += 20000;
+		}
+	}
+
+	// Hand-made nodes: a vertical partition with dx = 0 and a horizontal one with dy = 0, a diagonal, a partition through
+	// the origin with a zero-length direction, and a point exactly on each line.
+	nodeStore.assign(5, node_t{});
+	subStore.assign(8, subsector_t{});
+	auto leaf = [](int i) { return (UINT16)(NF_SUBSECTOR | i); };
+	nodeStore[0] = {0, 0, 0, FRACUNIT, {}, {leaf(0), leaf(1)}};
+	nodeStore[1] = {5 * FRACUNIT, 5 * FRACUNIT, FRACUNIT, 0, {}, {leaf(2), leaf(3)}};
+	nodeStore[2] = {-3 * FRACUNIT, 2 * FRACUNIT, 7 * FRACUNIT, 3 * FRACUNIT, {}, {leaf(4), leaf(5)}};
+	nodeStore[3] = {0, 0, 0, 0, {}, {leaf(6), leaf(7)}};
+	nodeStore[4] = {INT32_MAX, INT32_MIN, INT32_MIN, INT32_MAX, {}, {0, 1}};
+	nodes = nodeStore.data();
+	subsectors = subStore.data();
+	for (size_t root = 1; root <= 5; root++)
+	{
+		numnodes = root;
+		Rebuild(P_BuildNodeWalk);
+		for (int x : {INT32_MIN, -FRACUNIT, -1, 0, 1, FRACUNIT, 5 * FRACUNIT, INT32_MAX})
+			for (int y : {INT32_MIN, -FRACUNIT, -1, 0, 1, FRACUNIT, 5 * FRACUNIT, INT32_MAX})
+			{
+#ifdef _UWP
+				R_ClearPointInSubsectorCache();
+#endif
+				assert(R_PointInSubsector(x, y) == UpstreamPointInSubsector(x, y));
+			}
+	}
+
+	// A nodewalk built before a write to nodes[] is out of date; the walk then differs from upstream's.
+	NewBsp(4000, false);
+	Rebuild(P_BuildNodeWalk);
+	for (auto &n : nodeStore)
+		n.dx = n.dy = 0, n.x = n.y = 0;
+	assert(Mismatches(20000) > 0);
+	std::puts("Stale copy control: comparison detected a copy made before nodes[] changed.");
+
+	// Negative controls: a copy that swaps the children, and one that copies dy into dx.
+	NewBsp(4000, false);
+	Rebuild(P_BuildNodeWalkSwappedChildren);
+	assert(Mismatches(20000) > 0);
+	std::puts("Swapped children control: comparison detected a different subsector.");
+	NewBsp(4000, false);
+	Rebuild(P_BuildNodeWalkDyAsDx);
+	assert(Mismatches(20000) > 0);
+	std::puts("Wrong partition field control: comparison detected a different subsector.");
+
+	std::printf("node_walk: ok (%zu random points)\n", total);
+	return 0;
+}

@@ -17,7 +17,7 @@ def generate_title(engine, output, templates, render, function_section):
     parts = {}
     code = Source(engine / "taglist.c").section(
         "boolean Tag_Compare", "/// Search for an element"
-    ) + Source(engine / "r_main.cpp").function("R_PointOnSide")
+    ) + Source(engine / "r_main.cpp").function("R_PointOnSideOf") + Source(engine / "r_main.cpp").function("R_PointOnSide")
     for n in [
         "P_GetSlopeZAt",
         "P_GetZAt",

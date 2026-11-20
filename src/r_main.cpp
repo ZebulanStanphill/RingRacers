@@ -230,7 +230,15 @@ void ChaseCam4_OnChange(void)
 //
 // killough 5/2/98: reformatted
 //
-INT32 R_PointOnSide(fixed_t x, fixed_t y, node_t *node)
+// [ZE]: The compact walk table's purpose is its size.
+static_assert(sizeof(node_walk_t) == 20, "node_walk_t must stay compact");
+
+// [ZE]: Upstream's R_PointOnSide, word for word, as a template over the node type, so that R_PointOnSide (node_t) and
+// R_PointInSubsector's walk over nodewalk[] (node_walk_t) run the same code on the same values, and read them through a
+// pointer as upstream did. (Passing the values as arguments let clang without -fwrapv compile the overflowing
+// subtraction differently.)
+template <typename Node>
+static inline INT32 R_PointOnSideOf(fixed_t x, fixed_t y, const Node *node)
 {
 	if (!node->dx)
 		return x <= node->x ? node->dy > 0 : node->dy < 0;
@@ -246,6 +254,12 @@ INT32 R_PointOnSide(fixed_t x, fixed_t y, node_t *node)
 	INT32 mask = (node->dy ^ node->dx ^ x ^ y) >> 31;
 	return (mask & ((node->dy ^ x) < 0)) |  // (left is negative)
 		(~mask & (FixedMul(y, node->dx>>FRACBITS) >= FixedMul(node->dy>>FRACBITS, x)));
+}
+
+INT32 R_PointOnSide(fixed_t x, fixed_t y, node_t *node)
+{
+	// [ZE]: Upstream's body is R_PointOnSideOf.
+	return R_PointOnSideOf(x, y, node);
 }
 
 // killough 5/2/98: reformatted
@@ -1293,8 +1307,11 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 
 	size_t nodenum = numnodes-1;
 
+	// [ZE]: Walk nodewalk[], the compact copy of nodes[], which holds exactly the values upstream's walk read from nodes[]
+	// (upstream: nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)]). With numnodes == 0, nodenum is SIZE_MAX,
+	// the loop doesn't run, and neither array is read, as upstream.
 	while (!(nodenum & NF_SUBSECTOR))
-		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)];
+		nodenum = nodewalk[nodenum].children[R_PointOnSideOf(x, y, nodewalk+nodenum)]; // [ZE]: nodewalk, see above.
 
 // [UWP]: Store the new lookup in the cache, newest first.
 #ifdef _UWP
