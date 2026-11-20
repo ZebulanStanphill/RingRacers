@@ -88,6 +88,8 @@ extern size_t numnodes;
 extern node_t *nodes;
 // [ZE]: Compact copy of nodes[] for R_PointInSubsector's walk, in the same zone tag. See node_walk_t.
 extern node_walk_t *nodewalk;
+// [ZE]: Where R_PointInSubsector's walk starts for each blockmap cell, in the same zone tag. See bsp_cell_start_t.
+extern bsp_cell_start_t bspcellstart;
 
 extern size_t numlines;
 extern line_t *lines;

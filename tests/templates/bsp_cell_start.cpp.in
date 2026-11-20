@@ -1,0 +1,474 @@
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <random>
+#include <vector>
+#include "doomdef.h"
+#include "doomdata.h"
+#include "m_fixed.h"
+#include "r_defs.h"
+#include "r_state.h"
+#include "r_main.h"
+#include "p_local.h"
+#include "z_zone.h"
+
+// A synthetic or real BSP and blockmap stand in for a level's. R_PointOnSideOf, R_PointInSubsector, P_BuildNodeWalk,
+// P_BSPCellSide, and P_BuildBSPCellStart are production code; the reference is a frozen copy of upstream's walk from the root.
+subsector_t *subsectors = nullptr;
+size_t numnodes = 0;
+node_t *nodes = nullptr;
+node_walk_t *nodewalk = nullptr;
+bsp_cell_start_t bspcellstart = {};
+static boolean nodewalkbuilt = true;
+INT32 bmapwidth = 0, bmapheight = 0;
+fixed_t bmaporgx = 0, bmaporgy = 0;
+
+#include "title-bsp.inc"
+
+void *Z_Calloc2(size_t size, INT32, void *, INT32, const char *, INT32)
+{
+	return std::calloc(1, size ? size : 1);
+}
+
+#ifndef _UWP // _UWP builds have FixedMul inline in m_fixed.h
+@@FIXED_MUL@@
+#endif
+@@POINT_ON_SIDE@@
+@@WALK@@
+@@BUILD_WALK@@
+@@BUILD@@
+@@BUILD_TWO_CORNERS@@
+@@BUILD_NO_MASK@@
+@@BUILD_SHORT_EDGE@@
+@@BUILD_NO_OVERFLOW_CHECK@@
+@@REFERENCE@@
+
+#ifdef EXTREME_COORDS
+static constexpr bool kExtreme = true; // run with -fwrapv: partitions and points anywhere in the 32-bit range
+#else
+static constexpr bool kExtreme = false; // no -fwrapv: skip points where the reference walk's subtraction would overflow
+#endif
+
+static std::mt19937 rng(11);
+static uint32_t roll(uint32_t n) { return (uint32_t)(rng() % n); }
+static constexpr int64_t kCell = (int64_t)1 << MAPBLOCKSHIFT;
+
+static std::vector<node_t> nodeStore;
+static size_t leafCount;
+
+static fixed_t Clamp32(int64_t v) { return (fixed_t)std::max<int64_t>(INT32_MIN, std::min<int64_t>(INT32_MAX, v)); }
+
+// A coordinate for a partition line's origin: near the blockmap's cells (on edges, corners, and one off them), anywhere
+// in them, or (kExtreme) far away.
+static fixed_t RandOrigin(int64_t org, int cells, bool far)
+{
+	int64_t cell = (int64_t)roll((uint32_t)cells + 1);
+	switch (roll(far && kExtreme ? 9 : 6))
+	{
+		case 0: return Clamp32(org + cell * kCell);
+		case 1: return Clamp32(org + cell * kCell - 1);
+		case 2: return Clamp32(org + cell * kCell + 1);
+		case 3: return Clamp32(org + cell * kCell + kCell - 1);
+		case 4: return Clamp32(org + (int64_t)roll((uint32_t)(cells * kCell >> 4)) * 16);
+		case 5: return Clamp32(org + (int64_t)(rng() >> 9) % (cells * kCell + 1));
+		case 6: return INT32_MAX - (int32_t)roll(4);
+		case 7: return INT32_MIN + (int32_t)roll(4);
+		default: return (fixed_t)rng();
+	}
+}
+
+// A direction component: zero, one unit, small, a whole number of map units, or anything (which includes the values
+// whose >> 16 is +-32768 and +-1).
+static fixed_t RandDirection()
+{
+	switch (roll(9))
+	{
+		case 0: return 0;
+		case 1: return roll(2) ? 1 : -1;
+		case 2: return (fixed_t)((int32_t)roll(257) - 128) * FRACUNIT;
+		case 3: return roll(2) ? FRACUNIT : -FRACUNIT;
+		case 4: return (fixed_t)((int32_t)roll(2001) - 1000);
+		case 5: return roll(2) ? INT32_MAX - (int32_t)roll(4) : INT32_MIN + (int32_t)roll(4);
+		default: return (fixed_t)rng();
+	}
+}
+
+// A BSP whose partitions lie around a blockmap of cells wide x high, nodes numbered children first so the root is last.
+static UINT16 NewTree(int depth, int64_t orgx, int64_t orgy, int wide, int high)
+{
+	if (depth == 0 || (depth < 4 && roll(3) == 0))
+		return (UINT16)(NF_SUBSECTOR | leafCount++);
+	node_t n{};
+	n.x = RandOrigin(orgx, wide, true);
+	n.y = RandOrigin(orgy, high, true);
+	n.dx = RandDirection();
+	n.dy = RandDirection();
+	if (roll(8) == 0) n.dx = n.dy = roll(2) ? FRACUNIT : -FRACUNIT; // 45 degrees
+	n.children[0] = NewTree(depth - 1, orgx, orgy, wide, high);
+	n.children[1] = NewTree(depth - 1, orgx, orgy, wide, high);
+	nodeStore.push_back(n);
+	return (UINT16)(nodeStore.size() - 1);
+}
+
+static std::vector<subsector_t> subStore;
+
+static void Install(fixed_t orgx, fixed_t orgy, INT32 wide, INT32 high)
+{
+	subStore.assign(std::max<size_t>(leafCount, 1), subsector_t{});
+	nodes = nodeStore.data();
+	numnodes = nodeStore.size();
+	subsectors = subStore.data();
+	bmaporgx = orgx;
+	bmaporgy = orgy;
+	bmapwidth = wide;
+	bmapheight = high;
+	std::free(nodewalk);
+	nodewalk = nullptr;
+#ifdef _UWP
+	R_ClearPointInSubsectorCache(); // a new BSP; a cached point only repeats an answer already compared with the walk
+#endif
+	std::free(bspcellstart.start); // the engine's zone frees both with the level
+	bspcellstart.start = nullptr;
+	P_BuildNodeWalk();
+}
+
+static size_t CellStartsBelowRoot()
+{
+	size_t n = 0;
+	for (UINT32 i = 0; bspcellstart.start && i < bspcellstart.width * bspcellstart.height; i++)
+		n += bspcellstart.start[i] != numnodes - 1;
+	return n;
+}
+
+// True when the reference walk from the root would overflow a subtraction at some node on its way for this point.
+static bool ReferenceOverflows(fixed_t x, fixed_t y)
+{
+	size_t nodenum = numnodes - 1;
+	while (!(nodenum & NF_SUBSECTOR))
+	{
+		const node_t &n = nodes[nodenum];
+		if (n.dx && n.dy)
+		{
+			int64_t dx = (int64_t)x - n.x, dy = (int64_t)y - n.y;
+			if (dx < INT32_MIN || dx > INT32_MAX || dy < INT32_MIN || dy > INT32_MAX)
+				return true;
+		}
+		nodenum = n.children[UpstreamPointOnSide(x, y, nodes + nodenum)];
+	}
+	return false;
+}
+
+static size_t g_checked, g_skipped;
+
+// 1 if the production lookup differs from the frozen walk from the root at this point.
+static size_t Differs(fixed_t x, fixed_t y)
+{
+	if (!kExtreme && ReferenceOverflows(x, y))
+	{
+		g_skipped++;
+		return 0;
+	}
+	g_checked++;
+	return R_PointInSubsector(x, y) != UpstreamPointInSubsector(x, y);
+}
+
+// Every cell: its corners and edges, points one off them, the coordinates of random partitions' origins moved into the
+// cell, and random points. Then points outside the table: next to it, and anywhere.
+static size_t Mismatches(size_t randomPerCell)
+{
+	size_t bad = 0;
+	const int64_t orgx = bmaporgx, orgy = bmaporgy;
+	for (INT32 cy = 0; cy < bmapheight && cy < 512; cy++)
+		for (INT32 cx = 0; cx < bmapwidth && cx < 512; cx++)
+		{
+			int64_t xlo = orgx + cx * kCell, ylo = orgy + cy * kCell;
+			if (xlo < INT32_MIN || xlo + kCell - 1 > INT32_MAX || ylo < INT32_MIN || ylo + kCell - 1 > INT32_MAX)
+				continue; // a cell that wraps has no single range of fixed_t values to pick from
+			const int64_t xs[] = {xlo, xlo + 1, xlo + kCell / 2, xlo + kCell - 2, xlo + kCell - 1};
+			const int64_t ys[] = {ylo, ylo + 1, ylo + kCell / 2, ylo + kCell - 2, ylo + kCell - 1};
+			for (int64_t x : xs)
+				for (int64_t y : ys)
+					bad += Differs((fixed_t)x, (fixed_t)y);
+			for (size_t i = 0; i < randomPerCell; i++)
+			{
+				const node_t &near = nodeStore[roll((uint32_t)nodeStore.size())];
+				int64_t x = xlo + roll((uint32_t)kCell), y = ylo + roll((uint32_t)kCell);
+				switch (roll(5))
+				{
+					case 0: x = std::max(xlo, std::min(xlo + kCell - 1, (int64_t)near.x + (int32_t)roll(3) - 1)); break;
+					case 1: y = std::max(ylo, std::min(ylo + kCell - 1, (int64_t)near.y + (int32_t)roll(3) - 1)); break;
+					case 2: x = xs[roll(5)]; break;
+					case 3: y = ys[roll(5)]; break;
+					default: break;
+				}
+				bad += Differs((fixed_t)x, (fixed_t)y);
+			}
+		}
+	for (size_t i = 0; i < randomPerCell * 8; i++)
+	{
+		int64_t x = orgx + (int64_t)(roll((uint32_t)(bmapwidth + 2)) - 1) * kCell + (int64_t)roll((uint32_t)kCell);
+		int64_t y = orgy + (int64_t)(roll((uint32_t)(bmapheight + 2)) - 1) * kCell + (int64_t)roll((uint32_t)kCell);
+		bad += Differs(roll(4) ? (fixed_t)x : (fixed_t)rng(), (fixed_t)y);
+	}
+	bad += Differs(INT32_MIN, INT32_MIN) + Differs(INT32_MAX, INT32_MAX) + Differs(INT32_MIN, INT32_MAX) + Differs(INT32_MAX, INT32_MIN);
+	return bad;
+}
+
+typedef void (*Builder)(void);
+
+// A random blockmap and BSP around it; true when the table stopped above the root in at least one cell.
+static size_t RunRound(Builder build, int depth, int wide, int high, fixed_t orgx, fixed_t orgy, size_t perCell, size_t *below)
+{
+	do
+	{
+		nodeStore.clear(); // a tree that is a single subsector has no nodes, which is its own case below
+		leafCount = 0;
+		NewTree(depth, orgx, orgy, wide, high);
+	} while (nodeStore.empty());
+	Install(orgx, orgy, wide, high);
+	build();
+	if (below)
+		*below += CellStartsBelowRoot();
+	return Mismatches(perCell);
+}
+
+static fixed_t RandBlockmapOrigin()
+{
+	if (roll(4) == 0)
+		return -(fixed_t)(roll(12) * kCell); // cells around 0, where partitions at the limits start to overflow
+	// The origin is a whole number of map units from -32768 to 32767, as P_LoadBlockMap and P_CreateBlockMap make it.
+	return (fixed_t)((int32_t)roll(65536) - 32768) * FRACUNIT;
+}
+
+int main()
+{
+	static_assert(MAPBLOCKSHIFT == FRACBITS + 7, "cells are 128 map units");
+	size_t below = 0, rounds = 0;
+
+	// Random trees over random blockmaps of 1 to 20 cells a side.
+	for (int round = 0; round < (kExtreme ? 120 : 160); round++, rounds++)
+	{
+		int wide = 1 + (int)roll(20), high = 1 + (int)roll(20);
+		fixed_t orgx = roll(3) ? RandBlockmapOrigin() : (kExtreme ? (fixed_t)INT16_MIN * FRACUNIT : 0);
+		fixed_t orgy = roll(3) ? RandBlockmapOrigin() : (kExtreme ? (fixed_t)(INT16_MAX - 20) * FRACUNIT : 0);
+		size_t bad = RunRound(P_BuildBSPCellStart, 3 + (int)roll(8), wide, high, orgx, orgy, 40, &below);
+		assert(bad == 0);
+	}
+	std::printf("bsp_cell_start: %zu rounds, %zu cells start below the root\n", rounds, below);
+	assert(below > 0);
+
+	// A single subsector, no nodes: upstream's walk does not run, and no table is made.
+	nodeStore.clear();
+	leafCount = 1;
+	Install(0, 0, 4, 4);
+	P_BuildBSPCellStart();
+	assert(numnodes == 0 && bspcellstart.start == nullptr);
+
+	// A blockmap with no cells, or with a size that is not positive, makes no table.
+	nodeStore.clear();
+	leafCount = 0;
+	NewTree(4, 0, 0, 4, 4);
+	Install(0, 0, 0, 4);
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start == nullptr);
+	Install(0, 0, 4, 0);
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start == nullptr);
+
+	// A wide blockmap (the lump may claim up to 65,535 cells a side) gets at most 512 x 512 entries, which every
+	// reachable cell index fits.
+	nodeStore.clear();
+	leafCount = 0;
+	NewTree(5, 0, 0, 20, 20);
+	Install(-100 * FRACUNIT, 50 * FRACUNIT, 65535, 65535);
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start && bspcellstart.width == 512 && bspcellstart.height == 512);
+	assert(Mismatches(4) == 0);
+
+	// The previous level's table is not used once this level has none: the lookup falls back to the root.
+	std::free(bspcellstart.start);
+	bspcellstart.start = nullptr;
+	assert(Mismatches(4) == 0);
+
+	// A table is not built from nodes that were not loaded (P_LoadMapBSP returned early).
+	nodewalkbuilt = false;
+	Install(0, 0, 4, 4);
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start == nullptr);
+	nodewalkbuilt = true;
+
+	// More nodes than a child index can name: the root has no valid index, so no table.
+	nodeStore.assign((size_t)NF_SUBSECTOR + 1, node_t{});
+	leafCount = 4;
+	for (auto &n : nodeStore) n.children[0] = n.children[1] = (UINT16)NF_SUBSECTOR;
+	Install(0, 0, 4, 4);
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start == nullptr);
+
+	// A tree whose nodes cycle back on themselves (invalid data): the build ends. The walk from the root of such a tree
+	// does not end for these cells, so only that the build returns is checked.
+	nodeStore.assign(3, node_t{});
+	nodeStore[0] = {0, 0, 0, FRACUNIT, {}, {1, (UINT16)(NF_SUBSECTOR | 0)}};
+	nodeStore[1] = {1000 * FRACUNIT, 0, 0, FRACUNIT, {}, {2, (UINT16)(NF_SUBSECTOR | 0)}};
+	nodeStore[2] = {1000 * FRACUNIT, 0, 0, FRACUNIT, {}, {1, 2}};
+	leafCount = 1;
+	Install(5000 * FRACUNIT, 0, 2, 2); // every cell is right of both partitions and takes child 0 each time: 2, 1, 2, ...
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start);
+	// A child that names a node past the end: the table stops at the node that has it, and not at the root.
+	nodeStore.assign(2, node_t{});
+	nodeStore[0] = {0, 0, 0, FRACUNIT, {}, {(UINT16)7, (UINT16)7}};
+	nodeStore[1] = {-5000 * FRACUNIT, 0, 0, FRACUNIT, {}, {0, (UINT16)(NF_SUBSECTOR | 0)}};
+	leafCount = 1;
+	Install(-1000 * FRACUNIT, -1000 * FRACUNIT, 1, 1);
+	P_BuildBSPCellStart();
+	assert(bspcellstart.start && bspcellstart.start[0] == 0);
+
+	// Random DAGs of nodes (shared children, deep chains) over blockmaps, partitions and points anywhere.
+	for (int round = 0; round < 6; round++, rounds++)
+	{
+		size_t count = round < 3 ? 40 : 3000;
+		nodeStore.assign(count, node_t{});
+		leafCount = 64;
+		for (size_t i = 0; i < count; i++)
+		{
+			node_t &n = nodeStore[i];
+			n.x = RandOrigin(0, 8, true);
+			n.y = RandOrigin(0, 8, true);
+			n.dx = RandDirection();
+			n.dy = RandDirection();
+			for (int j = 0; j < 2; j++)
+				n.children[j] = i > 0 && roll(3) ? (UINT16)((round & 1) && j ? i - 1 : roll((uint32_t)i)) : (UINT16)(NF_SUBSECTOR | roll(64));
+		}
+		Install(RandBlockmapOrigin() / 64, RandBlockmapOrigin() / 64, 8, 8);
+		P_BuildBSPCellStart();
+		below += CellStartsBelowRoot();
+		assert(Mismatches(40) == 0);
+	}
+
+	// The title map's real BSP and the blockmap its vertices make.
+	nodeStore.assign(std::begin(kTitleNodes), std::end(kTitleNodes));
+	leafCount = kTitleSubsectors;
+	Install(kTitleOrgX, kTitleOrgY, kTitleWidth, kTitleHeight);
+	P_BuildBSPCellStart();
+	size_t titleBelow = CellStartsBelowRoot();
+	std::printf("bsp_cell_start: title map %d x %d cells, %zu below the root\n", (int)bmapwidth, (int)bmapheight, titleBelow);
+	assert(titleBelow > 0);
+	assert(Mismatches(400) == 0);
+
+	// P_BSPCellSide against every point of many small rectangles around random partition lines, including rectangles
+	// that cross x' = 0 and y' = 0 and the whole range of directions. When it names a side, every point must have it;
+	// when its arithmetic can't overflow, it must name one whenever every point has the same side (the corners are points).
+	size_t rectangles = 0, same = 0, wrongTwoCorners = 0, wrongNoMask = 0, wrongNoOverflowCheck = 0;
+	for (int i = 0; i < 400000; i++)
+	{
+		node_t n{};
+		n.x = (fixed_t)((int32_t)roll(81) - 40);
+		n.y = (fixed_t)((int32_t)roll(81) - 40);
+		n.dx = RandDirection();
+		n.dy = RandDirection();
+		if (roll(4) == 0) n.x *= FRACUNIT, n.y *= FRACUNIT;
+		int64_t xlo = (int64_t)n.x + (int32_t)roll(61) - 40, ylo = (int64_t)n.y + (int32_t)roll(61) - 40;
+		if (kExtreme && roll(2) == 0)
+		{
+			// A partition at the limits and a rectangle where x - node->x or y - node->y wraps inside it.
+			n.x = roll(2) ? INT32_MAX - (int32_t)roll(3) : INT32_MIN + (int32_t)roll(3);
+			n.y = roll(2) ? INT32_MAX - (int32_t)roll(3) : INT32_MIN + (int32_t)roll(3);
+			n.dx = ((int32_t)roll(81) - 40) * 65536 + (int32_t)roll(65536);
+			n.dy = ((int32_t)roll(81) - 40) * 65536 + (int32_t)roll(65536);
+			xlo = (int64_t)(int32_t)((uint32_t)n.x + 0x80000000u) - (int32_t)roll(31);
+			ylo = roll(2) ? (int64_t)(int32_t)((uint32_t)n.y + 0x80000000u) - (int32_t)roll(31) : (int64_t)n.y - (int32_t)roll(31);
+		}
+		int64_t xhi = xlo + (int32_t)roll(31), yhi = ylo + (int32_t)roll(31);
+		if (xlo < INT32_MIN || xhi > INT32_MAX || ylo < INT32_MIN || yhi > INT32_MAX)
+			continue;
+		INT32 got = P_BSPCellSide(&n, xlo, xhi, ylo, yhi);
+		bool overflow = false;
+		INT32 first = -1;
+		bool allSame = true;
+		for (int64_t y = ylo; y <= yhi; y++)
+			for (int64_t x = xlo; x <= xhi; x++)
+			{
+				if (n.dx && n.dy && (x - n.x < INT32_MIN || x - n.x > INT32_MAX || y - n.y < INT32_MIN || y - n.y > INT32_MAX))
+				{
+					overflow = true;
+					if (!kExtreme)
+						continue; // upstream's subtraction is undefined here; the build must have said "split"
+				}
+				INT32 here = R_PointOnSide((fixed_t)x, (fixed_t)y, &n);
+				if (first < 0) first = here;
+				if (here != first) allSame = false;
+			}
+		rectangles++;
+		// The decision procedures with one deliberate mistake each must claim a side for some rectangle whose points
+		// do not all have it.
+		auto wrong = [&](INT32 claimed) { return claimed >= 0 && !(allSame && first == claimed); };
+		wrongTwoCorners += wrong(P_BSPCellSideTwoCorners(&n, xlo, xhi, ylo, yhi));
+		wrongNoMask += wrong(P_BSPCellSideNoMask(&n, xlo, xhi, ylo, yhi));
+		if (kExtreme) // without the check, the corners are evaluated with overflowing arithmetic
+			wrongNoOverflowCheck += wrong(P_BSPCellSideNoOverflowCheck(&n, xlo, xhi, ylo, yhi));
+		if (got >= 0)
+		{
+			assert(allSame && first == got); // every point has the side it named
+		}
+		if (overflow && !kExtreme)
+			assert(got == -1);
+		if (!overflow && allSame)
+		{
+			assert(got == first); // exact when nothing can overflow
+			same++;
+		}
+	}
+	assert(same > 1000);
+	std::printf("Rectangle controls: two corners wrong in %zu, ignored sign mask in %zu, no overflow check in %zu rectangles.\n",
+		wrongTwoCorners, wrongNoMask, wrongNoOverflowCheck);
+	assert(wrongTwoCorners > 0 && wrongNoMask > 0 && (wrongNoOverflowCheck > 0 || !kExtreme));
+	std::printf("bsp_cell_start: %zu small rectangles checked point by point, %zu with one side\n", rectangles, same);
+
+	// Points along the edges of a few cells (every 61st), and a fine grid inside them.
+	for (int pass = 0; pass < 2; pass++)
+	{
+		if (pass)
+		{
+			nodeStore.clear();
+			leafCount = 0;
+			NewTree(7, 0, 0, 3, 3);
+			Install(0, 0, 3, 3);
+			P_BuildBSPCellStart();
+		}
+		for (int c = 0; c < 2; c++)
+		{
+			int64_t xlo = (int64_t)bmaporgx + (pass ? 1 : (bmapwidth / 3 + c)) * kCell;
+			int64_t ylo = (int64_t)bmaporgy + (pass ? 2 : (bmapheight / 3 + c)) * kCell;
+			size_t bad = 0;
+			for (int64_t i = 0; i < kCell; i += 61)
+			{
+				bad += Differs((fixed_t)(xlo + i), (fixed_t)ylo) + Differs((fixed_t)(xlo + i), (fixed_t)(ylo + kCell - 1));
+				bad += Differs((fixed_t)xlo, (fixed_t)(ylo + i)) + Differs((fixed_t)(xlo + kCell - 1), (fixed_t)(ylo + i));
+			}
+			for (int64_t i = 0; i < kCell; i += 1 << 13)
+				for (int64_t j = 0; j < kCell; j += 1 << 12)
+					bad += Differs((fixed_t)(xlo + i), (fixed_t)(ylo + j));
+			assert(bad == 0);
+		}
+	}
+
+	// Negative controls: each wrong builder has to disagree with the walk from the root somewhere.
+	auto expectMismatch = [&](Builder build, const char *what, int rounds) {
+		size_t bad = 0;
+		for (int round = 0; round < rounds && !bad; round++)
+			bad = RunRound(build, 6 + (int)roll(4), 6, 6, RandBlockmapOrigin(), RandBlockmapOrigin(), 60, nullptr);
+		assert(bad > 0);
+		std::printf("%s control: comparison detected a different subsector.\n", what);
+	};
+	expectMismatch(P_BuildBSPCellStartTwoCorners, "Two corners", 200);
+	expectMismatch(P_BuildBSPCellStartNoMask, "Ignored sign mask", 200);
+	expectMismatch(P_BuildBSPCellStartShortEdge, "Cell edge one short", 200);
+
+	std::free(bspcellstart.start);
+	std::free(nodewalk);
+	std::printf("bsp_cell_start: ok (%zu points compared, %zu skipped for overflow)\n", g_checked, g_skipped);
+	return 0;
+}

@@ -10,12 +10,14 @@
 #include "r_defs.h"
 #include "r_state.h"
 #include "r_main.h"
+#include "p_local.h"
 #include "z_zone.h"
 // A synthetic BSP stands in for a level's. R_PointOnSide and the cached R_PointInSubsector are production code.
 subsector_t *subsectors = nullptr;
 size_t numnodes = 0;
 node_t *nodes = nullptr;
 node_walk_t *nodewalk = nullptr;
+bsp_cell_start_t bspcellstart = {}; // no table: lookups start at the root
 void *Z_Calloc2(size_t size, INT32, void *, INT32, const char *, INT32) { return std::calloc(1, size ? size : 1); }
 @@POINT_ON_SIDE@@
 @@BUILD@@

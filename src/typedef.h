@@ -384,6 +384,7 @@ TYPEDEF (degenmobj_t);
 TYPEDEF (light_t);
 TYPEDEF (node_t);
 TYPEDEF (node_walk_t); // [ZE]: R_PointInSubsector's compact copy of node_t
+TYPEDEF (bsp_cell_start_t); // [ZE]: R_PointInSubsector's per-blockmap-cell start nodes
 TYPEDEF (post_t);
 TYPEDEF (drawseg_t);
 TYPEDEF (rotsprite_t);

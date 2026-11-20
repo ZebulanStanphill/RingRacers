@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from source import Source
-from title_fixture import generate_fixture
+from title_fixture import generate_bsp, generate_fixture
 from title_replay import generate_title
 
 
@@ -1084,6 +1084,45 @@ def generate(engine, output):
             .replace(copy_dx, "nodewalk[i].dx = nodes[i].dy;"),
         "REFERENCE": (templates.parent / "fixtures/node-walk-baseline.inc").read_text(encoding="utf-8"),
     }, output / "node_walk.cpp")
+
+    side = setup.function("P_BSPCellSide")
+    cells = setup.function("P_BuildBSPCellStart")
+    renderer_text = {
+        "FIXED_MUL": Source(engine / "src/m_fixed.c").function("FixedMul"),
+        "POINT_ON_SIDE": renderer.function("R_PointOnSideOf") + renderer.function("R_PointOnSide"),
+        "WALK": renderer.section("#ifdef _UWP\n// [UWP]: The subsectors of points looked up recently",
+            "//\n// R_PointInSubsectorOrNull"),
+        "BUILD_WALK": build,
+        "BUILD": side + cells,
+        "REFERENCE": (templates.parent / "fixtures/node-walk-baseline.inc").read_text(encoding="utf-8"),
+    }
+
+    def wrong_cells(suffix, in_side=(), in_cells=()):
+        # A builder with one deliberate mistake: its own copy of both functions, with the given (old, new) edits.
+        mine, theirs = side, cells
+        for old, new in in_side:
+            if mine.count(old) != 1:
+                raise ValueError(f"Could not inject the BSP cell start negative control {suffix}: {old!r}")
+            mine = mine.replace(old, new)
+        for old, new in in_cells:
+            if theirs.count(old) != 1:
+                raise ValueError(f"Could not inject the BSP cell start negative control {suffix}: {old!r}")
+            theirs = theirs.replace(old, new)
+        return (mine + theirs).replace("P_BSPCellSide", "P_BSPCellSide" + suffix).replace(
+            "P_BuildBSPCellStart", "P_BuildBSPCellStart" + suffix)
+
+    corner_side = "INT32 here = R_PointOnSide((fixed_t)xs[i][c & 1], (fixed_t)ys[j][c >> 1], node);"
+    overflow_check = "if (xlo - node->x < INT32_MIN || xhi - node->x > INT32_MAX || ylo - node->y < INT32_MIN || yhi - node->y > INT32_MAX)"
+    render(templates / "bsp_cell_start.cpp.in", {
+        **renderer_text,
+        "BUILD_TWO_CORNERS": wrong_cells("TwoCorners", in_side=[("c < 4", "c < 2")]),
+        "BUILD_NO_MASK": wrong_cells("NoMask", in_side=[
+            (corner_side, "INT32 here = FixedMul((fixed_t)ys[j][c >> 1] - node->y, node->dx >> FRACBITS) >= "
+                          "FixedMul(node->dy >> FRACBITS, (fixed_t)xs[i][c & 1] - node->x);")]),
+        "BUILD_SHORT_EDGE": wrong_cells("ShortEdge", in_cells=[("INT64 xhi = xlo + cellsize - 1;", "INT64 xhi = xlo + cellsize - 2;")]),
+        "BUILD_NO_OVERFLOW_CHECK": wrong_cells("NoOverflowCheck", in_side=[(overflow_check, "if (false)")]),
+    }, output / "bsp_cell_start.cpp")
+    generate_bsp(templates.parent / "fixtures", output)
 
     shader = Source(engine / "src/hardware/r_viberant/shaders.hlsl").function("PSWipeFull")
     shader = shader.replace(" : SV_Target", "")

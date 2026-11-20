@@ -1,6 +1,7 @@
 """Expand compact title-map inputs into C++ initialization at configure time."""
 
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -225,3 +226,40 @@ def generate_fixture(fixtures, out):
         code[-1],
     ]
     (out / "title-fixture.h").write_text("\n".join(small))
+
+
+def generate_bsp(fixtures, out):
+    """The title map's real BSP (nodes from its ZNODES lump) and the blockmap bounds P_CreateBlockMap would make."""
+    m = json.loads((fixtures / "title-map.json").read_text())
+    b = (fixtures / "title-znodes.bin").read_bytes()
+    p = 4
+    orig, new = struct.unpack_from("<II", b, p)
+    p += 8
+    xs = [math.floor(v["x"]) for v in m["vertex"]]
+    ys = [math.floor(v["y"]) for v in m["vertex"]]
+    for i in range(new):
+        x, y = struct.unpack_from("<ii", b, p)
+        p += 8
+        xs.append(x >> 16)
+        ys.append(y >> 16)
+    numsubs = struct.unpack_from("<I", b, p)[0]
+    p += 4
+    counts = struct.unpack_from("<" + "I" * numsubs, b, p)
+    p += 4 * numsubs
+    p += 4 + 11 * sum(counts)  # the segs
+    numnds = struct.unpack_from("<I", b, p)[0]
+    p += 4
+    rows = []
+    for i in range(numnds):
+        vals = struct.unpack_from("<12hII", b, p)
+        p += 32
+        kids = [(c & 65535) | ((c >> 16) & 0xC000) for c in vals[12:]]
+        rows.append(f"{{{vals[0]}*FRACUNIT, {vals[1]}*FRACUNIT, {vals[2]}*FRACUNIT, {vals[3]}*FRACUNIT, {{}}, {{{kids[0]}, {kids[1]}}}}},")
+    assert p == len(b), (p, len(b))
+    minx, miny, maxx, maxy = min(xs), min(ys), max(xs), max(ys)
+    (out / "title-bsp.inc").write_text(
+        "static const node_t kTitleNodes[] = {\n" + "\n".join(rows) + "\n};\n"
+        f"static const size_t kTitleSubsectors = {numsubs};\n"
+        f"static const fixed_t kTitleOrgX = {minx} * FRACUNIT, kTitleOrgY = {miny} * FRACUNIT;\n"
+        f"static const INT32 kTitleWidth = {((maxx - minx) >> 7) + 1}, kTitleHeight = {((maxy - miny) >> 7) + 1};\n"
+    )

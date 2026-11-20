@@ -164,6 +164,8 @@ sector_t *sectors;
 subsector_t *subsectors;
 node_t *nodes;
 node_walk_t *nodewalk; // [ZE]: Compact copy of nodes[] for R_PointInSubsector's walk, built by P_BuildNodeWalk.
+bsp_cell_start_t bspcellstart; // [ZE]: Per-blockmap-cell start nodes for R_PointInSubsector's walk, built by P_BuildBSPCellStart.
+static boolean nodewalkbuilt; // [ZE]: Whether this level load reached P_BuildNodeWalk, so that nodes[] and nodewalk[] are current.
 line_t *lines;
 linecheck_t *linechecks; // [ZE]: Level-local linedef iteration data.
 side_t *sides;
@@ -4119,6 +4121,10 @@ static void P_BuildNodeWalk(void)
 
 static void P_LoadMapBSP(const virtres_t *virt)
 {
+	// [ZE]: No table or walk copy is current until this load builds them below.
+	bspcellstart.start = NULL;
+	nodewalkbuilt = false;
+
 	UINT8 *nodedata = NULL;
 	nodetype_t nodetype = P_GetNodetype(virt, &nodedata);
 
@@ -4165,7 +4171,134 @@ static void P_LoadMapBSP(const virtres_t *virt)
 	}
 	// [ZE]: Build the compact walk table once nodes[] is final. Not reached by the early returns above, which load no nodes.
 	P_BuildNodeWalk();
+	nodewalkbuilt = true; // [ZE]: See P_BuildBSPCellStart.
 	return;
+}
+
+// [ZE]: Decides whether every point of a blockmap cell gets the same side of a node's partition line from
+// R_PointOnSide, and which. The cell is the rectangle of points [xlo, xhi] x [ylo, yhi] (all within the 32-bit range).
+// Returns that side, or -1 when the cell's points do not all get one side or when the arithmetic could overflow for
+// some point of it (then the answer is "split", which only makes the walk start earlier).
+// The tests mirror R_PointOnSideOf's, in its order. For a partition with dx == 0 the side depends on x <= node->x only,
+// and for one with dy == 0 on y <= node->y only. Otherwise R_PointOnSideOf subtracts the node's x and y; neither
+// difference overflows (checked below), so a point's side depends on the signs of x' = x - node->x and y' = y - node->y
+// and, where the sign mask is clear, on FixedMul(y', dx >> 16) >= FixedMul(dy >> 16, x'). Within a rectangle where x'
+// and y' each keep their sign, the mask is constant, so the side is either constant ((dy ^ x') < 0 depends on the
+// sign of x' only) or that comparison. FixedMul(a, k) with |a| < 2^31 and |k| <= 2^15 is floor(a * k / 2^16) (the
+// 64-bit product is below 2^46, so nothing overflows or truncates), which is monotone in a, so FixedMul(y', K1) -
+// FixedMul(K2, x') is monotone in x' and in y' separately, its smallest and largest values over the rectangle are at
+// corners, and the sides at the four corners (which are points of the cell, evaluated with R_PointOnSide itself) all
+// being equal means every point has that side.
+static INT32 P_BSPCellSide(node_t *node, INT64 xlo, INT64 xhi, INT64 ylo, INT64 yhi)
+{
+	if (!node->dx)
+	{
+		if (!node->dy)
+			return 0; // both branches of upstream's test are (dy > 0) and (dy < 0), which are false
+		if (xhi <= node->x)
+			return node->dy > 0;
+		if (xlo > node->x)
+			return node->dy < 0;
+		return -1;
+	}
+
+	if (!node->dy)
+	{
+		if (yhi <= node->y)
+			return node->dx < 0;
+		if (ylo > node->y)
+			return node->dx > 0;
+		return -1;
+	}
+
+	if (xlo - node->x < INT32_MIN || xhi - node->x > INT32_MAX || ylo - node->y < INT32_MIN || yhi - node->y > INT32_MAX)
+		return -1;
+
+	// Split the cell at x' = 0 and y' = 0 into up to four rectangles where both keep their sign: x < node->x is x' < 0.
+	INT64 xs[2][2] = {{xlo, std::min<INT64>(xhi, (INT64)node->x - 1)}, {std::max<INT64>(xlo, node->x), xhi}};
+	INT64 ys[2][2] = {{ylo, std::min<INT64>(yhi, (INT64)node->y - 1)}, {std::max<INT64>(ylo, node->y), yhi}};
+	INT32 side = -1;
+
+	for (int i = 0; i < 2; i++)
+	{
+		if (xs[i][0] > xs[i][1])
+			continue;
+		for (int j = 0; j < 2; j++)
+		{
+			if (ys[j][0] > ys[j][1])
+				continue;
+			for (int c = 0; c < 4; c++)
+			{
+				INT32 here = R_PointOnSide((fixed_t)xs[i][c & 1], (fixed_t)ys[j][c >> 1], node);
+				if (side == -1)
+					side = here;
+				else if (side != here)
+					return -1;
+			}
+		}
+	}
+
+	return side; // at least one rectangle is non-empty, so this is 0 or 1
+}
+
+// [ZE]: Fills bspcellstart, called once the level's nodes and blockmap are both final (end of P_LoadMapLUT). For each
+// blockmap cell, the walk from the root that follows a node's child while every point of the cell gets the same side
+// there (P_BSPCellSide), and stops at the first node where the points can differ, at a subsector, or (so that a table is
+// never built from nodes that can't be walked) at a node whose chosen child is not a node of the tree. Points whose cell
+// index, computed as the game does elsewhere ((unsigned)(x - bmaporgx) >> MAPBLOCKSHIFT), is outside the table keep the
+// walk from the root. Cells whose x or y range would pass the 32-bit limits (wrapping) start at the root.
+static void P_BuildBSPCellStart(void)
+{
+	bspcellstart.start = NULL;
+	bspcellstart.width = bspcellstart.height = 0;
+
+	// No table without current nodes (P_LoadMapBSP can return early), with no node (numnodes == 0 is upstream's
+	// walk that doesn't run), with a root that is not a node index, or without cells.
+	if (!nodewalkbuilt || numnodes == 0 || numnodes - 1 >= NF_SUBSECTOR || bmapwidth <= 0 || bmapheight <= 0)
+		return;
+
+	UINT32 width = std::min<UINT32>(bmapwidth, 512);
+	UINT32 height = std::min<UINT32>(bmapheight, 512);
+	UINT16 *start = static_cast<UINT16*>(Z_Calloc(width * height * sizeof(*start), PU_LEVEL, NULL));
+	const INT64 cellsize = (INT64)1 << MAPBLOCKSHIFT;
+	// Bound the work so that hostile node data can't make the load slow: at most 64 nodes per cell (real maps stop far
+	// sooner) and 2 million in all. Stopping early only makes a walk start higher up, which is always correct.
+	size_t budget = 2000000;
+
+	for (UINT32 cy = 0; cy < height; cy++)
+	{
+		for (UINT32 cx = 0; cx < width; cx++)
+		{
+			size_t nodenum = numnodes - 1;
+			INT64 xlo = (INT64)bmaporgx + (INT64)cx * cellsize;
+			INT64 ylo = (INT64)bmaporgy + (INT64)cy * cellsize;
+			INT64 xhi = xlo + cellsize - 1;
+			INT64 yhi = ylo + cellsize - 1;
+
+			if (xlo >= INT32_MIN && xhi <= INT32_MAX && ylo >= INT32_MIN && yhi <= INT32_MAX)
+			{
+				for (size_t steps = 0; steps < numnodes && steps < 64 && budget > 0 && !(nodenum & NF_SUBSECTOR); steps++, budget--)
+				{
+					INT32 side = P_BSPCellSide(&nodes[nodenum], xlo, xhi, ylo, yhi);
+					if (side < 0)
+						break;
+
+					UINT16 child = nodes[nodenum].children[side];
+					if (!(child & NF_SUBSECTOR) && child >= numnodes)
+						break;
+					nodenum = child;
+				}
+			}
+
+			start[cy * width + cx] = static_cast<UINT16>(nodenum);
+		}
+	}
+
+	bspcellstart.orgx = bmaporgx;
+	bspcellstart.orgy = bmaporgy;
+	bspcellstart.width = width;
+	bspcellstart.height = height;
+	bspcellstart.start = start;
 }
 
 // Split from P_LoadBlockMap for convenience
@@ -4512,6 +4645,9 @@ static void P_LoadMapLUT(const virtres_t *virt)
 
 	if (!(virtblockmap && P_LoadBlockMap(virtblockmap->data, virtblockmap->size)))
 		P_CreateBlockMap();
+
+	// [ZE]: The nodes (P_LoadMapBSP, before this) and the blockmap's origin and size are final now.
+	P_BuildBSPCellStart();
 }
 
 //
@@ -8535,6 +8671,7 @@ void P_FreeLevelState(void)
 	G_FreeGhosts(); // ghosts are allocated with PU_LEVEL
 	Patch_FreeTag(PU_PATCH_LOWPRIORITY);
 	Patch_FreeTag(PU_PATCH_ROTATED);
+	bspcellstart.start = NULL; // [ZE]: Allocated with PU_LEVEL, so it is freed below; R_PointInSubsector must not use it.
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
 
 	R_InitMobjInterpolators();

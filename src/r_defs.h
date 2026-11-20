@@ -804,6 +804,17 @@ struct node_walk_t
 	UINT16 children[2];
 };
 
+// [ZE]: Per blockmap cell, the node where R_PointInSubsector's walk can start for every point of that cell: the first
+// node on the way down from the root whose partition line splits the cell, or the subsector the cell lies in
+// (P_BuildBSPCellStart). The origin and size are the blockmap's at build time, kept here so that a lookup never depends
+// on the blockmap's variables. start is NULL when there is no table, and then the walk starts at the root.
+struct bsp_cell_start_t
+{
+	fixed_t orgx, orgy;
+	UINT32 width, height; // in cells, at most 512 each: (UINT32)(x - orgx) >> MAPBLOCKSHIFT is never above 511
+	UINT16 *start; // width * height entries, row by row (y * width + x), children's type
+};
+
 #if defined(_MSC_VER)
 #pragma pack(1)
 #endif

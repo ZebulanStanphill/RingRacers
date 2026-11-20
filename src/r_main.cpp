@@ -1307,6 +1307,19 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 
 	size_t nodenum = numnodes-1;
 
+	// [ZE]: Start at the node the blockmap cell holding the point is known to reach from the root, when there is a table
+	// and the point is in it (P_BuildBSPCellStart: every point of the cell takes the same branches from the root down to
+	// that node, so the walk below continues exactly where the walk from the root would be). The cell index is the
+	// game's blockmap arithmetic, in unsigned math. Any other point, and any point with no table, starts at the root.
+	if (bspcellstart.start)
+	{
+		UINT32 cellx = ((UINT32)x - (UINT32)bspcellstart.orgx) >> MAPBLOCKSHIFT;
+		UINT32 celly = ((UINT32)y - (UINT32)bspcellstart.orgy) >> MAPBLOCKSHIFT;
+
+		if (cellx < bspcellstart.width && celly < bspcellstart.height)
+			nodenum = bspcellstart.start[celly * bspcellstart.width + cellx];
+	}
+
 	// [ZE]: Walk nodewalk[], the compact copy of nodes[], which holds exactly the values upstream's walk read from nodes[]
 	// (upstream: nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)]). With numnodes == 0, nodenum is SIZE_MAX,
 	// the loop doesn't run, and neither array is read, as upstream.

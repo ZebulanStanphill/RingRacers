@@ -932,6 +932,22 @@ untouched padding.
   overflow wraps (`-fwrapv`, and the overflow sanitizer is off for these two tests) so that extreme coordinates run.
   Three negative controls must fail in-process: a copy that swaps the children, a copy that puts `dy` in `dx`, and a
   copy made before `nodes[]` changes.
+- **BSP cell start:** `bsp_cell_start`, `bsp_cell_start_uwp`, and `bsp_cell_start_wrap` compile the production
+  `R_PointInSubsector`, `P_BuildNodeWalk`, `P_BSPCellSide`, and `P_BuildBSPCellStart`, and compare every lookup with the
+  frozen walk from the root (`fixtures/node-walk-baseline.inc`) over random trees laid around random blockmaps
+  (partitions on cell edges and corners, one off them, anywhere, with every kind of direction), random DAGs, and the
+  title map's real nodes (`fixtures/title-znodes.bin`) with the blockmap its vertices make. For every cell it checks
+  the corners and edges, points one off them, partition origins moved into the cell, and random points, then points
+  outside the table. It also compares `P_BSPCellSide` with every point of 400,000 small rectangles around random
+  partitions (it must be right whenever it names a side, and name one whenever every point has it and nothing can
+  overflow), and checks the edge cases: no nodes, a blockmap with no cells or a 65,535-cell claim (512 by 512 entries),
+  nodes that were not loaded, too many nodes for a child index, a cycle, a child past the end, and no table. The
+  second variant also compiles the lookup cache, and the third runs with `-fwrapv` (overflow sanitizer off) and
+  partitions at the 32-bit limits, as `node_walk` does; the first two skip points where the reference's subtraction
+  would overflow, so they run without `-fwrapv`. Negative controls that fail in-process: a build that checks only two
+  corners, one that ignores the sign mask, and one with a cell edge one short, each against the walk, and the same
+  two mistakes plus a missing overflow check against the rectangles (the last with partitions at the 32-bit limits and
+  rectangles where the subtraction wraps).
 - **Extraction safeguards:** ensure comments, strings, nested blocks and prototypes
   do not truncate extracted functions; reject missing/ambiguous definitions.
 - **VibeRant without `_UWP`:** `python3 tests/check-viberant-desktop.py build/ninja-release/compile_commands.json`
