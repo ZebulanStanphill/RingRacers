@@ -1,10 +1,10 @@
 # VibeRant driver thread
 
 VibeRant D3D can record and present frames on a second CPU thread while the
-game builds the next frame. **Driver Thread** in Xbox Video Options → Advanced
-controls it. On Windows desktop, use the console command
-`gr_driverthread On` or `gr_driverthread Off`. The saved setting defaults to
-On and takes effect at the next `FinishUpdate`. Vulkan and Metal call the
+game builds the next frame. It is always on. For troubleshooting, the console
+command `gr_driverthread Off` (or `On`) switches it at the next
+`FinishUpdate`, on Xbox and Windows desktop. The game doesn't save it, so every
+launch starts with the thread on. Vulkan and Metal call the
 driver on the main thread, where their presenters can use SDL.
 
 ## Command order and ownership

@@ -438,7 +438,6 @@ typedef enum
 // [UWP]: Put Batching after the other hardware settings because players rarely need it.
 #ifdef _UWP
 	vaopt_batching,
-	vaopt_driverthread, // [UWP]: VibeRant D3D worker
 #endif
 	vaopt_legacygl_end,
 } vaopt_e;

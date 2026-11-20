@@ -16,11 +16,6 @@
 
 extern consvar_t cv_menuframeskip;
 
-// [UWP]: Driver Thread is a VibeRant D3D setting.
-#ifdef _UWP
-extern consvar_t cv_grdriverthread;
-#endif
-
 // see vaopt_e
 menuitem_t OPTIONS_VideoAdvanced[] =
 {
@@ -145,9 +140,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 	// [UWP]: Last, as the setting an average player needs least
 	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
 		NULL, {.cvar = &cv_glbatching}, 0, 0},
-	// [UWP]: This setting applies at the next frame boundary.
-	{IT_STRING | IT_CVAR, "Driver Thread", "Draws on a second CPU thread. Turn off to compare speed or check visual problems.",
-		NULL, {.cvar = &cv_grdriverthread}, 0, 0},
 #endif
 };
 
