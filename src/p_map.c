@@ -1779,6 +1779,76 @@ static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
 	return BMIT_CONTINUE;
 }
 
+// [ZE]: P_BlockThingsIterator for PIT_CheckThing, without the call, or the two reference updates around it, for a
+// thing that PIT_CheckThing would return BMIT_CONTINUE for at its first tests. Why the result is upstream's:
+// 1. The skip test is those tests, read-only and in PIT_CheckThing's order: g_tm.thing is NULL or removed (then
+//    PIT_CheckThing returns BMIT_STOP, so we call it), the thing was removed, the thing is g_tm.thing, or the
+//    distance pre-filter. Each is read live for every thing. A skipped thing's call would have returned
+//    BMIT_CONTINUE and written nothing.
+// 2. Every thing that isn't skipped gets upstream's sequence: P_SetTarget on bnext (which also releases what the walk
+//    still holds from an earlier called thing), the call, and upstream's ABORT, STOP, and removed-bnext handling.
+//    So at every call and every return, each mobj's reference count is upstream's. They differ only while skipped
+//    things are passed over, when no other code runs; nothing reacts to a count changing in P_SetTarget (PARANOIA
+//    builds write debug_time and may print, read only by P_RemoveThinkerDelayed's PARANOIA log), and a mobj is
+//    freed only by the thinker loop, a savegame load, or a level change, never inside a collision walk.
+// 3. Upstream tests bnext (the thing's bnext, held by the P_SetTarget) for removal after every BMIT_CONTINUE. A skipped
+//    thing's bnext can't change (nothing ran), so the same pointer gets the same test.
+// Assumes PIT_CheckThing's opening tests are as listed (tests/generate.py checks), and no other thread writes mobjs.
+// PARANOIA (debug) builds only: P_SetTarget2 also stamps debug_time on the things it moves the reference between, so a
+// skipped thing and its bnext keep an older stamp, and P_RemoveThinkerDelayed's PARANOIA log line can differ. Nothing
+// else reads debug_time; release builds don't have it.
+static boolean P_BlockThingsIteratorCheck(INT32 x, INT32 y)
+{
+	mobj_t *mobj, *bnext = NULL;
+
+	if (x < 0 || y < 0 || x >= bmapwidth || y >= bmapheight)
+		return true;
+
+	mobj = blocklinks[y*bmapwidth + x];
+
+	while (mobj)
+	{
+		BlockItReturn_t ret;
+
+		if (g_tm.thing != NULL && !P_MobjWasRemoved(g_tm.thing)
+			&& (P_MobjWasRemoved(mobj) || mobj == g_tm.thing || P_ThingSurelyOutOfReach(mobj)))
+		{
+			// Skipped: no call and no reference update, so bnext keeps what an earlier called thing set.
+			mobj_t *next = mobj->bnext;
+
+			if (next && P_MobjWasRemoved(next))
+			{
+				P_SetTarget(&bnext, NULL);
+				return true;
+			}
+
+			mobj = next;
+			continue;
+		}
+
+		P_SetTarget(&bnext, mobj->bnext); // We want to note our reference to bnext here incase it is MF_NOTHINK and gets removed!
+		ret = PIT_CheckThing(mobj);
+
+		if (ret == BMIT_ABORT)
+		{
+			P_SetTarget(&bnext, NULL);
+			return false; // failure
+		}
+
+		if ((ret == BMIT_STOP)
+			|| (bnext && P_MobjWasRemoved(bnext))) // func just broke blockmap chain, cannot continue.
+		{
+			P_SetTarget(&bnext, NULL);
+			return true; // success
+		}
+
+		mobj = bnext;
+	}
+
+	P_SetTarget(&bnext, NULL); // Release what an earlier called thing left held when only skipped things follow it.
+	return true;
+}
+
 // PIT_CheckCameraLine
 // Adjusts g_tm.floorz and g_tm.ceilingz as lines are contacted - FOR CAMERA ONLY
 static BlockItReturn_t PIT_CheckCameraLine(line_t *ld)
@@ -2389,7 +2459,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y, TryMoveResult_t *re
 		{
 			for (by = yl; by <= yh; by++)
 			{
-				if (!P_BlockThingsIterator(bx, by, PIT_CheckThing))
+				if (!P_BlockThingsIteratorCheck(bx, by)) // [ZE]: was P_BlockThingsIterator(bx, by, PIT_CheckThing)
 				{
 					blockval = false;
 				}

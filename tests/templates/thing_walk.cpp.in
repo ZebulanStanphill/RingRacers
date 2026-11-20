@@ -1,0 +1,342 @@
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <random>
+#include <string>
+#include <vector>
+
+using fixed_t = std::int32_t;
+using INT32 = std::int32_t;
+using INT64 = std::int64_t;
+using boolean = bool;
+using std::abs;
+
+@@TYPES@@
+
+// Only what the extracted walk and pre-filter read.
+struct mobj_t
+{
+	fixed_t x, y, radius;
+	bool removed = false;
+	mobj_t *bnext = nullptr;
+	int references = 0;
+	int id = 0;
+};
+
+// A script hook can leave g_tm.thing NULL in the middle of a walk, and reading through it faults in the game.
+// Here the read throws, so a walk that reads it without testing it first is detected.
+struct MoverFault {};
+struct Mover
+{
+	mobj_t *p = nullptr;
+	Mover() = default;
+	Mover(mobj_t *thing) : p(thing) {}
+	mobj_t *operator->() const
+	{
+		if (!p)
+			throw MoverFault{};
+		return p;
+	}
+	operator mobj_t *() const { return p; }
+};
+
+static struct
+{
+	Mover thing;
+	fixed_t x, y;
+} g_tm;
+
+static constexpr INT32 bmapwidth = 3, bmapheight = 2;
+static std::array<mobj_t *, bmapwidth * bmapheight> blocklinksStorage;
+static mobj_t **blocklinks = blocklinksStorage.data();
+
+static bool P_MobjWasRemoved(const mobj_t *thing)
+{
+	return !thing || thing->removed;
+}
+
+// The build's reference update, in any of its forms: the count moves and nothing else reacts.
+static mobj_t *P_SetTarget(mobj_t **mop, mobj_t *targ)
+{
+	if (*mop)
+		(*mop)->references--;
+	if (targ)
+		targ->references++;
+	*mop = targ;
+	return targ;
+}
+
+@@PREFILTER@@
+
+// What a callback does to the walk's world, chosen per thing by the scenario.
+enum Action
+{
+	Nothing, Stop, Abort, RemoveNext, RemoveSelf, ClearMover, RemoveMover, UnlinkNext, MoveQuery, SwitchMover, Retarget,
+	ActionCount,
+};
+
+struct Call
+{
+	int id;
+	std::vector<int> references;
+	int mover; // id of g_tm.thing, or -1
+	fixed_t x, y;
+
+	bool operator==(const Call &o) const
+	{
+		return id == o.id && references == o.references && mover == o.mover && x == o.x && y == o.y;
+	}
+};
+
+static std::vector<mobj_t> things;
+static std::vector<Action> script;
+static std::vector<int> argument; // second number for an action
+static std::vector<Call> calls;
+static unsigned entered; // calls of the stand-in, including those that returned at its opening tests
+
+static int MoverId()
+{
+	return g_tm.thing.p ? g_tm.thing.p->id : -1;
+}
+
+// The opening of upstream's PIT_CheckThing, from the game's own source, then what a callback might do.
+static BlockItReturn_t PIT_CheckThing(mobj_t *thing)
+{
+	++entered;
+@@OPENING@@
+	Call call{thing->id, {}, MoverId(), g_tm.x, g_tm.y};
+	for (const mobj_t &t : things)
+		call.references.push_back(t.references);
+	calls.push_back(call);
+
+	const Action action = script[thing->id];
+	mobj_t *other = &things[static_cast<size_t>(argument[thing->id]) % things.size()];
+	switch (action)
+	{
+		case Stop:
+			return BMIT_STOP;
+		case Abort:
+			return BMIT_ABORT;
+		case RemoveNext:
+			if (thing->bnext)
+				thing->bnext->removed = true;
+			break;
+		case RemoveSelf:
+			thing->removed = true;
+			break;
+		case ClearMover:
+			g_tm.thing = nullptr;
+			break;
+		case RemoveMover:
+			if (g_tm.thing.p)
+				g_tm.thing->removed = true;
+			break;
+		case UnlinkNext:
+			if (thing->bnext)
+			{
+				thing->bnext->removed = true;
+				thing->bnext = thing->bnext->bnext;
+			}
+			break;
+		case MoveQuery:
+			g_tm.x += argument[thing->id] % 41 - 20;
+			g_tm.y -= argument[thing->id] % 37 - 18;
+			break;
+		case SwitchMover:
+			g_tm.thing = other;
+			break;
+		case Retarget:
+			++other->references; // Something else takes a reference, as hit and floor things do.
+			break;
+		default:
+			break;
+	}
+	return BMIT_CONTINUE;
+}
+
+@@REFERENCE@@
+@@PRODUCTION@@
+@@NO_MOVER_TEST@@
+@@NO_REMOVED_NEXT@@
+@@NO_RELEASE_AT_END@@
+@@NO_RELEASE_ON_REMOVED_NEXT@@
+
+struct Outcome
+{
+	std::vector<boolean> returns;
+	std::vector<Call> calls;
+	std::vector<int> references;
+	std::vector<bool> removed;
+	std::vector<int> next;
+	int mover;
+	fixed_t x, y;
+	unsigned entered;
+	bool fault;
+	bool operator==(const Outcome &o) const
+	{
+		return fault == o.fault && returns == o.returns && calls == o.calls && references == o.references && removed == o.removed
+			&& next == o.next && mover == o.mover && x == o.x && y == o.y;
+	}
+};
+
+struct Scenario
+{
+	std::vector<mobj_t> things;
+	std::vector<int> next; // index of each thing's bnext, or -1
+	std::vector<Action> script;
+	std::vector<int> argument;
+	std::array<int, bmapwidth * bmapheight> heads;
+	int mover; // index, or -1 for NULL, or -2 for a removed one
+	fixed_t x, y;
+	std::vector<std::array<INT32, 2>> cells;
+};
+
+using Walk = boolean (*)(INT32, INT32);
+
+static boolean UpstreamWalk(INT32 x, INT32 y)
+{
+	return P_BlockThingsIterator(x, y, PIT_CheckThing);
+}
+
+static Outcome Run(const Scenario &s, Walk walk)
+{
+	things = s.things;
+	for (size_t i = 0; i < things.size(); ++i)
+	{
+		things[i].id = static_cast<int>(i);
+		things[i].bnext = nullptr;
+	}
+	script = s.script;
+	argument = s.argument;
+	calls.clear();
+	entered = 0;
+	for (size_t c = 0; c < blocklinksStorage.size(); ++c)
+		blocklinksStorage[c] = s.heads[c] < 0 ? nullptr : &things[static_cast<size_t>(s.heads[c])];
+	for (size_t i = 0; i < things.size(); ++i)
+		things[i].bnext = s.next[i] < 0 ? nullptr : &things[static_cast<size_t>(s.next[i])];
+	g_tm = {s.mover >= 0 ? &things[static_cast<size_t>(s.mover)] : nullptr, s.x, s.y};
+	if (s.mover == -2)
+	{
+		g_tm.thing = &things[0];
+		things[0].removed = true;
+	}
+
+	Outcome out{};
+	out.fault = false;
+	try
+	{
+		for (const auto &cell : s.cells)
+			out.returns.push_back(walk(cell[0], cell[1]));
+	}
+	catch (const MoverFault &)
+	{
+		out.fault = true;
+	}
+	out.calls = calls;
+	for (const mobj_t &t : things)
+	{
+		out.references.push_back(t.references);
+		out.removed.push_back(t.removed);
+		out.next.push_back(t.bnext ? t.bnext->id : -1);
+	}
+	out.mover = MoverId();
+	out.x = g_tm.x;
+	out.y = g_tm.y;
+	out.entered = entered;
+	return out;
+}
+
+static std::mt19937 rng(20261119);
+
+static Scenario RandomScenario()
+{
+	Scenario s;
+	const size_t count = 1 + rng() % 12;
+	s.things.resize(count);
+	const bool near = rng() % 2;
+	for (mobj_t &t : s.things)
+	{
+		t.x = static_cast<fixed_t>(rng() % (near ? 25 : 90)) - (near ? 12 : 45);
+		t.y = static_cast<fixed_t>(rng() % (near ? 25 : 90)) - (near ? 12 : 45);
+		t.radius = 1 + static_cast<fixed_t>(rng() % 20);
+		t.removed = rng() % 7 == 0;
+		t.references = static_cast<int>(rng() % 3);
+	}
+	s.next.assign(count, -1);
+	s.heads.fill(-1);
+	std::array<int, bmapwidth * bmapheight> tails;
+	tails.fill(-1);
+	for (size_t i = 0; i < count; ++i)
+	{
+		const size_t cell = rng() % s.heads.size();
+		if (s.heads[cell] < 0)
+			s.heads[cell] = static_cast<int>(i);
+		else
+			s.next[static_cast<size_t>(tails[cell])] = static_cast<int>(i);
+		tails[cell] = static_cast<int>(i);
+	}
+	for (size_t i = 0; i < count; ++i)
+	{
+		s.script.push_back(rng() % 3 ? Nothing : static_cast<Action>(rng() % ActionCount));
+		s.argument.push_back(static_cast<int>(rng() % 1000));
+	}
+	const unsigned mover = rng() % 20;
+	s.mover = mover == 0 ? -1 : mover == 1 ? -2 : static_cast<int>(rng() % count);
+	s.x = static_cast<fixed_t>(rng() % 21) - 10;
+	s.y = static_cast<fixed_t>(rng() % 21) - 10;
+	const size_t visits = 1 + rng() % 8;
+	for (size_t i = 0; i < visits; ++i)
+		s.cells.push_back({static_cast<INT32>(rng() % (bmapwidth + 2)) - 1, static_cast<INT32>(rng() % (bmapheight + 2)) - 1});
+	return s;
+}
+
+static const std::array<std::pair<const char *, Walk>, 4> controls{{
+	{"missing g_tm.thing test", NoMoverTestWalk},
+	{"missing removed next thing test", NoRemovedNextWalk},
+	{"reference kept at the end of the chain", NoReleaseAtEndWalk},
+	{"reference kept when a removed next thing ends the walk", NoReleaseOnRemovedNextWalk},
+}};
+
+int main()
+{
+	constexpr unsigned Cases = 40000;
+	// A removed, non-NULL g_tm.thing has no control: PIT_CheckThing stops at the first thing it is called for, and
+	// a skipped thing before it changes nothing, so skipping around it can't be told apart. NULL can, by the read.
+	std::array<unsigned, controls.size()> detected{};
+	unsigned skipped = 0, total = 0, calledTotal = 0;
+	for (unsigned i = 0; i < Cases; ++i)
+	{
+		const Scenario s = RandomScenario();
+		const Outcome expected = Run(s, UpstreamWalk);
+		const Outcome actual = Run(s, P_BlockThingsIteratorCheck);
+		if (!(actual == expected))
+		{
+			std::fprintf(stderr, "Scenario %u: the walk disagrees with frozen upstream (%zu vs %zu calls, returns equal=%d, "
+				"references equal=%d).\n", i, actual.calls.size(), expected.calls.size(),
+				actual.returns == expected.returns, actual.references == expected.references);
+			std::abort();
+		}
+		for (const mobj_t &t : things)
+			assert(t.references >= 0);
+		total += expected.entered;
+		skipped += expected.entered - actual.entered;
+		calledTotal += static_cast<unsigned>(actual.calls.size());
+		for (size_t c = 0; c < controls.size(); ++c)
+			detected[c] += !(Run(s, controls[c].second) == expected);
+	}
+	for (size_t c = 0; c < controls.size(); ++c)
+	{
+		if (!detected[c])
+		{
+			std::fprintf(stderr, "Negative control not detected: %s.\n", controls[c].first);
+			std::abort();
+		}
+		std::printf("Control (%s): comparison failed on %u scenarios.\n", controls[c].first, detected[c]);
+	}
+	assert(skipped > 0 && calledTotal > 0);
+	std::printf("%u seeded scenarios. %u things visited by upstream, %u of them skipped by the walk, %u calls past "
+		"the opening tests, all identical in order, references, and results.\n", Cases, total, skipped, calledTotal);
+}

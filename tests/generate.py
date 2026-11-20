@@ -134,6 +134,31 @@ def generate(engine, output):
         "UNCHECKED_RADII": prefilter.replace("P_ThingSurelyOutOfReach", "UncheckedRadiiPrefilter")
             .replace(sum_range, "\n\t\t"),
     }, output / "thing_check_order.cpp")
+    thing_walk = game_map.function("P_BlockThingsIteratorCheck")
+    opening = function_section(game_map, "PIT_CheckThing", "\tif (g_tm.thing == NULL", "\t// Ignore spectators")
+    if opening.count("return BMIT_STOP;") != 1 or opening.count("return BMIT_CONTINUE;") != 3:
+        raise ValueError("PIT_CheckThing's opening tests are not the ones the thing walk's skip test mirrors")
+    skip_mover = "g_tm.thing != NULL && !P_MobjWasRemoved(g_tm.thing)"
+    skip_removed_next = ("\t\t\tif (next && P_MobjWasRemoved(next))\n\t\t\t{\n\t\t\t\tP_SetTarget(&bnext, NULL);\n"
+                         "\t\t\t\treturn true;\n\t\t\t}\n\n")
+    release_end = "\tP_SetTarget(&bnext, NULL); // Release what an earlier called thing left held when only skipped things follow it.\n"
+    release_skip = "\t\t\t\tP_SetTarget(&bnext, NULL);\n\t\t\t\treturn true;"
+    for part in (skip_mover, skip_removed_next, release_end, release_skip):
+        if thing_walk.count(part) != 1:
+            raise ValueError("Could not inject the thing walk negative controls: " + part)
+    def thing_walk_control(name, old, new):
+        return thing_walk.replace("P_BlockThingsIteratorCheck", name).replace(old, new)
+    render(templates / "thing_walk.cpp.in", {
+        "TYPES": Source(engine / "src/p_maputl.h").enum("BlockItReturn_t"),
+        "PREFILTER": prefilter,
+        "OPENING": opening,
+        "REFERENCE": (templates.parent / "fixtures/thing-walk-baseline.c").read_text(encoding="utf-8"),
+        "PRODUCTION": thing_walk,
+        "NO_MOVER_TEST": thing_walk_control("NoMoverTestWalk", skip_mover, "true"),
+        "NO_REMOVED_NEXT": thing_walk_control("NoRemovedNextWalk", skip_removed_next, ""),
+        "NO_RELEASE_AT_END": thing_walk_control("NoReleaseAtEndWalk", release_end, ""),
+        "NO_RELEASE_ON_REMOVED_NEXT": thing_walk_control("NoReleaseOnRemovedNextWalk", release_skip, "\t\t\t\treturn true;"),
+    }, output / "thing_walk.cpp")
     polyobj = Source(engine / "src/p_polyobj.c")
     line_box = maputl.function("P_SkipLineBox")
     line_walk = maputl.function("P_BlockLinesIteratorInternal")

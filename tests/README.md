@@ -122,6 +122,21 @@ Use the CTest filter under Running to select the cases below by name.
   on either axis, an early skip when the radius sum underflows, and fall-through
   while respawning.
 
+- **Blockmap thing walk.** `thing_walk` compares the position check's own walk over a cell's things
+  (`P_BlockThingsIteratorCheck`) with a frozen copy of upstream's `P_BlockThingsIterator` calling
+  `PIT_CheckThing`. The stand-in callback begins with `PIT_CheckThing`'s opening tests, extracted from
+  `p_map.c`, and then records the references of every object at the call and does something a game callback or a script
+  hook can do: stop, abort, remove the next or the current thing, unlink the next thing, clear, remove, or
+  switch `g_tm.thing`, move the query point, or take a reference. Each of 40,000 seeded scenarios visits up to
+  eight cells, including ones outside the map, with removed things, the moving object in the chain, and a NULL
+  or removed `g_tm.thing`. The walks must give the same results, the same sequence of calls past the opening tests,
+  the same references at each, and the same final references, chains, and query. The
+  `g_tm.thing` read throws when NULL, as it faults in the game. Generated negative controls detect a skip without
+  the `g_tm.thing` test, one without the test of a removed next thing, and a walk that keeps its reference on an
+  exit from the skipped path or at the end of the chain. (A removed, non-NULL `g_tm.thing` can't have a control:
+  the first call stops, so skipping before it is not observable.) `generate.py` also fails unless the
+  extracted opening has exactly one stop and three continues.
+
 - **Metal presenter, a window out of sight:** `metal_present_seen` runs the production
   decision of VibeRant Metal's presenter (`metal/mtl_present_seen.h`, plain C++; the
   presenter itself only builds on macOS) against a model of a `CAMetalLayer` with three
