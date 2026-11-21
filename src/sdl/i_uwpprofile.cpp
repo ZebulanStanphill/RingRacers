@@ -79,6 +79,7 @@ using GetStackLimitsFn = void (WINAPI *)(PULONG_PTR, PULONG_PTR);
 using GetProcessorNumberFn = DWORD (WINAPI *)(void);
 using GetSystemCpuSetInformationFn = BOOL (WINAPI *)(void*, ULONG, PULONG, HANDLE, ULONG);
 using GetCpuSetsFn = BOOL (WINAPI *)(HANDLE, PULONG, ULONG, PULONG);
+using SetCpuSetsFn = BOOL (WINAPI *)(HANDLE, const ULONG*, ULONG);
 
 void* FindKernelFunction(const char* name)
 {
@@ -885,6 +886,56 @@ void I_UWPLogCpuSets(void)
 	};
 	log_sets("the process's default", getprocesssets, GetCurrentProcess());
 	log_sets("the main thread's", getthreadsets, GetCurrentThread());
+}
+
+void I_UWPKeepMainThreadOffSystemCache(void)
+{
+	const std::vector<CpuSet> sets = ReadCpuSets(false);
+	bool systemcache[256] = {};
+	ULONG ids[64];
+	ULONG count = 0;
+	char list[256] = "";
+
+	// The system's processors are the ones Xbox holds for no one; on an Xbox One X, 0 and 1. A processor that shares
+	// their cache (on an Xbox One X, 2 and 3, in the same 4-core cluster with one shared L2 cache) runs the main thread
+	// about 14% slower than a processor in the other cluster
+	for (const CpuSet& set : sets)
+	{
+		if (!(set.flags & (kCpuSetAllocated | kCpuSetAllocatedToUs)))
+		{
+			systemcache[set.cache] = true;
+		}
+	}
+	for (const CpuSet& set : sets)
+	{
+		if ((set.flags & (kCpuSetAllocated | kCpuSetAllocatedToUs)) && !systemcache[set.cache] && count < 64)
+		{
+			const size_t used = strlen(list);
+			snprintf(list + used, sizeof list - used, "%s%u", count ? ", " : "", set.processor);
+			ids[count++] = set.id;
+		}
+	}
+
+	// Only where the system's processors share a cache with some of the game's, and at least two are apart from it
+	if (count < 2 || count == sets.size())
+	{
+		I_OutputMsg("UWP: main thread placement: left to Windows (no processors apart from the system's cache)\n");
+		return;
+	}
+
+	auto set_thread_sets = reinterpret_cast<SetCpuSetsFn>(FindKernelFunction("SetThreadSelectedCpuSets"));
+	if (!set_thread_sets)
+	{
+		I_OutputMsg("UWP: main thread placement: left to Windows (SetThreadSelectedCpuSets is missing)\n");
+	}
+	else if (!set_thread_sets(GetCurrentThread(), ids, count))
+	{
+		I_OutputMsg("UWP: main thread placement: left to Windows (error %lu)\n", GetLastError());
+	}
+	else
+	{
+		I_OutputMsg("UWP: main thread placement: processors %s, apart from the system's cache\n", list);
+	}
 }
 
 void I_UWPNoteProcessor(void)

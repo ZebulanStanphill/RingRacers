@@ -348,6 +348,10 @@ void I_UWPTakeProfilerStats(INT32 *samples, double *pausedms);
 // runs it as a game. Call from the main thread.
 void I_UWPLogCpuSets(void);
 
+// [UWP]: Keeps the main thread on the game's processors that don't share a cache with the system's, where some do
+// (on an Xbox One X, 4 to 7 rather than 2 and 3), and logs where it put it. Call from the main thread.
+void I_UWPKeepMainThreadOffSystemCache(void);
+
 // [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
 // doesn't mark any
 unsigned int I_UWPUsableProcessors(void);
