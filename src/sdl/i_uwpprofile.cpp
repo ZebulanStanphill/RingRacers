@@ -279,8 +279,13 @@ std::atomic<uint64_t> g_pausenanoseconds{0};
 // The profiler's thread, which catches its own faults reading the main thread's stack
 std::atomic<DWORD> g_samplerthreadid{0};
 
-GetProcessorNumberFn g_getprocessornumber;
+// Looked up once by I_UWPLogCpuSets, which other threads can already be running by then
+std::atomic<GetProcessorNumberFn> g_getprocessornumber{nullptr};
 uint32_t g_processorcounts[kMaxProcessors]; // only touched by the main thread
+
+// [UWP]: Where the game's other threads have run since the perf log last took them, one row per kind of thread. Each
+// row is its own cache line or more, and counted with relaxed atomics, so a thread notes its processor without waiting.
+alignas(64) std::atomic<uint32_t> g_threadprocessorcounts[NUMUWPTHREADS][kMaxProcessors];
 
 // Walks a stack from context, filling frames with the address being run and then return addresses, innermost first,
 // for up to maxframes. Takes no locks and allocates nothing, since the main thread could be paused holding them.
@@ -572,6 +577,8 @@ void SampleMainThread(Sampler sampler)
 			Sleep(20);
 		}
 
+		I_UWPNoteThreadProcessor(UWPTHREAD_SAMPLER);
+
 		CONTEXT context = {};
 		context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
 
@@ -855,7 +862,8 @@ void I_UWPLogCpuSets(void)
 	auto getprocesssets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetProcessDefaultCpuSets"));
 	auto getthreadsets = reinterpret_cast<GetCpuSetsFn>(FindKernelFunction("GetThreadSelectedCpuSets"));
 
-	g_getprocessornumber = reinterpret_cast<GetProcessorNumberFn>(FindKernelFunction("GetCurrentProcessorNumber"));
+	g_getprocessornumber.store(reinterpret_cast<GetProcessorNumberFn>(FindKernelFunction("GetCurrentProcessorNumber")),
+		std::memory_order_relaxed);
 
 	for (const CpuSet& set : ReadCpuSets(true))
 	{
@@ -940,9 +948,58 @@ void I_UWPKeepMainThreadOffSystemCache(void)
 
 void I_UWPNoteProcessor(void)
 {
-	if (g_getprocessornumber)
+	const GetProcessorNumberFn getprocessor = g_getprocessornumber.load(std::memory_order_relaxed);
+
+	if (getprocessor)
 	{
-		g_processorcounts[g_getprocessornumber() % kMaxProcessors]++;
+		g_processorcounts[getprocessor() % kMaxProcessors]++;
+	}
+}
+
+void I_UWPNoteThreadProcessor(uwpthreadkind_t kind)
+{
+	const GetProcessorNumberFn getprocessor = g_getprocessornumber.load(std::memory_order_relaxed);
+
+	if (getprocessor && kind >= 0 && kind < NUMUWPTHREADS)
+	{
+		g_threadprocessorcounts[kind][getprocessor() % kMaxProcessors].fetch_add(1, std::memory_order_relaxed);
+	}
+}
+
+void I_UWPTakeThreadStats(char *buffer, size_t size)
+{
+	static const char *const names[NUMUWPTHREADS] = {"driver", "audio", "sampler", "pool"};
+
+	buffer[0] = '\0';
+	for (int kind = 0; kind < NUMUWPTHREADS; kind++)
+	{
+		uint32_t counts[kMaxProcessors];
+		uint32_t total = 0;
+
+		for (int i = 0; i < kMaxProcessors; i++)
+		{
+			counts[i] = g_threadprocessorcounts[kind][i].exchange(0, std::memory_order_relaxed);
+			total += counts[i];
+		}
+
+		size_t used = strlen(buffer);
+		snprintf(buffer + used, size - used, "%s%s", used ? "; " : "", names[kind]);
+		used = strlen(buffer);
+		if (!total)
+		{
+			snprintf(buffer + used, size - used, " none");
+			continue;
+		}
+		bool first = true;
+		for (int i = 0; i < kMaxProcessors; i++)
+		{
+			if (counts[i])
+			{
+				used = strlen(buffer);
+				snprintf(buffer + used, size - used, "%s%d (%.0f%%)", first ? " " : ", ", i, 100.0 * counts[i] / total);
+				first = false;
+			}
+		}
 	}
 }
 

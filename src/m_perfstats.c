@@ -1028,6 +1028,11 @@ void PS_UWPAddLoop(precise_t worktime, boolean displayed)
 		I_UWPTakeProcessorStats(processors, sizeof processors);
 		I_OutputMsg("UWP perf:   main thread on processors %s; profiler paused it %.1f ms per second (%d samples, %.0f us each)\n",
 			processors, pausedms / seconds, samples, samples ? pausedms * 1000.0 / samples : 0.0);
+
+		// [UWP]: Where the other threads ran, in the same period
+		char threads[1024];
+		I_UWPTakeThreadStats(threads, sizeof threads);
+		I_OutputMsg("UWP perf:   other threads on processors: %s\n", threads);
 	}
 
 	memset(&uwp_perf, 0, sizeof uwp_perf);

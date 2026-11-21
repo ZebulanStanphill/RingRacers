@@ -28,6 +28,7 @@
 #ifdef _UWP
 extern "C" void I_OutputMsg(const char *error, ...);
 extern "C" unsigned int I_UWPUsableProcessors(void);
+#include "../i_system.h" // [UWP]: for I_UWPNoteThreadProcessor
 #endif
 
 using namespace srb2;
@@ -72,6 +73,9 @@ static void pool_executor(
 		bool did_work = false;
 		if (work)
 		{
+#ifdef _UWP
+			I_UWPNoteThreadProcessor(UWPTHREAD_POOL); // [UWP]: Count where this worker ran, once per task
+#endif
 			do_work(*work);
 
 			did_work = true;
@@ -84,6 +88,9 @@ static void pool_executor(
 				work = q->steal();
 				if (work)
 				{
+#ifdef _UWP
+					I_UWPNoteThreadProcessor(UWPTHREAD_POOL); // [UWP]: Count where this worker ran, once per task
+#endif
 					do_work(*work);
 
 					did_work = true;

@@ -244,6 +244,10 @@ struct Queue
 					}
 					if (kind == RecordKind::Finish)
 					{
+#ifdef _UWP
+						// [UWP]: Count where the driver thread ran, once per frame
+						I_UWPNoteThreadProcessor(UWPTHREAD_DRIVER);
+#endif
 						AccountBusy();
 						timings.worstFrameBusy = std::max(timings.worstFrameBusy, timings.frameBusy);
 						timings.frameBusy = {};

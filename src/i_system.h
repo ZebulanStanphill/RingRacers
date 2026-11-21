@@ -370,6 +370,21 @@ void I_UWPInstallCrashHandler(void);
 void I_UWPNoteProcessor(void);
 void I_UWPTakeProcessorStats(char *buffer, size_t size);
 
+// [UWP]: The same for the game's other threads, which each note their own processor at a cheap point (no locks, no
+// allocation, no logging): the driver thread once per frame, the audio thread once per callback, the profiler's sampler
+// once per sample, and a pool worker once per task. I_UWPTakeThreadStats writes which ones each was on since the last
+// call, like "driver 4 (55%), 5 (45%); audio 2 (100%); sampler 3 (90%), 2 (10%); pool none"
+typedef enum
+{
+	UWPTHREAD_DRIVER,
+	UWPTHREAD_AUDIO,
+	UWPTHREAD_SAMPLER,
+	UWPTHREAD_POOL,
+	NUMUWPTHREADS
+} uwpthreadkind_t;
+void I_UWPNoteThreadProcessor(uwpthreadkind_t kind);
+void I_UWPTakeThreadStats(char *buffer, size_t size);
+
 // [UWP]: What the main thread is doing, for the profiler
 typedef enum
 {

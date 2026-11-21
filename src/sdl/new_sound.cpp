@@ -386,6 +386,9 @@ static const char* kAudio = "Audio";
 void audio_callback(void* userdata, Uint8* buffer, int len)
 {
 	tracy::SetThreadName("SDL Audio Thread");
+#ifdef _UWP
+	I_UWPNoteThreadProcessor(UWPTHREAD_AUDIO); // [UWP]: Count where the audio thread ran, once per callback
+#endif
 	FrameMarkStart(kAudio);
 	ZoneScoped;
 	floatdenormalstate_t dtzstate = M_EnterFloatDenormalToZero();
