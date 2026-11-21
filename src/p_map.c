@@ -19,6 +19,7 @@
 #include "m_bbox.h"
 #include "m_random.h"
 #include "p_local.h"
+#include "m_prefetch.h" // [ZE]
 #include "p_setup.h" // NiGHTS stuff
 #include "r_fps.h"
 #include "r_state.h"
@@ -1809,6 +1810,10 @@ static boolean P_BlockThingsIteratorCheck(INT32 x, INT32 y)
 	while (mobj)
 	{
 		BlockItReturn_t ret;
+
+		// [ZE]: A hint only (m_prefetch.h): start loading the next thing while this one is tested. The walk still reads
+		// mobj->bnext where it did.
+		M_PrefetchBlockThing(mobj->bnext);
 
 		if (g_tm.thing != NULL && !P_MobjWasRemoved(g_tm.thing)
 			&& (P_MobjWasRemoved(mobj) || mobj == g_tm.thing || P_ThingSurelyOutOfReach(mobj)))

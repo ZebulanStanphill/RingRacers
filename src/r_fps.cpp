@@ -27,6 +27,9 @@
 #include "i_time.h"
 // [ZE]: Include frame capture mode, which turns interpolation off.
 #include "d_framecapture.h"
+#include "m_prefetch.h" // [ZE]
+
+#include <algorithm> // [ZE]: std::min
 
 UINT32 R_GetFramerateCap(void)
 {
@@ -677,10 +680,35 @@ void R_InitMobjInterpolators(void)
 	interpolated_mobjs.clear();
 }
 
+// [ZE]: Starts loading the fields R_ResetMobjInterpolationState touches (m_prefetch.h). NULL is fine. The test is in
+// here, not in the loop that calls this, so that loop keeps its shape for profile-guided optimization.
+static inline void R_PrefetchMobjInterpolationState(const mobj_t *mobj)
+{
+	if (!mobj)
+		return;
+
+	M_Prefetch(mobj);
+	M_Prefetch(&mobj->angle);
+	M_Prefetch(&mobj->old_angle);
+	M_Prefetch(&mobj->old_x2);
+	M_Prefetch(&mobj->scale);
+	M_Prefetch(&mobj->old_scale);
+	M_Prefetch(&mobj->spritexscale);
+	M_Prefetch(&mobj->old_spritexscale);
+	M_Prefetch(&mobj->resetinterp);
+}
+
 void R_UpdateMobjInterpolators(void)
 {
+	// [ZE]: Hints only (m_prefetch.h): each pass starts loading the mobj eight entries ahead. The loop is upstream's.
+	const size_t count = interpolated_mobjs.size();
+	size_t ahead = 8;
+
 	for (mobj_t* mobj : interpolated_mobjs)
 	{
+		R_PrefetchMobjInterpolationState(interpolated_mobjs[std::min(ahead, count - 1)]); // [ZE]
+		ahead++; // [ZE]
+
 		if (!P_MobjWasRemoved(mobj))
 			R_ResetMobjInterpolationState(mobj);
 	}

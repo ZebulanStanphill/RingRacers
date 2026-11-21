@@ -18,6 +18,7 @@
 
 #include "k_kart.h"
 #include "p_local.h"
+#include "m_prefetch.h" // [ZE]
 #include "r_main.h"
 #include "r_data.h"
 #include "r_textures.h"
@@ -1393,6 +1394,9 @@ boolean P_BlockThingsIterator(INT32 x, INT32 y, BlockItReturn_t (*func)(mobj_t *
 	for (mobj = blocklinks[y*bmapwidth + x]; mobj; mobj = bnext)
 	{
 		BlockItReturn_t ret = BMIT_CONTINUE;
+
+		// [ZE]: A hint only (m_prefetch.h): start loading the next thing while func runs on this one.
+		M_PrefetchBlockThing(mobj->bnext);
 
 		P_SetTarget(&bnext, mobj->bnext); // We want to note our reference to bnext here incase it is MF_NOTHINK and gets removed!
 		ret = func(mobj);

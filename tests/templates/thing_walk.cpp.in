@@ -16,6 +16,9 @@ using std::abs;
 
 @@TYPES@@
 
+// The walk's prefetch hint (m_prefetch.h) does nothing a program can observe; here it only has to compile.
+#define M_PrefetchBlockThing(mobj) ((void)(mobj))
+
 // Only what the extracted walk and pre-filter read.
 struct mobj_t
 {
