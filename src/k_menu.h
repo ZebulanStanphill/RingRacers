@@ -435,10 +435,6 @@ typedef enum
 	vaopt_anisotropic,
 	vaopt_billboarding,
 	vaopt_perspective,
-// [UWP]: Put Batching after the other hardware settings because players rarely need it.
-#ifdef _UWP
-	vaopt_batching,
-#endif
 	vaopt_legacygl_end,
 } vaopt_e;
 

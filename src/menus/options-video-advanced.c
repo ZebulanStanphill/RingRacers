@@ -135,12 +135,6 @@ menuitem_t OPTIONS_VideoAdvanced[] =
 
 	{IT_STRING | IT_CVAR, "Software Perspective", "Emulates Software shearing when looking up or down. Not recommended.",
 		NULL, {.cvar = &cv_glshearing}, 0, 0},
-
-#ifdef _UWP
-	// [UWP]: Last, as the setting an average player needs least
-	{IT_STRING | IT_CVAR, "Batching", "Improves hardware rendering speed. Turn off to check visual problems. Resets on launch.",
-		NULL, {.cvar = &cv_glbatching}, 0, 0},
-#endif
 };
 
 menu_t OPTIONS_VideoAdvancedDef = {
