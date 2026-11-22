@@ -93,6 +93,10 @@ CV_PossibleValue_t glanisotropicmode_cons_t[] = {{0, "Off"}, {16, "16"}, {0, nul
 void HWR_Startup() {}
 UINT32 HWR_UWPTakeLazyModelLoads(void) { return 0; }
 void I_UWPProfileDriverThread(boolean) {}
+#ifdef _UWP
+// Only the Windows driver test builds the driver thread as the Xbox build does.
+void I_UWPNoteThreadProcessor(uwpthreadkind_t) {}
+#endif
 precise_t I_GetPreciseTime() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 UINT64 I_GetPrecisePrecision() { LARGE_INTEGER n; QueryPerformanceFrequency(&n); return n.QuadPart; }
 void I_OutputMsg(const char *fmt, ...) { char b[8192]; va_list ap; va_start(ap,fmt); vsnprintf(b,sizeof b,fmt,ap); va_end(ap); std::lock_guard<std::mutex> lock(logMutex); logs += b; fputs(b,stdout); }
