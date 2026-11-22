@@ -26,6 +26,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${RR_SOURCE_DIR}/src/r_defs.h"
     "${RR_SOURCE_DIR}/src/k_pathfind.c"
     "${RR_SOURCE_DIR}/src/k_bheap.c"
+    "${RR_SOURCE_DIR}/src/k_waypoint.cpp"
     "${RR_SOURCE_DIR}/src/p_map.c"
     "${RR_SOURCE_DIR}/src/p_maputl.c"
     "${RR_SOURCE_DIR}/src/p_maputl.h"
@@ -167,6 +168,7 @@ regression(trace_uwp_hw trace _UWP HWRENDER)
 regression(wipe_math wipe)
 regression(view_interpolation view_interp)
 regression(pathfind pathfind)
+regression(waypoint_memo waypoint_memo)
 regression(block_lines block_lines)
 # Exercise invalid pointers through the production linedef box accessor.
 regression(block_lines_paranoia block_lines PARANOIA TEST_LINE_PARANOIA)

@@ -1,0 +1,634 @@
+// Checks the finish distance reuse extracted from k_waypoint.cpp against fresh searches. The search is a stand-in that
+// reads the same inputs as the real one (the graph, and each waypoint mobj's x, y, z, extravalue1, and lastlook) and
+// counts its calls; what is under test is the code that decides when a stored distance may stand in for it.
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <random>
+#include <vector>
+
+using fixed_t = std::int32_t;
+using INT32 = std::int32_t;
+using UINT8 = std::uint8_t;
+using UINT32 = std::uint32_t;
+using boolean = bool;
+
+static UINT32 cht_debug = 0;
+enum : UINT32 { DBG_GAMELOGIC = 0x80 };
+
+struct mobj_t
+{
+	fixed_t x, y, z;
+	INT32 extravalue1;
+	INT32 lastlook;
+	bool removed;
+};
+
+struct waypoint_t
+{
+	mobj_t *mobj;
+	waypoint_t **nextwaypoints;
+	UINT32 *nextwaypointdistances;
+	size_t numnextwaypoints;
+};
+
+struct path_t
+{
+	void *array;
+	size_t numnodes;
+	UINT32 totaldist;
+};
+
+static bool P_MobjWasRemoved(const mobj_t *mobj)
+{
+	return mobj->removed;
+}
+
+void I_Error(const char *message, ...)
+{
+	std::fprintf(stderr, "I_Error: %s\n", message);
+	std::abort();
+}
+
+static void Z_Free(void *ptr)
+{
+	std::free(ptr);
+}
+
+// The stand-in search: Dijkstra over the enabled, non-shortcut waypoints, with edge costs that also depend on the
+// target's position. A NULL or removed mobj reads as enabled, not a shortcut, and at the origin, as upstream's getters do.
+static unsigned searches;
+
+static bool enabled(const waypoint_t *w)
+{
+	return !w->mobj || w->mobj->removed || w->mobj->extravalue1 == 1;
+}
+
+static bool shortcut(const waypoint_t *w)
+{
+	return w->mobj && !w->mobj->removed && w->mobj->lastlook == 1;
+}
+
+static fixed_t xpos(const waypoint_t *w)
+{
+	return (w->mobj && !w->mobj->removed) ? w->mobj->x + w->mobj->y + w->mobj->z : 0;
+}
+
+boolean K_PathfindToWaypoint(waypoint_t *const source, waypoint_t *const dest, path_t *const path,
+	const boolean useshortcuts, const boolean huntbackwards)
+{
+	assert(!useshortcuts && !huntbackwards);
+	++searches;
+
+	if (source == nullptr || dest == nullptr || source->numnextwaypoints == 0)
+		return false;
+
+	std::map<waypoint_t *, UINT32> dist;
+	std::map<waypoint_t *, bool> done;
+	dist[source] = 0;
+
+	for (;;)
+	{
+		waypoint_t *best = nullptr;
+		for (auto &entry : dist)
+			if (!done[entry.first] && (!best || entry.second < dist[best]))
+				best = entry.first;
+		if (!best)
+			return false;
+		if (best == dest)
+		{
+			path->totaldist = dist[best];
+			path->numnodes = 1;
+			path->array = std::calloc(1, 8);
+			return true;
+		}
+		done[best] = true;
+		for (size_t i = 0; i < best->numnextwaypoints; ++i)
+		{
+			waypoint_t *next = best->nextwaypoints[i];
+			if (!enabled(next) || (shortcut(next) && !shortcut(best)))
+				continue;
+			const UINT32 cost = dist[best] + best->nextwaypointdistances[i] + (UINT32)(xpos(next) & 7);
+			if (!dist.count(next) || cost < dist[next])
+				dist[next] = cost;
+		}
+	}
+}
+
+struct Memo
+{
+	const char *name;
+	void (*begin)();
+	void (*end)();
+	void (*abort_)();
+	void (*reset)();
+	boolean (*find)(waypoint_t *, waypoint_t *, path_t *);
+	waypoint_t **heap;
+	size_t *count;
+	waypoint_t **finish;
+};
+
+// What each copy of the production code sees as the file's own statics.
+#define MEMO_STATE \
+	static waypoint_t *waypointheap = nullptr; \
+	static waypoint_t *finishline = nullptr; \
+	static size_t numwaypoints = 0;
+
+#define MEMO_OPS(NS) \
+	static Memo ops = { #NS, K_BeginFinishDistanceReuse, K_EndFinishDistanceReuse, K_AbortFinishDistanceReuse, \
+		K_ResetFinishDistanceReuse, K_PathfindToFinishForDistance, &waypointheap, &numwaypoints, &finishline };
+
+namespace production
+{
+MEMO_STATE
+@@PRODUCTION@@
+MEMO_OPS(production)
+}
+
+namespace mutant_stores_when_unarmed
+{
+MEMO_STATE
+@@STORES_UNARMED@@
+MEMO_OPS(mutant_stores_when_unarmed)
+}
+
+namespace mutant_ignores_lastlook
+{
+MEMO_STATE
+@@IGNORES_LASTLOOK@@
+MEMO_OPS(mutant_ignores_lastlook)
+}
+
+namespace mutant_ignores_extravalue1
+{
+MEMO_STATE
+@@IGNORES_EXTRAVALUE1@@
+MEMO_OPS(mutant_ignores_extravalue1)
+}
+
+namespace mutant_ignores_z
+{
+MEMO_STATE
+@@IGNORES_Z@@
+MEMO_OPS(mutant_ignores_z)
+}
+
+namespace mutant_keeps_entries_on_change
+{
+MEMO_STATE
+@@KEEPS_ENTRIES@@
+MEMO_OPS(mutant_keeps_entries_on_change)
+}
+
+namespace mutant_stores_failures
+{
+MEMO_STATE
+@@STORES_FAILURES@@
+MEMO_OPS(mutant_stores_failures)
+}
+
+namespace mutant_reads_when_unarmed
+{
+MEMO_STATE
+@@READS_UNARMED@@
+MEMO_OPS(mutant_reads_when_unarmed)
+}
+
+namespace mutant_ignores_graph_identity
+{
+MEMO_STATE
+@@IGNORES_IDENTITY@@
+MEMO_OPS(mutant_ignores_graph_identity)
+}
+
+namespace mutant_ignores_debug_flag
+{
+MEMO_STATE
+@@IGNORES_DEBUG@@
+MEMO_OPS(mutant_ignores_debug_flag)
+}
+
+namespace mutant_reset_keeps_entries
+{
+MEMO_STATE
+@@RESET_KEEPS@@
+MEMO_OPS(mutant_reset_keeps_entries)
+}
+
+// One level: a random graph in an array, with a mobj per waypoint.
+struct Level
+{
+	std::vector<mobj_t> mobjs;
+	std::vector<waypoint_t> waypoints;
+	std::vector<std::vector<waypoint_t *>> next;
+	std::vector<std::vector<UINT32>> costs;
+
+	Level(std::mt19937 &rng, size_t n)
+	{
+		mobjs.resize(n);
+		waypoints.resize(n);
+		next.resize(n);
+		costs.resize(n);
+		for (size_t i = 0; i < n; ++i)
+		{
+			mobjs[i] = {fixed_t(rng() % 4096), fixed_t(rng() % 4096), fixed_t(rng() % 4096),
+				(rng() % 5) ? 1 : 0, (rng() % 4) == 0, false};
+			waypoints[i].mobj = &mobjs[i];
+		}
+		for (size_t i = 0; i < n; ++i)
+		{
+			// A chain plus a few chords, so most waypoints reach the finish line and a few don't.
+			const size_t chords = rng() % 3;
+			if (i + 1 < n)
+			{
+				next[i].push_back(&waypoints[i + 1]);
+				costs[i].push_back(rng() % 50);
+			}
+			for (size_t e = 0; e < chords; ++e)
+			{
+				next[i].push_back(&waypoints[rng() % n]);
+				costs[i].push_back(rng() % 50);
+			}
+			waypoints[i].nextwaypoints = next[i].data();
+			waypoints[i].nextwaypointdistances = costs[i].data();
+			waypoints[i].numnextwaypoints = next[i].size();
+		}
+	}
+};
+
+static void install(const Memo &m, Level &level, size_t finish, size_t count)
+{
+	*m.heap = level.waypoints.data();
+	*m.count = count;
+	*m.finish = &level.waypoints[finish];
+}
+
+// Searches fresh, through the stand-in itself.
+static bool fresh(waypoint_t *source, waypoint_t *finish, UINT32 &dist)
+{
+	path_t path = {};
+	const bool found = K_PathfindToWaypoint(source, finish, &path, false, false);
+	if (found)
+		dist = path.totaldist;
+	Z_Free(path.array);
+	return found;
+}
+
+// Asks the memo for every source and compares with a fresh search. Returns the number of differences and counts the
+// searches the memo itself ran.
+static unsigned ask(const Memo &m, Level &level, std::mt19937 &rng, unsigned &memosearches)
+{
+	unsigned wrong = 0;
+	std::vector<size_t> order(level.waypoints.size());
+	for (size_t i = 0; i < order.size(); ++i)
+		order[i] = i;
+	std::shuffle(order.begin(), order.end(), rng);
+	for (size_t i : order)
+	{
+		waypoint_t *source = &level.waypoints[i];
+		UINT32 want = 0;
+		const bool wantfound = fresh(source, *m.finish, want);
+		path_t path = {};
+		const unsigned before = searches;
+		const bool found = m.find(source, *m.finish, &path);
+		memosearches += searches - before;
+		if (found != wantfound || (found && path.totaldist != want))
+			++wrong;
+		Z_Free(path.array);
+	}
+	return wrong;
+}
+
+static void mutate(Level &level, std::mt19937 &rng)
+{
+	mobj_t &mobj = level.mobjs[rng() % level.mobjs.size()];
+	switch (rng() % 5)
+	{
+	case 0: mobj.x += 1 + rng() % 100; break;
+	case 1: mobj.y += 1 + rng() % 100; break;
+	case 2: mobj.z += 1 + rng() % 100; break;
+	case 3: mobj.extravalue1 ^= 1; break;
+	case 4: mobj.lastlook ^= 1; break;
+	}
+}
+
+// Random passes, as the engine runs them: arm, ask (answers must equal fresh searches), end or abort. Values change only
+// outside an armed pass, where scripts or other code may write them.
+static unsigned scenario(const Memo &m, unsigned seed, unsigned &answered, unsigned &asked)
+{
+	std::mt19937 rng(seed);
+	unsigned wrong = 0;
+	unsigned memosearches = 0;
+	const size_t n = 6 + rng() % 10;
+	Level level(rng, n);
+	install(m, level, rng() % n, n);
+	m.reset();
+
+	for (int step = 0; step < 60; ++step)
+	{
+		const unsigned action = rng() % 8;
+		if (action < 3)
+			mutate(level, rng);
+
+		m.begin();
+		for (int round = 0; round < 3; ++round)
+		{
+			const unsigned before = memosearches;
+			wrong += ask(m, level, rng, memosearches);
+			answered += (unsigned)n - std::min<unsigned>((unsigned)n, memosearches - before);
+			asked += (unsigned)n;
+		}
+		if (action == 3)
+		{
+			// A hook ran: abort, let a script write, and keep asking in the same pass.
+			m.abort_();
+			mutate(level, rng);
+			wrong += ask(m, level, rng, memosearches);
+		}
+		m.end();
+		if (action == 4)
+		{
+			// Asks between passes, after a change: the plain search.
+			mutate(level, rng);
+			wrong += ask(m, level, rng, memosearches);
+		}
+	}
+	return wrong;
+}
+
+static unsigned failures;
+static bool report = true;
+
+static void check(bool condition, const char *what)
+{
+	if (!condition)
+	{
+		++failures;
+		if (report)
+			std::fprintf(stderr, "FAILED: %s\n", what);
+	}
+}
+
+// How many searches finding every source in a row took (the memo's own, not the checks').
+static unsigned searches_for(const Memo &m, waypoint_t *source, waypoint_t *dest, int calls, bool *found = nullptr)
+{
+	const unsigned before = searches;
+	for (int i = 0; i < calls; ++i)
+	{
+		path_t path = {};
+		const bool f = m.find(source, dest, &path);
+		if (found)
+			*found = f;
+		Z_Free(path.array);
+	}
+	return searches - before;
+}
+
+// Fixed cases the random passes might not pin down. Failed checks are counted, so mutants can be caught by them.
+static void hand_made(const Memo &m)
+{
+	std::mt19937 rng(7);
+	Level level(rng, 8);
+	const size_t last = 7;
+	for (mobj_t &mobj : level.mobjs)
+	{
+		mobj.extravalue1 = 1;
+		mobj.lastlook = 0;
+	}
+	install(m, level, last, 8);
+	m.reset();
+	waypoint_t *finish = &level.waypoints[last];
+	waypoint_t *source = &level.waypoints[0];
+	UINT32 want = 0;
+
+	check(searches_for(m, source, finish, 3) == 3, "unarmed, every call is a search");
+	m.begin();
+	check(searches_for(m, source, finish, 1) == 1, "the first armed call searches: nothing was stored while unarmed");
+	{
+		path_t path = {};
+		const unsigned before = searches;
+		check(m.find(source, finish, &path), "the second armed call finds a path");
+		check(searches == before, "and runs no search");
+		check(path.array == nullptr && path.numnodes == 0, "and leaves the path as the caller had it");
+		check(fresh(source, finish, want) && path.totaldist == want, "and equals a fresh search");
+	}
+	m.end();
+	check(searches_for(m, source, finish, 1) == 1, "after the pass a call is a search again");
+	m.begin();
+	check(searches_for(m, source, finish, 1) == 0, "unchanged values keep entries across passes");
+	m.end();
+
+	level.mobjs[3].extravalue1 ^= 1;
+	m.begin();
+	check(searches_for(m, source, finish, 1) == 1, "an extravalue1 change drops the entries");
+	m.end();
+	level.mobjs[3].extravalue1 ^= 1;
+	// Store under the restored values first, so the next check sees only the lastlook change.
+	m.begin();
+	searches_for(m, source, finish, 1);
+	check(searches_for(m, source, finish, 1) == 0, "the restored values are stored again");
+	m.end();
+
+	level.mobjs[4].lastlook ^= 1;
+	m.begin();
+	check(searches_for(m, source, finish, 1) == 1, "a lastlook change drops the entries");
+	m.end();
+
+	level.mobjs[5].z += 3;
+	m.begin();
+	check(searches_for(m, source, finish, 1) == 1, "a z change drops the entries");
+
+	// Abort: later calls in the same pass search and store nothing, and a change is seen at the next arming.
+	m.abort_();
+	level.mobjs[6].x += 9;
+	check(searches_for(m, source, finish, 2) == 2, "after an abort every call searches");
+	m.end();
+	m.begin();
+	check(searches_for(m, source, finish, 1) == 1, "a change during an aborted pass drops the entries at the next arming");
+	{
+		bool found = false;
+		searches_for(m, source, finish, 1, &found);
+		UINT32 got = 0;
+		path_t path = {};
+		m.find(source, finish, &path);
+		got = path.totaldist;
+		check(fresh(source, finish, want) && got == want, "and the stored distance is the one for the new values");
+	}
+	m.end();
+
+	// A hook changes a value, searches, and restores the value, all in one pass: that search must not be stored,
+	// because the next arming sees the same values as before and keeps the entries.
+	m.begin();
+	searches_for(m, source, finish, 1);
+	check(searches_for(m, source, finish, 1) == 0, "a distance is stored before the hook");
+	m.abort_();
+	{
+		UINT32 changed = 0;
+		check(fresh(source, finish, want), "a path exists before the hook's change");
+		for (mobj_t &mobj : level.mobjs)
+			mobj.x += 1;
+		check(fresh(source, finish, changed) && changed != want, "the hook's change alters the distance");
+		searches_for(m, source, finish, 1);
+		for (mobj_t &mobj : level.mobjs)
+			mobj.x -= 1;
+	}
+	m.end();
+	m.begin();
+	{
+		path_t path = {};
+		check(m.find(source, finish, &path) && path.totaldist == want,
+			"a search made after an abort is not stored: the restored values give the old distance");
+		Z_Free(path.array);
+	}
+	m.end();
+
+	// Only the finish line as destination, sources inside the heap, and no debug output reuse a distance.
+	m.begin();
+	{
+		path_t path = {};
+		m.find(source, finish, &path);
+		check(searches_for(m, source, &level.waypoints[last - 1], 1) == 1, "a destination that isn't the finish line is a search");
+
+		waypoint_t outside = level.waypoints[0];
+		check(searches_for(m, &outside, finish, 2) == 2, "a source outside the heap is a search every time");
+		check(searches_for(m, nullptr, finish, 1) == 1, "a NULL source is a search");
+
+		cht_debug = DBG_GAMELOGIC;
+		check(searches_for(m, source, finish, 1) == 1, "with debug output on, a stored distance is not used");
+		cht_debug = 0;
+		check(searches_for(m, source, finish, 1) == 0, "and with it off again, it is");
+	}
+	m.end();
+
+	// A failed search is never stored: a waypoint with no next waypoints has no path.
+	{
+		Level dead(rng, 5);
+		install(m, dead, 4, 5);
+		m.reset();
+		dead.waypoints[2].numnextwaypoints = 0;
+		m.begin();
+		bool found = true;
+		unsigned count = searches_for(m, &dead.waypoints[2], &dead.waypoints[4], 1, &found);
+		check(!found, "a waypoint with no next waypoint has no path");
+		count += searches_for(m, &dead.waypoints[2], &dead.waypoints[4], 1, &found);
+		check(!found, "and still has none");
+		check(count == 2, "failures are searched every time");
+		m.end();
+	}
+
+	// Not armed: a waypoint without a mobj, a removed mobj, no finish line, or a finish line outside the heap.
+	{
+		Level broken(rng, 6);
+		for (mobj_t &mobj : broken.mobjs)
+			mobj.extravalue1 = 1;
+		install(m, broken, 4, 6);
+		m.reset();
+		waypoint_t *finish4 = &broken.waypoints[4];
+		auto pass = [&]() {
+			m.begin();
+			const unsigned count = searches_for(m, &broken.waypoints[0], finish4, 2);
+			m.end();
+			return count;
+		};
+		check(pass() == 1, "the control: armed, one search and one hit");
+		broken.waypoints[1].mobj = nullptr;
+		check(pass() == 2, "a waypoint without a mobj is not armed");
+		broken.waypoints[1].mobj = &broken.mobjs[1];
+		broken.mobjs[2].removed = true;
+		check(pass() == 2, "a removed mobj is not armed");
+		broken.mobjs[2].removed = false;
+		check(pass() == 0, "once repaired, the entry stored before is valid again: its values never changed");
+		*m.count = 4; // the finish line is now past the end of the heap
+		check(pass() == 2, "a finish line outside the heap is not armed");
+		*m.count = 6;
+		*m.finish = nullptr;
+		m.begin();
+		path_t path = {};
+		const unsigned before = searches;
+		m.find(&broken.waypoints[0], nullptr, &path);
+		m.end();
+		check(searches - before == 1, "no finish line is not armed");
+	}
+
+	// A different graph with the same values: the identity check or the reset drops the entries.
+	{
+		std::mt19937 r1(99), r2(99);
+		Level a(r1, 6), b(r2, 6);
+		for (mobj_t &mobj : a.mobjs)
+		{
+			mobj.extravalue1 = 1; // every waypoint reaches the finish line along the chain
+			mobj.lastlook = 0;
+		}
+		for (auto &list : b.costs)
+			for (UINT32 &cost : list)
+				cost += 11; // every path through the graph now costs more
+		// The same mobjs with the same values, so only the graph's own identity tells the levels apart.
+		for (size_t i = 0; i < b.waypoints.size(); ++i)
+			b.waypoints[i].mobj = &a.mobjs[i];
+		install(m, a, 5, 6);
+		m.reset();
+		unsigned memosearches = 0;
+		m.begin();
+		ask(m, a, rng, memosearches);
+		m.end();
+		install(m, b, 5, 6);
+		m.begin();
+		check(ask(m, b, rng, memosearches) == 0, "another level's graph does not reuse the old entries");
+		m.end();
+		// The same graph edited in place, as a new level's setup would after K_ClearWaypoints.
+		for (auto &list : b.costs)
+			for (UINT32 &cost : list)
+				cost += 7;
+		m.reset();
+		m.begin();
+		check(ask(m, b, rng, memosearches) == 0, "a cleared memo does not reuse the old entries");
+		m.end();
+	}
+}
+
+int main()
+{
+	std::printf("waypoint finish distance reuse\n");
+
+	unsigned answered = 0;
+	unsigned asked = 0;
+	unsigned wrong = 0;
+	for (unsigned seed = 0; seed < 100; ++seed)
+		wrong += scenario(production::ops, seed, answered, asked);
+	check(wrong == 0, "production returns what a fresh search returns in every random pass");
+	check(answered > asked / 8, "production answers a good share of the asks without a search");
+	hand_made(production::ops);
+	std::printf("  production: %u asks, %u answered without a search, %u differences, %u failed checks\n",
+		asked, answered, wrong, failures);
+	if (failures != 0)
+		return 1;
+
+	const Memo *mutants[] = {
+		&mutant_ignores_lastlook::ops, &mutant_ignores_extravalue1::ops, &mutant_ignores_z::ops,
+		&mutant_keeps_entries_on_change::ops, &mutant_stores_failures::ops, &mutant_reads_when_unarmed::ops,
+		&mutant_ignores_graph_identity::ops, &mutant_ignores_debug_flag::ops, &mutant_reset_keeps_entries::ops,
+		&mutant_stores_when_unarmed::ops,
+	};
+	report = false;
+	for (const Memo *mutant : mutants)
+	{
+		// Each negative control must be caught by the random passes or by the hand-made cases.
+		unsigned a = 0, asked2 = 0, mutantwrong = 0;
+		failures = 0;
+		for (unsigned seed = 0; seed < 100; ++seed)
+			mutantwrong += scenario(*mutant, seed, a, asked2);
+		hand_made(*mutant);
+		std::printf("  %s: %u differences in random passes, %u failed hand-made checks\n", mutant->name, mutantwrong,
+			failures);
+		if (mutantwrong == 0 && failures == 0)
+		{
+			std::fprintf(stderr, "FAILED: %s was not caught\n", mutant->name);
+			return 1;
+		}
+	}
+	std::printf("ok\n");
+	return 0;
+}

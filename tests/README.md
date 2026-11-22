@@ -87,6 +87,30 @@ Use the CTest filter under Running to select the cases below by name.
   Rebasing every predecessor to the start changes the returned path when a
   five-node chain forces the node array to move.
 
+- **Finish distance reuse:** `waypoint_memo` extracts the production code that
+  stores waypoint distances to the finish line (`k_waypoint.cpp`) and runs it
+  beside a stand-in search that reads the same inputs as the real one (the
+  graph, and each waypoint mobj's `x`, `y`, `z`, `extravalue1`, and `lastlook`)
+  and counts its calls. 100 seeded random graphs run 60 passes each: arm,
+  ask for every source several times in random order, end or abort, and change
+  a value only outside an armed pass, as a script could. Every answer must
+  equal a fresh search. Directed cases check that a hit runs no search and
+  leaves the path as the caller had it; that an `extravalue1`, `lastlook`, or
+  `z` change drops the entries (each checked alone); that after an abort every
+  call searches and stores nothing, even when a value changes and is restored
+  within the pass; that other destinations, sources outside the heap, a NULL
+  source, and `DBG_GAMELOGIC` output are plain searches; that failures are
+  never stored; that a missing or removed mobj, no finish line, or a finish
+  line outside the heap does not arm; and that another level's graph, or a
+  cleared memo, reuses nothing. Ten generated negative controls (ignoring
+  `lastlook`, `extravalue1`, or `z`; keeping entries after a change; storing
+  failures; reading while unarmed; storing while unarmed; ignoring the graph's identity or the debug
+  flag; and a reset that keeps entries) must each be caught. The test cannot
+  cover what no value can show, which is the audit in the commit message that
+  nothing reachable from the pass writes those fields. A build with
+  `-DK_FINISH_DISTANCE_VERIFY` also runs the real search on every hit and
+  checks the guarded values when the pass ends.
+
 - **Blockmap line walks:** `block_lines` compares the production iterators and
   the three callback rejection prefixes against a frozen pre-table walk. It
   checks callback order and live query boxes, early stop and abort results, and

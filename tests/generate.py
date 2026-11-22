@@ -92,12 +92,53 @@ def generate_pathfind(engine, templates, output):
     }, output / "pathfind.cpp")
 
 
+def generate_waypoint_memo(engine, templates, output):
+    memo = Source(engine / "src/k_waypoint.cpp").section(
+        "// [ZE]: BEGIN finish distance reuse", "// [ZE]: END finish distance reuse")
+    # Each negative control changes one piece of the production code that the argument relies on.
+    snapshot = "\t\t\t|| snap.extravalue1 != mobj->extravalue1 || snap.lastlook != mobj->lastlook)\n\t\t{"
+    mutations = {
+        "IGNORES_LASTLOOK": (snapshot, "\t\t\t|| snap.extravalue1 != mobj->extravalue1)\n\t\t{"),
+        "IGNORES_EXTRAVALUE1": (snapshot, "\t\t\t|| snap.lastlook != mobj->lastlook)\n\t\t{"),
+        "IGNORES_Z": ("snap.y != mobj->y || snap.z != mobj->z\n\t\t\t||", "snap.y != mobj->y\n\t\t\t||"),
+        "KEEPS_ENTRIES": (
+            "\tif (changed)\n\t{\n\t\tstd::fill(finishdistvalid.begin(), finishdistvalid.end(), 0U);\n\t}\n", ""),
+        "STORES_FAILURES": ("if (reuse && pathfound == true && finishdistarmed)", "if (reuse && finishdistarmed)"),
+        "STORES_UNARMED": (
+            "\tif (reuse && pathfound == true && finishdistarmed)\n\t{\n"
+            "\t\tfinishdistdist[index] = returnpath->totaldist;\n\t\tfinishdistvalid[index] = 1U;\n\t}\n",
+            "\tif (pathfound == true && destinationwaypoint == finishline\n"
+            "\t\t&& offset < (uintptr_t)numwaypoints * sizeof(waypoint_t) && finishdistvalid.size() == numwaypoints)\n"
+            "\t{\n\t\tconst size_t at = (size_t)(sourcewaypoint - waypointheap);\n"
+            "\t\tfinishdistdist[at] = returnpath->totaldist;\n\t\tfinishdistvalid[at] = 1U;\n\t}\n"),
+        "READS_UNARMED": ("const bool reuse = (finishdistarmed\n", "const bool reuse = (finishdistsnapshot\n"),
+        "IGNORES_IDENTITY": (
+            "\t\t|| finishdistheap != waypointheap\n\t\t|| finishdistcount != numwaypoints\n"
+            "\t\t|| finishdistfinish != finishline\n\t\t|| finishdistsnaps.size() != numwaypoints);",
+            "\t\t|| (void(finishdistheap), void(finishdistcount), void(finishdistfinish), false));"),
+        "IGNORES_DEBUG": (
+            "\n\t\t&& (cht_debug & DBG_GAMELOGIC) != DBG_GAMELOGIC);", ");"),
+        "RESET_KEEPS": (
+            "\tfinishdistsnapshot = false;\n\tfinishdistheap = NULL;\n\tfinishdistcount = 0U;\n"
+            "\tfinishdistfinish = NULL;\n\tfinishdistsnaps.clear();\n\tfinishdistdist.clear();\n"
+            "\tfinishdistvalid.clear();\n", ""),
+    }
+    for name, (original, replacement) in mutations.items():
+        if memo.count(original) != 1:
+            raise ValueError(f"Could not inject the finish distance {name} negative control")
+    render(templates / "waypoint_memo.cpp.in", {
+        "PRODUCTION": memo,
+        **{name: memo.replace(original, replacement) for name, (original, replacement) in mutations.items()},
+    }, output / "waypoint_memo.cpp")
+
+
 def generate(engine, output):
     output.mkdir(parents=True, exist_ok=True)
     templates = Path(__file__).parent / "templates"
     generate_fixture(templates.parent / "fixtures", output)
     generate_title(engine, output, templates, render, function_section)
     generate_pathfind(engine, templates, output)
+    generate_waypoint_memo(engine, templates, output)
     render(templates / "split_projection.cpp.in", {
         "TRANSFORM": Source(engine / "src/hardware/r_viberant/r_viberant.cpp").function("VibeRant_SetTransform"),
         "FRUSTUM": Source(engine / "src/hardware/hw_clip.c").section("#define RMUL", "// SRB2CB I don't think"),

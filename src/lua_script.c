@@ -28,6 +28,7 @@
 #include "p_local.h"
 #include "p_slopes.h" // for P_SlopeById and slopelist
 #include "p_polyobj.h" // polyobj_t, PolyObjects
+#include "k_waypoint.h" // [ZE]: K_AbortFinishDistanceReuse
 #ifdef LUA_ALLOW_BYTECODE
 #include "d_netfil.h" // for LUA_DumpFile
 #endif
@@ -913,6 +914,9 @@ void LUA_InvalidateUserdata(void *data)
 	if (!ValidUserdata_Has(data))
 		return;
 	ValidUserdata_Remove(data);
+	// [ZE]: The Lua calls below can raise an error (out of memory) that jumps out of whatever freed this block, so a
+	// pass that reuses finish line distances ends here and can't be left on by the jump.
+	K_AbortFinishDistanceReuse();
 
 	// fetch the userdata
 	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);

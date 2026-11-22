@@ -12418,13 +12418,14 @@ static void K_UpdateDistanceFromFinishLine(player_t *const player)
 		}
 		else if ((player->currentwaypoint != NULL) && (player->nextwaypoint != NULL) && (finishline != NULL))
 		{
-			const boolean useshortcuts = false;
-			const boolean huntbackwards = false;
+			// [ZE]: Upstream declared the constants useshortcuts and huntbackwards (both false) here for the call below.
 			boolean pathfindsuccess = false;
 			path_t pathtofinish = {0};
 
-			pathfindsuccess =
-				K_PathfindToWaypoint(player->nextwaypoint, finishline, &pathtofinish, useshortcuts, huntbackwards);
+			// [ZE]: Upstream called K_PathfindToWaypoint(player->nextwaypoint, finishline, &pathtofinish, false, false),
+			// with those two flags as local constants. Only the result, totaldist, and the Z_Free are used, so a stored
+			// distance may stand in for it (pathtofinish.array may then be NULL, which Z_Free accepts).
+			pathfindsuccess = K_PathfindToFinishForDistance(player->nextwaypoint, finishline, &pathtofinish);
 
 			// Update the player's distance to the finish line if a path was found.
 			// Using shortcuts won't find a path, so distance won't be updated until the player gets back on track
@@ -13764,6 +13765,8 @@ void K_UpdateAllPlayerPositions(void)
 {
 	INT32 i;
 
+	K_BeginFinishDistanceReuse(); // [ZE]: May reuse finish line distances until the first loop ends (see k_waypoint.cpp).
+
 	// First loop: Ensure all players' distance to the finish line are all accurate
 	for (i = 0; i < MAXPLAYERS; i++)
 	{
@@ -13789,6 +13792,8 @@ void K_UpdateAllPlayerPositions(void)
 
 		K_UpdatePlayerWaypoints(player);
 	}
+
+	K_EndFinishDistanceReuse(); // [ZE]: Ends the reuse begun above.
 
 	// Second loop: Ensure all player positions reflect everyone's distances
 	for (i = 0; i < MAXPLAYERS; i++)

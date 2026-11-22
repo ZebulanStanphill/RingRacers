@@ -279,6 +279,26 @@ boolean K_PathfindToWaypoint(
 	const boolean     huntbackwards);
 
 
+// [ZE]: Same result as K_PathfindToWaypoint(sourcewaypoint, destinationwaypoint, returnpath, false, false), for
+// callers that use only the return value and returnpath->totaldist: when K_PathfindToFinishForDistance reuses a
+// stored distance, returnpath->array stays as the caller left it (NULL, which Z_Free accepts) and numnodes 0.
+// The finish line distances are stored only between K_BeginFinishDistanceReuse and K_EndFinishDistanceReuse;
+// k_waypoint.cpp explains why that is exact. Any other call is a plain K_PathfindToWaypoint.
+boolean K_PathfindToFinishForDistance(
+	waypoint_t *const sourcewaypoint,
+	waypoint_t *const destinationwaypoint,
+	path_t *const     returnpath);
+
+// [ZE]: Starts a pass that may reuse finish line distances (K_UpdateAllPlayerPositions' first loop).
+void K_BeginFinishDistanceReuse(void);
+
+// [ZE]: Ends the pass.
+void K_EndFinishDistanceReuse(void);
+
+// [ZE]: Ends the pass early, before anything that could run a script (every Lua hook call does this).
+void K_AbortFinishDistanceReuse(void);
+
+
 /*--------------------------------------------------
 	boolean K_PathfindThruCircuit(
 		waypoint_t *const sourcewaypoint,

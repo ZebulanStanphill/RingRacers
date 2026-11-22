@@ -17,6 +17,7 @@
 #include "g_game.h"
 #include "r_skins.h"
 #include "k_bot.h"
+#include "k_waypoint.h" // [ZE]: K_AbortFinishDistanceReuse
 #include "z_zone.h"
 
 #include "lua_script.h"
@@ -314,6 +315,9 @@ static boolean init_hook_type
 
 	if (nonzero)
 	{
+		// [ZE]: Pushing the hook's arguments can create a userdata, which can start a garbage collection step that runs a
+		// script's finalizer, so stop reusing finish line distances here too, before any push.
+		K_AbortFinishDistanceReuse();
 		start_hook_stack();
 		hook->hook_type = hook_type;
 		hook->mobj_type = mobj_type;
@@ -408,6 +412,7 @@ static void get_hook_from_table(Hook_State *hook, int n)
 
 static int pcall(Hook_State *hook)
 {
+	K_AbortFinishDistanceReuse(); // [ZE]: A script may move or toggle waypoints, so stop reusing finish line distances.
 	return lua_pcall(gL, hook->values, hook->results, EINDEX);
 }
 

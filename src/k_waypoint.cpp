@@ -24,6 +24,7 @@
 #include "cxxutil.hpp"
 
 #include <algorithm>
+#include <vector> // [ZE]: Finish distance reuse.
 
 #include <fmt/format.h>
 
@@ -376,8 +377,7 @@ static void K_CompareOverlappingWaypoint
 		waypoint_t **const bestwaypoint,
 		fixed_t     *const bestfindist)
 {
-	const boolean useshortcuts = false;
-	const boolean huntbackwards = false;
+	// [ZE]: Upstream declared the constants useshortcuts and huntbackwards (both false) here for the call below.
 	boolean pathfindsuccess = false;
 	path_t pathtofinish = {0};
 
@@ -388,8 +388,9 @@ static void K_CompareOverlappingWaypoint
 		return;
 	}
 
-	pathfindsuccess =
-		K_PathfindToWaypoint(checkwaypoint, finishline, &pathtofinish, useshortcuts, huntbackwards);
+	// [ZE]: Upstream called K_PathfindToWaypoint(checkwaypoint, finishline, &pathtofinish, false, false), with those
+	// two flags as local constants. Only the result and totaldist are used, so a stored distance may stand in for it.
+	pathfindsuccess = K_PathfindToFinishForDistance(checkwaypoint, finishline, &pathtofinish);
 
 	if (pathfindsuccess == true)
 	{
@@ -1398,6 +1399,225 @@ boolean K_PathfindToWaypoint(
 
 	return pathfound;
 }
+
+// [ZE]: BEGIN finish distance reuse
+//
+// K_CompareOverlappingWaypoint and K_UpdateDistanceFromFinishLine ask K_PathfindToWaypoint(w, finishline, &path,
+// false, false) for the same waypoints, several times per racer per tic, and use only whether a path was found and
+// path.totaldist. This stores that distance per source waypoint and returns it again while it is provably what the
+// search would return now.
+//
+// What the search reads (K_PathfindToWaypoint with useshortcuts and huntbackwards false, then K_PathfindAStar, the
+// binary heap, and K_WaypointPathfindGetNext, GetNextCosts, GetHeuristic, TraversableNoShortcuts, and ReachedEnd):
+//  1. The graph: waypointheap, each waypoint's nextwaypoints, numnextwaypoints, nextwaypointdistances, and
+//     numprevwaypoints, and finishline. They are written only while the level's waypoint list is set up
+//     (K_MakeWaypoint, K_AddPrevToWaypoint, K_SetupWaypoint, K_SetupWaypointList), which starts with K_FreeWaypoints,
+//     which calls K_ClearWaypoints, so the memo is cleared there.
+//  2. For each waypoint's mobj: whether it is NULL or removed, x, y, and z (the heuristic), extravalue1 (enabled),
+//     and lastlook (shortcut).
+//  3. The base capacities and scratch arrays, which only size buffers: capacity never changes which node is popped
+//     (the heap orders by score and the order of its own operations), the lookup table finds a node by its data
+//     pointer whatever its size, and a search starts by clearing everything it reads. The base capacities are read
+//     and grown only in the wrappers in this file and are not saved or synced.
+//  Nothing else: no random numbers, player state, or time.
+//
+// The argument:
+//  1. A stored distance came from the real search, run while armed, under the snapshot values S below.
+//  2. Every K_BeginFinishDistanceReuse compares the live values of every waypoint's mobj (pointer, x, y, z,
+//     extravalue1, lastlook) and the identity of the graph (waypointheap, numwaypoints, finishline) with S, and clears
+//     every entry on any difference, so when a pass is armed each valid entry was computed under values equal to the
+//     live ones. It does not arm unless every waypoint's mobj exists, so a search never reads a NULL or removed mobj,
+//     which would print debug messages and count as enabled.
+//  3. Between arming and the pass ending (K_EndFinishDistanceReuse, or K_AbortFinishDistanceReuse, which every Lua
+//     hook does before any script can run), nothing writes those values or the graph: the pass is the first loop of
+//     K_UpdateAllPlayerPositions, and nothing reachable from it except Lua hooks removes a mobj, moves a thing, sets a
+//     waypoint enabled, runs a linedef executor or ACS script, or writes a waypoint mobj (the commit message has the
+//     audit). A hook that calls K_UpdateAllPlayerPositions again arms and disarms in its own pass, and the outer pass
+//     stays disarmed afterwards, searching as upstream does. LUA_InvalidateUserdata, the one user of the Lua API
+//     reachable outside a hook (from Z_Free), also ends the pass before its Lua calls, so an error raised there
+//     cannot jump out of the pass and leave it armed.
+//  4. So a hit returns the totaldist the search would compute now, with a path found. Misses, unarmed calls, calls
+//     with a destination other than finishline, sources outside waypointheap, and calls while DBG_GAMELOGIC debug
+//     output is on (which the search can print) are the search itself. Failures are never stored.
+//  5. A hit skips the search's path array and scratch use and the growth of the base capacities. They affect buffers
+//     only, never a value the game reads.
+static bool finishdistarmed = false;
+static bool finishdistsnapshot = false;
+static waypoint_t *finishdistheap = NULL;
+static size_t finishdistcount = 0U;
+static waypoint_t *finishdistfinish = NULL;
+
+struct finishdistsnap_t
+{
+	mobj_t *mobj;
+	fixed_t x, y, z;
+	INT32 extravalue1;
+	INT32 lastlook;
+};
+
+static std::vector<finishdistsnap_t> finishdistsnaps;
+static std::vector<UINT32> finishdistdist;
+static std::vector<UINT8> finishdistvalid;
+
+static void K_ResetFinishDistanceReuse(void)
+{
+	finishdistarmed = false;
+	finishdistsnapshot = false;
+	finishdistheap = NULL;
+	finishdistcount = 0U;
+	finishdistfinish = NULL;
+	finishdistsnaps.clear();
+	finishdistdist.clear();
+	finishdistvalid.clear();
+}
+
+void K_BeginFinishDistanceReuse(void)
+{
+	size_t i;
+	bool changed;
+
+	finishdistarmed = false;
+
+	if (finishline == NULL || numwaypoints == 0U || waypointheap == NULL)
+	{
+		return;
+	}
+
+	// The destination's mobj must be one the snapshot covers.
+	if (finishline < waypointheap || finishline >= waypointheap + numwaypoints)
+	{
+		return;
+	}
+
+	for (i = 0U; i < numwaypoints; i++)
+	{
+		const mobj_t *mobj = waypointheap[i].mobj;
+
+		if (mobj == NULL || P_MobjWasRemoved(mobj))
+		{
+			return;
+		}
+	}
+
+	changed = (finishdistsnapshot == false
+		|| finishdistheap != waypointheap
+		|| finishdistcount != numwaypoints
+		|| finishdistfinish != finishline
+		|| finishdistsnaps.size() != numwaypoints);
+
+	if (changed)
+	{
+		finishdistsnaps.assign(numwaypoints, finishdistsnap_t());
+		finishdistdist.assign(numwaypoints, 0U);
+		finishdistvalid.assign(numwaypoints, 0U);
+	}
+
+	for (i = 0U; i < numwaypoints; i++)
+	{
+		mobj_t *mobj = waypointheap[i].mobj;
+		finishdistsnap_t &snap = finishdistsnaps[i];
+
+		if (snap.mobj != mobj
+			|| snap.x != mobj->x || snap.y != mobj->y || snap.z != mobj->z
+			|| snap.extravalue1 != mobj->extravalue1 || snap.lastlook != mobj->lastlook)
+		{
+			snap.mobj = mobj;
+			snap.x = mobj->x;
+			snap.y = mobj->y;
+			snap.z = mobj->z;
+			snap.extravalue1 = mobj->extravalue1;
+			snap.lastlook = mobj->lastlook;
+			changed = true;
+		}
+	}
+
+	if (changed)
+	{
+		std::fill(finishdistvalid.begin(), finishdistvalid.end(), 0U);
+	}
+
+	finishdistsnapshot = true;
+	finishdistheap = waypointheap;
+	finishdistcount = numwaypoints;
+	finishdistfinish = finishline;
+	finishdistarmed = true;
+}
+
+void K_EndFinishDistanceReuse(void)
+{
+#ifdef K_FINISH_DISTANCE_VERIFY
+	// Verification build: nothing may have written a guarded value while armed.
+	if (finishdistarmed)
+	{
+		size_t i;
+
+		for (i = 0U; i < numwaypoints; i++)
+		{
+			const mobj_t *mobj = waypointheap[i].mobj;
+			const finishdistsnap_t &snap = finishdistsnaps[i];
+
+			if (mobj == NULL || P_MobjWasRemoved(mobj) || snap.mobj != mobj
+				|| snap.x != mobj->x || snap.y != mobj->y || snap.z != mobj->z
+				|| snap.extravalue1 != mobj->extravalue1 || snap.lastlook != mobj->lastlook)
+			{
+				I_Error("K_EndFinishDistanceReuse: waypoint %d changed while finish distances were reused.", (int)i);
+			}
+		}
+	}
+#endif
+
+	finishdistarmed = false;
+}
+
+void K_AbortFinishDistanceReuse(void)
+{
+	finishdistarmed = false;
+}
+
+boolean K_PathfindToFinishForDistance(
+	waypoint_t *const sourcewaypoint,
+	waypoint_t *const destinationwaypoint,
+	path_t *const     returnpath)
+{
+	// Unsigned offsets avoid comparing a pointer that isn't in the array.
+	const uintptr_t offset = (uintptr_t)sourcewaypoint - (uintptr_t)waypointheap;
+	const bool reuse = (finishdistarmed
+		&& destinationwaypoint == finishline
+		&& offset < (uintptr_t)numwaypoints * sizeof(waypoint_t)
+		&& (cht_debug & DBG_GAMELOGIC) != DBG_GAMELOGIC);
+	const size_t index = reuse ? (size_t)(sourcewaypoint - waypointheap) : 0U;
+	boolean pathfound;
+
+	if (reuse && finishdistvalid[index])
+	{
+#ifdef K_FINISH_DISTANCE_VERIFY
+		path_t realpath = {0};
+		const boolean realfound = K_PathfindToWaypoint(sourcewaypoint, destinationwaypoint, &realpath, false, false);
+
+		if (realfound != true || realpath.totaldist != finishdistdist[index])
+		{
+			I_Error("K_PathfindToFinishForDistance: stored distance %u for waypoint %d, search gave %u (found %d).",
+				(unsigned)finishdistdist[index], (int)index, (unsigned)realpath.totaldist, (int)realfound);
+		}
+
+		Z_Free(realpath.array);
+#endif
+		returnpath->totaldist = finishdistdist[index];
+		return true;
+	}
+
+	pathfound = K_PathfindToWaypoint(sourcewaypoint, destinationwaypoint, returnpath, false, false);
+
+	if (reuse && pathfound == true && finishdistarmed)
+	{
+		finishdistdist[index] = returnpath->totaldist;
+		finishdistvalid[index] = 1U;
+	}
+
+	return pathfound;
+}
+
+// [ZE]: END finish distance reuse
 
 /*--------------------------------------------------
 	boolean K_PathfindThruCircuit(
@@ -2825,6 +3045,7 @@ boolean K_SetupWaypointList(void)
 --------------------------------------------------*/
 void K_ClearWaypoints(void)
 {
+	K_ResetFinishDistanceReuse(); // [ZE]: The graph the stored distances belong to is gone.
 	waypointheap     = NULL;
 	firstwaypoint    = NULL;
 	finishline       = NULL;
