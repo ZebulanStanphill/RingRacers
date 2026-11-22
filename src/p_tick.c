@@ -54,6 +54,7 @@
 #include "k_endcam.h"
 #include "lua_profile.h"
 #include "deh_tables.h" // MOBJTYPE_LIST
+#include "m_prefetch.h" // [ZE]
 
 tic_t leveltime;
 boolean thinkersCompleted;
@@ -570,6 +571,10 @@ static void P_RunThinkers(void)
 		ps_thlist_times[i] = I_GetPreciseTime();
 		for (currentthinker = thlist[i].next; currentthinker != &thlist[i]; currentthinker = currentthinker->next)
 		{
+			// [ZE]: A hint only (m_prefetch.h): start loading the next thinker while this one runs. Most are mobjs,
+			// whose thinker reads fields across about 768 bytes. The loop still reads currentthinker->next afterwards.
+			M_PrefetchBytes(currentthinker->next, 768);
+
 #ifdef PARANOIA
 			I_Assert(currentthinker->function.acp1 != NULL);
 #endif
