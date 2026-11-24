@@ -3,6 +3,7 @@
 #include <vector>
 #include "doomdef.h"
 #include "hardware/hw_driver.h"
+#include "m_prefetch.h"
 #include "r_defs.h"
 
 // Production forms a node pointer before testing the subsector bit. Keep that
@@ -28,6 +29,15 @@ static void HWR_Subsector(INT32 leaf)
     visits.push_back(leaf);
     boxes.push_back(hwbbox);
 }
+// The walk's memory hints (HWR_PrefetchChild) run as in production. They take addresses in these tables and
+// decide nothing, so the visits checked below are the same with them.
+struct extrasubsector_t { void *planepoly; };
+static size_t numnodes = NF_SUBSECTOR + 4, numsubsectors = 3, addsubsector = 3;
+static subsector_t subsectorStorage[3];
+static subsector_t *subsectors = subsectorStorage;
+static extrasubsector_t extraStorage[3];
+static extrasubsector_t *extrasubsectors = extraStorage;
+@@BSP_PREFETCH@@
 @@BSP_WALK@@
 
 // The drivers a build can draw with: only VibeRant for UWP (front_bbox_uwp), only OpenGL without the VibeRant

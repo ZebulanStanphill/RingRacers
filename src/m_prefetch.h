@@ -14,12 +14,15 @@
 /// list) pays that for every object, one stall after another, because the address of the next object is only known
 /// once the current one has been read. A hint pays off where the loop does enough work on each object for the next
 /// one's memory to arrive meanwhile: it did for the thinker list, and measurably didn't for the blockmap thing walk
-/// or the interpolation loop (see CHANGES.md).
+/// or the interpolation loop (see CHANGES.md). The hardware renderer's level walk also asks for several objects whose
+/// addresses it already knows (a subsector's segs, then their linedefs) together, so that they load side by side
+/// instead of one stall after another.
 
 #ifndef __M_PREFETCH__
 #define __M_PREFETCH__
 
 #include <stddef.h>
+#include <stdint.h>
 
 #if defined(__GNUC__) || defined(__clang__)
 #define M_Prefetch(address) __builtin_prefetch((const void *)(address))
@@ -44,6 +47,26 @@ static inline void M_PrefetchBytes(const void *object, size_t bytes)
 
 	for (offset = 0; offset < bytes; offset += M_CACHELINE)
 		M_Prefetch((const char *)object + offset);
+}
+
+// Every cache line that holds any of an object's first bytes, wherever in its line the object starts. NULL is fine.
+static inline void M_PrefetchSpan(const void *object, size_t bytes)
+{
+	const uintptr_t mask = ~(uintptr_t)(M_CACHELINE - 1);
+	uintptr_t line, last;
+	size_t lines;
+
+	if (!object || !bytes)
+		return;
+
+	line = (uintptr_t)object & mask;
+	last = ((uintptr_t)object + bytes - 1) & mask;
+	if (last < line) // the span would wrap around the address space
+		return;
+
+	// Counted, so that a span ending in the last line of the address space still ends.
+	for (lines = (last - line) / M_CACHELINE + 1; lines > 0; lines--, line += M_CACHELINE)
+		M_Prefetch(line);
 }
 
 #endif // __M_PREFETCH__

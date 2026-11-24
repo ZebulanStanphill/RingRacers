@@ -22,6 +22,7 @@
 #include "p_polyobj.h"
 #include "z_zone.h"
 #include "hardware/hw_glob.h"
+#include "m_prefetch.h"
 #undef min
 #undef max
 #define min std::min
@@ -36,6 +37,8 @@ polyvertex_t pverts[300]{};
 seg_t mapSegs[2000]{}; seg_t *segs=mapSegs;
 subsector_t mapSubs[300]{}; subsector_t *subsectors=mapSubs;
 node_t mapNodes[300]{}; node_t *nodes=mapNodes;
+// What the walk's memory hints (HWR_PrefetchChild, extracted with the walk) look at: the sizes of the tables above.
+size_t numsubsectors=300,numnodes=300,addsubsector=0; extrasubsector_t *extrasubsectors=nullptr;
 sector_t *gl_frontsector,*gl_backsector,*hwr_viewfog=nullptr;
 seg_t *gl_curline;line_t *gl_linedef;side_t *gl_sidedef;
 INT32 skyflatnum=1,numtextures=4;

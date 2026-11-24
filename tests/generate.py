@@ -967,6 +967,7 @@ def generate(engine, output):
             "        assert(extend==SoftwareDrawsLine(&seg,&a));",
             "        ++cases;if(!extend)++skipped;", "    }"])
     render(templates / "front_bbox.cpp.in", {
+        "BSP_PREFETCH": hardware.function("HWR_PrefetchChild"),
         "BSP_WALK": hardware.function("HWR_RenderBSPNode"),
     }, output / "front_bbox.cpp")
     for name in ("HWR_RenderPlane", "HWR_ProjectWall", "HWR_DrawFlatBleed",

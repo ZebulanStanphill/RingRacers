@@ -1845,8 +1845,10 @@ in `generate.py`, and register its executable in `CMakeLists.txt`. Register extr
   rejection, visible back siblings, front-to-back order, portal rejection and each
   visited leaf's own `hwbbox`. Desktop retains unconditional front traversal.
   `front_bbox_both` walks the tree with each driver in turn. The
-  pre-fix UWP walk fails the hidden-subtree case. These checks cover traversal,
-  not rendered pixels or Xbox output.
+  pre-fix UWP walk fails the hidden-subtree case. The walk's memory hint
+  (`HWR_PrefetchChild`) runs as in production, so the same checks show the
+  hints leave the visits alone. These checks cover traversal, not rendered
+  pixels, Xbox output, or what a hint does to timing.
 
 - **Midtextures between skies:** `midtexture_sky` executes the production cut
   helper for Municipal Meadow's MIDPEG trees, one matching sky plane, ordinary

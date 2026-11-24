@@ -124,6 +124,7 @@ def generate_title(engine, output, templates, render, function_section):
         code += hw.function(n)
     code += (
         "\nstatic void HWR_Subsector(size_t);\n"
+        + hw.function("HWR_PrefetchChild")
         + hw.function("HWR_RenderBSPNode")
         + "\n#define _UWP\n"
     )

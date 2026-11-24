@@ -55,6 +55,7 @@
 #include "../st_stuff.h"
 #include "../i_system.h"
 #include "../m_cheat.h"
+#include "../m_prefetch.h" // [ZE]
 #include "../f_finale.h"
 #include "../r_things.h" // R_GetShadowZ
 #include "../d_main.h"
@@ -4940,6 +4941,78 @@ static boolean HWR_FOFPlaneIsHidden(const ffloor_t *plane, fixed_t height)
 //                  : Draw one or more line segments.
 // Notes            : Sets gl_cursectorlight to the light of the parent sector, to modulate wall textures
 // -----------------+
+// [ZE]: Hints for the BSP walk (m_prefetch.h). They read only fields of objects the walk has in hand at that
+// point (the node, the subsector, its sector, its segs, the sprite object), write nothing, and decide nothing: each
+// only asks for memory the walk is likely to read soon, most of it for the first time in the view. In a profile of
+// 16-racer races on Xbox One X, about 60% of HWR_Subsector's own time, the largest single cost of the 3D view, sat
+// on such first reads: each seg's flags, each sprite object, the floor polygon, each seg's linedef and corners,
+// and the subsector itself. The tests and loops are in these functions, not at the call sites, so that the walk's
+// functions keep their control-flow shape and with it their profile-guided optimization data.
+#define HWR_PREFETCH_SEGS 16 // the most segs of one subsector to ask for
+#define HWR_PREFETCH_THING_BYTES 640 // what culling, interpolating, and projecting a sprite read of its object
+#define HWR_PREFETCH_PLANEPOLY_BYTES 128 // a floor polygon's point count and its first ten points
+
+static void HWR_PrefetchThing(const mobj_t *thing)
+{
+	M_PrefetchSpan(thing, HWR_PREFETCH_THING_BYTES);
+}
+
+// A BSP node's child, before the bounding box tests that decide whether to walk into it.
+static void HWR_PrefetchChild(UINT16 child)
+{
+	size_t num;
+
+	if (!(child & NF_SUBSECTOR))
+	{
+		if (child < numnodes)
+			M_PrefetchSpan(&nodes[child], sizeof(node_t));
+		return;
+	}
+
+	num = child & ~NF_SUBSECTOR;
+	if (num < numsubsectors)
+		M_PrefetchSpan(&subsectors[num], sizeof(subsector_t));
+	if (extrasubsectors && num < addsubsector)
+		M_PrefetchSpan(&extrasubsectors[num], sizeof(extrasubsector_t));
+}
+
+// A subsector's segs, floor polygon, and first sprite object, before its planes are drawn. num is below
+// numsubsectors, and line and count are the subsector's own.
+static void HWR_PrefetchSubsector(size_t num, const subsector_t *sub, const seg_t *line, INT16 count)
+{
+	const sector_t *sector = sub->sector;
+
+	if (count > HWR_PREFETCH_SEGS)
+		count = HWR_PREFETCH_SEGS;
+	if (count > 0)
+		M_PrefetchSpan(line, count * sizeof(seg_t));
+
+	if (extrasubsectors)
+		M_PrefetchSpan(extrasubsectors[num].planepoly, HWR_PREFETCH_PLANEPOLY_BYTES);
+
+	// HWR_AddSprites walks a sector's objects once per view.
+	if (sector->validcount != validcount)
+		HWR_PrefetchThing(sector->thinglist);
+}
+
+// What drawing a seg reads first through it: the start of its linedef and its two corners. The seg loop reads
+// every one of these segs (at least the flags that say whether to draw it), so the reads here are of segs it
+// reads too. A seg the loop skips can have no linedef or corners; a NULL is passed on and ignored.
+static void HWR_PrefetchSegTargets(const seg_t *line, INT16 count)
+{
+	INT16 i;
+
+	if (count > HWR_PREFETCH_SEGS)
+		count = HWR_PREFETCH_SEGS;
+
+	for (i = 0; i < count; i++)
+	{
+		M_PrefetchSpan(line[i].linedef, M_CACHELINE);
+		M_PrefetchSpan(line[i].pv1, sizeof(polyvertex_t));
+		M_PrefetchSpan(line[i].pv2, sizeof(polyvertex_t));
+	}
+}
+
 static void HWR_Subsector(size_t num)
 {
 	INT16 count;
@@ -4976,6 +5049,7 @@ static void HWR_Subsector(size_t num)
 		count = sub->numlines;
 		// first line seg
 		line = &segs[sub->firstline];
+		HWR_PrefetchSubsector(num, sub, line, count); // [ZE]
 	}
 	else
 	{
@@ -5289,6 +5363,8 @@ static void HWR_Subsector(size_t num)
 // hurdler: faux: on ajoute seulement les sprites, le murs sont trac� d'abord
 	if (line)
 	{
+		HWR_PrefetchSegTargets(line, count); // [ZE]: The segs have had the planes' time to arrive.
+
 		// draw sprites first, coz they are clipped to the solidsegs of
 		// subsectors more 'in front'
 		HWR_AddSprites(gl_frontsector);
@@ -5396,6 +5472,7 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 
 	// Decide which side the view point is on.
 	side = R_PointOnSide(dup_viewx, dup_viewy, bsp);
+	HWR_PrefetchChild(bsp->children[side]); // [ZE]
 
 	// BP: big hack for a test in lighning ref : 1249753487AB
 	hwbbox = bsp->bbox[side];
@@ -5410,6 +5487,7 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 
 	// Possibly divide back space.
 	// [ZE]: Skip a back BSP branch if its bounds lie outside the portal view.
+	HWR_PrefetchChild(bsp->children[side^1]); // [ZE]
 	if (HWR_CheckBBox(bsp->bbox[side^1])
 #ifdef HAVE_VIBERANT
 		&& (!HWR_VibeRant() || HWR_PortalBBox(bsp->bbox[side^1]))
@@ -7739,6 +7817,8 @@ static void HWR_AddSprites(sector_t *sec)
 	limit_dist = (fixed_t)(cv_drawdist.value) * mapobjectscale;
 	for (thing = sec->thinglist; thing; thing = thing->snext)
 	{
+		HWR_PrefetchThing(thing->snext); // [ZE]: A hint only; the loop still reads thing->snext afterwards.
+
 		// [ZE]: Omit objects flagged to stay out of the skybox when traversing its view.
 		// do not render in skybox
 		if ((thing->renderflags & RF_HIDEINSKYBOX) && gl_skyboxview)
