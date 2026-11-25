@@ -82,7 +82,9 @@ void ReleaseModelBuffers()
 	g_modelVertices.clear();
 }
 
-void FillVertices(int count, const float* vertices, const float* normals, const float* uvs)
+// uvs times (max_s, max_t) is what the game's adjustTextureCoords stores in mesh->uvs: the same two float factors,
+// multiplied the same way, so the result is the same bits. A scale of 1 leaves the coordinates as they are.
+void FillVertices(int count, const float* vertices, const float* normals, const float* uvs, float max_s, float max_t)
 {
 	g_modelVertices.resize(count);
 	for (int i = 0; i < count; i++)
@@ -94,12 +96,12 @@ void FillVertices(int count, const float* vertices, const float* normals, const 
 		v.nx = normals ? normals[i * 3] : 0.0f;
 		v.ny = normals ? normals[i * 3 + 1] : 0.0f;
 		v.nz = normals ? normals[i * 3 + 2] : 1.0f;
-		v.s = uvs ? uvs[i * 2] : 0.0f;
-		v.t = uvs ? uvs[i * 2 + 1] : 0.0f;
+		v.s = uvs ? uvs[i * 2] * max_s : 0.0f;
+		v.t = uvs ? uvs[i * 2 + 1] * max_t : 0.0f;
 	}
 }
 
-void FillTinyVertices(int count, const short* vertices, const char* normals, const float* uvs)
+void FillTinyVertices(int count, const short* vertices, const char* normals, const float* uvs, float max_s, float max_t)
 {
 	g_modelVertices.resize(count);
 	for (int i = 0; i < count; i++)
@@ -111,8 +113,8 @@ void FillTinyVertices(int count, const short* vertices, const char* normals, con
 		v.nx = normals ? normals[i * 3] : 0.0f;
 		v.ny = normals ? normals[i * 3 + 1] : 0.0f;
 		v.nz = normals ? normals[i * 3 + 2] : 1.0f;
-		v.s = uvs ? uvs[i * 2] : 0.0f;
-		v.t = uvs ? uvs[i * 2 + 1] : 0.0f;
+		v.s = uvs ? uvs[i * 2] * max_s : 0.0f;
+		v.t = uvs ? uvs[i * 2 + 1] * max_t : 0.0f;
 	}
 }
 
@@ -164,6 +166,13 @@ void DrawMesh(const StaticBuffer* buffer, const mesh_t* mesh, bool indexed, UINT
 	CaptureSurfaceProbe("model", nullptr, 0);
 }
 
+ModelCoords VibeRant_ModelCoords(const model_t* model)
+{
+	return {model->max_s, model->max_t,
+		memcmp(&(model->vbo_max_s), &(model->max_s), sizeof(model->max_s)) == 0 &&
+		memcmp(&(model->vbo_max_t), &(model->max_t), sizeof(model->max_t)) == 0};
+}
+
 void VibeRant_DrawModel(
 	model_t* model,
 	INT32 frameIndex,
@@ -175,7 +184,8 @@ void VibeRant_DrawModel(
 	float vscale,
 	UINT8 flipped,
 	UINT8 hflipped,
-	FSurfaceInfo* Surface
+	FSurfaceInfo* Surface,
+	const ModelCoords& coords
 )
 {
 	static float poly[4] = {0, 0, 0, 0};
@@ -295,8 +305,8 @@ void VibeRant_DrawModel(
 
 	// Don't use the VBO if it does not have the correct texture coordinates.
 	// (Can happen when model uses a sprite as a texture and the sprite changes)
-	const bool useVBO = memcmp(&(model->vbo_max_s), &(model->max_s), sizeof(model->max_s)) == 0 &&
-						memcmp(&(model->vbo_max_t), &(model->max_t), sizeof(model->max_t)) == 0;
+	// The answer and the coordinates' scale come with the draw (see ModelCoords): the model's own may have changed.
+	const bool useVBO = coords.useVBO;
 
 	for (int i = 0; i < model->numMeshes; i++)
 	{
@@ -321,7 +331,7 @@ void VibeRant_DrawModel(
 				else
 				{
 					g_stats.modelFallbacks++;
-					FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs);
+					FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->originaluvs, coords.max_s, coords.max_t);
 					DrawMesh(nullptr, mesh, true, mesh->numTriangles * 3);
 				}
 			}
@@ -343,8 +353,8 @@ void VibeRant_DrawModel(
 							(short) (frame->vertices[c] + (pol * (nextframe->vertices[c] - frame->vertices[c])));
 						normal[k] = (char) (frame->normals[c] + (pol * (nextframe->normals[c] - frame->normals[c])));
 					}
-					v.s = mesh->uvs[j * 2];
-					v.t = mesh->uvs[j * 2 + 1];
+					v.s = mesh->originaluvs[j * 2] * coords.max_s;
+					v.t = mesh->originaluvs[j * 2 + 1] * coords.max_t;
 				}
 				DrawMesh(nullptr, mesh, true, mesh->numTriangles * 3);
 			}
@@ -365,7 +375,7 @@ void VibeRant_DrawModel(
 				else
 				{
 					g_stats.modelFallbacks++;
-					FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs);
+					FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->originaluvs, coords.max_s, coords.max_t);
 					DrawMesh(nullptr, mesh, false, mesh->numTriangles * 3);
 				}
 			}
@@ -386,8 +396,8 @@ void VibeRant_DrawModel(
 						position[k] = frame->vertices[c] + (pol * (nextframe->vertices[c] - frame->vertices[c]));
 						normal[k] = frame->normals[c] + (pol * (nextframe->normals[c] - frame->normals[c]));
 					}
-					v.s = mesh->uvs[j * 2];
-					v.t = mesh->uvs[j * 2 + 1];
+					v.s = mesh->originaluvs[j * 2] * coords.max_s;
+					v.t = mesh->originaluvs[j * 2 + 1] * coords.max_t;
 				}
 				DrawMesh(nullptr, mesh, false, mesh->numVertices);
 			}
@@ -421,13 +431,13 @@ void VibeRant_CreateModelVBOs(model_t* model)
 			if (mesh->frames)
 			{
 				mdlframe_t* frame = &mesh->frames[j];
-				FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs);
+				FillVertices(mesh->numTriangles * 3, frame->vertices, frame->normals, mesh->uvs, 1.0f, 1.0f);
 				vboID = &frame->vboID;
 			}
 			else if (mesh->tinyframes)
 			{
 				tinyframe_t* frame = &mesh->tinyframes[j];
-				FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs);
+				FillTinyVertices(mesh->numVertices, frame->vertices, frame->normals, mesh->uvs, 1.0f, 1.0f);
 				vboID = &frame->vboID;
 			}
 			else

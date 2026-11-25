@@ -88,8 +88,19 @@ void VibeRant_SetPaletteLookup(UINT8 *lut);
 UINT32 VibeRant_CreateLightTable(RGBA_t *hw_lighttable);
 void VibeRant_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable);
 void VibeRant_ClearLightTables(void);
+// What a model's texture coordinates were when its draw was asked for. The game rewrites a sprite-textured model's
+// coordinates (mesh->uvs, and the model's max_s and max_t) whenever it draws the model with a sprite of another size,
+// which can be a hundred times a second, so a draw that waits in the driver thread's queue must not read them when
+// it runs. It carries this instead: the scale the game applied to the model's original coordinates, which never
+// change, and whether the model's vertex buffers were built for that scale.
+struct ModelCoords
+{
+	float max_s, max_t;
+	bool useVBO;
+};
+ModelCoords VibeRant_ModelCoords(const model_t *model);
 void VibeRant_DrawModel(model_t *model, INT32 frameIndex, float duration, float tics, INT32 nextFrameIndex, FTransform *pos,
-	float hscale, float vscale, UINT8 flipped, UINT8 hflipped, FSurfaceInfo *surface);
+	float hscale, float vscale, UINT8 flipped, UINT8 hflipped, FSurfaceInfo *surface, const ModelCoords &coords);
 void VibeRant_CreateModelVBOs(model_t* model);
 void VibeRant_RenderSkyDome(gl_sky_t* sky);
 

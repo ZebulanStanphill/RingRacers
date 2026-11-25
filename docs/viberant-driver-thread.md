@@ -26,7 +26,7 @@ directly.
 | Entry points | Execution with threading on |
 | --- | --- |
 | `DrawPolygon`, `DrawIndexedTriangles`, `Draw2DLine`, `ClearBuffer`, `SetTransform`, `SetPortalPlane`, `SetScreenPalette` | Queued with copies of pointed-to arguments. Indexed draws copy through the highest referenced index. |
-| `DrawModel` | Queued with copied transform and surface. Loaded models stay allocated. The engine drains before changing a model's texture coordinates, and VBO creation is synchronous. |
+| `DrawModel` | Queued with copied transform and surface, and with the scale of the model's texture coordinates and whether its VBOs match that scale, both read when the draw is queued. The worker applies the scale to the model's original coordinates, so the engine rewrites a sprite-textured model's coordinates without draining. Loaded models stay allocated, and VBO creation is synchronous. |
 | `RenderSkyDome` | Copies the sky descriptor and loops for a draw from the existing GPU buffer. Rebuilds are synchronous because they read the source vertices and update the caller's descriptor. A queued draw without a GPU buffer or source data skips the draw and logs once. |
 | `SetTexture` | Binds a copied name and brightmap flag, or unbinds for null. Uploads for textures without names are synchronous, as are `UpdateTexture`, `DeleteTexture`, and `ClearMipMapCache`. |
 | `SetSpecialState` | Water surface, model lighting, and palette rendering queue. A changed shader option, texture filter, atlas, or anisotropy setting is synchronous. The last shader option is cached to skip redundant calls. |
@@ -66,8 +66,9 @@ flush paths can retain and update that object only in synchronous calls.
 The worker can set an atomic texture-flush request. Shader eligibility and
 render-target dimensions only change in synchronous calls. The placement
 fallback flag is atomic because a worker present can change the next frame's
-layout. Model geometry stays allocated, and the main thread drains before
-rewriting UVs. Render statistics are read and reset in command order.
+layout. Model geometry stays allocated. Queued model draws read a model's
+original UVs, which never change, and not the adjusted copy the main thread
+rewrites. Render statistics are read and reset in command order.
 
 ## Present, pacing, and errors
 

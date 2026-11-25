@@ -87,8 +87,6 @@ void VibeRant_ReleaseWindow(void);
 // Waits for the GPU, then releases the swap chain and the device
 void VibeRant_Shutdown(void);
 
-// Drains draws that might read game-owned model UVs before the game rewrites them.
-void VibeRant_SyncModelUpdates(void);
 // Worker logging skips game- and window-owned output.
 boolean VibeRant_OnDriverThread(void);
 // Only true after a shutdown timeout. The process must leave live graphics objects alone.

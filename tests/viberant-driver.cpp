@@ -1845,7 +1845,7 @@ int main(int argc,char **argv) {
         for(int i=0;i<18;i+=3) modelNext[i]+=1.2f;
         mdlframe_t modelFrames[2]={}; modelFrames[0].vertices=modelVertices.data(); modelFrames[1].vertices=modelNext.data();
         modelFrames[0].normals=modelFrames[1].normals=normals.data();
-        mesh_t mesh={}; mesh.numVertices=6; mesh.numTriangles=2; mesh.numFrames=2; mesh.frames=modelFrames; mesh.uvs=uvs.data();
+        mesh_t mesh={}; mesh.numVertices=6; mesh.numTriangles=2; mesh.numFrames=2; mesh.frames=modelFrames; mesh.uvs=mesh.originaluvs=uvs.data();
         model_t model={}; model.numMeshes=1; model.meshes=&mesh; model.maxNumFrames=2; model.max_s=model.max_t=1;
         FTransform position={}; auto modelSurface=surface({192,96,48}); modelSurface.PolyFlags=PF_NoTexture|PF_NoDepthTest;
         special(HWD_SET_MODEL_LIGHTING,0);

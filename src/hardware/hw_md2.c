@@ -1340,11 +1340,8 @@ static void adjustTextureCoords(model_t *model, patch_t *patch)
 	if (!gpatch)
 		return;
 
-	// [ZE]: Queued VibeRant draws still read this model's UVs.
-#ifdef HAVE_VIBERANT
-	if (HWR_VibeRant())
-		VibeRant_SyncModelUpdates();
-#endif
+	// [ZE]: VibeRant draws still waiting in the driver thread's queue don't read what this rewrites: each carries the
+	// scale it was asked with and applies it to originaluvs (ModelCoords in viberant_thread.h).
 	for (i = 0; i < model->numMeshes; i++)
 	{
 		int j;

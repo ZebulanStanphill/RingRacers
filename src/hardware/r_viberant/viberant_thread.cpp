@@ -668,10 +668,12 @@ void VibeRant_SetTransform(FTransform *transform)
 void VibeRant_DrawModel(model_t *model, INT32 frame, float duration, float tics, INT32 nextFrame, FTransform *pos,
 	float hscale, float vscale, UINT8 flipped, UINT8 hflipped, FSurfaceInfo *surface)
 {
+	// Read on the game's thread, now: see ModelCoords.
+	const impl::ModelCoords coords = impl::VibeRant_ModelCoords(model);
 	if (!Queued())
-		return impl::VibeRant_DrawModel(model, frame, duration, tics, nextFrame, pos, hscale, vscale, flipped, hflipped, surface);
+		return impl::VibeRant_DrawModel(model, frame, duration, tics, nextFrame, pos, hscale, vscale, flipped, hflipped, surface, coords);
 	Enqueue([=, transform = Optional(pos), info = Optional(surface)]() mutable {
-		impl::VibeRant_DrawModel(model, frame, duration, tics, nextFrame, transform.Get(), hscale, vscale, flipped, hflipped, info.Get());
+		impl::VibeRant_DrawModel(model, frame, duration, tics, nextFrame, transform.Get(), hscale, vscale, flipped, hflipped, info.Get(), coords);
 	});
 }
 
@@ -866,11 +868,6 @@ boolean VibeRant_TakeTextureFlushRequest()
 		return false;
 	Sync(SyncReason::TextureFlush);
 	return impl::VibeRant_TakeTextureFlushRequest();
-}
-
-void VibeRant_SyncModelUpdates()
-{
-	Sync(SyncReason::Model);
 }
 
 void VibeRant_FinishUpdate(INT32 waitvbl)
