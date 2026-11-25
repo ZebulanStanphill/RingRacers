@@ -1834,11 +1834,8 @@ static void IdentifyVersion(void)
 	if (! AddIWAD())
 	{
 #ifdef _UWP
-		// [UWP]: Say what to check before the technical details (the error dialog adds the drives it can see)
-		I_Error("Couldn't find the game's data (\"bios.pk3\" isn't in %s).\n\n"
-			"Is the USB drive with the ringracers folder connected? The folder must be at the top of the drive "
-			"and hold the v2.4 assets, such as E:\\ringracers\\bios.pk3. See the README on GitHub for setup.\n",
-			srb2waddir);
+		// [UWP]: The error dialog adds what is wrong with the USB drive and what to do about it
+		I_Error("Couldn't find the game's data (\"bios.pk3\" isn't in %s).\n", srb2waddir);
 #else
 		I_Error("\"bios.pk3\" not found! Expected in %s\n", srb2waddir);
 // [UWP]: End of the Xbox message that says to check the USB drive.

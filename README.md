@@ -109,11 +109,14 @@ Files copied onto the drive on Windows inherit these permissions. Files copied f
 
 ### If the game can't use the drive
 
-When the game stops with an error, the message ends with a list of the drives it can see. The message is also saved as `E:\ringracers\error.txt` if the drive can be written to. In the list, error 5 means access denied, and error 2 or 3 means not found:
+When the game stops with an error and can't find its files on the drive, the message ends by saying what is wrong with the drive:
 
-- `E: error 5` or `E:\ringracers\bios.pk3: error 5`: the drive's permissions don't let the game in. Give Xbox apps access to the drive again.
-- `E: ok, ringracers error 2`: the drive works, but there is no `ringracers` folder at the top of it.
-- `E:\ringracers\bios.pk3: error 2`: the folder is there, but the game's files aren't in it. Extract the assets archive into it.
+- **No USB drive is connected.** Plug in the drive and start the game again.
+- **The game isn't allowed to read the drive.** The drive's permissions don't let the game in. Give Xbox apps access to the drive again.
+- **There is no `ringracers` folder at the top of the drive.** The folder must not be inside another folder.
+- **The game's files aren't in the `ringracers` folder.** Extract the assets archive into it.
+
+If another drive has a `ringracers` folder, the message says so: the game only reads drive `E:`, and a second USB drive gets another letter. The message is also saved as `E:\ringracers\error.txt` if the drive can be written to.
 
 If Windows says the drive has errors, copy `ringracers\ringracers` (your config and saves) off it before letting Windows repair it. A repair moves files it can't put back in place into a `found.000` folder at the top of the drive. That happened to a drive of mine, and it took everything the game had written.
 

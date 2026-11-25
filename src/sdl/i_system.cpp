@@ -296,44 +296,78 @@ static void write_backtrace(INT32 signal)
 #endif // UNIXBACKTRACE
 
 #ifdef _UWP
-// [UWP]: Describes which drives the app can see and where ringracers folders are, for the crash dialog
-static void UWPDescribeDrives(char *out, size_t outsize)
+// [UWP]: Whether a path exists. When it doesn't, error is why: a Windows error code.
+static bool UWPPathExists(const char *path, DWORD *error)
 {
-	size_t len = 0;
-	DWORD attributes;
+	if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+		return true;
+	*error = GetLastError();
+	return false;
+}
+
+// [UWP]: Says in a sentence what is wrong with the USB drive and what to do about it, for the error dialog. Leaves
+// the text empty when the game's data is where it should be: the error is about something else then.
+static void UWPDescribeDrive(char *out, size_t outsize)
+{
+	DWORD error = ERROR_SUCCESS;
+	bool nodrive = false, nofolder = false;
+	size_t len;
 	char letter;
 
-	attributes = GetFileAttributesA("E:\\ringracers\\bios.pk3");
-	if (attributes == INVALID_FILE_ATTRIBUTES)
-		len += snprintf(out + len, outsize - len, "E:\\ringracers\\bios.pk3: error %lu\n", GetLastError());
-	else
-		len += snprintf(out + len, outsize - len, "E:\\ringracers\\bios.pk3: found\n");
+	out[0] = '\0';
+	if (UWPPathExists("E:\\ringracers\\bios.pk3", &error))
+		return;
 
-	for (letter = 'A'; letter <= 'Z' && len < outsize; letter++)
+	if (!UWPPathExists("E:\\", &error))
+	{
+		nofolder = true;
+		if (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND || error == ERROR_INVALID_DRIVE)
+		{
+			snprintf(out, outsize, "No USB drive is connected. Plug in the drive that has the ringracers folder, "
+				"then start the game again.");
+			error = ERROR_SUCCESS;
+			nodrive = true;
+		}
+	}
+	else if (!UWPPathExists("E:\\ringracers", &error))
+	{
+		nofolder = true;
+		if (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND)
+		{
+			snprintf(out, outsize, "The USB drive is connected, but there is no ringracers folder at the top of it. "
+				"The README on GitHub says how to set the drive up.");
+			error = ERROR_SUCCESS;
+		}
+	}
+	else if (!UWPPathExists("E:\\ringracers\\bios.pk3", &error)
+		&& (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND))
+	{
+		snprintf(out, outsize, "The USB drive has a ringracers folder, but the game's files, such as bios.pk3, aren't "
+			"in it. Extract the v2.4 assets into the folder.");
+		error = ERROR_SUCCESS;
+	}
+
+	// Whatever couldn't be opened was there, and Windows refused it or failed
+	if (error == ERROR_ACCESS_DENIED)
+		snprintf(out, outsize, "The USB drive is connected, but the game isn't allowed to read it. Give Xbox apps "
+			"access to the drive again; the README on GitHub says how.");
+	else if (error != ERROR_SUCCESS)
+		snprintf(out, outsize, "The game couldn't read the USB drive (Windows error %lu).", error);
+
+	// The game only reads drive E:, and a second USB drive gets another letter
+	for (letter = 'F'; nofolder && letter <= 'Z'; letter++)
 	{
 		char path[16];
-		DWORD error;
-
-		snprintf(path, sizeof path, "%c:\\", letter);
-		attributes = GetFileAttributesA(path);
-		error = GetLastError();
-
-		// No drive with this letter
-		if (attributes == INVALID_FILE_ATTRIBUTES && (error == ERROR_PATH_NOT_FOUND || error == ERROR_FILE_NOT_FOUND || error == ERROR_INVALID_DRIVE))
-			continue;
-
-		if (attributes == INVALID_FILE_ATTRIBUTES)
-		{
-			len += snprintf(out + len, outsize - len, "%c: error %lu\n", letter, error);
-			continue;
-		}
 
 		snprintf(path, sizeof path, "%c:\\ringracers", letter);
-		attributes = GetFileAttributesA(path);
-		if (attributes == INVALID_FILE_ATTRIBUTES)
-			len += snprintf(out + len, outsize - len, "%c: ok, ringracers error %lu\n", letter, GetLastError());
-		else
-			len += snprintf(out + len, outsize - len, "%c: ok, ringracers found\n", letter);
+		if (!UWPPathExists(path, &error))
+			continue;
+
+		// Instead of saying that no drive is connected, or after what is wrong with drive E:
+		len = nodrive ? 0 : strlen(out);
+		snprintf(out + len, outsize - len, "%sDrive %c: has a ringracers folder, but the game only reads drive E:. "
+			"Unplugging other USB drives may help.", len ? "\n\n" : "", letter);
+		break;
 	}
 }
 
@@ -366,11 +400,16 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
 #ifdef _UWP
 	// [UWP]: The Xbox message dialog cuts off long text, so show only the error and save it next to the game data
 	{
-		char drives[1024];
+		char drive[512];
 		FILE *errorfile;
+		size_t length = strlen(messagefordevelopers);
 
-		UWPDescribeDrives(drives, sizeof drives);
-		snprintf(finalmessage, sizeof finalmessage, "%s\n\n%s", messagefordevelopers, drives);
+		// The error, then what is wrong with the USB drive when something is
+		while (length > 0 && messagefordevelopers[length - 1] == '\n')
+			length--;
+		UWPDescribeDrive(drive, sizeof drive);
+		snprintf(finalmessage, sizeof finalmessage, "%.*s%s%s", (int)length, messagefordevelopers,
+			drive[0] ? "\n\n" : "", drive);
 
 		errorfile = fopen("E:\\ringracers\\error.txt", "w");
 		if (errorfile)
@@ -380,7 +419,7 @@ static void I_ShowErrorMessageBox(const char *messagefordevelopers, boolean dump
 		}
 
 		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
-			"Dr. Robotnik's Ring Racers " VERSIONSTRING " Error",
+			"Dr. Robotnik's Ring Racers ZE " VERSIONSTRING " Error",
 			finalmessage, NULL);
 		return;
 	}
