@@ -47,6 +47,17 @@ using Duration = Clock::duration;
 constexpr size_t kAlignment = 16;
 constexpr size_t kQueueBytes = 16 * 1024 * 1024;
 
+#ifdef _UWP
+// [UWP]: How long the driver thread keeps looking for the next command before it sleeps. Sprites and models reach the
+// queue one at a time, and the thread drew each sooner than the next came. It then slept, and the main thread paid a
+// system call to wake it for nearly every one of them: about 2% of the 3D view on an Xbox One X. Looking for 200
+// microseconds removed a third of that (the wake-ups for a sprite's texture, a few microseconds after its shader);
+// the rest follow longer gaps, such as a spring's clipping. In the sessions measured, Windows ran the thread alone on
+// a processor there, so looking longer takes nothing from the main thread. After it presents a frame, the thread
+// sleeps at once: nothing comes until the game has run its logic.
+constexpr auto kIdleSpin = std::chrono::milliseconds(2);
+#endif
+
 enum class SyncReason
 {
 	Other, TextureUpload, TextureUpdate, TextureDelete, TextureFlush, Palette, Readback, State, Shader,
@@ -64,7 +75,7 @@ struct ProducerStats
 {
 	std::array<UINT64, std::size(kSyncNames)> syncs{};
 	Duration syncWait{}, frameWait{}, worstFrameWait{}, spaceWait{};
-	UINT64 frames = 0, bytes = 0, peakBytes = 0, spaceWaits = 0, frameWaits = 0;
+	UINT64 frames = 0, bytes = 0, peakBytes = 0, spaceWaits = 0, frameWaits = 0, wakes = 0;
 };
 
 struct WorkerStats
@@ -122,14 +133,17 @@ public:
 		return ready();
 	}
 
-	void Signal()
+	// Whether there was a sleeping waiter to wake
+	bool Signal()
 	{
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 		if (armed.load(std::memory_order_relaxed))
 		{
 			std::lock_guard<std::mutex> lock(mutex);
 			condition.notify_one();
+			return true;
 		}
+		return false;
 	}
 
 private:
@@ -161,7 +175,7 @@ struct Queue
 	char fatal[1024]{};
 
 	// The producer owns these positions. The consumer only uses published and consumed.
-	UINT64 tail = 0, previousFrame = 0, frameBytes = 0;
+	UINT64 tail = 0, previousFrame = 0, frameBytes = 0, wakes = 0;
 
 	// The consumer owns these timings.
 	WorkerStats timings;
@@ -187,7 +201,8 @@ struct Queue
 	{
 		tail += bytes;
 		published.store(tail, std::memory_order_release);
-		workReady.Signal();
+		if (workReady.Signal())
+			++wakes;
 	}
 
 	void AccountBusy()
@@ -205,6 +220,7 @@ struct Queue
 		I_UWPProfileDriverThread(true);
 #endif
 		UINT64 head = 0;
+		[[maybe_unused]] bool frameEnded = false; // the last command presented a frame
 		for (;;)
 		{
 			auto ready = [&] { return published.load(std::memory_order_acquire) != head || stop.load(); };
@@ -214,6 +230,18 @@ struct Queue
 				YieldProcessor();
 #endif
 			}
+#ifdef _UWP
+			if (!frameEnded && !ready())
+			{
+				// [UWP]: See kIdleSpin.
+				const auto until = Clock::now() + kIdleSpin;
+				do
+				{
+					for (unsigned i = 0; i < 64 && !ready(); ++i)
+						YieldProcessor();
+				} while (!ready() && Clock::now() < until);
+			}
+#endif
 			if (!ready())
 				workReady.Wait(ready, Clock::time_point::max(), false);
 			const UINT64 end = published.load(std::memory_order_acquire);
@@ -225,9 +253,11 @@ struct Queue
 			{
 				auto *record = std::launder(reinterpret_cast<Record *>(At(head)));
 				const UINT32 size = record->size;
+				frameEnded = false;
 				if (record->execute && !failed.load(std::memory_order_relaxed) && !discard.load(std::memory_order_relaxed))
 				{
 					const RecordKind kind = record->kind;
+					frameEnded = kind == RecordKind::Finish;
 					if (kind == RecordKind::Perf)
 						AccountBusy();
 					try
@@ -458,11 +488,12 @@ void LogQueuePerf(double seconds, const ProducerStats &sample)
 		if (wrote > 0)
 			used += std::min(static_cast<size_t>(wrote), sizeof reasons - used - 1);
 	}
-	I_OutputMsg("VibeRant perf: driver thread: on; per frame: worker busy %.2f ms (worst %.2f), main waited %.2f ms for the previous frame (worst %.2f) and %.2f ms for queue space; queue %.2f MB per frame (peak %.2f); frame waits %llu, space waits %llu; syncs %.1f per second (%.2f ms waited)%s\n",
+	I_OutputMsg("VibeRant perf: driver thread: on; per frame: worker busy %.2f ms (worst %.2f), main waited %.2f ms for the previous frame (worst %.2f) and %.2f ms for queue space; queue %.2f MB per frame (peak %.2f); frame waits %llu, space waits %llu; worker woken %.1f times per frame; syncs %.1f per second (%.2f ms waited)%s\n",
 		Milliseconds(work.busy) / frames, Milliseconds(work.worstFrameBusy), Milliseconds(sample.frameWait) / frames,
 		Milliseconds(sample.worstFrameWait), Milliseconds(sample.spaceWait) / frames, sample.bytes / (1048576.0 * frames),
 		sample.peakBytes / 1048576.0, static_cast<unsigned long long>(sample.frameWaits),
-		static_cast<unsigned long long>(sample.spaceWaits), syncs / seconds, Milliseconds(sample.syncWait), reasons);
+		static_cast<unsigned long long>(sample.spaceWaits), sample.wakes / frames, syncs / seconds,
+		Milliseconds(sample.syncWait), reasons);
 }
 
 } // namespace
@@ -930,6 +961,11 @@ void VibeRant_LogPerf(double seconds)
 	const UINT32 lazy = 0;
 #endif
 	const INT32 effect = cv_scr_effect.value;
+	if (queue)
+	{
+		stats.wakes = queue->wakes;
+		queue->wakes = 0;
+	}
 	const auto sample = stats;
 	stats = {};
 	auto log = [=] {

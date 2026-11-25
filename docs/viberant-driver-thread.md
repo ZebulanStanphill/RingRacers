@@ -15,7 +15,11 @@ wraps the queue. The producer waits if it runs out of room, and a single record
 too large for the ring runs synchronously. Release and acquire operations
 publish both the records and the space the worker has finished using. The
 worker spins briefly when idle, then waits on a condition variable. Publishers
-notify only when a waiter is armed.
+notify only when a waiter is armed. On Xbox the worker keeps looking for the
+next command for 2 ms before it waits, unless it has just presented a frame:
+sprites and models reach the queue one at a time, and waking the worker for
+each cost the main thread a system call. The perf line's `worker woken` figure
+counts those wake-ups per frame.
 
 A synchronous call waits for all published commands, then calls the same
 driver implementation on the main thread. The worker can run no more driver
