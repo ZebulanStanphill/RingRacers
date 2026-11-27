@@ -896,6 +896,14 @@ void I_UWPLogCpuSets(void)
 	log_sets("the main thread's", getthreadsets, GetCurrentThread());
 }
 
+// The CPU sets the main thread was kept on, and their processors for the log. Written by the main thread before it
+// starts the driver thread, which then reads them. The driver thread can't work them out again: Windows can list the
+// CPU sets differently by then (on an Xbox One X, the same check later found no processors apart from the system's
+// cache).
+static ULONG g_mainthreadsets[64];
+static ULONG g_mainthreadsetcount = 0;
+static char g_mainthreadprocessors[256] = "";
+
 void I_UWPKeepMainThreadOffSystemCache(void)
 {
 	const std::vector<CpuSet> sets = ReadCpuSets(false);
@@ -943,6 +951,27 @@ void I_UWPKeepMainThreadOffSystemCache(void)
 	else
 	{
 		I_OutputMsg("UWP: main thread placement: processors %s, apart from the system's cache\n", list);
+		memcpy(g_mainthreadsets, ids, count * sizeof ids[0]);
+		memcpy(g_mainthreadprocessors, list, sizeof list);
+		g_mainthreadsetcount = count;
+	}
+}
+
+void I_UWPKeepDriverThreadOffSystemCache(void)
+{
+	auto set_thread_sets = reinterpret_cast<SetCpuSetsFn>(FindKernelFunction("SetThreadSelectedCpuSets"));
+
+	if (!g_mainthreadsetcount)
+	{
+		I_OutputMsg("UWP: driver thread placement: left to Windows (the main thread was left to Windows)\n");
+	}
+	else if (!set_thread_sets || !set_thread_sets(GetCurrentThread(), g_mainthreadsets, g_mainthreadsetcount))
+	{
+		I_OutputMsg("UWP: driver thread placement: left to Windows (error %lu)\n", set_thread_sets ? GetLastError() : 0);
+	}
+	else
+	{
+		I_OutputMsg("UWP: driver thread placement: processors %s, with the main thread\n", g_mainthreadprocessors);
 	}
 }
 

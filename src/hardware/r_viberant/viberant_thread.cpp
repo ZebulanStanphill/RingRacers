@@ -202,6 +202,7 @@ struct Queue
 	{
 		workerQueue = this;
 #ifdef _UWP
+		I_UWPKeepDriverThreadOffSystemCache();
 		I_UWPProfileDriverThread(true);
 #endif
 		UINT64 head = 0;

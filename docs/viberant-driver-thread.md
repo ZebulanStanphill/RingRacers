@@ -60,6 +60,7 @@ D3D presenters, the D3D paths in the device core, and the UWP perf call.
 | `I_GetPreciseTime`, `I_GetPrecisePrecision`, `I_OutputMsg`, `I_Error` | The timers use SDL's performance counter. Logging can write from either thread, with the log stream kept open until the worker stops. Worker logs skip TTF and the interactive terminal cursor. The Xbox logging timer is atomic and excludes worker time. Only the main thread calls `I_Error`. |
 | `vid`, `cv_scr_scaling`, `uwp_GetScreenSize`, `UWPTraceFrameId`, `window`, presenter SDL/ANGLE calls | The main thread measures the layout and captures the trace ID. Window lookup, take, and release use SDL and ANGLE on the main thread. |
 | `I_UWPProfileDriverThread` | Registers the worker with the sampler using a locked thread handle. The sampler resumes the main thread before sampling the worker. |
+| `I_UWPKeepDriverThreadOffSystemCache` | Called by the worker as it starts, on its own thread. It keeps the worker on the main thread's processors, so the queue's cache lines stay in one L2 cache. |
 
 Queued texture binding never dereferences a `GLMipmap_t`. The upload and
 flush paths can retain and update that object only in synchronous calls.

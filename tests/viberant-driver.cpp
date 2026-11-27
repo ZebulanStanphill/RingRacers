@@ -96,6 +96,7 @@ void I_UWPProfileDriverThread(boolean) {}
 #ifdef _UWP
 // Only the Windows driver test builds the driver thread as the Xbox build does.
 void I_UWPNoteThreadProcessor(uwpthreadkind_t) {}
+void I_UWPKeepDriverThreadOffSystemCache(void) {}
 #endif
 precise_t I_GetPreciseTime() { LARGE_INTEGER n; QueryPerformanceCounter(&n); return n.QuadPart; }
 UINT64 I_GetPrecisePrecision() { LARGE_INTEGER n; QueryPerformanceFrequency(&n); return n.QuadPart; }

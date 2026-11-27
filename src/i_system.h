@@ -352,6 +352,10 @@ void I_UWPLogCpuSets(void);
 // (on an Xbox One X, 4 to 7 rather than 2 and 3), and logs where it put it. Call from the main thread.
 void I_UWPKeepMainThreadOffSystemCache(void);
 
+// [UWP]: The same placement for the VibeRant D3D driver thread, which shares the command queue's cache lines with the
+// main thread. Call from the driver thread.
+void I_UWPKeepDriverThreadOffSystemCache(void);
+
 // [UWP]: How many processors Xbox marks as the game's own, leaving out those it keeps for the system, or 0 if it
 // doesn't mark any
 unsigned int I_UWPUsableProcessors(void);
